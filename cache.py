@@ -82,7 +82,7 @@ class AppCache:
             try:
                 CACHE_DIR.mkdir(parents=True, exist_ok=True)
                 _disk_path(key).write_text(json.dumps(
-                    {"data": data, "set_at": entry.set_at, "ttl": ttl}
+                    {"key": key, "data": data, "set_at": entry.set_at, "ttl": ttl}
                 ))
             except Exception as e:
                 logger.warning(f"Disk cache write failed for {key}: {e}")
@@ -100,6 +100,20 @@ class AppCache:
             safe = re.sub(r"[^\w\-]", "_", prefix)
             for f in CACHE_DIR.glob(f"{safe}*.json"):
                 f.unlink(missing_ok=True)
+
+    def keys_for_prefix(self, prefix: str) -> list[str]:
+        """Return all cached keys (memory + disk) that start with prefix."""
+        keys: set[str] = {k for k in self._store if k.startswith(prefix)}
+        if CACHE_DIR.exists():
+            safe = re.sub(r"[^\w\-]", "_", prefix)
+            for f in CACHE_DIR.glob(f"{safe}*.json"):
+                try:
+                    raw = json.loads(f.read_text())
+                    if "key" in raw:
+                        keys.add(raw["key"])
+                except Exception:
+                    pass
+        return list(keys)
 
     def clear(self):
         self._store.clear()

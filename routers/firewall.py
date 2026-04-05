@@ -154,7 +154,7 @@ async def policy_lookup(req: PolicyLookupRequest):
 
 @router.get("/cache/info")
 async def firewall_cache_info():
-    keys  = [k for k in cache._store if k.startswith("pan_")]
+    keys  = cache.keys_for_prefix("pan_")
     infos = {k: cache.cache_info(k) for k in keys}
     valid_ts = [v["set_at"] for v in infos.values() if v]
     return {"oldest_at": min(valid_ts) if valid_ts else None, "keys": infos}

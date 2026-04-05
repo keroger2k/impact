@@ -941,15 +941,22 @@ Router.register('firewall', async (el) => {
             <input type="checkbox" id="fw-all" checked> Show all matches
           </label>
           ${deviceGroups.length ? `
-          <div style="margin-left:auto">
-            <div class="fw-dg-list" id="fw-dg-list">
-              <label class="fw-dg-item fw-dg-all">
-                <input type="checkbox" id="fw-dg-all" checked> All device groups
+          <div class="dg-select" id="fw-dg-wrap" style="margin-left:auto">
+            <button type="button" class="dg-select-btn" id="fw-dg-btn">
+              <span id="fw-dg-label">All device groups</span>
+              <span class="dg-select-arrow">▾</span>
+            </button>
+            <div class="dg-select-panel" id="fw-dg-panel" hidden>
+              <label class="dg-select-item dg-select-all-item">
+                <input type="checkbox" id="fw-dg-all" checked>
+                <span>All device groups</span>
               </label>
-              <div class="fw-dg-items">
+              <div class="dg-select-divider"></div>
+              <div class="dg-select-items">
                 ${deviceGroups.map(dg => `
-                  <label class="fw-dg-item">
-                    <input type="checkbox" class="fw-dg-cb" value="${dg}" checked> ${dg}
+                  <label class="dg-select-item">
+                    <input type="checkbox" class="fw-dg-cb" value="${dg}" checked>
+                    <span>${dg}</span>
                   </label>`).join('')}
               </div>
             </div>
@@ -967,15 +974,37 @@ Router.register('firewall', async (el) => {
   );
 
   if (deviceGroups.length) {
-    const allCb  = el.querySelector('#fw-dg-all');
-    const itemCbs = () => el.querySelectorAll('.fw-dg-cb');
+    const wrap    = el.querySelector('#fw-dg-wrap');
+    const btn     = el.querySelector('#fw-dg-btn');
+    const panel   = el.querySelector('#fw-dg-panel');
+    const lbl     = el.querySelector('#fw-dg-label');
+    const allCb   = el.querySelector('#fw-dg-all');
+    const itemCbs = () => [...el.querySelectorAll('.fw-dg-cb')];
+
+    function updateLabel() {
+      const checked = itemCbs().filter(cb => cb.checked);
+      lbl.textContent = checked.length === deviceGroups.length || checked.length === 0
+        ? 'All device groups'
+        : `${checked.length} of ${deviceGroups.length} groups`;
+    }
+
+    btn.addEventListener('click', () => { panel.hidden = !panel.hidden; });
+
+    // Close when clicking outside
+    document.addEventListener('click', function outsideClick(e) {
+      if (!wrap.contains(e.target)) { panel.hidden = true; }
+    });
+
     allCb.addEventListener('change', () => {
       itemCbs().forEach(cb => cb.checked = allCb.checked);
+      updateLabel();
     });
-    el.querySelector('.fw-dg-items').addEventListener('change', () => {
-      const all = [...itemCbs()];
+
+    el.querySelector('.dg-select-items').addEventListener('change', () => {
+      const all = itemCbs();
       allCb.checked       = all.every(cb => cb.checked);
       allCb.indeterminate = !allCb.checked && all.some(cb => cb.checked);
+      updateLabel();
     });
   }
 
