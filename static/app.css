@@ -35,14 +35,18 @@
   --transition:     160ms ease;
 }
 
-/* ── Reset ──────────────────────────────────────────────────── */
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+/* ── Reset (in @layer base so @layer components margins/padding win) ── */
+@layer base {
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  button { cursor: pointer; font-family: inherit; }
+  input, select, textarea { font-family: inherit; }
+  a { color: var(--cisco-blue); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+}
+
+/* These unlayered rules are intentional overrides (no margin/padding conflict) */
 html { font-size: 14px; -webkit-font-smoothing: antialiased; }
 body { font-family: var(--font); background: var(--bg); color: var(--text); }
-button { cursor: pointer; font-family: inherit; }
-input, select, textarea { font-family: inherit; }
-a { color: var(--cisco-blue); text-decoration: none; }
-a:hover { text-decoration: underline; }
 
 /* ── Layout shell ───────────────────────────────────────────── */
 #app { display: flex; min-height: 100vh; }
