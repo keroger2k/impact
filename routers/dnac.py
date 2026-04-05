@@ -210,6 +210,14 @@ async def list_sites(filter: Optional[str] = None):
 
 # ── Cache management ──────────────────────────────────────────────────────────
 
+@router.get("/cache/info")
+async def dnac_cache_info():
+    return {
+        "devices": cache.cache_info("devices"),
+        "sites":   cache.cache_info("sites"),
+    }
+
+
 @router.post("/cache/refresh")
 async def refresh_cache():
     """Force full cache refresh."""

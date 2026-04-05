@@ -162,6 +162,9 @@ cython_debug/
 
 #credentials
 
+# Disk cache (persistent between restarts, not committed)
+data/cache/
+
 # PyCharm
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
 #  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore

@@ -236,6 +236,32 @@ async function refreshCache() {
   } catch (e) { toast(e.message, 'error'); }
 }
 
+/* ── Cache bar helpers ──────────────────────────────────────── */
+function fmtAge(ts) {
+  const sec = Math.floor(Date.now() / 1000 - ts);
+  if (sec < 60)    return `${sec}s ago`;
+  if (sec < 3600)  return `${Math.floor(sec / 60)}m ago`;
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+  return m ? `${h}h ${m}m ago` : `${h}h ago`;
+}
+
+async function initCacheBar(barEl, infoUrl, refreshUrl, onRefresh) {
+  if (!barEl) return;
+  try {
+    const info  = await API.get(infoUrl);
+    const setAt = info.oldest_at ?? info.devices?.set_at;
+    barEl.innerHTML = setAt
+      ? `<span class="cache-ts">Cached ${fmtAge(setAt)}</span>
+         <button class="btn btn-xs cache-refresh-btn">↻ Refresh</button>`
+      : `<span class="cache-ts cache-ts-warn">Not yet cached</span>`;
+    barEl.querySelector('.cache-refresh-btn')?.addEventListener('click', async () => {
+      barEl.innerHTML = '<span class="cache-ts cache-ts-warn">Refreshing…</span>';
+      try { await API.post(refreshUrl, {}); } catch {}
+      onRefresh();
+    });
+  } catch {}
+}
+
 /* ================================================================
    PAGES
    ================================================================ */
@@ -336,6 +362,7 @@ Router.register('devices', async (el) => {
         </select>
         <button class="btn btn-primary" id="dev-search">Search</button>
         <span class="table-count" id="dev-count"></span>
+        <div class="cache-bar" id="dev-cache-bar"></div>
       </div>
       <div id="dev-table"><div class="empty-state"><div class="spinner spinner-lg"></div></div></div>
     </div>
@@ -466,6 +493,13 @@ Router.register('devices', async (el) => {
     if (!c) return;
     dlText(c.text, `${hostname}_config.txt`);
   };
+
+  initCacheBar(
+    el.querySelector('#dev-cache-bar'),
+    '/dnac/cache/info',
+    '/dnac/cache/refresh',
+    () => Router.go('devices')
+  );
 });
 
 /* ── IP Lookup ──────────────────────────────────────────────── */
@@ -548,13 +582,16 @@ Router.register('ip-lookup', async (el) => {
 /* ── ISE ────────────────────────────────────────────────────── */
 Router.register('ise', async (el) => {
   el.innerHTML = `
-    <div class="tabs" id="ise-tabs">
-      <div class="tab active" data-tab="nads">NADs</div>
-      <div class="tab" data-tab="endpoints">Endpoints</div>
-      <div class="tab" data-tab="trustsec">TrustSec</div>
-      <div class="tab" data-tab="identity">Identity</div>
-      <div class="tab" data-tab="policy">Policy</div>
-      <div class="tab" data-tab="admin">Admin</div>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:2px">
+      <div class="tabs" id="ise-tabs" style="margin-bottom:0;border-bottom:none;flex:1">
+        <div class="tab active" data-tab="nads">NADs</div>
+        <div class="tab" data-tab="endpoints">Endpoints</div>
+        <div class="tab" data-tab="trustsec">TrustSec</div>
+        <div class="tab" data-tab="identity">Identity</div>
+        <div class="tab" data-tab="policy">Policy</div>
+        <div class="tab" data-tab="admin">Admin</div>
+      </div>
+      <div class="cache-bar" id="ise-cache-bar"></div>
     </div>
     <div id="ise-content"></div>`;
 
@@ -576,6 +613,13 @@ Router.register('ise', async (el) => {
   });
 
   renderNads(document.getElementById('ise-content'));
+
+  initCacheBar(
+    el.querySelector('#ise-cache-bar'),
+    '/ise/cache/info',
+    '/ise/cache/refresh',
+    () => Router.go('ise')
+  );
 
   /* NADs */
   async function renderNads(area) {
@@ -864,7 +908,7 @@ Router.register('firewall', async (el) => {
 
   el.innerHTML = `
     <div class="card" style="margin-bottom:16px">
-      <div class="card-header"><span class="card-title">Security Policy Lookup</span></div>
+      <div class="card-header"><span class="card-title">Security Policy Lookup</span><div class="cache-bar" id="fw-cache-bar"></div></div>
       <div class="card-body">
         <div style="display:grid;grid-template-columns:1fr 1fr 120px 120px auto;gap:12px;align-items:flex-end">
           <div class="form-group" style="margin:0">
@@ -898,15 +942,42 @@ Router.register('firewall', async (el) => {
           </label>
           ${deviceGroups.length ? `
           <div style="margin-left:auto">
-            <select class="select" id="fw-dg" style="width:200px">
-              <option value="">All device groups</option>
-              ${deviceGroups.map(dg => `<option value="${dg}">${dg}</option>`).join('')}
-            </select>
+            <div class="fw-dg-list" id="fw-dg-list">
+              <label class="fw-dg-item fw-dg-all">
+                <input type="checkbox" id="fw-dg-all" checked> All device groups
+              </label>
+              <div class="fw-dg-items">
+                ${deviceGroups.map(dg => `
+                  <label class="fw-dg-item">
+                    <input type="checkbox" class="fw-dg-cb" value="${dg}" checked> ${dg}
+                  </label>`).join('')}
+              </div>
+            </div>
           </div>` : ''}
         </div>
       </div>
     </div>
     <div id="fw-result"></div>`;
+
+  initCacheBar(
+    el.querySelector('#fw-cache-bar'),
+    '/firewall/cache/info',
+    '/firewall/cache/refresh',
+    () => Router.go('firewall')
+  );
+
+  if (deviceGroups.length) {
+    const allCb  = el.querySelector('#fw-dg-all');
+    const itemCbs = () => el.querySelectorAll('.fw-dg-cb');
+    allCb.addEventListener('change', () => {
+      itemCbs().forEach(cb => cb.checked = allCb.checked);
+    });
+    el.querySelector('.fw-dg-items').addEventListener('change', () => {
+      const all = [...itemCbs()];
+      allCb.checked       = all.every(cb => cb.checked);
+      allCb.indeterminate = !allCb.checked && all.some(cb => cb.checked);
+    });
+  }
 
   document.getElementById('fw-go').addEventListener('click', async () => {
     const src  = document.getElementById('fw-src').value.trim();
@@ -917,14 +988,14 @@ Router.register('firewall', async (el) => {
     if (!src || !dst) { toast('Enter source and destination IP', 'warn'); return; }
     res.innerHTML = '<div class="empty-state"><div class="spinner spinner-lg"></div><p style="margin-top:12px;color:var(--text-secondary)">Loading rules from Panorama (cached after first run)…</p></div>';
 
-    const dgEl = document.getElementById('fw-dg');
+    const checkedDgs = [...el.querySelectorAll('.fw-dg-cb:checked')].map(cb => cb.value);
     const body = {
       src_ip: src, dst_ip: dst,
       dst_port: port ? parseInt(port) : null,
       protocol: document.getElementById('fw-proto').value,
       include_disabled: document.getElementById('fw-disabled').checked,
       show_all: document.getElementById('fw-all').checked,
-      device_groups: dgEl && dgEl.value ? [dgEl.value] : [],
+      device_groups: checkedDgs.length === deviceGroups.length || checkedDgs.length === 0 ? [] : checkedDgs,
     };
 
     try {

@@ -152,9 +152,15 @@ async def policy_lookup(req: PolicyLookupRequest):
     }
 
 
+@router.get("/cache/info")
+async def firewall_cache_info():
+    keys  = [k for k in cache._store if k.startswith("pan_")]
+    infos = {k: cache.cache_info(k) for k in keys}
+    valid_ts = [v["set_at"] for v in infos.values() if v]
+    return {"oldest_at": min(valid_ts) if valid_ts else None, "keys": infos}
+
+
 @router.post("/cache/refresh")
 async def refresh_firewall_cache():
-    for key in list(cache._store.keys()):
-        if key.startswith("pan_"):
-            cache.invalidate(key)
+    cache.invalidate_prefix("pan_")
     return {"status": "firewall cache cleared"}

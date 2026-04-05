@@ -1,13 +1,20 @@
 """
-cache.py — In-memory TTL cache + system connectivity checks.
+cache.py — In-memory TTL cache with disk persistence + system connectivity checks.
 
 Replaces Streamlit's @st.cache_data. Thread-safe, async-compatible.
 Data is stored as plain dicts/lists — no SDK objects escape the client layer.
+
+Keys matching DISK_KEYS or DISK_PREFIXES are written to data/cache/ as JSON and
+survive server restarts. All other keys (status checks, per-device configs) are
+memory-only.
 """
 
 import asyncio
+import json
 import logging
+import re
 import time
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -16,12 +23,29 @@ TTL_DEVICES = 3600   # 1 hour
 TTL_SITES   = 3600
 TTL_STATUS  = 300    # 5 minutes
 
+CACHE_DIR    = Path("data/cache")
+DISK_KEYS    = {"devices", "sites"}
+DISK_PREFIXES = ("pan_", "ise_")
+
+
+def _should_persist(key: str) -> bool:
+    return key in DISK_KEYS or any(key.startswith(p) for p in DISK_PREFIXES)
+
+
+def _disk_path(key: str) -> Path:
+    safe = re.sub(r"[^\w\-]", "_", key)
+    return CACHE_DIR / f"{safe}.json"
+
 
 class _Entry:
-    __slots__ = ("data", "expires_at")
-    def __init__(self, data: Any, ttl: int):
-        self.data       = data
-        self.expires_at = time.monotonic() + ttl
+    __slots__ = ("data", "expires_at", "set_at", "ttl")
+
+    def __init__(self, data: Any, ttl: int, set_at: float | None = None):
+        self.data    = data
+        self.set_at  = set_at if set_at is not None else time.time()
+        self.ttl     = ttl
+        remaining    = ttl if set_at is None else max(0.0, ttl - (time.time() - set_at))
+        self.expires_at = time.monotonic() + remaining
 
     @property
     def valid(self) -> bool:
@@ -35,19 +59,69 @@ class AppCache:
 
     def get(self, key: str) -> Any | None:
         entry = self._store.get(key)
-        return entry.data if entry and entry.valid else None
+        if entry and entry.valid:
+            return entry.data
+        # Fall back to disk for persistent keys
+        if _should_persist(key):
+            path = _disk_path(key)
+            if path.exists():
+                try:
+                    raw   = json.loads(path.read_text())
+                    entry = _Entry(raw["data"], raw["ttl"], set_at=raw["set_at"])
+                    if entry.valid:
+                        self._store[key] = entry
+                        return entry.data
+                except Exception:
+                    path.unlink(missing_ok=True)
+        return None
 
     def set(self, key: str, data: Any, ttl: int):
-        self._store[key] = _Entry(data, ttl)
+        entry = _Entry(data, ttl)
+        self._store[key] = entry
+        if _should_persist(key):
+            try:
+                CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                _disk_path(key).write_text(json.dumps(
+                    {"data": data, "set_at": entry.set_at, "ttl": ttl}
+                ))
+            except Exception as e:
+                logger.warning(f"Disk cache write failed for {key}: {e}")
 
     def invalidate(self, key: str):
         self._store.pop(key, None)
+        _disk_path(key).unlink(missing_ok=True)
+
+    def invalidate_prefix(self, prefix: str):
+        """Invalidate all in-memory and on-disk keys with the given prefix."""
+        keys = [k for k in list(self._store) if k.startswith(prefix)]
+        for k in keys:
+            self.invalidate(k)
+        if CACHE_DIR.exists():
+            safe = re.sub(r"[^\w\-]", "_", prefix)
+            for f in CACHE_DIR.glob(f"{safe}*.json"):
+                f.unlink(missing_ok=True)
 
     def clear(self):
         self._store.clear()
 
+    def cache_info(self, key: str) -> dict | None:
+        """Return {set_at, ttl} for a key, checking disk if not in memory."""
+        entry = self._store.get(key)
+        if entry and entry.valid:
+            return {"set_at": entry.set_at, "ttl": entry.ttl}
+        if _should_persist(key):
+            path = _disk_path(key)
+            if path.exists():
+                try:
+                    raw = json.loads(path.read_text())
+                    if time.time() - raw["set_at"] < raw["ttl"]:
+                        return {"set_at": raw["set_at"], "ttl": raw["ttl"]}
+                except Exception:
+                    pass
+        return None
+
     async def warm(self):
-        """Pre-fetch devices and sites on startup."""
+        """Pre-fetch devices and sites on startup (skipped if disk cache is valid)."""
         async with self._lock:
             if self.get("devices") is None:
                 await asyncio.get_event_loop().run_in_executor(None, self._load_devices)
