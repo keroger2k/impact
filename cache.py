@@ -10,6 +10,7 @@ memory-only.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -34,8 +35,10 @@ def _should_persist(key: str) -> bool:
 
 
 def _disk_path(key: str) -> Path:
-    safe = re.sub(r"[^\w\-]", "_", key)
-    return CACHE_DIR / f"{safe}.json"
+    # Short readable prefix + 8-char hash avoids filesystem filename length limits
+    prefix = re.sub(r"[^\w\-]", "_", key)[:32]
+    digest = hashlib.sha1(key.encode()).hexdigest()[:8]
+    return CACHE_DIR / f"{prefix}_{digest}.json"
 
 
 class _Entry:
