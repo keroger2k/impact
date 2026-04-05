@@ -300,10 +300,10 @@ Router.register('dashboard', async (el) => {
         </div>
       </div>
 
-      <div class="grid-2" style="margin-bottom:16px">
+      <div class="grid-2 mb-4">
         <div class="card">
           <div class="card-header"><span class="card-title">Top Platforms</span></div>
-          <div class="card-body" style="padding:0">
+          <div class="card-body p-0">
             <table>
               <thead><tr><th>Platform</th><th>Count</th></tr></thead>
               <tbody>
@@ -316,7 +316,7 @@ Router.register('dashboard', async (el) => {
         </div>
         <div class="card">
           <div class="card-header"><span class="card-title">Software Versions</span></div>
-          <div class="card-body" style="padding:0">
+          <div class="card-body p-0">
             <table>
               <thead><tr><th>Version</th><th>Count</th></tr></thead>
               <tbody>
@@ -331,7 +331,7 @@ Router.register('dashboard', async (el) => {
 
       <div class="card">
         <div class="card-header"><span class="card-title">Devices by Role</span></div>
-        <div class="card-body" style="padding:0">
+        <div class="card-body p-0">
           <table>
             <thead><tr><th>Role</th><th>Count</th></tr></thead>
             <tbody>
@@ -366,7 +366,7 @@ Router.register('devices', async (el) => {
       </div>
       <div id="dev-table"><div class="empty-state"><div class="spinner spinner-lg"></div></div></div>
     </div>
-    <div id="dev-detail" style="margin-top:16px"></div>`;
+    <div id="dev-detail" class="mt-4"></div>`;
 
   const cols = [
     { key: 'hostname',            label: 'Hostname' },
@@ -421,7 +421,7 @@ Router.register('devices', async (el) => {
             <div class="detail-hostname">${device.hostname || '—'}</div>
             <div style="font-size:11px;opacity:.7">${device.managementIpAddress} · ${device.platformId}</div>
           </div>
-          <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+          <div class="ml-auto flex gap-2 items-center">
             <button class="btn btn-secondary btn-sm" onclick="loadConfig('${devId}','${device.hostname}')">📄 Config</button>
             <a class="btn btn-ghost btn-sm" href="${dnacUrl}" target="_blank">🔗 Open in DNAC</a>
           </div>
@@ -463,7 +463,7 @@ Router.register('devices', async (el) => {
         <hr class="divider">
         <div class="section-header">
           <div class="section-title">Running Config — ${hostname}</div>
-          <div style="display:flex;gap:8px">
+          <div class="flex gap-2">
             <input class="input" id="cfg-filter-${devId}" placeholder="Filter lines…" style="width:200px">
             <button class="btn btn-ghost btn-sm" onclick="downloadConfig('${hostname}','${devId}')">⬇️ Download</button>
           </div>
@@ -505,7 +505,7 @@ Router.register('devices', async (el) => {
 /* ── IP Lookup ──────────────────────────────────────────────── */
 Router.register('ip-lookup', async (el) => {
   el.innerHTML = `
-    <div class="card" style="max-width:700px;margin-bottom:16px">
+    <div class="card max-w-[700px] mb-4">
       <div class="card-header"><span class="card-title">🔍 IP Address Lookup</span></div>
       <div class="card-body">
         <div class="input-row">
@@ -513,7 +513,7 @@ Router.register('ip-lookup', async (el) => {
             <label class="form-label">IP Address</label>
             <input class="input" id="ip-input" placeholder="e.g. 10.47.31.195">
           </div>
-          <button class="btn btn-primary" id="ip-go" style="margin-top:20px">Look up</button>
+          <button class="btn btn-primary mt-5" id="ip-go">Look up</button>
         </div>
       </div>
     </div>
@@ -536,7 +536,7 @@ Router.register('ip-lookup', async (el) => {
         const iface  = r.interface || {};
         const device = r.device   || {};
         return `
-          <div class="grid-2" style="margin-bottom:16px">
+          <div class="grid-2 mb-4">
             <div class="card">
               <div class="card-header"><span class="card-title">🔌 Interface</span>
                 <span style="color:var(--text-secondary);font-size:12px;margin-left:8px">${iface.portName || ''}</span>
@@ -582,7 +582,7 @@ Router.register('ip-lookup', async (el) => {
 /* ── ISE ────────────────────────────────────────────────────── */
 Router.register('ise', async (el) => {
   el.innerHTML = `
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:2px">
+    <div class="flex items-center gap-3 mb-0.5">
       <div class="tabs" id="ise-tabs" style="margin-bottom:0;border-bottom:none;flex:1">
         <div class="tab active" data-tab="nads">NADs</div>
         <div class="tab" data-tab="endpoints">Endpoints</div>
@@ -632,7 +632,7 @@ Router.register('ise', async (el) => {
         </div>
         <div id="nad-table"></div>
       </div>
-      <div id="nad-detail" style="margin-top:16px"></div>`;
+      <div id="nad-detail" class="mt-4"></div>`;
 
     const cols = [
       { key: 'name', label: 'Name' },
@@ -681,10 +681,10 @@ Router.register('ise', async (el) => {
                   <div class="detail-section-title">RADIUS</div>
                   ${kvRow('Protocol', rad.networkProtocol)}
                   ${kvRow('Secret', rad.radiusSharedSecret ? '*** (set)' : 'Not set')}
-                  <div class="detail-section-title" style="margin-top:12px">TACACS</div>
+                  <div class="detail-section-title mt-3">TACACS</div>
                   ${kvRow('Secret', tac.sharedSecret ? '*** (set)' : 'Not set')}
                   ${kvRow('Connect Mode', tac.connectModeOptions)}
-                  <div class="detail-section-title" style="margin-top:12px">SNMP</div>
+                  <div class="detail-section-title mt-3">SNMP</div>
                   ${kvRow('Version', snmp.version)}
                   ${kvRow('Poll Interval', snmp.pollingInterval ? `${snmp.pollingInterval}s` : '—')}
                 </div>
@@ -706,7 +706,7 @@ Router.register('ise', async (el) => {
         </div>
         <div id="ep-table"></div>
       </div>
-      <div id="ep-detail" style="margin-top:16px"></div>`;
+      <div id="ep-detail" class="mt-4"></div>`;
 
     document.getElementById('ep-go').addEventListener('click', async () => {
       const mac = document.getElementById('ep-mac').value.trim();
@@ -856,7 +856,7 @@ Router.register('ise', async (el) => {
       ];
       area.innerHTML = `
         <div class="table-wrap">${makeTable(cols, d.items, ps => loadPolicyDetail(ps))}</div>
-        <div id="ps-detail" style="margin-top:16px"></div>`;
+        <div id="ps-detail" class="mt-4"></div>`;
       bindTableSort(area.querySelector('.table-wrap'), cols, d.items, ps => loadPolicyDetail(ps));
       if (!d.items.length) {
         area.innerHTML = `<div class="alert alert-info">ℹ️ No policy sets returned — ensure OpenAPI is enabled on ISE (Administration → System → Settings → API Settings).</div>`;
@@ -878,7 +878,7 @@ Router.register('ise', async (el) => {
         detEl.innerHTML = `
           <div class="card">
             <div class="card-header"><span class="card-title">Auth Rules — ${ps.name}</span></div>
-            <div class="card-body" style="padding:0">${makeTable(cols, d.items)}</div>
+            <div class="card-body p-0">${makeTable(cols, d.items)}</div>
           </div>`;
       } catch(e) { detEl.innerHTML = `<div class="alert alert-danger">${e.message}</div>`; }
     }
@@ -907,19 +907,19 @@ Router.register('firewall', async (el) => {
   try { const d = await API.get('/firewall/device-groups'); deviceGroups = d.items || []; } catch {}
 
   el.innerHTML = `
-    <div class="card" style="margin-bottom:16px">
+    <div class="card mb-4">
       <div class="card-header"><span class="card-title">Security Policy Lookup</span><div class="cache-bar" id="fw-cache-bar"></div></div>
       <div class="card-body">
         <div style="display:grid;grid-template-columns:1fr 1fr 120px 120px auto;gap:12px;align-items:flex-end">
-          <div class="form-group" style="margin:0">
+          <div class="form-group m-0">
             <label class="form-label">Source IP</label>
             <input class="input" id="fw-src" placeholder="10.47.31.195">
           </div>
-          <div class="form-group" style="margin:0">
+          <div class="form-group m-0">
             <label class="form-label">Destination IP</label>
             <input class="input" id="fw-dst" placeholder="10.16.97.122">
           </div>
-          <div class="form-group" style="margin:0">
+          <div class="form-group m-0">
             <label class="form-label">Protocol</label>
             <select class="select" id="fw-proto">
               <option value="any">Any</option>
@@ -927,21 +927,21 @@ Router.register('firewall', async (el) => {
               <option value="udp">UDP</option>
             </select>
           </div>
-          <div class="form-group" style="margin:0">
+          <div class="form-group m-0">
             <label class="form-label">Dest Port</label>
             <input class="input" id="fw-port" placeholder="443">
           </div>
-          <button class="btn btn-primary" id="fw-go" style="white-space:nowrap">🔍 Search</button>
+          <button class="btn btn-primary" id="fw-go">🔍 Search</button>
         </div>
-        <div style="display:flex;gap:16px;margin-top:12px;align-items:center">
-          <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
+        <div class="flex gap-4 mt-3 items-center">
+          <label class="flex items-center gap-1.5 text-xs cursor-pointer">
             <input type="checkbox" id="fw-disabled"> Include disabled rules
           </label>
-          <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
+          <label class="flex items-center gap-1.5 text-xs cursor-pointer">
             <input type="checkbox" id="fw-all" checked> Show all matches
           </label>
           ${deviceGroups.length ? `
-          <div class="dg-select" id="fw-dg-wrap" style="margin-left:auto">
+          <div class="dg-select ml-auto" id="fw-dg-wrap">
             <button type="button" class="dg-select-btn" id="fw-dg-btn">
               <span id="fw-dg-label">All device groups</span>
               <span class="dg-select-arrow">▾</span>
@@ -1059,7 +1059,7 @@ Router.register('firewall', async (el) => {
       const rows = data.matches.map(m => ({ ...m, _icon: '' }));
 
       const kpis = `
-        <div class="kpi-row cols-4" style="margin-bottom:16px">
+        <div class="kpi-row cols-4 mb-4">
           <div class="kpi-card"><div class="kpi-label">Rules Searched</div><div class="kpi-value">${data.rules_searched.toLocaleString()}</div></div>
           <div class="kpi-card"><div class="kpi-label">Matching Rules</div><div class="kpi-value">${data.match_count}</div></div>
           <div class="kpi-card ${data.traffic_decision === 'allow' ? 'success' : 'danger'}">
@@ -1075,7 +1075,7 @@ Router.register('firewall', async (el) => {
           <div class="table-toolbar"><span class="table-count">${data.match_count} rule(s) matched — click a row for detail</span></div>
           ${makeTable(cols, rows, rule => showRuleDetail(rule, data))}
         </div>
-        <div id="fw-rule-detail" style="margin-top:16px"></div>`;
+        <div id="fw-rule-detail" class="mt-4"></div>`;
 
       bindTableSort(document.getElementById('fw-table'), cols, rows, rule => showRuleDetail(rule, data));
 
@@ -1153,7 +1153,7 @@ Router.register('firewall', async (el) => {
 
           ${(rule.source?.filter(n=>n!='any').length || rule.destination?.filter(n=>n!='any').length || rule.service?.filter(n=>!['any','application-default'].includes(n)).length) ? `
           <hr class="divider">
-          <div class="section-title" style="margin-bottom:12px">Resolved Objects</div>
+          <div class="section-title mb-3">Resolved Objects</div>
           <div class="grid-3">
             ${rule.source?.filter(n=>n!='any').length ? `
             <div>
@@ -1193,10 +1193,10 @@ Router.register('command-runner', async (el) => {
   ];
 
   el.innerHTML = `
-    <div class="grid-2" style="gap:16px;align-items:start">
+    <div class="grid-2 gap-4 items-start">
       <!-- Left: device selection -->
       <div>
-        <div class="card" style="margin-bottom:16px">
+        <div class="card mb-4">
           <div class="card-header"><span class="card-title">Step 1 — Devices</span></div>
           <div class="card-body">
             <div class="tabs" id="cr-input-tabs">
@@ -1205,7 +1205,7 @@ Router.register('command-runner', async (el) => {
             </div>
             <div id="cr-paste-panel">
               <textarea class="textarea" id="cr-ips" placeholder="One IP per line, or comma-separated&#10;10.12.4.1&#10;10.14.1.2"></textarea>
-              <button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="parseIpList()">Parse IP list</button>
+              <button class="btn btn-secondary btn-sm mt-2" onclick="parseIpList()">Parse IP list</button>
             </div>
             <div id="cr-filter-panel" style="display:none">
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
@@ -1223,19 +1223,19 @@ Router.register('command-runner', async (el) => {
           </div>
         </div>
 
-        <div class="card" style="margin-bottom:16px">
+        <div class="card mb-4">
           <div class="card-header"><span class="card-title">Selected Devices</span>
             <span class="table-count" id="cr-dev-count">0 selected</span>
           </div>
-          <div id="cr-dev-table" style="max-height:220px;overflow-y:auto">
-            <div class="empty-state" style="padding:20px">No devices selected yet.</div>
+          <div id="cr-dev-table" class="max-h-[220px] overflow-y-auto">
+            <div class="empty-state p-5">No devices selected yet.</div>
           </div>
         </div>
       </div>
 
       <!-- Right: command + creds -->
       <div>
-        <div class="card" style="margin-bottom:16px">
+        <div class="card mb-4">
           <div class="card-header"><span class="card-title">Step 2 — Command</span></div>
           <div class="card-body">
             <div class="form-group">
@@ -1253,8 +1253,8 @@ Router.register('command-runner', async (el) => {
         <div class="card">
           <div class="card-header"><span class="card-title">Step 3 — Settings</span></div>
           <div class="card-body">
-            <div class="grid-2" style="gap:12px">
-              <div class="form-group" style="margin:0">
+            <div class="grid-2 gap-3">
+              <div class="form-group m-0">
                 <label class="form-label">Device type</label>
                 <select class="select" id="cr-dtype">
                   <option value="auto">Auto-detect from DNAC</option>
@@ -1265,11 +1265,11 @@ Router.register('command-runner', async (el) => {
                   <option value="linux">linux</option>
                 </select>
               </div>
-              <div class="form-group" style="margin:0">
+              <div class="form-group m-0">
                 <label class="form-label">Parallel workers</label>
                 <input class="input" type="number" id="cr-workers" value="10" min="1" max="30">
               </div>
-              <div class="form-group" style="margin:0">
+              <div class="form-group m-0">
                 <label class="form-label">Timeout (s)</label>
                 <input class="input" type="number" id="cr-timeout" value="30" min="10" max="120">
               </div>
@@ -1279,18 +1279,18 @@ Router.register('command-runner', async (el) => {
       </div>
     </div>
 
-    <div style="margin-top:16px;display:flex;gap:12px;align-items:center">
+    <div class="mt-4 flex gap-3 items-center">
       <button class="btn btn-primary" id="cr-run" onclick="runCommands()">▶ Run</button>
       <span id="cr-run-status" style="font-size:12px;color:var(--text-secondary)"></span>
     </div>
 
-    <div id="cr-progress" style="margin-top:16px;display:none">
+    <div id="cr-progress" class="mt-4" style="display:none">
       <div class="progress-outer"><div class="progress-inner" id="cr-prog-bar" style="width:0%"></div></div>
       <div class="progress-label" id="cr-prog-label">Starting…</div>
-      <div class="log-stream" id="cr-log" style="margin-top:8px;max-height:200px"></div>
+      <div class="log-stream mt-2 max-h-[200px]" id="cr-log"></div>
     </div>
 
-    <div id="cr-results" style="margin-top:16px"></div>`;
+    <div id="cr-results" class="mt-4"></div>`;
 
   // Tab switching
   document.querySelectorAll('#cr-input-tabs .tab').forEach(t => {
@@ -1343,7 +1343,7 @@ Router.register('command-runner', async (el) => {
   function renderDeviceList() {
     document.getElementById('cr-dev-count').textContent = `${devices.length} selected`;
     const tEl = document.getElementById('cr-dev-table');
-    if (!devices.length) { tEl.innerHTML = '<div class="empty-state" style="padding:20px">No devices.</div>'; return; }
+    if (!devices.length) { tEl.innerHTML = '<div class="empty-state p-5">No devices.</div>'; return; }
     tEl.innerHTML = `<table>
       <thead><tr><th>Hostname</th><th>IP</th><th>Platform</th></tr></thead>
       <tbody>${devices.map(d => `<tr><td>${d.hostname}</td><td class="mono">${d.ip}</td><td>${d.platform||'—'}</td></tr>`).join('')}</tbody>
@@ -1415,7 +1415,7 @@ Router.register('command-runner', async (el) => {
     const rows = results.map(r => ({ ...r, _icon: '' }));
 
     resEl.innerHTML = `
-      <div class="kpi-row cols-4" style="margin-bottom:16px">
+      <div class="kpi-row cols-4 mb-4">
         <div class="kpi-card"><div class="kpi-label">Total</div><div class="kpi-value">${results.length}</div></div>
         <div class="kpi-card success"><div class="kpi-label">Succeeded</div><div class="kpi-value">${ok}</div></div>
         <div class="kpi-card danger"><div class="kpi-label">Failed</div><div class="kpi-value">${results.length - ok}</div></div>
@@ -1424,12 +1424,12 @@ Router.register('command-runner', async (el) => {
       <div class="table-wrap" id="cr-res-table">
         <div class="table-toolbar">
           <span class="table-count">Click a row to view output</span>
-          <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="downloadAllOutput()">⬇️ Download All</button>
+          <button class="btn btn-ghost btn-sm ml-auto" onclick="downloadAllOutput()">⬇️ Download All</button>
           <button class="btn btn-ghost btn-sm" onclick="downloadCsv()">⬇️ CSV</button>
         </div>
         ${makeTable(cols, rows, r => showOutputDetail(r))}
       </div>
-      <div id="cr-out-detail" style="margin-top:16px"></div>`;
+      <div id="cr-out-detail" class="mt-4"></div>`;
 
     bindTableSort(document.getElementById('cr-res-table'), cols, rows, r => showOutputDetail(r));
   }
@@ -1443,14 +1443,14 @@ Router.register('command-runner', async (el) => {
           <span class="detail-hostname">${r.hostname} (${r.ip})</span>
           <span style="margin-left:auto;font-size:11px;opacity:.7">${r.elapsed}s · ${r.status}</span>
         </div>
-        <div class="detail-body" style="padding:0">
+        <div class="detail-body p-0">
           ${r.output ? `
             <div style="padding:10px 14px;border-bottom:1px solid var(--border);display:flex;gap:8px">
-              <input class="input" id="out-filter" placeholder="Filter lines…" style="max-width:240px">
+              <input class="input max-w-[240px]" id="out-filter" placeholder="Filter lines…">
               <button class="btn btn-ghost btn-sm" onclick="dlText(document.getElementById('out-pre').textContent,'${r.hostname}_output.txt')">⬇️ Download</button>
             </div>
             <pre class="code-block" id="out-pre" style="border-radius:0;max-height:460px">${escHtml(r.output)}</pre>` :
-            `<div class="alert alert-danger" style="margin:12px">${r.error}</div>`}
+            `<div class="alert alert-danger m-3">${r.error}</div>`}
         </div>
       </div>`;
 
@@ -1486,22 +1486,22 @@ Router.register('command-runner', async (el) => {
 /* ── Import ─────────────────────────────────────────────────── */
 Router.register('import', async (el) => {
   el.innerHTML = `
-    <div class="card" style="margin-bottom:16px">
+    <div class="card mb-4">
       <div class="card-header"><span class="card-title">Device Discovery & Import</span></div>
       <div class="card-body">
-        <div class="alert alert-warn" style="margin-bottom:16px">
+        <div class="alert alert-warn mb-4">
           ⚠️ <strong>Write operation.</strong> This discovers and assigns devices in Catalyst Center.
         </div>
         <div class="form-group">
           <label class="form-label">Device list  (site_code,ip_address — one per line)</label>
           <textarea class="textarea" id="imp-input" style="min-height:140px" placeholder="# One entry per line&#10;ATL-T1,10.16.1.1&#10;DFW-T1,10.12.4.1&#10;ORD-T1,10.14.1.2"></textarea>
         </div>
-        <div class="grid-2" style="gap:12px;margin-bottom:12px">
-          <div class="form-group" style="margin:0">
+        <div class="grid-2 gap-3 mb-3">
+          <div class="form-group m-0">
             <label class="form-label">CLI Username</label>
             <input class="input" id="imp-cli" value="dnac-acct">
           </div>
-          <div class="form-group" style="margin:0">
+          <div class="form-group m-0">
             <label class="form-label">SNMP Username</label>
             <input class="input" id="imp-snmp" value="tsa_mon_user">
           </div>
@@ -1510,11 +1510,11 @@ Router.register('import', async (el) => {
       </div>
     </div>
 
-    <div id="imp-preview-area" style="margin-bottom:16px"></div>
-    <div id="imp-progress" style="display:none;margin-bottom:16px">
+    <div id="imp-preview-area" class="mb-4"></div>
+    <div id="imp-progress" style="display:none" class="mb-4">
       <div class="progress-outer"><div class="progress-inner" id="imp-bar" style="width:0%"></div></div>
       <div class="progress-label" id="imp-label">Starting…</div>
-      <div class="log-stream" id="imp-log" style="margin-top:8px"></div>
+      <div class="log-stream mt-2" id="imp-log"></div>
     </div>
     <div id="imp-results"></div>`;
 
@@ -1534,13 +1534,13 @@ Router.register('import', async (el) => {
         <div class="card-header">
           <span class="card-title">Preview — ${entries.length} entries</span>
           <div class="card-actions">
-            <label style="display:flex;align-items:center;gap:6px;font-size:12px">
+            <label class="flex items-center gap-1.5 text-xs">
               <input type="checkbox" id="imp-confirm"> I confirm I want to run this import
             </label>
             <button class="btn btn-primary btn-sm" id="imp-run" disabled>🚀 Run Import</button>
           </div>
         </div>
-        <div class="card-body" style="padding:0">
+        <div class="card-body p-0">
           <table>
             <thead><tr><th>Site Code</th><th>IP Address</th><th>Valid</th></tr></thead>
             <tbody>
@@ -1603,7 +1603,7 @@ Router.register('import', async (el) => {
   function renderImportResults(ev) {
     const resEl = document.getElementById('imp-results');
     resEl.innerHTML = `
-      <div class="kpi-row cols-4" style="margin-bottom:16px">
+      <div class="kpi-row cols-4 mb-4">
         <div class="kpi-card"><div class="kpi-label">Total</div><div class="kpi-value">${ev.total}</div></div>
         <div class="kpi-card success"><div class="kpi-label">Discovered</div><div class="kpi-value">${ev.discovered}</div></div>
         <div class="kpi-card warn"><div class="kpi-label">Skipped</div><div class="kpi-value">${ev.skipped}</div></div>
@@ -1700,7 +1700,7 @@ Router.register('reports', async (el) => {
         { key: 'reachabilityFailureReason', label: 'Failure Reason' },
       ];
       area.innerHTML = `
-        <div class="alert alert-danger" style="margin-bottom:12px">🔴 ${d.total} unreachable device(s)</div>
+        <div class="alert alert-danger mb-3">🔴 ${d.total} unreachable device(s)</div>
         <div class="table-wrap">${makeTable(cols, d.items)}</div>`;
       bindTableSort(area.querySelector('.table-wrap'), cols, d.items, null);
     } catch(e) { area.innerHTML = `<div class="alert alert-danger">${e.message}</div>`; }
@@ -1726,10 +1726,10 @@ Router.register('reports', async (el) => {
 
   function renderConfigSearch(area) {
     area.innerHTML = `
-      <div class="card" style="margin-bottom:16px">
+      <div class="card mb-4">
         <div class="card-header"><span class="card-title">Configuration String Search</span></div>
         <div class="card-body">
-          <div class="alert alert-info" style="margin-bottom:16px">
+          <div class="alert alert-info mb-4">
             ℹ️ Configs are pulled from DNAC (cached 10 min per device). Results appear as each
             device's config is fetched and searched in parallel.
           </div>
@@ -1742,27 +1742,27 @@ Router.register('reports', async (el) => {
 
           <!-- Device filters -->
           <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:12px">
-            <div class="form-group" style="margin:0">
+            <div class="form-group m-0">
               <label class="form-label">Hostname contains</label>
               <input class="input" id="cs-hostname" placeholder="e.g.  ATL  or  router">
             </div>
-            <div class="form-group" style="margin:0">
+            <div class="form-group m-0">
               <label class="form-label">Management IP contains</label>
               <input class="input" id="cs-ip" placeholder="e.g.  10.16">
             </div>
-            <div class="form-group" style="margin:0">
+            <div class="form-group m-0">
               <label class="form-label">Platform contains</label>
               <input class="input" id="cs-platform" placeholder="e.g.  C9300  or  ISR">
             </div>
-            <div class="form-group" style="margin:0">
+            <div class="form-group m-0">
               <label class="form-label">Role contains</label>
               <input class="input" id="cs-role" placeholder="e.g.  ACCESS  or  DISTRIBUTION">
             </div>
-            <div class="form-group" style="margin:0">
+            <div class="form-group m-0">
               <label class="form-label">Device family contains</label>
               <input class="input" id="cs-family" placeholder="e.g.  Switches  or  Routers">
             </div>
-            <div class="form-group" style="margin:0">
+            <div class="form-group m-0">
               <label class="form-label">Reachability</label>
               <select class="select" id="cs-reach">
                 <option value="Reachable">Reachable only (recommended)</option>
@@ -1772,12 +1772,12 @@ Router.register('reports', async (el) => {
             </div>
           </div>
 
-          <div style="display:flex;align-items:center;gap:16px">
-            <div class="form-group" style="margin:0">
+          <div class="flex items-center gap-4">
+            <div class="form-group m-0">
               <label class="form-label">Max devices to search</label>
               <input class="input" type="number" id="cs-max" value="500" min="1" max="2700" style="width:100px">
             </div>
-            <div style="margin-top:20px;display:flex;gap:8px">
+            <div class="mt-5 flex gap-2">
               <button class="btn btn-primary" id="cs-run">🔍 Search Configs</button>
               <button class="btn btn-ghost" id="cs-clear">Clear</button>
             </div>
@@ -1816,7 +1816,7 @@ Router.register('reports', async (el) => {
       resEl.innerHTML = `
         <div class="card">
           <div class="card-body" style="text-align:center;padding:32px">
-            <div class="spinner spinner-lg" style="margin:0 auto 12px"></div>
+            <div class="spinner spinner-lg mx-auto mb-3"></div>
             <div style="color:var(--text-secondary);font-size:13px">
               Fetching and searching device configs from DNAC.<br>
               Configs are cached — subsequent searches on the same devices are instant.
@@ -1867,7 +1867,7 @@ Router.register('reports', async (el) => {
 
       // Summary metrics
       const kpis = `
-        <div class="kpi-row cols-4" style="margin-bottom:16px">
+        <div class="kpi-row cols-4 mb-4">
           <div class="kpi-card">
             <div class="kpi-label">Devices filtered</div>
             <div class="kpi-value">${data.devices_matched_filter.toLocaleString()}</div>
@@ -1899,7 +1899,7 @@ Router.register('reports', async (el) => {
         <tr id="cs-detail-${i}" style="display:none">
           <td colspan="6" style="padding:0;background:var(--bg)">
             <div style="padding:10px 14px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center">
-              <input class="input" id="cs-line-filter-${i}" placeholder="Filter these lines…" style="max-width:260px"
+              <input class="input max-w-[260px]" id="cs-line-filter-${i}" placeholder="Filter these lines…"
                 oninput="filterCsLines(${i})">
               <button class="btn btn-ghost btn-sm" onclick="downloadCsDevice(${i})">⬇️ Download</button>
               <span style="font-size:11px;color:var(--text-secondary)">${r.match_count} line(s) match</span>
@@ -1916,7 +1916,7 @@ Router.register('reports', async (el) => {
         <div class="table-wrap">
           <div class="table-toolbar">
             <span class="table-count">${data.total_matches} device(s) with matches — click a row to expand</span>
-            <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="downloadCsAll()">⬇️ Download all</button>
+            <button class="btn btn-ghost btn-sm ml-auto" onclick="downloadCsAll()">⬇️ Download all</button>
           </div>
           <table>
             <thead><tr>
