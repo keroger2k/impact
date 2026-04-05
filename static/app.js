@@ -1,0 +1,1909 @@
+/* ============================================================
+   IMPACT II — SPA JavaScript
+   Vanilla JS, no build step, no frameworks.
+   Hash-based routing: #/dashboard, #/devices, etc.
+   ============================================================ */
+
+'use strict';
+
+/* ── API client ─────────────────────────────────────────────── */
+const API = {
+  async get(path) {
+    const r = await fetch(`/api${path}`);
+    if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || r.statusText); }
+    return r.json();
+  },
+  async post(path, body) {
+    const r = await fetch(`/api${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || r.statusText); }
+    return r.json();
+  },
+  stream(path, body, onEvent, onDone) {
+    /* POST then read the SSE stream line by line */
+    fetch(`/api${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then(async r => {
+      const reader = r.body.getReader();
+      const dec    = new TextDecoder();
+      let buf      = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try { onEvent(JSON.parse(line.slice(6))); } catch {}
+          }
+        }
+      }
+      if (onDone) onDone();
+    }).catch(err => {
+      onEvent({ type: 'error', message: err.message });
+      if (onDone) onDone();
+    });
+  }
+};
+
+/* ── Router ─────────────────────────────────────────────────── */
+const Router = {
+  current: null,
+  routes: {},
+
+  register(name, renderFn) { this.routes[name] = renderFn; },
+
+  navigate(page) {
+    window.location.hash = `/${page}`;
+  },
+
+  init() {
+    const handle = () => {
+      const hash = window.location.hash.slice(2) || 'dashboard';
+      this.render(hash);
+    };
+    window.addEventListener('hashchange', handle);
+    handle();
+
+    document.querySelectorAll('.nav-item').forEach(el => {
+      el.addEventListener('click', () => {
+        this.navigate(el.dataset.page);
+      });
+    });
+  },
+
+  render(page) {
+    this.current = page;
+    document.querySelectorAll('.nav-item').forEach(el => {
+      el.classList.toggle('active', el.dataset.page === page);
+    });
+
+    const titles = {
+      dashboard: 'Dashboard',
+      devices: 'Device Inventory',
+      'ip-lookup': 'IP Address Lookup',
+      ise: 'Cisco ISE',
+      firewall: '🔥 Security Policy Lookup',
+      'command-runner': 'Command Runner',
+      import: 'Device Import',
+      reports: 'Reports & Exports',
+    };
+    document.getElementById('page-title').textContent = titles[page] || page;
+
+    const fn = this.routes[page];
+    const el = document.getElementById('content');
+    if (fn) {
+      el.innerHTML = '<div class="empty-state"><div class="spinner spinner-lg"></div></div>';
+      fn(el);
+    } else {
+      el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">🗺️</div><div class="empty-state-title">Page not found</div><div class="empty-state-desc">${page}</div></div>`;
+    }
+  }
+};
+
+/* ── Toast ──────────────────────────────────────────────────── */
+function toast(msg, type = 'info', ms = 3500) {
+  const el = document.createElement('div');
+  el.className = `toast toast-${type}`;
+  const icons = { success: '✅', error: '❌', warn: '⚠️', info: 'ℹ️' };
+  el.innerHTML = `<span>${icons[type] || ''}</span><span>${msg}</span>`;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), ms);
+}
+
+/* ── Table helper ───────────────────────────────────────────── */
+function makeTable(cols, rows, onRowClick) {
+  if (!rows.length) {
+    return `<div class="empty-state"><div class="empty-state-icon">📭</div>
+      <div class="empty-state-title">No results</div></div>`;
+  }
+  const head = cols.map(c =>
+    `<th data-col="${c.key}">${c.label}<span class="sort-arrow">↕</span></th>`
+  ).join('');
+
+  const body = rows.map((r, i) =>
+    `<tr data-idx="${i}">${cols.map(c => {
+      const raw = r[c.key];
+      const val = c.render ? c.render(raw, r) : (raw ?? '—');
+      return `<td class="${c.mono ? 'mono' : ''}">${val}</td>`;
+    }).join('')}</tr>`
+  ).join('');
+
+  return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+function bindTableSort(container, cols, rows, onRowClick) {
+  let sortCol = null, sortDir = 1;
+
+  const rebind = () => {
+    container.querySelectorAll('tbody tr').forEach((tr, idx) => {
+      tr.addEventListener('click', () => {
+        container.querySelectorAll('tbody tr').forEach(r => r.classList.remove('selected'));
+        tr.classList.add('selected');
+        if (onRowClick) onRowClick(rows[parseInt(tr.dataset.idx)], tr);
+      });
+    });
+    container.querySelectorAll('thead th').forEach(th => {
+      th.addEventListener('click', () => {
+        const col = th.dataset.col;
+        if (sortCol === col) sortDir *= -1;
+        else { sortCol = col; sortDir = 1; }
+        rows.sort((a, b) => {
+          const av = a[col] ?? '', bv = b[col] ?? '';
+          return String(av).localeCompare(String(bv), undefined, { numeric: true }) * sortDir;
+        });
+        rows.forEach((r, i) => { /* re-index */
+          const tr = container.querySelector(`tbody tr:nth-child(${i + 1})`);
+          if (tr) tr.dataset.idx = String(i);
+        });
+        container.querySelectorAll('thead th').forEach(h => h.classList.remove('sorted'));
+        th.classList.add('sorted');
+        const tbody = container.querySelector('tbody');
+        tbody.innerHTML = rows.map((r, i) =>
+          `<tr data-idx="${i}">${cols.map(c => {
+            const raw = r[c.key];
+            const val = c.render ? c.render(raw, r) : (raw ?? '—');
+            return `<td class="${c.mono ? 'mono' : ''}">${val}</td>`;
+          }).join('')}</tr>`
+        ).join('');
+        rebind();
+      });
+    });
+  };
+  rebind();
+}
+
+/* ── KV detail rows ─────────────────────────────────────────── */
+function kvRow(label, value) {
+  return `<div class="kv-row"><span class="kv-label">${label}</span><span class="kv-value">${value ?? '—'}</span></div>`;
+}
+
+/* ── Reachability badge ─────────────────────────────────────── */
+function reachBadge(status) {
+  if (status === 'Reachable') return `<span class="badge badge-success">✅ Reachable</span>`;
+  return `<span class="badge badge-danger">🔴 ${status || 'Unknown'}</span>`;
+}
+
+/* ── Format timestamp ───────────────────────────────────────── */
+function fmtTs(ts) {
+  if (!ts) return '—';
+  try { return new Date(parseInt(ts)).toLocaleString(); } catch { return ts; }
+}
+
+/* ── Modal ──────────────────────────────────────────────────── */
+function showModal(title, bodyHtml, wide = false) {
+  const backdrop = document.createElement('div');
+  backdrop.className = 'modal-backdrop';
+  backdrop.innerHTML = `
+    <div class="modal ${wide ? 'wide' : ''}">
+      <div class="modal-header">
+        <span class="modal-title">${title}</span>
+        <button class="modal-close" onclick="this.closest('.modal-backdrop').remove()">✕</button>
+      </div>
+      <div class="modal-body">${bodyHtml}</div>
+    </div>`;
+  backdrop.addEventListener('click', e => { if (e.target === backdrop) backdrop.remove(); });
+  document.body.appendChild(backdrop);
+  return backdrop;
+}
+
+/* ── System status ──────────────────────────────────────────── */
+async function loadStatus() {
+  try {
+    const s = await API.get('/status');
+    const set = (id, ok, detail) => {
+      document.getElementById(id).className = `status-dot ${ok ? 'ok' : 'err'}`;
+      document.getElementById(`${id}-txt`).textContent = detail;
+    };
+    set('st-dnac', s.dnac?.ok,     `DNAC — ${s.dnac?.detail || '?'}`);
+    set('st-ise',  s.ise?.ok,      `ISE — ${s.ise?.detail || '?'}`);
+    set('st-pan',  s.panorama?.ok, `Panorama — ${s.panorama?.detail || '?'}`);
+  } catch {}
+}
+
+async function refreshCache() {
+  toast('Refreshing cache…', 'info');
+  try {
+    await API.post('/dnac/cache/refresh', {});
+    toast('Cache refreshed', 'success');
+    loadStatus();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+/* ================================================================
+   PAGES
+   ================================================================ */
+
+/* ── Dashboard ──────────────────────────────────────────────── */
+Router.register('dashboard', async (el) => {
+  try {
+    const [stats, status] = await Promise.all([
+      API.get('/dnac/devices/stats'),
+      API.get('/status'),
+    ]);
+
+    const pct    = stats.pct_reachable ?? 0;
+    const pctBar = `<div class="progress-outer"><div class="progress-inner" style="width:${pct}%"></div></div>`;
+
+    el.innerHTML = `
+      <div class="kpi-row cols-4">
+        <div class="kpi-card">
+          <div class="kpi-label">Total Devices</div>
+          <div class="kpi-value">${stats.total?.toLocaleString() ?? '—'}</div>
+        </div>
+        <div class="kpi-card success">
+          <div class="kpi-label">Reachable</div>
+          <div class="kpi-value">${stats.reachable?.toLocaleString() ?? '—'}</div>
+          <div class="kpi-sub">${pct}% of inventory</div>
+        </div>
+        <div class="kpi-card danger">
+          <div class="kpi-label">Unreachable</div>
+          <div class="kpi-value">${stats.unreachable?.toLocaleString() ?? '—'}</div>
+          <div class="kpi-sub">${pctBar}</div>
+        </div>
+        <div class="kpi-card teal">
+          <div class="kpi-label">Systems Online</div>
+          <div class="kpi-value">${[status.dnac, status.ise, status.panorama].filter(s => s?.ok).length}/3</div>
+          <div class="kpi-sub">DNAC · ISE · Panorama</div>
+        </div>
+      </div>
+
+      <div class="grid-2" style="margin-bottom:16px">
+        <div class="card">
+          <div class="card-header"><span class="card-title">Top Platforms</span></div>
+          <div class="card-body" style="padding:0">
+            <table>
+              <thead><tr><th>Platform</th><th>Count</th></tr></thead>
+              <tbody>
+                ${(stats.platforms || []).map(([p, c]) =>
+                  `<tr><td>${p}</td><td><strong>${c}</strong></td></tr>`
+                ).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">Software Versions</span></div>
+          <div class="card-body" style="padding:0">
+            <table>
+              <thead><tr><th>Version</th><th>Count</th></tr></thead>
+              <tbody>
+                ${(stats.versions || []).map(([v, c]) =>
+                  `<tr><td class="mono">${v}</td><td><strong>${c}</strong></td></tr>`
+                ).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">Devices by Role</span></div>
+        <div class="card-body" style="padding:0">
+          <table>
+            <thead><tr><th>Role</th><th>Count</th></tr></thead>
+            <tbody>
+              ${(stats.roles || []).map(([r, c]) =>
+                `<tr><td>${r}</td><td><strong>${c}</strong></td></tr>`
+              ).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+  } catch (e) {
+    el.innerHTML = `<div class="alert alert-danger">Failed to load dashboard: ${e.message}</div>`;
+  }
+});
+
+/* ── Devices ────────────────────────────────────────────────── */
+Router.register('devices', async (el) => {
+  el.innerHTML = `
+    <div class="table-wrap">
+      <div class="table-toolbar">
+        <div class="search-input"><input class="input" id="dev-hostname" placeholder="Hostname…" style="width:160px"></div>
+        <div class="search-input"><input class="input" id="dev-ip" placeholder="IP address…" style="width:140px"></div>
+        <input class="input" id="dev-platform" placeholder="Platform…" style="width:130px">
+        <select class="select" id="dev-reach" style="width:130px">
+          <option value="">All reachability</option>
+          <option value="reachable">Reachable</option>
+          <option value="unreachable">Unreachable</option>
+        </select>
+        <button class="btn btn-primary" id="dev-search">Search</button>
+        <span class="table-count" id="dev-count"></span>
+      </div>
+      <div id="dev-table"><div class="empty-state"><div class="spinner spinner-lg"></div></div></div>
+    </div>
+    <div id="dev-detail" style="margin-top:16px"></div>`;
+
+  const cols = [
+    { key: 'hostname',            label: 'Hostname' },
+    { key: 'managementIpAddress', label: 'Mgmt IP', mono: true },
+    { key: 'platformId',          label: 'Platform' },
+    { key: 'softwareVersion',     label: 'IOS Version', mono: true },
+    { key: 'role',                label: 'Role' },
+    { key: 'reachabilityStatus',  label: 'Status',
+      render: v => reachBadge(v) },
+    { key: 'lastContactFormatted', label: 'Last Contact' },
+  ];
+
+  let allDevices = [];
+
+  async function doSearch() {
+    const params = new URLSearchParams({
+      hostname:     document.getElementById('dev-hostname').value,
+      ip:           document.getElementById('dev-ip').value,
+      platform:     document.getElementById('dev-platform').value,
+      reachability: document.getElementById('dev-reach').value,
+      limit:        2000,
+    });
+    const tableEl = document.getElementById('dev-table');
+    tableEl.innerHTML = '<div class="empty-state"><div class="spinner spinner-lg"></div></div>';
+    try {
+      const data   = await API.get(`/dnac/devices?${params}`);
+      allDevices   = data.items;
+      document.getElementById('dev-count').textContent = `${data.total.toLocaleString()} device(s)`;
+      tableEl.innerHTML = makeTable(cols, allDevices, showDeviceDetail);
+      bindTableSort(tableEl, cols, allDevices, showDeviceDetail);
+    } catch (e) {
+      tableEl.innerHTML = `<div class="alert alert-danger">${e.message}</div>`;
+    }
+  }
+
+  document.getElementById('dev-search').addEventListener('click', doSearch);
+  ['dev-hostname','dev-ip','dev-platform'].forEach(id => {
+    document.getElementById(id)?.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+  });
+  doSearch();
+
+  function showDeviceDetail(device) {
+    const detEl   = document.getElementById('dev-detail');
+    const devId   = device.id;
+    const dnacUrl = `${window.location.origin.replace(':8000','')}/dna/provision/devices/inventory/device-details?deviceId=${devId}`;
+
+    detEl.innerHTML = `
+      <div class="detail-panel">
+        <div class="detail-header">
+          <span style="font-size:18px">${device.reachabilityStatus === 'Reachable' ? '✅' : '🔴'}</span>
+          <div>
+            <div class="detail-hostname">${device.hostname || '—'}</div>
+            <div style="font-size:11px;opacity:.7">${device.managementIpAddress} · ${device.platformId}</div>
+          </div>
+          <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+            <button class="btn btn-secondary btn-sm" onclick="loadConfig('${devId}','${device.hostname}')">📄 Config</button>
+            <a class="btn btn-ghost btn-sm" href="${dnacUrl}" target="_blank">🔗 Open in DNAC</a>
+          </div>
+        </div>
+        <div class="detail-body">
+          <div class="detail-grid">
+            <div class="detail-section">
+              <div class="detail-section-title">Identity</div>
+              ${kvRow('Hostname', device.hostname)}
+              ${kvRow('Management IP', `<code>${device.managementIpAddress}</code>`)}
+              ${kvRow('Platform', device.platformId)}
+              ${kvRow('IOS Version', device.softwareVersion)}
+              ${kvRow('Serial', device.serialNumber)}
+              ${kvRow('Vendor', device.vendor)}
+            </div>
+            <div class="detail-section">
+              <div class="detail-section-title">Status</div>
+              ${kvRow('Reachability', reachBadge(device.reachabilityStatus))}
+              ${kvRow('Role', device.role)}
+              ${kvRow('Uptime', device.upTime)}
+              ${kvRow('Last Contact', device.lastContactFormatted)}
+              ${kvRow('Device ID', `<code style="font-size:10px">${device.id}</code>`)}
+              ${device.reachabilityFailureReason ? kvRow('Failure', `<span class="badge badge-danger">${device.reachabilityFailureReason}</span>`) : ''}
+            </div>
+          </div>
+          <div id="config-area-${devId}"></div>
+        </div>
+      </div>`;
+
+    detEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  window.loadConfig = async function(devId, hostname) {
+    const area = document.getElementById(`config-area-${devId}`);
+    area.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
+    try {
+      const data = await API.get(`/dnac/devices/${devId}/config`);
+      area.innerHTML = `
+        <hr class="divider">
+        <div class="section-header">
+          <div class="section-title">Running Config — ${hostname}</div>
+          <div style="display:flex;gap:8px">
+            <input class="input" id="cfg-filter-${devId}" placeholder="Filter lines…" style="width:200px">
+            <button class="btn btn-ghost btn-sm" onclick="downloadConfig('${hostname}','${devId}')">⬇️ Download</button>
+          </div>
+        </div>
+        <div class="code-wrap">
+          <div class="code-toolbar">📄 ${hostname} · ${data.cached ? 'cached' : 'live'}</div>
+          <pre class="code-block" id="cfg-pre-${devId}">${escHtml(data.config)}</pre>
+        </div>`;
+
+      document.getElementById(`cfg-filter-${devId}`).addEventListener('input', e => {
+        const q     = e.target.value.toLowerCase();
+        const lines = data.config.split('\n');
+        const shown = q ? lines.filter(l => l.toLowerCase().includes(q)) : lines;
+        document.getElementById(`cfg-pre-${devId}`).textContent = shown.join('\n');
+      });
+
+      window._configs = window._configs || {};
+      window._configs[devId] = { text: data.config, hostname };
+
+    } catch (err) {
+      area.innerHTML = `<div class="alert alert-danger">${err.message}</div>`;
+    }
+  };
+
+  window.downloadConfig = function(hostname, devId) {
+    const c = (window._configs || {})[devId];
+    if (!c) return;
+    dlText(c.text, `${hostname}_config.txt`);
+  };
+});
+
+/* ── IP Lookup ──────────────────────────────────────────────── */
+Router.register('ip-lookup', async (el) => {
+  el.innerHTML = `
+    <div class="card" style="max-width:700px;margin-bottom:16px">
+      <div class="card-header"><span class="card-title">🔍 IP Address Lookup</span></div>
+      <div class="card-body">
+        <div class="input-row">
+          <div class="form-group">
+            <label class="form-label">IP Address</label>
+            <input class="input" id="ip-input" placeholder="e.g. 10.47.31.195">
+          </div>
+          <button class="btn btn-primary" id="ip-go" style="margin-top:20px">Look up</button>
+        </div>
+      </div>
+    </div>
+    <div id="ip-result"></div>`;
+
+  async function doLookup() {
+    const ip    = document.getElementById('ip-input').value.trim();
+    const resEl = document.getElementById('ip-result');
+    if (!ip) return;
+    resEl.innerHTML = '<div class="empty-state"><div class="spinner spinner-lg"></div></div>';
+    try {
+      const data = await API.get(`/dnac/ip-lookup/${encodeURIComponent(ip)}`);
+      if (!data.found) {
+        resEl.innerHTML = `
+          <div class="alert alert-warn">⚠️ No interface found for <strong>${ip}</strong> in DNAC.
+          The address may be a secondary IP, loopback, or not yet synced.</div>`;
+        return;
+      }
+      resEl.innerHTML = data.interfaces.map(r => {
+        const iface  = r.interface || {};
+        const device = r.device   || {};
+        return `
+          <div class="grid-2" style="margin-bottom:16px">
+            <div class="card">
+              <div class="card-header"><span class="card-title">🔌 Interface</span>
+                <span style="color:var(--text-secondary);font-size:12px;margin-left:8px">${iface.portName || ''}</span>
+              </div>
+              <div class="card-body">
+                ${kvRow('IP Address', `<code>${ip}</code>`)}
+                ${kvRow('Subnet', iface.subnet)}
+                ${kvRow('MAC Address', iface.macAddress)}
+                ${kvRow('VLAN', iface.vlanId)}
+                ${kvRow('Description', iface.description)}
+                ${kvRow('Admin Status', iface.adminStatus)}
+                ${kvRow('Oper Status', iface.operStatus)}
+                ${kvRow('Speed', iface.speed)}
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-header">
+                <span>${device.reachabilityStatus === 'Reachable' ? '✅' : '🔴'}</span>
+                <span class="card-title">${device.hostname || 'Unknown Device'}</span>
+              </div>
+              <div class="card-body">
+                ${kvRow('Management IP', `<code>${device.managementIpAddress}</code>`)}
+                ${kvRow('Platform', device.platformId)}
+                ${kvRow('IOS Version', device.softwareVersion)}
+                ${kvRow('Serial', device.serialNumber)}
+                ${kvRow('Role', device.role)}
+                ${kvRow('Uptime', device.upTime)}
+                ${kvRow('Last Contact', device.lastContactFormatted)}
+                ${kvRow('Reachability', reachBadge(device.reachabilityStatus))}
+              </div>
+            </div>
+          </div>`;
+      }).join('');
+    } catch (e) {
+      resEl.innerHTML = `<div class="alert alert-danger">${e.message}</div>`;
+    }
+  }
+
+  document.getElementById('ip-go').addEventListener('click', doLookup);
+  document.getElementById('ip-input').addEventListener('keydown', e => { if (e.key === 'Enter') doLookup(); });
+});
+
+/* ── ISE ────────────────────────────────────────────────────── */
+Router.register('ise', async (el) => {
+  el.innerHTML = `
+    <div class="tabs" id="ise-tabs">
+      <div class="tab active" data-tab="nads">NADs</div>
+      <div class="tab" data-tab="endpoints">Endpoints</div>
+      <div class="tab" data-tab="trustsec">TrustSec</div>
+      <div class="tab" data-tab="identity">Identity</div>
+      <div class="tab" data-tab="policy">Policy</div>
+      <div class="tab" data-tab="admin">Admin</div>
+    </div>
+    <div id="ise-content"></div>`;
+
+  const panels = {
+    nads:      renderNads,
+    endpoints: renderEndpoints,
+    trustsec:  renderTrustsec,
+    identity:  renderIdentity,
+    policy:    renderPolicy,
+    admin:     renderAdmin,
+  };
+
+  document.querySelectorAll('#ise-tabs .tab').forEach(t => {
+    t.addEventListener('click', () => {
+      document.querySelectorAll('#ise-tabs .tab').forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+      panels[t.dataset.tab](document.getElementById('ise-content'));
+    });
+  });
+
+  renderNads(document.getElementById('ise-content'));
+
+  /* NADs */
+  async function renderNads(area) {
+    area.innerHTML = `
+      <div class="table-wrap">
+        <div class="table-toolbar">
+          <div class="search-input"><input class="input" id="nad-search" placeholder="Search by name or IP…" style="width:220px"></div>
+          <button class="btn btn-primary" id="nad-go">Search</button>
+          <span class="table-count" id="nad-count"></span>
+        </div>
+        <div id="nad-table"></div>
+      </div>
+      <div id="nad-detail" style="margin-top:16px"></div>`;
+
+    const cols = [
+      { key: 'name', label: 'Name' },
+      { key: 'description', label: 'Description' },
+    ];
+
+    async function doNadSearch() {
+      const q = document.getElementById('nad-search').value;
+      const tEl = document.getElementById('nad-table');
+      tEl.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
+      try {
+        const d = await API.get(`/ise/nads?search=${encodeURIComponent(q)}`);
+        document.getElementById('nad-count').textContent = `${d.total} device(s)`;
+        tEl.innerHTML = makeTable(cols, d.items, nad => loadNadDetail(nad));
+        bindTableSort(tEl, cols, d.items, nad => loadNadDetail(nad));
+      } catch (e) { tEl.innerHTML = `<div class="alert alert-danger">${e.message}</div>`; }
+    }
+
+    document.getElementById('nad-go').addEventListener('click', doNadSearch);
+    document.getElementById('nad-search').addEventListener('keydown', e => { if (e.key === 'Enter') doNadSearch(); });
+
+    async function loadNadDetail(nad) {
+      const detEl = document.getElementById('nad-detail');
+      detEl.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
+      try {
+        const d    = await API.get(`/ise/nads/${nad.id}`);
+        const ips  = (d.NetworkDeviceIPList || []).map(e => `${e.ipaddress}/${e.mask}`).join(', ') || '—';
+        const grps = (d.NetworkDeviceGroupList || []).join(', ') || '—';
+        const rad  = d.authenticationSettings || {};
+        const tac  = d.tacacsSettings || {};
+        const snmp = d.snmpsettings || {};
+        detEl.innerHTML = `
+          <div class="detail-panel">
+            <div class="detail-header"><span class="detail-hostname">🖥️ ${d.name}</span></div>
+            <div class="detail-body">
+              <div class="detail-grid">
+                <div class="detail-section">
+                  <div class="detail-section-title">Identity</div>
+                  ${kvRow('IP / Mask', ips)}
+                  ${kvRow('Profile', d.profileName)}
+                  ${kvRow('Model', d.modelName)}
+                  ${kvRow('Groups', grps)}
+                  ${kvRow('CoA Port', d.coaPort)}
+                </div>
+                <div class="detail-section">
+                  <div class="detail-section-title">RADIUS</div>
+                  ${kvRow('Protocol', rad.networkProtocol)}
+                  ${kvRow('Secret', rad.radiusSharedSecret ? '*** (set)' : 'Not set')}
+                  <div class="detail-section-title" style="margin-top:12px">TACACS</div>
+                  ${kvRow('Secret', tac.sharedSecret ? '*** (set)' : 'Not set')}
+                  ${kvRow('Connect Mode', tac.connectModeOptions)}
+                  <div class="detail-section-title" style="margin-top:12px">SNMP</div>
+                  ${kvRow('Version', snmp.version)}
+                  ${kvRow('Poll Interval', snmp.pollingInterval ? `${snmp.pollingInterval}s` : '—')}
+                </div>
+              </div>
+            </div>
+          </div>`;
+      } catch(e) { detEl.innerHTML = `<div class="alert alert-danger">${e.message}</div>`; }
+    }
+  }
+
+  /* Endpoints */
+  async function renderEndpoints(area) {
+    area.innerHTML = `
+      <div class="table-wrap">
+        <div class="table-toolbar">
+          <div class="search-input"><input class="input" id="ep-mac" placeholder="MAC address (partial OK)…" style="width:240px"></div>
+          <button class="btn btn-primary" id="ep-go">Search</button>
+          <span class="table-count" id="ep-count"></span>
+        </div>
+        <div id="ep-table"></div>
+      </div>
+      <div id="ep-detail" style="margin-top:16px"></div>`;
+
+    document.getElementById('ep-go').addEventListener('click', async () => {
+      const mac = document.getElementById('ep-mac').value.trim();
+      if (!mac || mac.length < 2) { toast('Enter at least 2 characters', 'warn'); return; }
+      const tEl = document.getElementById('ep-table');
+      tEl.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
+      try {
+        const d = await API.get(`/ise/endpoints?mac=${encodeURIComponent(mac)}`);
+        document.getElementById('ep-count').textContent = `${d.total} endpoint(s)`;
+        const cols = [{ key: 'name', label: 'MAC Address', mono: true }, { key: 'description', label: 'Description' }];
+        tEl.innerHTML = makeTable(cols, d.items, ep => loadEpDetail(ep));
+        bindTableSort(tEl, cols, d.items, ep => loadEpDetail(ep));
+        if (d.items.length === 1) loadEpDetail(d.items[0]);
+      } catch (e) { tEl.innerHTML = `<div class="alert alert-danger">${e.message}</div>`; }
+    });
+
+    async function loadEpDetail(ep) {
+      const detEl = document.getElementById('ep-detail');
+      detEl.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
+      try {
+        const d   = await API.get(`/ise/endpoints/${ep.id}`);
+        const mfc = d.mfcAttributes || {};
+        const mfcVal = k => { const v = mfc[k]; return Array.isArray(v) && v.length ? v[0] : '—'; };
+        detEl.innerHTML = `
+          <div class="detail-panel">
+            <div class="detail-header"><span class="detail-hostname">💻 ${d.mac || ep.name}</span></div>
+            <div class="detail-body">
+              <div class="detail-grid">
+                <div class="detail-section">
+                  <div class="detail-section-title">Endpoint</div>
+                  ${kvRow('Portal User', d.portalUser)}
+                  ${kvRow('Identity Store', d.identityStore)}
+                  ${kvRow('Profile ID', d.profileId)}
+                  ${kvRow('Group ID', d.groupId)}
+                  ${kvRow('Static Profile', d.staticProfileAssignment)}
+                  ${kvRow('Static Group', d.staticGroupAssignment)}
+                </div>
+                <div class="detail-section">
+                  <div class="detail-section-title">MFC Profiler</div>
+                  ${kvRow('Endpoint Type', mfcVal('mfcDeviceType'))}
+                  ${kvRow('Manufacturer', mfcVal('mfcHardwareManufacturer'))}
+                  ${kvRow('Model', mfcVal('mfcHardwareModel'))}
+                  ${kvRow('Operating System', mfcVal('mfcOperatingSystem'))}
+                </div>
+              </div>
+              <p style="font-size:11px;color:var(--text-secondary);margin-top:12px">
+                ℹ️ Full authentication attributes (AAA-Server, AD-*, Posture) available once OpenAPI is enabled on ISE.
+              </p>
+            </div>
+          </div>`;
+      } catch(e) { detEl.innerHTML = `<div class="alert alert-danger">${e.message}</div>`; }
+    }
+  }
+
+  /* TrustSec */
+  async function renderTrustsec(area) {
+    area.innerHTML = `
+      <div class="tabs" id="ts-tabs">
+        <div class="tab active" data-ts="sgts">SGTs</div>
+        <div class="tab" data-ts="sgacls">SGACLs</div>
+        <div class="tab" data-ts="egress">Egress Matrix</div>
+      </div>
+      <div id="ts-content"></div>`;
+
+    const tsPanels = {
+      sgts:   renderSgts,
+      sgacls: renderSgacls,
+      egress: renderEgress,
+    };
+    document.querySelectorAll('#ts-tabs .tab').forEach(t => {
+      t.addEventListener('click', () => {
+        document.querySelectorAll('#ts-tabs .tab').forEach(x => x.classList.remove('active'));
+        t.classList.add('active');
+        tsPanels[t.dataset.ts](document.getElementById('ts-content'));
+      });
+    });
+    renderSgts(document.getElementById('ts-content'));
+
+    async function renderSgts(a) {
+      a.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
+      try {
+        const d = await API.get('/ise/sgts');
+        const cols = [
+          { key: 'name', label: 'Name' },
+          { key: 'value', label: 'Tag Value' },
+          { key: 'propagateToApic', label: 'To APIC', render: v => v ? 'Yes' : 'No' },
+          { key: 'description', label: 'Description' },
+        ];
+        a.innerHTML = `<div class="table-wrap">${makeTable(cols, d.items)}</div>`;
+        bindTableSort(a.querySelector('.table-wrap'), cols, d.items, null);
+      } catch(e) { a.innerHTML = `<div class="alert alert-danger">${e.message}</div>`; }
+    }
+
+    async function renderSgacls(a) {
+      a.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
+      try {
+        const d = await API.get('/ise/sgacls');
+        const cols = [
+          { key: 'name', label: 'Name' },
+          { key: 'ipVersion', label: 'IP Version' },
+          { key: 'description', label: 'Description' },
+        ];
+        a.innerHTML = `<div class="table-wrap">${makeTable(cols, d.items)}</div>`;
+        bindTableSort(a.querySelector('.table-wrap'), cols, d.items, null);
+      } catch(e) { a.innerHTML = `<div class="alert alert-danger">${e.message}</div>`; }
+    }
+
+    async function renderEgress(a) {
+      a.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
+      try {
+        const d = await API.get('/ise/egress-matrix');
+        const cols = [
+          { key: 'sourceSgtId', label: 'Src SGT' },
+          { key: 'destinationSgtId', label: 'Dst SGT' },
+          { key: 'matrixCellStatus', label: 'Status' },
+          { key: 'defaultRule', label: 'Default Rule' },
+        ];
+        a.innerHTML = `<div class="table-wrap">${makeTable(cols, d.items)}</div>`;
+        bindTableSort(a.querySelector('.table-wrap'), cols, d.items, null);
+      } catch(e) { a.innerHTML = `<div class="alert alert-danger">${e.message}</div>`; }
+    }
+  }
+
+  /* Identity */
+  async function renderIdentity(area) {
+    area.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
+    try {
+      const d = await API.get('/ise/identity-groups');
+      const cols = [
+        { key: 'name', label: 'Name' },
+        { key: 'parent', label: 'Parent' },
+        { key: 'description', label: 'Description' },
+      ];
+      area.innerHTML = `<div class="table-wrap">${makeTable(cols, d.items)}</div>`;
+      bindTableSort(area.querySelector('.table-wrap'), cols, d.items, null);
+    } catch(e) { area.innerHTML = `<div class="alert alert-danger">${e.message}</div>`; }
+  }
+
+  /* Policy */
+  async function renderPolicy(area) {
+    area.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
+    try {
+      const d = await API.get('/ise/policy-sets');
+      const cols = [
+        { key: 'name', label: 'Policy Set' },
+        { key: 'description', label: 'Description' },
+      ];
+      area.innerHTML = `
+        <div class="table-wrap">${makeTable(cols, d.items, ps => loadPolicyDetail(ps))}</div>
+        <div id="ps-detail" style="margin-top:16px"></div>`;
+      bindTableSort(area.querySelector('.table-wrap'), cols, d.items, ps => loadPolicyDetail(ps));
+      if (!d.items.length) {
+        area.innerHTML = `<div class="alert alert-info">ℹ️ No policy sets returned — ensure OpenAPI is enabled on ISE (Administration → System → Settings → API Settings).</div>`;
+      }
+    } catch(e) { area.innerHTML = `<div class="alert alert-danger">${e.message}</div>`; }
+
+    async function loadPolicyDetail(ps) {
+      const detEl = document.getElementById('ps-detail');
+      if (!detEl) return;
+      detEl.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
+      try {
+        const d = await API.get(`/ise/policy-sets/${ps.id}/auth-rules`);
+        const cols = [
+          { key: 'rank', label: 'Rank' },
+          { key: 'name', label: 'Rule Name' },
+          { key: 'state', label: 'State' },
+          { key: 'identitySourceName', label: 'Identity Source' },
+        ];
+        detEl.innerHTML = `
+          <div class="card">
+            <div class="card-header"><span class="card-title">Auth Rules — ${ps.name}</span></div>
+            <div class="card-body" style="padding:0">${makeTable(cols, d.items)}</div>
+          </div>`;
+      } catch(e) { detEl.innerHTML = `<div class="alert alert-danger">${e.message}</div>`; }
+    }
+  }
+
+  /* Admin */
+  async function renderAdmin(area) {
+    area.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
+    try {
+      const d = await API.get('/ise/deployment-nodes');
+      const cols = [
+        { key: 'hostname', label: 'Hostname' },
+        { key: 'ipAddress', label: 'IP', mono: true },
+        { key: 'fqdn', label: 'FQDN' },
+        { key: 'nodeType', label: 'Type' },
+      ];
+      area.innerHTML = `<div class="table-wrap">${makeTable(cols, d.items)}</div>`;
+      bindTableSort(area.querySelector('.table-wrap'), cols, d.items, null);
+    } catch(e) { area.innerHTML = `<div class="alert alert-danger">${e.message}</div>`; }
+  }
+});
+
+/* ── Firewall ───────────────────────────────────────────────── */
+Router.register('firewall', async (el) => {
+  let deviceGroups = [];
+  try { const d = await API.get('/firewall/device-groups'); deviceGroups = d.items || []; } catch {}
+
+  el.innerHTML = `
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header"><span class="card-title">Security Policy Lookup</span></div>
+      <div class="card-body">
+        <div style="display:grid;grid-template-columns:1fr 1fr 120px 120px auto;gap:12px;align-items:flex-end">
+          <div class="form-group" style="margin:0">
+            <label class="form-label">Source IP</label>
+            <input class="input" id="fw-src" placeholder="10.47.31.195">
+          </div>
+          <div class="form-group" style="margin:0">
+            <label class="form-label">Destination IP</label>
+            <input class="input" id="fw-dst" placeholder="10.16.97.122">
+          </div>
+          <div class="form-group" style="margin:0">
+            <label class="form-label">Protocol</label>
+            <select class="select" id="fw-proto">
+              <option value="any">Any</option>
+              <option value="tcp">TCP</option>
+              <option value="udp">UDP</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin:0">
+            <label class="form-label">Dest Port</label>
+            <input class="input" id="fw-port" placeholder="443">
+          </div>
+          <button class="btn btn-primary" id="fw-go" style="white-space:nowrap">🔍 Search</button>
+        </div>
+        <div style="display:flex;gap:16px;margin-top:12px;align-items:center">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
+            <input type="checkbox" id="fw-disabled"> Include disabled rules
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
+            <input type="checkbox" id="fw-all" checked> Show all matches
+          </label>
+          ${deviceGroups.length ? `
+          <div style="margin-left:auto">
+            <select class="select" id="fw-dg" style="width:200px">
+              <option value="">All device groups</option>
+              ${deviceGroups.map(dg => `<option value="${dg}">${dg}</option>`).join('')}
+            </select>
+          </div>` : ''}
+        </div>
+      </div>
+    </div>
+    <div id="fw-result"></div>`;
+
+  document.getElementById('fw-go').addEventListener('click', async () => {
+    const src  = document.getElementById('fw-src').value.trim();
+    const dst  = document.getElementById('fw-dst').value.trim();
+    const port = document.getElementById('fw-port').value.trim();
+    const res  = document.getElementById('fw-result');
+
+    if (!src || !dst) { toast('Enter source and destination IP', 'warn'); return; }
+    res.innerHTML = '<div class="empty-state"><div class="spinner spinner-lg"></div><p style="margin-top:12px;color:var(--text-secondary)">Loading rules from Panorama (cached after first run)…</p></div>';
+
+    const dgEl = document.getElementById('fw-dg');
+    const body = {
+      src_ip: src, dst_ip: dst,
+      dst_port: port ? parseInt(port) : null,
+      protocol: document.getElementById('fw-proto').value,
+      include_disabled: document.getElementById('fw-disabled').checked,
+      show_all: document.getElementById('fw-all').checked,
+      device_groups: dgEl && dgEl.value ? [dgEl.value] : [],
+    };
+
+    try {
+      const data  = await API.post('/firewall/lookup', body);
+      const portLabel = port ? `:${port}` : ' (any port)';
+      const decisColor = data.traffic_decision === 'allow' ? 'var(--success)' : 'var(--danger)';
+
+      if (!data.match_count) {
+        res.innerHTML = `
+          <div class="alert alert-warn">⚠️ No rules match <strong>${src} → ${dst}${portLabel}</strong>. Traffic hits the implicit deny.</div>
+          <div style="font-size:12px;color:var(--text-secondary);margin-top:8px">${data.rules_searched.toLocaleString()} rules searched.</div>`;
+        return;
+      }
+
+      const cols = [
+        { key: '_icon', label: '',
+          render: (_, r) => r.action === 'allow' ? '✅' : '🔴' },
+        { key: 'name', label: 'Rule Name',
+          render: (v, r) => r.first_match ? `⭐ ${v}` : v },
+        { key: 'device_group', label: 'Device Group' },
+        { key: 'rulebase', label: 'Rulebase' },
+        { key: 'action', label: 'Action',
+          render: v => `<span class="badge ${v === 'allow' ? 'badge-success' : 'badge-danger'}">${v.toUpperCase()}</span>` },
+        { key: 'source', label: 'Source',
+          render: v => fmtList(v) },
+        { key: 'destination', label: 'Destination',
+          render: v => fmtList(v) },
+        { key: 'service', label: 'Service',
+          render: v => fmtList(v) },
+      ];
+
+      const rows = data.matches.map(m => ({ ...m, _icon: '' }));
+
+      const kpis = `
+        <div class="kpi-row cols-4" style="margin-bottom:16px">
+          <div class="kpi-card"><div class="kpi-label">Rules Searched</div><div class="kpi-value">${data.rules_searched.toLocaleString()}</div></div>
+          <div class="kpi-card"><div class="kpi-label">Matching Rules</div><div class="kpi-value">${data.match_count}</div></div>
+          <div class="kpi-card ${data.traffic_decision === 'allow' ? 'success' : 'danger'}">
+            <div class="kpi-label">Traffic Decision</div>
+            <div class="kpi-value" style="font-size:20px;color:${decisColor}">${data.traffic_decision.toUpperCase()}</div>
+          </div>
+          <div class="kpi-card"><div class="kpi-label">Flow</div><div class="kpi-value" style="font-size:13px;padding-top:4px">${src} → ${dst}${portLabel}</div></div>
+        </div>`;
+
+      res.innerHTML = `
+        ${kpis}
+        <div class="table-wrap" id="fw-table">
+          <div class="table-toolbar"><span class="table-count">${data.match_count} rule(s) matched — click a row for detail</span></div>
+          ${makeTable(cols, rows, rule => showRuleDetail(rule, data))}
+        </div>
+        <div id="fw-rule-detail" style="margin-top:16px"></div>`;
+
+      bindTableSort(document.getElementById('fw-table'), cols, rows, rule => showRuleDetail(rule, data));
+
+      // Auto-select first match
+      const firstMatchRow = document.querySelector('#fw-table tbody tr');
+      if (firstMatchRow) { firstMatchRow.classList.add('selected'); showRuleDetail(rows[0], data); }
+
+    } catch (e) {
+      res.innerHTML = `<div class="alert alert-danger">${e.message}</div>`;
+    }
+  });
+
+  function fmtList(arr) {
+    if (!arr || !arr.length) return '—';
+    if (arr.includes('any')) return '<span class="badge badge-neutral">any</span>';
+    if (arr.length <= 3) return arr.join(', ');
+    return `${arr.slice(0,2).join(', ')} <span class="badge badge-neutral">+${arr.length-2}</span>`;
+  }
+
+  function showRuleDetail(rule, data) {
+    const detEl = document.getElementById('fw-rule-detail');
+    const actionCss = rule.action === 'allow' ? 'var(--success)' : 'var(--danger)';
+
+    const resolvedRows = (names, resolved) => names
+      .filter(n => n !== 'any')
+      .flatMap(name => {
+        const vals = resolved?.[name] || [];
+        if (!vals.length) return [`<tr><td>${name}</td><td style="color:var(--text-secondary)">(unresolved)</td></tr>`];
+        return vals.map(v => `<tr><td>${name}</td><td class="mono">${v}</td></tr>`);
+      }).join('');
+
+    const svcRows = (names, resolved) => names
+      .filter(n => !['any','application-default'].includes(n))
+      .flatMap(name => {
+        const vals = resolved?.[name] || [];
+        if (!vals.length) return [`<tr><td>${name}</td><td>—</td><td>—</td></tr>`];
+        return vals.map(v => `<tr><td>${name}</td><td>${v.protocol?.toUpperCase()}</td><td class="mono">${v.ports}</td></tr>`);
+      }).join('');
+
+    detEl.innerHTML = `
+      <div class="detail-panel">
+        <div class="detail-header">
+          <span style="font-size:18px">${rule.action === 'allow' ? '✅' : '🔴'}</span>
+          <div>
+            <div class="detail-hostname">${rule.first_match ? '⭐ ' : ''}${rule.name}</div>
+            <div style="font-size:11px;opacity:.7">
+              ${rule.device_group} · ${rule.rulebase}-rulebase
+              ${rule.disabled ? ' · DISABLED' : ''}
+            </div>
+          </div>
+          <span class="action-badge action-${rule.action}" style="margin-left:auto;padding:4px 12px;border-radius:3px;font-weight:700">${rule.action.toUpperCase()}</span>
+        </div>
+        <div class="detail-body">
+          <div class="detail-grid">
+            <div class="detail-section">
+              <div class="detail-section-title">Traffic</div>
+              ${kvRow('Source Zones', rule.from_zones?.join(', ') || '—')}
+              ${kvRow('Source Addresses', fmtList(rule.source))}
+              ${kvRow('Source Negate', rule.source_negate ? 'Yes' : 'No')}
+              ${kvRow('Dest Zones', rule.to_zones?.join(', ') || '—')}
+              ${kvRow('Dest Addresses', fmtList(rule.destination))}
+              ${kvRow('Dest Negate', rule.dest_negate ? 'Yes' : 'No')}
+            </div>
+            <div class="detail-section">
+              <div class="detail-section-title">Policy</div>
+              ${kvRow('Application', fmtList(rule.application))}
+              ${kvRow('Service', fmtList(rule.service))}
+              ${kvRow('Security Profile', rule.profile_group)}
+              ${kvRow('Log Setting', rule.log_setting)}
+              ${kvRow('Tags', rule.tag?.join(', '))}
+              ${kvRow('Description', rule.description)}
+              ${kvRow('First Match', rule.first_match ? '<span class="badge badge-success">Yes — decides traffic</span>' : 'No')}
+            </div>
+          </div>
+
+          ${(rule.source?.filter(n=>n!='any').length || rule.destination?.filter(n=>n!='any').length || rule.service?.filter(n=>!['any','application-default'].includes(n)).length) ? `
+          <hr class="divider">
+          <div class="section-title" style="margin-bottom:12px">Resolved Objects</div>
+          <div class="grid-3">
+            ${rule.source?.filter(n=>n!='any').length ? `
+            <div>
+              <div class="detail-section-title">Source Addresses</div>
+              <table><thead><tr><th>Object</th><th>Resolves to</th></tr></thead>
+              <tbody>${resolvedRows(rule.source, rule.resolved_source)}</tbody></table>
+            </div>` : ''}
+            ${rule.destination?.filter(n=>n!='any').length ? `
+            <div>
+              <div class="detail-section-title">Destination Addresses</div>
+              <table><thead><tr><th>Object</th><th>Resolves to</th></tr></thead>
+              <tbody>${resolvedRows(rule.destination, rule.resolved_destination)}</tbody></table>
+            </div>` : ''}
+            ${rule.service?.filter(n=>!['any','application-default'].includes(n)).length ? `
+            <div>
+              <div class="detail-section-title">Services</div>
+              <table><thead><tr><th>Service</th><th>Proto</th><th>Port(s)</th></tr></thead>
+              <tbody>${svcRows(rule.service, rule.resolved_service)}</tbody></table>
+            </div>` : ''}
+          </div>` : ''}
+        </div>
+      </div>`;
+  }
+});
+
+/* ── Command Runner ─────────────────────────────────────────── */
+Router.register('command-runner', async (el) => {
+  let devices = [];
+  let results = [];
+
+  const quickCmds = [
+    '— Quick commands —','show version','show ip interface brief','show interfaces',
+    'show ip route summary','show ip bgp summary','show cdp neighbors','show dmvpn',
+    'show crypto session','show access-lists','show logging','show ntp status',
+    'show processes cpu sorted | head 20','show spanning-tree summary',
+    'show ip ospf neighbor','show ip eigrp neighbors',
+  ];
+
+  el.innerHTML = `
+    <div class="grid-2" style="gap:16px;align-items:start">
+      <!-- Left: device selection -->
+      <div>
+        <div class="card" style="margin-bottom:16px">
+          <div class="card-header"><span class="card-title">Step 1 — Devices</span></div>
+          <div class="card-body">
+            <div class="tabs" id="cr-input-tabs">
+              <div class="tab active" data-crtab="paste">Paste IPs</div>
+              <div class="tab" data-crtab="filter">Filter from DNAC</div>
+            </div>
+            <div id="cr-paste-panel">
+              <textarea class="textarea" id="cr-ips" placeholder="One IP per line, or comma-separated&#10;10.12.4.1&#10;10.14.1.2"></textarea>
+              <button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="parseIpList()">Parse IP list</button>
+            </div>
+            <div id="cr-filter-panel" style="display:none">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+                <input class="input" id="cr-fhost" placeholder="Hostname…">
+                <input class="input" id="cr-fip" placeholder="IP…">
+                <input class="input" id="cr-fplat" placeholder="Platform…">
+                <select class="select" id="cr-freach">
+                  <option value="">All</option>
+                  <option value="reachable">Reachable</option>
+                  <option value="unreachable">Unreachable</option>
+                </select>
+              </div>
+              <button class="btn btn-secondary btn-sm" onclick="filterDevices()">Apply filter</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:16px">
+          <div class="card-header"><span class="card-title">Selected Devices</span>
+            <span class="table-count" id="cr-dev-count">0 selected</span>
+          </div>
+          <div id="cr-dev-table" style="max-height:220px;overflow-y:auto">
+            <div class="empty-state" style="padding:20px">No devices selected yet.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: command + creds -->
+      <div>
+        <div class="card" style="margin-bottom:16px">
+          <div class="card-header"><span class="card-title">Step 2 — Command</span></div>
+          <div class="card-body">
+            <div class="form-group">
+              <label class="form-label">Quick commands</label>
+              <select class="select" id="cr-quick">
+                ${quickCmds.map(c => `<option>${c}</option>`).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Command</label>
+              <input class="input" id="cr-cmd" placeholder="e.g. show ip interface brief">
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">Step 3 — Settings</span></div>
+          <div class="card-body">
+            <div class="grid-2" style="gap:12px">
+              <div class="form-group" style="margin:0">
+                <label class="form-label">Device type</label>
+                <select class="select" id="cr-dtype">
+                  <option value="auto">Auto-detect from DNAC</option>
+                  <option value="cisco_ios">cisco_ios</option>
+                  <option value="cisco_nxos">cisco_nxos</option>
+                  <option value="cisco_asa">cisco_asa</option>
+                  <option value="paloalto_panos">paloalto_panos</option>
+                  <option value="linux">linux</option>
+                </select>
+              </div>
+              <div class="form-group" style="margin:0">
+                <label class="form-label">Parallel workers</label>
+                <input class="input" type="number" id="cr-workers" value="10" min="1" max="30">
+              </div>
+              <div class="form-group" style="margin:0">
+                <label class="form-label">Timeout (s)</label>
+                <input class="input" type="number" id="cr-timeout" value="30" min="10" max="120">
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:16px;display:flex;gap:12px;align-items:center">
+      <button class="btn btn-primary" id="cr-run" onclick="runCommands()">▶ Run</button>
+      <span id="cr-run-status" style="font-size:12px;color:var(--text-secondary)"></span>
+    </div>
+
+    <div id="cr-progress" style="margin-top:16px;display:none">
+      <div class="progress-outer"><div class="progress-inner" id="cr-prog-bar" style="width:0%"></div></div>
+      <div class="progress-label" id="cr-prog-label">Starting…</div>
+      <div class="log-stream" id="cr-log" style="margin-top:8px;max-height:200px"></div>
+    </div>
+
+    <div id="cr-results" style="margin-top:16px"></div>`;
+
+  // Tab switching
+  document.querySelectorAll('#cr-input-tabs .tab').forEach(t => {
+    t.addEventListener('click', () => {
+      document.querySelectorAll('#cr-input-tabs .tab').forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+      document.getElementById('cr-paste-panel').style.display = t.dataset.crtab === 'paste' ? '' : 'none';
+      document.getElementById('cr-filter-panel').style.display = t.dataset.crtab === 'filter' ? '' : 'none';
+    });
+  });
+
+  // Quick command selector
+  document.getElementById('cr-quick').addEventListener('change', e => {
+    const v = e.target.value;
+    if (v !== '— Quick commands —') document.getElementById('cr-cmd').value = v;
+  });
+
+  window.parseIpList = async function() {
+    const raw = document.getElementById('cr-ips').value;
+    const ips = raw.split(/[\n,]/).map(s => s.trim()).filter(Boolean);
+    if (!ips.length) return;
+    // Look up from DNAC cache
+    let dnacDevices = [];
+    try { const d = await API.get(`/dnac/devices?limit=2000`); dnacDevices = d.items; } catch {}
+    const ipMap = {};
+    dnacDevices.forEach(d => { ipMap[d.managementIpAddress] = d; });
+    devices = ips.map(ip => ({
+      ip, hostname: ipMap[ip]?.hostname || ip, platform: ipMap[ip]?.platformId || '',
+    }));
+    renderDeviceList();
+  };
+
+  window.filterDevices = async function() {
+    const params = new URLSearchParams({
+      hostname: document.getElementById('cr-fhost').value,
+      ip: document.getElementById('cr-fip').value,
+      platform: document.getElementById('cr-fplat').value,
+      reachability: document.getElementById('cr-freach').value,
+      limit: 500,
+    });
+    try {
+      const d = await API.get(`/dnac/devices?${params}`);
+      devices = d.items.map(dev => ({
+        ip: dev.managementIpAddress, hostname: dev.hostname, platform: dev.platformId,
+      }));
+      renderDeviceList();
+    } catch(e) { toast(e.message, 'error'); }
+  };
+
+  function renderDeviceList() {
+    document.getElementById('cr-dev-count').textContent = `${devices.length} selected`;
+    const tEl = document.getElementById('cr-dev-table');
+    if (!devices.length) { tEl.innerHTML = '<div class="empty-state" style="padding:20px">No devices.</div>'; return; }
+    tEl.innerHTML = `<table>
+      <thead><tr><th>Hostname</th><th>IP</th><th>Platform</th></tr></thead>
+      <tbody>${devices.map(d => `<tr><td>${d.hostname}</td><td class="mono">${d.ip}</td><td>${d.platform||'—'}</td></tr>`).join('')}</tbody>
+    </table>`;
+  }
+
+  window.runCommands = function() {
+    const cmd = document.getElementById('cr-cmd').value.trim();
+    if (!devices.length) { toast('Select devices first', 'warn'); return; }
+    if (!cmd) { toast('Enter a command', 'warn'); return; }
+
+    results = [];
+    document.getElementById('cr-progress').style.display = '';
+    document.getElementById('cr-results').innerHTML = '';
+    document.getElementById('cr-run').disabled = true;
+    document.getElementById('cr-log').innerHTML = '';
+
+    const logEl  = document.getElementById('cr-log');
+    const progEl = document.getElementById('cr-prog-bar');
+    const lblEl  = document.getElementById('cr-prog-label');
+    let done = 0;
+
+    function logLine(msg, level='info') {
+      const ts = new Date().toLocaleTimeString();
+      logEl.innerHTML += `<div class="log-line ${level}"><span class="log-time">${ts}</span><span class="log-msg">${msg}</span></div>`;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    const body = {
+      devices,
+      command: cmd,
+      device_type_override: document.getElementById('cr-dtype').value === 'auto' ? null : document.getElementById('cr-dtype').value,
+      max_workers: parseInt(document.getElementById('cr-workers').value),
+      timeout: parseInt(document.getElementById('cr-timeout').value),
+    };
+
+    API.stream('/commands/run', body, ev => {
+      if (ev.type === 'progress') {
+        done = ev.done;
+        results.push(ev);
+        const pct = Math.round((done / ev.total) * 100);
+        progEl.style.width = pct + '%';
+        lblEl.textContent = `${done}/${ev.total} complete`;
+        const icon = ev.status === 'success' ? '✅' : '❌';
+        logLine(`${icon} ${ev.hostname} (${ev.ip}) — ${ev.status} in ${ev.elapsed}s`, ev.status === 'success' ? 'success' : 'error');
+      } else if (ev.type === 'complete') {
+        renderResults(cmd);
+        document.getElementById('cr-run').disabled = false;
+      } else if (ev.type === 'error') {
+        logLine(`Error: ${ev.message}`, 'error');
+      }
+    }, () => {
+      document.getElementById('cr-run').disabled = false;
+    });
+  };
+
+  function renderResults(cmd) {
+    const resEl = document.getElementById('cr-results');
+    const ok    = results.filter(r => r.status === 'success').length;
+    const cols  = [
+      { key: '_icon', label: '', render: (_, r) => r.status === 'success' ? '✅' : '❌' },
+      { key: 'hostname', label: 'Hostname' },
+      { key: 'ip', label: 'IP', mono: true },
+      { key: 'platform', label: 'Platform' },
+      { key: 'status', label: 'Status' },
+      { key: 'elapsed', label: 'Time (s)' },
+      { key: 'lines', label: 'Lines', render: (_, r) => r.output ? r.output.split('\n').length : 0 },
+    ];
+    const rows = results.map(r => ({ ...r, _icon: '' }));
+
+    resEl.innerHTML = `
+      <div class="kpi-row cols-4" style="margin-bottom:16px">
+        <div class="kpi-card"><div class="kpi-label">Total</div><div class="kpi-value">${results.length}</div></div>
+        <div class="kpi-card success"><div class="kpi-label">Succeeded</div><div class="kpi-value">${ok}</div></div>
+        <div class="kpi-card danger"><div class="kpi-label">Failed</div><div class="kpi-value">${results.length - ok}</div></div>
+        <div class="kpi-card"><div class="kpi-label">Avg Time</div><div class="kpi-value">${(results.reduce((s,r)=>s+r.elapsed,0)/results.length).toFixed(1)}s</div></div>
+      </div>
+      <div class="table-wrap" id="cr-res-table">
+        <div class="table-toolbar">
+          <span class="table-count">Click a row to view output</span>
+          <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="downloadAllOutput()">⬇️ Download All</button>
+          <button class="btn btn-ghost btn-sm" onclick="downloadCsv()">⬇️ CSV</button>
+        </div>
+        ${makeTable(cols, rows, r => showOutputDetail(r))}
+      </div>
+      <div id="cr-out-detail" style="margin-top:16px"></div>`;
+
+    bindTableSort(document.getElementById('cr-res-table'), cols, rows, r => showOutputDetail(r));
+  }
+
+  function showOutputDetail(r) {
+    const detEl = document.getElementById('cr-out-detail');
+    detEl.innerHTML = `
+      <div class="detail-panel">
+        <div class="detail-header">
+          <span>${r.status === 'success' ? '✅' : '❌'}</span>
+          <span class="detail-hostname">${r.hostname} (${r.ip})</span>
+          <span style="margin-left:auto;font-size:11px;opacity:.7">${r.elapsed}s · ${r.status}</span>
+        </div>
+        <div class="detail-body" style="padding:0">
+          ${r.output ? `
+            <div style="padding:10px 14px;border-bottom:1px solid var(--border);display:flex;gap:8px">
+              <input class="input" id="out-filter" placeholder="Filter lines…" style="max-width:240px">
+              <button class="btn btn-ghost btn-sm" onclick="dlText(document.getElementById('out-pre').textContent,'${r.hostname}_output.txt')">⬇️ Download</button>
+            </div>
+            <pre class="code-block" id="out-pre" style="border-radius:0;max-height:460px">${escHtml(r.output)}</pre>` :
+            `<div class="alert alert-danger" style="margin:12px">${r.error}</div>`}
+        </div>
+      </div>`;
+
+    const filterEl = document.getElementById('out-filter');
+    if (filterEl) {
+      filterEl.addEventListener('input', e => {
+        const q = e.target.value.toLowerCase();
+        const lines = r.output.split('\n');
+        document.getElementById('out-pre').textContent = q
+          ? lines.filter(l => l.toLowerCase().includes(q)).join('\n')
+          : r.output;
+      });
+    }
+  }
+
+  window.downloadAllOutput = function() {
+    const text = results.map(r =>
+      `${'='.repeat(60)}\nDevice: ${r.hostname} (${r.ip})\nStatus: ${r.status} | Time: ${r.elapsed}s\n${'='.repeat(60)}\n` +
+      (r.output || `ERROR: ${r.error}`)
+    ).join('\n\n');
+    dlText(text, `command_output_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.txt`);
+  };
+
+  window.downloadCsv = function() {
+    const header = 'Hostname,IP,Platform,Status,Time_s,Error\n';
+    const rows   = results.map(r =>
+      [r.hostname, r.ip, r.platform, r.status, r.elapsed, r.error||''].map(v => `"${v}"`).join(',')
+    ).join('\n');
+    dlText(header + rows, 'command_summary.csv');
+  };
+});
+
+/* ── Import ─────────────────────────────────────────────────── */
+Router.register('import', async (el) => {
+  el.innerHTML = `
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header"><span class="card-title">Device Discovery & Import</span></div>
+      <div class="card-body">
+        <div class="alert alert-warn" style="margin-bottom:16px">
+          ⚠️ <strong>Write operation.</strong> This discovers and assigns devices in Catalyst Center.
+        </div>
+        <div class="form-group">
+          <label class="form-label">Device list  (site_code,ip_address — one per line)</label>
+          <textarea class="textarea" id="imp-input" style="min-height:140px" placeholder="# One entry per line&#10;ATL-T1,10.16.1.1&#10;DFW-T1,10.12.4.1&#10;ORD-T1,10.14.1.2"></textarea>
+        </div>
+        <div class="grid-2" style="gap:12px;margin-bottom:12px">
+          <div class="form-group" style="margin:0">
+            <label class="form-label">CLI Username</label>
+            <input class="input" id="imp-cli" value="dnac-acct">
+          </div>
+          <div class="form-group" style="margin:0">
+            <label class="form-label">SNMP Username</label>
+            <input class="input" id="imp-snmp" value="tsa_mon_user">
+          </div>
+        </div>
+        <button class="btn btn-primary" id="imp-preview">Preview</button>
+      </div>
+    </div>
+
+    <div id="imp-preview-area" style="margin-bottom:16px"></div>
+    <div id="imp-progress" style="display:none;margin-bottom:16px">
+      <div class="progress-outer"><div class="progress-inner" id="imp-bar" style="width:0%"></div></div>
+      <div class="progress-label" id="imp-label">Starting…</div>
+      <div class="log-stream" id="imp-log" style="margin-top:8px"></div>
+    </div>
+    <div id="imp-results"></div>`;
+
+  document.getElementById('imp-preview').addEventListener('click', () => {
+    const raw = document.getElementById('imp-input').value;
+    const lines = raw.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
+    const entries = lines.map(l => {
+      const [site, ip] = l.split(',').map(s => s.trim());
+      return { site, ip, valid: !!(site && ip) };
+    });
+
+    const prevEl = document.getElementById('imp-preview-area');
+    if (!entries.length) { prevEl.innerHTML = ''; return; }
+
+    prevEl.innerHTML = `
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Preview — ${entries.length} entries</span>
+          <div class="card-actions">
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px">
+              <input type="checkbox" id="imp-confirm"> I confirm I want to run this import
+            </label>
+            <button class="btn btn-primary btn-sm" id="imp-run" disabled>🚀 Run Import</button>
+          </div>
+        </div>
+        <div class="card-body" style="padding:0">
+          <table>
+            <thead><tr><th>Site Code</th><th>IP Address</th><th>Valid</th></tr></thead>
+            <tbody>
+              ${entries.map(e => `<tr>
+                <td>${e.site || '<span class="badge badge-danger">Missing</span>'}</td>
+                <td class="mono">${e.ip || '<span class="badge badge-danger">Missing</span>'}</td>
+                <td>${e.valid ? '<span class="badge badge-success">✅</span>' : '<span class="badge badge-danger">❌</span>'}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+
+    const confirmEl = document.getElementById('imp-confirm');
+    const runBtn    = document.getElementById('imp-run');
+    confirmEl.addEventListener('change', () => { runBtn.disabled = !confirmEl.checked; });
+
+    runBtn.addEventListener('click', () => {
+      const valid = entries.filter(e => e.valid);
+      runImport(valid.map(e => ({ site_code: e.site, ip: e.ip })));
+    });
+  });
+
+  function runImport(entries) {
+    document.getElementById('imp-progress').style.display = '';
+    document.getElementById('imp-results').innerHTML = '';
+
+    const logEl  = document.getElementById('imp-log');
+    const barEl  = document.getElementById('imp-bar');
+    const lblEl  = document.getElementById('imp-label');
+
+    function log(msg, level = 'info') {
+      const ts = new Date().toLocaleTimeString();
+      logEl.innerHTML += `<div class="log-line ${level}"><span class="log-time">${ts}</span><span class="log-msg">${escHtml(msg)}</span></div>`;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    const body = {
+      entries,
+      cli_username:  document.getElementById('imp-cli').value,
+      snmp_username: document.getElementById('imp-snmp').value,
+    };
+
+    API.stream('/import/run', body, ev => {
+      if (ev.type === 'log') {
+        log(ev.message, ev.level);
+      } else if (ev.type === 'progress') {
+        barEl.style.width = ev.pct + '%';
+        lblEl.textContent = `${ev.done}/${ev.total} processed`;
+      } else if (ev.type === 'complete') {
+        barEl.style.width = '100%';
+        lblEl.textContent = 'Complete';
+        renderImportResults(ev);
+      } else if (ev.type === 'error') {
+        log(`Error: ${ev.message}`, 'error');
+      }
+    });
+  }
+
+  function renderImportResults(ev) {
+    const resEl = document.getElementById('imp-results');
+    resEl.innerHTML = `
+      <div class="kpi-row cols-4" style="margin-bottom:16px">
+        <div class="kpi-card"><div class="kpi-label">Total</div><div class="kpi-value">${ev.total}</div></div>
+        <div class="kpi-card success"><div class="kpi-label">Discovered</div><div class="kpi-value">${ev.discovered}</div></div>
+        <div class="kpi-card warn"><div class="kpi-label">Skipped</div><div class="kpi-value">${ev.skipped}</div></div>
+        <div class="kpi-card danger"><div class="kpi-label">Failed</div><div class="kpi-value">${ev.failed + ev.no_site}</div></div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>IP</th><th>Site</th><th>Outcome</th></tr></thead>
+          <tbody>
+            ${(ev.results || []).map(r => `<tr>
+              <td class="mono">${r.ip}</td>
+              <td>${r.site}</td>
+              <td><span class="badge ${r.outcome === 'discovered' ? 'badge-success' : r.outcome === 'skipped_exists' ? 'badge-neutral' : 'badge-danger'}">${r.outcome}</span></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  }
+});
+
+/* ── Reports ────────────────────────────────────────────────── */
+Router.register('reports', async (el) => {
+  el.innerHTML = `
+    <div class="tabs" id="rep-tabs">
+      <div class="tab active" data-tab="inventory">Inventory Export</div>
+      <div class="tab" data-tab="unreachable">Unreachable</div>
+      <div class="tab" data-tab="sites">Sites</div>
+      <div class="tab" data-tab="config-search">Config Search</div>
+    </div>
+    <div id="rep-content"></div>`;
+
+  const panels = {
+    inventory:     renderInventory,
+    unreachable:   renderUnreachable,
+    sites:         renderSites,
+    'config-search': renderConfigSearch,
+  };
+
+  document.querySelectorAll('#rep-tabs .tab').forEach(t => {
+    t.addEventListener('click', () => {
+      document.querySelectorAll('#rep-tabs .tab').forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+      panels[t.dataset.tab](document.getElementById('rep-content'));
+    });
+  });
+  renderInventory(document.getElementById('rep-content'));
+
+  async function renderInventory(area) {
+    area.innerHTML = '<div class="empty-state"><div class="spinner spinner-lg"></div></div>';
+    try {
+      const d = await API.get('/dnac/devices?limit=2000');
+      const cols = [
+        { key: 'hostname', label: 'Hostname' },
+        { key: 'managementIpAddress', label: 'Mgmt IP', mono: true },
+        { key: 'platformId', label: 'Platform' },
+        { key: 'softwareVersion', label: 'Version', mono: true },
+        { key: 'reachabilityStatus', label: 'Status', render: v => reachBadge(v) },
+        { key: 'serialNumber', label: 'Serial', mono: true },
+        { key: 'upTime', label: 'Uptime' },
+        { key: 'lastContactFormatted', label: 'Last Contact' },
+      ];
+      area.innerHTML = `
+        <div class="section-header">
+          <div class="section-title">Full Inventory — ${d.total.toLocaleString()} devices</div>
+          <button class="btn btn-secondary btn-sm" onclick="downloadInventoryCsv()">⬇️ Download CSV</button>
+        </div>
+        <div class="table-wrap">${makeTable(cols, d.items)}</div>`;
+      bindTableSort(area.querySelector('.table-wrap'), cols, d.items, null);
+      window._inventoryItems = d.items;
+    } catch(e) { area.innerHTML = `<div class="alert alert-danger">${e.message}</div>`; }
+  }
+
+  window.downloadInventoryCsv = function() {
+    const items = window._inventoryItems || [];
+    const header = 'Hostname,ManagementIP,Platform,Version,Reachability,Serial,Uptime,LastContact\n';
+    const rows   = items.map(d =>
+      [d.hostname, d.managementIpAddress, d.platformId, d.softwareVersion,
+       d.reachabilityStatus, d.serialNumber, d.upTime, d.lastContactFormatted]
+      .map(v => `"${v||''}"`).join(',')
+    ).join('\n');
+    dlText(header + rows, `inventory_${new Date().toISOString().slice(0,10)}.csv`);
+  };
+
+  async function renderUnreachable(area) {
+    area.innerHTML = '<div class="empty-state"><div class="spinner spinner-lg"></div></div>';
+    try {
+      const d = await API.get('/dnac/devices?reachability=unreachable&limit=2000');
+      if (!d.total) { area.innerHTML = '<div class="alert alert-success">✅ All devices are reachable.</div>'; return; }
+      const cols = [
+        { key: 'hostname', label: 'Hostname' },
+        { key: 'managementIpAddress', label: 'Mgmt IP', mono: true },
+        { key: 'platformId', label: 'Platform' },
+        { key: 'lastContactFormatted', label: 'Last Contact' },
+        { key: 'reachabilityFailureReason', label: 'Failure Reason' },
+      ];
+      area.innerHTML = `
+        <div class="alert alert-danger" style="margin-bottom:12px">🔴 ${d.total} unreachable device(s)</div>
+        <div class="table-wrap">${makeTable(cols, d.items)}</div>`;
+      bindTableSort(area.querySelector('.table-wrap'), cols, d.items, null);
+    } catch(e) { area.innerHTML = `<div class="alert alert-danger">${e.message}</div>`; }
+  }
+
+  async function renderSites(area) {
+    area.innerHTML = '<div class="empty-state"><div class="spinner spinner-lg"></div></div>';
+    try {
+      const d = await API.get('/dnac/sites');
+      const cols = [
+        { key: 'name', label: 'Full Path', render: v => v },
+        { key: 'depth', label: 'Depth', render: (_, r) => r.name.split('/').length - 1 },
+      ];
+      const items = d.items.map(s => ({...s, depth: s.name.split('/').length - 1}));
+      area.innerHTML = `
+        <div class="section-header">
+          <div class="section-title">${d.total.toLocaleString()} sites</div>
+        </div>
+        <div class="table-wrap">${makeTable(cols, items)}</div>`;
+      bindTableSort(area.querySelector('.table-wrap'), cols, items, null);
+    } catch(e) { area.innerHTML = `<div class="alert alert-danger">${e.message}</div>`; }
+  }
+
+  function renderConfigSearch(area) {
+    area.innerHTML = `
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-header"><span class="card-title">Configuration String Search</span></div>
+        <div class="card-body">
+          <div class="alert alert-info" style="margin-bottom:16px">
+            ℹ️ Configs are pulled from DNAC (cached 10 min per device). Results appear as each
+            device's config is fetched and searched in parallel.
+          </div>
+
+          <!-- Search string -->
+          <div class="form-group">
+            <label class="form-label">Search string <span style="color:var(--danger)">*</span></label>
+            <input class="input" id="cs-query" placeholder="e.g.  summary-address  /  crypto map  /  ip route 0.0.0.0  /  aaa server">
+          </div>
+
+          <!-- Device filters -->
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:12px">
+            <div class="form-group" style="margin:0">
+              <label class="form-label">Hostname contains</label>
+              <input class="input" id="cs-hostname" placeholder="e.g.  ATL  or  router">
+            </div>
+            <div class="form-group" style="margin:0">
+              <label class="form-label">Management IP contains</label>
+              <input class="input" id="cs-ip" placeholder="e.g.  10.16">
+            </div>
+            <div class="form-group" style="margin:0">
+              <label class="form-label">Platform contains</label>
+              <input class="input" id="cs-platform" placeholder="e.g.  C9300  or  ISR">
+            </div>
+            <div class="form-group" style="margin:0">
+              <label class="form-label">Role contains</label>
+              <input class="input" id="cs-role" placeholder="e.g.  ACCESS  or  DISTRIBUTION">
+            </div>
+            <div class="form-group" style="margin:0">
+              <label class="form-label">Device family contains</label>
+              <input class="input" id="cs-family" placeholder="e.g.  Switches  or  Routers">
+            </div>
+            <div class="form-group" style="margin:0">
+              <label class="form-label">Reachability</label>
+              <select class="select" id="cs-reach">
+                <option value="Reachable">Reachable only (recommended)</option>
+                <option value="unreachable">Unreachable only</option>
+                <option value="">All devices</option>
+              </select>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:16px">
+            <div class="form-group" style="margin:0">
+              <label class="form-label">Max devices to search</label>
+              <input class="input" type="number" id="cs-max" value="500" min="1" max="2700" style="width:100px">
+            </div>
+            <div style="margin-top:20px;display:flex;gap:8px">
+              <button class="btn btn-primary" id="cs-run">🔍 Search Configs</button>
+              <button class="btn btn-ghost" id="cs-clear">Clear</button>
+            </div>
+            <span id="cs-status" style="font-size:12px;color:var(--text-secondary);margin-top:20px"></span>
+          </div>
+        </div>
+      </div>
+
+      <div id="cs-results"></div>`;
+
+    document.getElementById('cs-clear').addEventListener('click', () => {
+      ['cs-query','cs-hostname','cs-ip','cs-platform','cs-role','cs-family'].forEach(id => {
+        document.getElementById(id).value = '';
+      });
+      document.getElementById('cs-reach').value = 'Reachable';
+      document.getElementById('cs-max').value = '500';
+      document.getElementById('cs-results').innerHTML = '';
+      document.getElementById('cs-status').textContent = '';
+    });
+
+    document.getElementById('cs-query').addEventListener('keydown', e => {
+      if (e.key === 'Enter') document.getElementById('cs-run').click();
+    });
+
+    document.getElementById('cs-run').addEventListener('click', async () => {
+      const query = document.getElementById('cs-query').value.trim();
+      if (!query || query.length < 2) {
+        toast('Enter at least 2 characters to search', 'warn'); return;
+      }
+
+      const runBtn  = document.getElementById('cs-run');
+      const statusEl = document.getElementById('cs-status');
+      const resEl   = document.getElementById('cs-results');
+      runBtn.disabled = true;
+      statusEl.textContent = 'Searching…';
+      resEl.innerHTML = `
+        <div class="card">
+          <div class="card-body" style="text-align:center;padding:32px">
+            <div class="spinner spinner-lg" style="margin:0 auto 12px"></div>
+            <div style="color:var(--text-secondary);font-size:13px">
+              Fetching and searching device configs from DNAC.<br>
+              Configs are cached — subsequent searches on the same devices are instant.
+            </div>
+          </div>
+        </div>`;
+
+      const body = {
+        search_string:  query,
+        hostname:       document.getElementById('cs-hostname').value.trim() || null,
+        ip:             document.getElementById('cs-ip').value.trim()       || null,
+        platform:       document.getElementById('cs-platform').value.trim() || null,
+        role:           document.getElementById('cs-role').value.trim()     || null,
+        device_family:  document.getElementById('cs-family').value.trim()   || null,
+        reachability:   document.getElementById('cs-reach').value,
+        max_devices:    parseInt(document.getElementById('cs-max').value) || 500,
+      };
+
+      try {
+        const data = await API.post('/dnac/config-search', body);
+        runBtn.disabled = false;
+        statusEl.textContent = `${data.total_matches} device(s) matched in ${data.devices_matched_filter} searched`;
+        renderConfigResults(resEl, data, query);
+      } catch (e) {
+        runBtn.disabled = false;
+        statusEl.textContent = '';
+        resEl.innerHTML = `<div class="alert alert-danger">❌ ${e.message}</div>`;
+      }
+    });
+
+    function renderConfigResults(resEl, data, query) {
+      if (!data.total_matches) {
+        resEl.innerHTML = `
+          <div class="card">
+            <div class="card-body">
+              <div class="empty-state">
+                <div class="empty-state-icon">🔍</div>
+                <div class="empty-state-title">No matches found</div>
+                <div class="empty-state-desc">
+                  "${escHtml(query)}" was not found in any config across
+                  ${data.devices_matched_filter.toLocaleString()} device(s).
+                </div>
+              </div>
+            </div>
+          </div>`;
+        return;
+      }
+
+      // Summary metrics
+      const kpis = `
+        <div class="kpi-row cols-4" style="margin-bottom:16px">
+          <div class="kpi-card">
+            <div class="kpi-label">Devices filtered</div>
+            <div class="kpi-value">${data.devices_matched_filter.toLocaleString()}</div>
+          </div>
+          <div class="kpi-card success">
+            <div class="kpi-label">Devices with match</div>
+            <div class="kpi-value">${data.total_matches.toLocaleString()}</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Total matching lines</div>
+            <div class="kpi-value">${data.total_matching_lines.toLocaleString()}</div>
+          </div>
+          <div class="kpi-card teal">
+            <div class="kpi-label">Search string</div>
+            <div class="kpi-value" style="font-size:14px;padding-top:4px"><code>${escHtml(query)}</code></div>
+          </div>
+        </div>`;
+
+      // Summary table — clickable rows expand to show matching lines
+      const summaryRows = data.results.map((r, i) => `
+        <tr data-idx="${i}" onclick="toggleCsDetail(${i})">
+          <td>${r.hostname}</td>
+          <td class="mono">${r.ip || '—'}</td>
+          <td>${r.platform || '—'}</td>
+          <td>${r.role || '—'}</td>
+          <td><strong>${r.match_count}</strong></td>
+          <td style="text-align:right"><span class="badge badge-neutral">▼</span></td>
+        </tr>
+        <tr id="cs-detail-${i}" style="display:none">
+          <td colspan="6" style="padding:0;background:var(--bg)">
+            <div style="padding:10px 14px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center">
+              <input class="input" id="cs-line-filter-${i}" placeholder="Filter these lines…" style="max-width:260px"
+                oninput="filterCsLines(${i})">
+              <button class="btn btn-ghost btn-sm" onclick="downloadCsDevice(${i})">⬇️ Download</button>
+              <span style="font-size:11px;color:var(--text-secondary)">${r.match_count} line(s) match</span>
+            </div>
+            <pre class="code-block" id="cs-pre-${i}" style="border-radius:0;margin:0;max-height:360px">${
+              r.lines.map(l => `<span style="color:var(--text-light);user-select:none;margin-right:10px">${String(l.line_num).padStart(4)}</span>${highlightMatch(escHtml(l.text), escHtml(query))}`).join('\n')
+            }</pre>
+          </td>
+        </tr>`
+      ).join('');
+
+      resEl.innerHTML = `
+        ${kpis}
+        <div class="table-wrap">
+          <div class="table-toolbar">
+            <span class="table-count">${data.total_matches} device(s) with matches — click a row to expand</span>
+            <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="downloadCsAll()">⬇️ Download all</button>
+          </div>
+          <table>
+            <thead><tr>
+              <th>Hostname</th><th>IP</th><th>Platform</th><th>Role</th>
+              <th>Match Count</th><th></th>
+            </tr></thead>
+            <tbody id="cs-tbody">${summaryRows}</tbody>
+          </table>
+        </div>`;
+
+      // Store for download
+      window._csData = data;
+      window._csQuery = query;
+    }
+
+    window.toggleCsDetail = function(idx) {
+      const row = document.getElementById(`cs-detail-${idx}`);
+      if (!row) return;
+      const open = row.style.display !== 'none';
+      row.style.display = open ? 'none' : '';
+      // Update arrow indicator on the parent row
+      const parentRow = document.querySelector(`#cs-tbody tr[data-idx="${idx}"]`);
+      const badge = parentRow?.querySelector('.badge');
+      if (badge) badge.textContent = open ? '▼' : '▲';
+      if (!open) row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    };
+
+    window.filterCsLines = function(idx) {
+      const q   = document.getElementById(`cs-line-filter-${idx}`)?.value.toLowerCase() || '';
+      const pre = document.getElementById(`cs-pre-${idx}`);
+      const data = window._csData;
+      if (!pre || !data) return;
+      const r   = data.results[idx];
+      const lines = q
+        ? r.lines.filter(l => l.text.toLowerCase().includes(q))
+        : r.lines;
+      pre.innerHTML = lines.map(l =>
+        `<span style="color:var(--text-light);user-select:none;margin-right:10px">${String(l.line_num).padStart(4)}</span>${highlightMatch(escHtml(l.text), escHtml(window._csQuery))}`
+      ).join('\n');
+    };
+
+    window.downloadCsDevice = function(idx) {
+      const data = window._csData;
+      if (!data) return;
+      const r    = data.results[idx];
+      const text = `Device: ${r.hostname} (${r.ip})\nSearch: "${data.search_string}"\n${'='.repeat(60)}\n` +
+        r.lines.map(l => `${String(l.line_num).padStart(5)}: ${l.text}`).join('\n');
+      dlText(text, `${r.hostname}_matches.txt`);
+    };
+
+    window.downloadCsAll = function() {
+      const data = window._csData;
+      if (!data) return;
+      const text = data.results.map(r =>
+        `${'='.repeat(60)}\nDevice: ${r.hostname} (${r.ip})\nPlatform: ${r.platform || '—'}\nMatches: ${r.match_count}\nSearch: "${data.search_string}"\n${'='.repeat(60)}\n` +
+        r.lines.map(l => `${String(l.line_num).padStart(5)}: ${l.text}`).join('\n')
+      ).join('\n\n');
+      dlText(text, `config_search_${new Date().toISOString().slice(0,10)}.txt`);
+    };
+
+    function highlightMatch(html, query) {
+      // Case-insensitive highlight — wrap matches in a span
+      const regex = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+      return html.replace(regex, `<mark style="background:#fbbf24;color:#1c1917;border-radius:2px;padding:0 1px">$1</mark>`);
+    }
+  }
+});
+
+/* ── Utilities ──────────────────────────────────────────────── */
+function escHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function dlText(text, filename) {
+  const a   = document.createElement('a');
+  a.href    = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+/* ── Bootstrap ──────────────────────────────────────────────── */
+Router.init();
+loadStatus();
+setInterval(loadStatus, 60_000);
