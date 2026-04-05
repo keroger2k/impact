@@ -4,7 +4,7 @@ cache.py — In-memory TTL cache with disk persistence + system connectivity che
 Replaces Streamlit's @st.cache_data. Thread-safe, async-compatible.
 Data is stored as plain dicts/lists — no SDK objects escape the client layer.
 
-Keys matching DISK_KEYS or DISK_PREFIXES are written to data/cache/ as JSON and
+Keys matching DISK_KEYS or DISK_PREFIXES are written to {project}/data/cache/ as JSON and
 survive server restarts. All other keys (status checks, per-device configs) are
 memory-only.
 """
@@ -23,7 +23,8 @@ TTL_DEVICES = 3600   # 1 hour
 TTL_SITES   = 3600
 TTL_STATUS  = 300    # 5 minutes
 
-CACHE_DIR    = Path("data/cache")
+# Absolute path so disk cache works regardless of where uvicorn is invoked from
+CACHE_DIR    = Path(__file__).parent / "data" / "cache"
 DISK_KEYS    = {"devices", "sites"}
 DISK_PREFIXES = ("pan_", "ise_")
 
