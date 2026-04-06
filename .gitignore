@@ -166,7 +166,7 @@ cython_debug/
 data/cache/
 
 # Generated Tailwind CSS (rebuild with: pytailwindcss -i static/tailwind.css -o static/dist/tailwind.css --minify)
-static/dist/
+#static/dist/
 
 # PyCharm
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
