@@ -14,8 +14,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from auth import require_auth
 from cache import AppCache
-from routers import dnac, ise, firewall, commands, import_
+from routers import dnac, ise, firewall, commands, import_, auth as auth_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,11 +55,14 @@ app.add_middleware(
 )
 
 # ── API routers ────────────────────────────────────────────────────────────────
-app.include_router(dnac.router,      prefix="/api/dnac",     tags=["DNAC"])
-app.include_router(ise.router,       prefix="/api/ise",      tags=["ISE"])
-app.include_router(firewall.router,  prefix="/api/firewall", tags=["Firewall"])
-app.include_router(commands.router,  prefix="/api/commands", tags=["Commands"])
-app.include_router(import_.router,   prefix="/api/import",   tags=["Import"])
+_auth_dep = {"dependencies": [__import__("fastapi").Depends(require_auth)]}
+
+app.include_router(auth_router.router, prefix="/api/auth",     tags=["Auth"])
+app.include_router(dnac.router,      prefix="/api/dnac",     tags=["DNAC"],     **_auth_dep)
+app.include_router(ise.router,       prefix="/api/ise",      tags=["ISE"],      **_auth_dep)
+app.include_router(firewall.router,  prefix="/api/firewall", tags=["Firewall"], **_auth_dep)
+app.include_router(commands.router,  prefix="/api/commands", tags=["Commands"], **_auth_dep)
+app.include_router(import_.router,   prefix="/api/import",   tags=["Import"],   **_auth_dep)
 
 # ── System status ──────────────────────────────────────────────────────────────
 @app.get("/api/status")

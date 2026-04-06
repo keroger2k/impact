@@ -1,20 +1,20 @@
 """routers/commands.py — Ad-hoc SSH command runner with SSE streaming.
 
-Credentials are read from DOMAIN_USERNAME / DOMAIN_PASSWORD env vars.
-No credentials are accepted or stored in the HTTP request.
+Credentials come from the logged-in user's session (AD credentials).
 """
 
 import asyncio
 import json
 import logging
-import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+from auth import SessionEntry, require_auth
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -36,15 +36,6 @@ def guess_device_type(platform_id: str) -> str:
         if substr in pid:
             return dtype
     return "cisco_ios"
-
-
-def _get_creds() -> tuple[str, str]:
-    """Return (username, password) from env. Raises 503 if not set."""
-    u = os.getenv("DOMAIN_USERNAME", "")
-    p = os.getenv("DOMAIN_PASSWORD", "")
-    if not u or not p:
-        raise HTTPException(503, "DOMAIN_USERNAME and DOMAIN_PASSWORD must be set in .env")
-    return u, p
 
 
 def _run_on_device(
@@ -90,9 +81,9 @@ class CommandRequest(BaseModel):
 
 
 @router.post("/run")
-async def run_command(req: CommandRequest):
+async def run_command(req: CommandRequest, session: SessionEntry = Depends(require_auth)):
     """Execute a command on multiple devices. Streams SSE progress."""
-    username, password = _get_creds()
+    username, password = session.username, session.password
 
     async def generate():
         total = len(req.devices)

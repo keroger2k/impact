@@ -10,15 +10,18 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 import clients.dnac as dc
+import auth as auth_module
+from auth import SessionEntry, require_auth
 from cache import cache, TTL_DEVICES, TTL_SITES
+from fastapi import Depends
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-def _get_dnac():
+def _get_dnac(session: SessionEntry):
     try:
-        return dc.get_client()
+        return auth_module.get_dnac_for_session(session)
     except Exception as e:
         raise HTTPException(503, f"DNAC connection failed: {e}")
 
@@ -51,12 +54,13 @@ async def list_devices(
     site:         Optional[str] = None,
     limit:        int = Query(500, le=2000),
     offset:       int = Query(0, ge=0),
+    session:      SessionEntry = Depends(require_auth),
 ):
     """Return filtered device list from cache."""
     devices = cache.get("devices")
     if devices is None:
         loop = asyncio.get_event_loop()
-        dnac    = _get_dnac()
+        dnac    = _get_dnac(session)
         devices = await loop.run_in_executor(None, dc.get_all_devices, dnac)
         cache.set("devices", devices, TTL_DEVICES)
 
@@ -90,12 +94,12 @@ async def list_devices(
 
 
 @router.get("/devices/stats")
-async def device_stats():
+async def device_stats(session: SessionEntry = Depends(require_auth)):
     """Summary statistics for the dashboard."""
     devices = cache.get("devices")
     if devices is None:
         loop    = asyncio.get_event_loop()
-        dnac    = _get_dnac()
+        dnac    = _get_dnac(session)
         devices = await loop.run_in_executor(None, dc.get_all_devices, dnac)
         cache.set("devices", devices, TTL_DEVICES)
 
@@ -128,7 +132,7 @@ async def get_device(device_id: str):
 
 
 @router.get("/devices/{device_id}/config")
-async def get_device_config(device_id: str):
+async def get_device_config(device_id: str, session: SessionEntry = Depends(require_auth)):
     """Running configuration for a device."""
     cache_key = f"config_{device_id}"
     cached    = cache.get(cache_key)
@@ -136,7 +140,7 @@ async def get_device_config(device_id: str):
         return {"config": cached, "cached": True}
 
     loop   = asyncio.get_event_loop()
-    dnac   = _get_dnac()
+    dnac   = _get_dnac(session)
     config = await loop.run_in_executor(None, dc.get_device_config, dnac, device_id)
     if not config:
         raise HTTPException(404, "Config not available for this device")
@@ -148,7 +152,7 @@ async def get_device_config(device_id: str):
 # ── IP Lookup ─────────────────────────────────────────────────────────────────
 
 @router.get("/ip-lookup/{ip}")
-async def ip_lookup(ip: str):
+async def ip_lookup(ip: str, session: SessionEntry = Depends(require_auth)):
     """Find what interface and device owns an IP address."""
     import ipaddress as _ip
     try:
@@ -157,7 +161,7 @@ async def ip_lookup(ip: str):
         raise HTTPException(400, f"'{ip}' is not a valid IP address")
 
     loop   = asyncio.get_event_loop()
-    dnac   = _get_dnac()
+    dnac   = _get_dnac(session)
     ifaces = await loop.run_in_executor(None, dc.get_interface_by_ip, dnac, ip)
 
     if not ifaces:
@@ -168,7 +172,7 @@ async def ip_lookup(ip: str):
 
     dev_site_map = cache.get("device_site_map")
     if dev_site_map is None:
-        sites = cache.get("sites") or []
+        sites        = cache.get("sites") or []
         dev_site_map = await loop.run_in_executor(None, dc.build_device_site_map, dnac, sites)
         cache.set("device_site_map", dev_site_map, TTL_SITES)
 
@@ -213,11 +217,11 @@ async def ip_lookup(ip: str):
 # ── Sites ─────────────────────────────────────────────────────────────────────
 
 @router.get("/sites")
-async def list_sites(filter: Optional[str] = None):
+async def list_sites(filter: Optional[str] = None, session: SessionEntry = Depends(require_auth)):
     sites = cache.get("sites")
     if sites is None:
         loop  = asyncio.get_event_loop()
-        dnac  = _get_dnac()
+        dnac  = _get_dnac(session)
         sites = await loop.run_in_executor(None, dc.get_site_cache, dnac)
         cache.set("sites", sites, TTL_SITES)
 
@@ -253,7 +257,7 @@ class TagDevicesRequest(BaseModel):
 
 
 @router.post("/tag-devices")
-async def tag_devices(req: TagDevicesRequest):
+async def tag_devices(req: TagDevicesRequest, session: SessionEntry = Depends(require_auth)):
     """Look up or create a tag and apply it to devices by management IP. Streams SSE progress."""
     from fastapi.responses import StreamingResponse
     import json
@@ -263,7 +267,7 @@ async def tag_devices(req: TagDevicesRequest):
             return f"data: {json.dumps(data)}\n\n"
 
         loop = asyncio.get_event_loop()
-        dnac = _get_dnac()
+        dnac = _get_dnac(session)
 
         # Resolve IPs → device IDs using the device cache
         devices   = cache.get("devices") or []
@@ -337,7 +341,7 @@ class ConfigSearchRequest(BaseModel):
 
 
 @router.post("/config-search")
-async def config_search(req: ConfigSearchRequest):
+async def config_search(req: ConfigSearchRequest, session: SessionEntry = Depends(require_auth)):
     """
     Pull device configs from DNAC (cached per device, 10 min TTL) and
     search for a string. Returns matching devices with the lines that matched.
@@ -352,7 +356,7 @@ async def config_search(req: ConfigSearchRequest):
     devices = cache.get("devices")
     if devices is None:
         loop    = asyncio.get_event_loop()
-        dnac    = _get_dnac()
+        dnac    = _get_dnac(session)
         devices = await loop.run_in_executor(None, dc.get_all_devices, dnac)
         cache.set("devices", devices, TTL_DEVICES)
 
@@ -398,7 +402,7 @@ async def config_search(req: ConfigSearchRequest):
         filtered = filtered[:req.max_devices]
 
     # ── 3. Fetch configs in parallel from DNAC cache ───────────────────────────
-    dnac     = _get_dnac()
+    dnac     = _get_dnac(session)
     loop     = asyncio.get_event_loop()
     search   = req.search_string.lower()
     results  = []

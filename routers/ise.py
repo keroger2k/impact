@@ -5,9 +5,11 @@ import json
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+import auth as auth_module
 import clients.ise as ic
+from auth import SessionEntry, require_auth
 from cache import cache
 
 router = APIRouter()
@@ -23,9 +25,9 @@ ISE_CACHE_KEYS = [
 ]
 
 
-def _get_ise():
+def _get_ise(session: SessionEntry):
     try:
-        return ic.get_client()
+        return auth_module.get_ise_for_session(session)
     except Exception as e:
         raise HTTPException(503, f"ISE connection failed: {e}")
 
@@ -57,8 +59,8 @@ async def refresh_ise_cache():
 # ── Network Access Devices ────────────────────────────────────────────────────
 
 @router.get("/nads")
-async def list_nads(search: Optional[str] = None):
-    ise  = _get_ise()
+async def list_nads(search: Optional[str] = None, session: SessionEntry = Depends(require_auth)):
+    ise  = _get_ise(session)
     loop = asyncio.get_event_loop()
     nads = await loop.run_in_executor(None, _cached, "ise_nads",
                lambda: ic.get_network_devices(ise, ""))
@@ -69,8 +71,8 @@ async def list_nads(search: Optional[str] = None):
 
 
 @router.get("/nads/{nad_id}")
-async def get_nad(nad_id: str):
-    ise    = _get_ise()
+async def get_nad(nad_id: str, session: SessionEntry = Depends(require_auth)):
+    ise    = _get_ise(session)
     loop   = asyncio.get_event_loop()
     detail = await loop.run_in_executor(None, ic.get_network_device_detail, ise, nad_id)
     if not detail:
@@ -79,8 +81,8 @@ async def get_nad(nad_id: str):
 
 
 @router.get("/device-groups")
-async def list_device_groups():
-    ise  = _get_ise()
+async def list_device_groups(session: SessionEntry = Depends(require_auth)):
+    ise  = _get_ise(session)
     loop = asyncio.get_event_loop()
     groups = await loop.run_in_executor(None, _cached, "ise_nad_groups",
                  lambda: ic.get_network_device_groups(ise))
@@ -90,16 +92,16 @@ async def list_device_groups():
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.get("/endpoints")
-async def search_endpoints(mac: str = Query(..., min_length=2)):
-    ise       = _get_ise()
+async def search_endpoints(mac: str = Query(..., min_length=2), session: SessionEntry = Depends(require_auth)):
+    ise       = _get_ise(session)
     loop      = asyncio.get_event_loop()
     endpoints = await loop.run_in_executor(None, ic.get_endpoints, ise, mac)
     return {"total": len(endpoints), "items": endpoints}
 
 
 @router.get("/endpoints/{ep_id}")
-async def get_endpoint(ep_id: str):
-    ise    = _get_ise()
+async def get_endpoint(ep_id: str, session: SessionEntry = Depends(require_auth)):
+    ise    = _get_ise(session)
     loop   = asyncio.get_event_loop()
     detail = await loop.run_in_executor(None, ic.get_endpoint_detail, ise, ep_id)
     if not detail:
@@ -108,8 +110,8 @@ async def get_endpoint(ep_id: str):
 
 
 @router.get("/endpoint-groups")
-async def list_endpoint_groups():
-    ise  = _get_ise()
+async def list_endpoint_groups(session: SessionEntry = Depends(require_auth)):
+    ise  = _get_ise(session)
     loop = asyncio.get_event_loop()
     groups = await loop.run_in_executor(None, _cached, "ise_endpoint_groups",
                  lambda: ic.get_endpoint_groups(ise))
@@ -119,8 +121,8 @@ async def list_endpoint_groups():
 # ── Identity ──────────────────────────────────────────────────────────────────
 
 @router.get("/identity-groups")
-async def list_identity_groups():
-    ise  = _get_ise()
+async def list_identity_groups(session: SessionEntry = Depends(require_auth)):
+    ise  = _get_ise(session)
     loop = asyncio.get_event_loop()
     groups = await loop.run_in_executor(None, _cached, "ise_identity_groups",
                  lambda: ic.get_identity_groups(ise))
@@ -128,8 +130,8 @@ async def list_identity_groups():
 
 
 @router.get("/users")
-async def list_users(search: Optional[str] = None):
-    ise  = _get_ise()
+async def list_users(search: Optional[str] = None, session: SessionEntry = Depends(require_auth)):
+    ise  = _get_ise(session)
     loop = asyncio.get_event_loop()
     users = await loop.run_in_executor(None, _cached, "ise_users",
                 lambda: ic.get_internal_users(ise, ""))
@@ -142,8 +144,8 @@ async def list_users(search: Optional[str] = None):
 # ── TrustSec ──────────────────────────────────────────────────────────────────
 
 @router.get("/sgts")
-async def list_sgts():
-    ise  = _get_ise()
+async def list_sgts(session: SessionEntry = Depends(require_auth)):
+    ise  = _get_ise(session)
     loop = asyncio.get_event_loop()
     raw  = await loop.run_in_executor(None, _cached, "ise_sgts",
                lambda: ic.get_sgts(ise))
@@ -159,8 +161,8 @@ async def list_sgts():
 
 
 @router.get("/sgacls")
-async def list_sgacls():
-    ise  = _get_ise()
+async def list_sgacls(session: SessionEntry = Depends(require_auth)):
+    ise  = _get_ise(session)
     loop = asyncio.get_event_loop()
     sgacls = await loop.run_in_executor(None, _cached, "ise_sgacls",
                  lambda: ic.get_sgacls(ise))
@@ -168,8 +170,8 @@ async def list_sgacls():
 
 
 @router.get("/egress-matrix")
-async def egress_matrix():
-    ise  = _get_ise()
+async def egress_matrix(session: SessionEntry = Depends(require_auth)):
+    ise  = _get_ise(session)
     loop = asyncio.get_event_loop()
     cells = await loop.run_in_executor(None, _cached, "ise_egress_matrix",
                 lambda: ic.get_egress_matrix(ise))
@@ -179,8 +181,8 @@ async def egress_matrix():
 # ── Policy ────────────────────────────────────────────────────────────────────
 
 @router.get("/policy-sets")
-async def list_policy_sets():
-    ise  = _get_ise()
+async def list_policy_sets(session: SessionEntry = Depends(require_auth)):
+    ise  = _get_ise(session)
     loop = asyncio.get_event_loop()
     sets = await loop.run_in_executor(None, _cached, "ise_policy_sets",
                lambda: ic.get_policy_sets(ise))
@@ -188,8 +190,8 @@ async def list_policy_sets():
 
 
 @router.get("/policy-sets/{policy_id}/auth-rules")
-async def get_auth_rules(policy_id: str):
-    ise  = _get_ise()
+async def get_auth_rules(policy_id: str, session: SessionEntry = Depends(require_auth)):
+    ise  = _get_ise(session)
     loop = asyncio.get_event_loop()
     rules = await loop.run_in_executor(None, _cached, f"ise_auth_rules_{policy_id}",
                 lambda: ic.get_auth_rules(ise, policy_id))
@@ -197,8 +199,8 @@ async def get_auth_rules(policy_id: str):
 
 
 @router.get("/authz-profiles")
-async def list_authz_profiles():
-    ise  = _get_ise()
+async def list_authz_profiles(session: SessionEntry = Depends(require_auth)):
+    ise  = _get_ise(session)
     loop = asyncio.get_event_loop()
     profiles = await loop.run_in_executor(None, _cached, "ise_authz_profiles",
                    lambda: ic.get_authz_profiles(ise))
@@ -206,8 +208,8 @@ async def list_authz_profiles():
 
 
 @router.get("/allowed-protocols")
-async def list_allowed_protocols():
-    ise  = _get_ise()
+async def list_allowed_protocols(session: SessionEntry = Depends(require_auth)):
+    ise  = _get_ise(session)
     loop = asyncio.get_event_loop()
     protocols = await loop.run_in_executor(None, _cached, "ise_allowed_protocols",
                     lambda: ic.get_allowed_protocols(ise))
@@ -217,8 +219,8 @@ async def list_allowed_protocols():
 # ── Profiling & Admin ─────────────────────────────────────────────────────────
 
 @router.get("/profiling-policies")
-async def list_profiling_policies():
-    ise  = _get_ise()
+async def list_profiling_policies(session: SessionEntry = Depends(require_auth)):
+    ise  = _get_ise(session)
     loop = asyncio.get_event_loop()
     policies = await loop.run_in_executor(None, _cached, "ise_profiling_policies",
                    lambda: ic.get_profiling_policies(ise))
@@ -226,8 +228,8 @@ async def list_profiling_policies():
 
 
 @router.get("/deployment-nodes")
-async def list_deployment_nodes():
-    ise  = _get_ise()
+async def list_deployment_nodes(session: SessionEntry = Depends(require_auth)):
+    ise  = _get_ise(session)
     loop = asyncio.get_event_loop()
     nodes = await loop.run_in_executor(None, _cached, "ise_deployment_nodes",
                 lambda: ic.get_deployment_nodes(ise))

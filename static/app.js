@@ -6,19 +6,43 @@
 
 'use strict';
 
+/* ── Auth token store ───────────────────────────────────────── */
+const Auth = {
+  token() { return localStorage.getItem('impact_token'); },
+  username() { return localStorage.getItem('impact_user'); },
+  save(token, username) {
+    localStorage.setItem('impact_token', token);
+    localStorage.setItem('impact_user', username);
+  },
+  clear() {
+    localStorage.removeItem('impact_token');
+    localStorage.removeItem('impact_user');
+  },
+  headers() {
+    const t = this.token();
+    return t ? { 'Authorization': `Bearer ${t}` } : {};
+  },
+};
+
 /* ── API client ─────────────────────────────────────────────── */
 const API = {
+  _handle401() {
+    Auth.clear();
+    renderLogin();
+  },
   async get(path) {
-    const r = await fetch(`/api${path}`);
+    const r = await fetch(`/api${path}`, { headers: Auth.headers() });
+    if (r.status === 401) { this._handle401(); throw new Error('Not authenticated'); }
     if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || r.statusText); }
     return r.json();
   },
   async post(path, body) {
     const r = await fetch(`/api${path}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...Auth.headers() },
       body: JSON.stringify(body),
     });
+    if (r.status === 401) { this._handle401(); throw new Error('Not authenticated'); }
     if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || r.statusText); }
     return r.json();
   },
@@ -26,9 +50,10 @@ const API = {
     /* POST then read the SSE stream line by line */
     fetch(`/api${path}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...Auth.headers() },
       body: JSON.stringify(body),
     }).then(async r => {
+      if (r.status === 401) { this._handle401(); if (onDone) onDone(); return; }
       const reader = r.body.getReader();
       const dec    = new TextDecoder();
       let buf      = '';
@@ -2163,7 +2188,109 @@ function dlText(text, filename) {
   URL.revokeObjectURL(a.href);
 }
 
+/* ── Login ──────────────────────────────────────────────────── */
+function renderLogin(errorMsg) {
+  // Hide the sidebar, expand main to full width
+  document.getElementById('sidebar').style.display = 'none';
+  const main = document.getElementById('main');
+  main.style.gridColumn = '1 / -1';   // span full width
+  main.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:center;min-height:100vh;background:var(--bg-secondary)">
+      <div class="card" style="width:360px;padding:32px">
+        <div style="text-align:center;margin-bottom:24px">
+          <div style="font-size:32px;font-weight:800;color:var(--cisco-blue);letter-spacing:-1px">IMPACT II</div>
+          <div style="font-size:13px;color:var(--text-light);margin-top:4px">TSA Network Operations</div>
+        </div>
+        ${errorMsg ? `<div class="alert alert-danger" style="margin-bottom:16px">${errorMsg}</div>` : ''}
+        <form id="login-form" autocomplete="on">
+          <div style="margin-bottom:14px">
+            <label style="display:block;font-size:12px;font-weight:600;color:var(--text-light);margin-bottom:6px">Username</label>
+            <input id="login-user" class="input" type="text" placeholder="domain\\username or username" autocomplete="username" style="width:100%">
+          </div>
+          <div style="margin-bottom:20px">
+            <label style="display:block;font-size:12px;font-weight:600;color:var(--text-light);margin-bottom:6px">Password</label>
+            <input id="login-pass" class="input" type="password" placeholder="AD password" autocomplete="current-password" style="width:100%">
+          </div>
+          <button id="login-btn" class="btn btn-primary" style="width:100%">Sign In</button>
+        </form>
+      </div>
+    </div>`;
+
+  const form = document.getElementById('login-form');
+  const btn  = document.getElementById('login-btn');
+
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    const username = document.getElementById('login-user').value.trim();
+    const password = document.getElementById('login-pass').value;
+    if (!username || !password) return;
+
+    btn.disabled   = true;
+    btn.textContent = 'Signing in…';
+
+    try {
+      const r = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        renderLogin(data.detail || 'Login failed — check your credentials');
+        return;
+      }
+      Auth.save(data.token, data.username);
+      bootApp();
+    } catch (e) {
+      renderLogin('Network error — please try again');
+    }
+  });
+}
+
+function bootApp() {
+  // Restore the main app shell
+  document.getElementById('sidebar').style.display = '';
+  const main = document.getElementById('main');
+  main.style.gridColumn = '';
+  main.innerHTML = `
+    <header id="topbar">
+      <span id="page-title">Dashboard</span>
+      <div id="topbar-actions">
+        <span style="font-size:13px;color:var(--text-light);margin-right:12px">👤 ${Auth.username()}</span>
+        <button class="btn btn-ghost btn-sm" onclick="refreshCache()">🔄 Refresh Cache</button>
+        <button class="btn btn-ghost btn-sm" onclick="logout()" style="margin-left:8px">Sign Out</button>
+      </div>
+    </header>
+    <div id="content">
+      <div class="empty-state"><div class="spinner spinner-lg"></div></div>
+    </div>`;
+
+  Router.init();
+  loadStatus();
+  setInterval(loadStatus, 60_000);
+}
+
+async function logout() {
+  try { await API.post('/auth/logout', {}); } catch {}
+  Auth.clear();
+  renderLogin();
+}
+
 /* ── Bootstrap ──────────────────────────────────────────────── */
-Router.init();
-loadStatus();
-setInterval(loadStatus, 60_000);
+(async () => {
+  const token = Auth.token();
+  if (token) {
+    // Validate the stored token
+    try {
+      const r = await fetch('/api/auth/me', { headers: { 'Authorization': `Bearer ${token}` } });
+      if (r.ok) {
+        const { username } = await r.json();
+        Auth.save(token, username);   // refresh stored username
+        bootApp();
+        return;
+      }
+    } catch {}
+    Auth.clear();
+  }
+  renderLogin();
+})();

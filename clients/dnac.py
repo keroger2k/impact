@@ -19,21 +19,35 @@ _client = None
 _POOL_SIZE = 50
 
 
+def _make_client(username: str, password: str) -> api.DNACenterAPI:
+    client = api.DNACenterAPI(
+        base_url=os.getenv("DNA_CENTER_BASE_URL"),
+        username=username,
+        password=password,
+        version=os.getenv("DNA_CENTER_VERSION", "2.3.7.6"),
+        verify=False,
+    )
+    adapter = HTTPAdapter(pool_connections=_POOL_SIZE, pool_maxsize=_POOL_SIZE)
+    session = client.custom_caller._session._req_session
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return client
+
+
 def get_client() -> api.DNACenterAPI:
+    """Return the shared service-account client (used for cache warming)."""
     global _client
     if _client is None:
-        _client = api.DNACenterAPI(
-            base_url=os.getenv("DNA_CENTER_BASE_URL"),
-            username=os.getenv("DOMAIN_USERNAME"),
-            password=os.getenv("DOMAIN_PASSWORD"),
-            version=os.getenv("DNA_CENTER_VERSION", "2.3.7.6"),
-            verify=False,
+        _client = _make_client(
+            os.getenv("DOMAIN_USERNAME", ""),
+            os.getenv("DOMAIN_PASSWORD", ""),
         )
-        adapter = HTTPAdapter(pool_connections=_POOL_SIZE, pool_maxsize=_POOL_SIZE)
-        session = _client.custom_caller._session._req_session
-        session.mount("https://", adapter)
-        session.mount("http://", adapter)
     return _client
+
+
+def create_user_client(username: str, password: str) -> api.DNACenterAPI:
+    """Create a per-user DNAC client (not cached globally)."""
+    return _make_client(username, password)
 
 
 def _dictify(obj) -> dict:
