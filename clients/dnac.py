@@ -6,12 +6,17 @@ import os
 import urllib3
 from dnacentersdk import api
 from dotenv import load_dotenv
+from requests.adapters import HTTPAdapter
 
 load_dotenv()
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logger = logging.getLogger(__name__)
 
 _client = None
+
+# Allow enough concurrent DNAC connections for bulk operations (config search,
+# device-site map build, cache warm) without hitting urllib3's default pool of 10.
+_POOL_SIZE = 50
 
 
 def get_client() -> api.DNACenterAPI:
@@ -24,6 +29,10 @@ def get_client() -> api.DNACenterAPI:
             version=os.getenv("DNA_CENTER_VERSION", "2.3.7.6"),
             verify=False,
         )
+        adapter = HTTPAdapter(pool_connections=_POOL_SIZE, pool_maxsize=_POOL_SIZE)
+        session = _client.custom_caller._session._req_session
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
     return _client
 
 
