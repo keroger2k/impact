@@ -25,7 +25,7 @@ TTL_STATUS  = 300    # 5 minutes
 
 # Absolute path so disk cache works regardless of where uvicorn is invoked from
 CACHE_DIR    = Path(__file__).parent / "data" / "cache"
-DISK_KEYS    = {"devices", "sites"}
+DISK_KEYS    = {"devices", "sites", "device_site_map"}
 DISK_PREFIXES = ("pan_", "ise_")
 
 
@@ -136,12 +136,14 @@ class AppCache:
         return None
 
     async def warm(self):
-        """Pre-fetch devices and sites on startup (skipped if disk cache is valid)."""
+        """Pre-fetch devices, sites, and device-site map on startup (skipped if disk cache is valid)."""
         async with self._lock:
             if self.get("devices") is None:
                 await asyncio.get_event_loop().run_in_executor(None, self._load_devices)
             if self.get("sites") is None:
                 await asyncio.get_event_loop().run_in_executor(None, self._load_sites)
+            if self.get("device_site_map") is None:
+                await asyncio.get_event_loop().run_in_executor(None, self._load_device_site_map)
 
     def _load_devices(self):
         try:
@@ -162,6 +164,17 @@ class AppCache:
             logger.info(f"Cache warmed: {len(sites)} sites")
         except Exception as e:
             logger.warning(f"Site cache warm failed: {e}")
+
+    def _load_device_site_map(self):
+        try:
+            import clients.dnac as dc
+            dnac         = dc.get_client()
+            sites        = self.get("sites") or []
+            dev_site_map = dc.build_device_site_map(dnac, sites)
+            self.set("device_site_map", dev_site_map, TTL_SITES)
+            logger.info(f"Cache warmed: device_site_map ({len(dev_site_map)} entries)")
+        except Exception as e:
+            logger.warning(f"Device site map warm failed: {e}")
 
     async def check_all_systems(self) -> dict:
         """Non-blocking connectivity check for all three systems."""

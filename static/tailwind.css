@@ -117,6 +117,12 @@
     display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   }
   .table-count { font-size: 12px; color: #5a7a96; margin-left: auto; }
+  .pagination {
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 14px; border-top: 1px solid #d0dce8;
+    background: #fafbfc;
+  }
+  .pagination-info { font-size: 12px; color: #5a7a96; flex: 1; text-align: center; }
 
   /* Tabs */
   .tabs { display: flex; border-bottom: 2px solid #d0dce8; margin-bottom: 20px; }
