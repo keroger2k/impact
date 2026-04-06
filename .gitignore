@@ -13,7 +13,6 @@ __pycache__/
 .vscode
 build/
 develop-eggs/
-dist/
 downloads/
 eggs/
 .eggs/
@@ -165,8 +164,6 @@ cython_debug/
 # Disk cache (persistent between restarts, not committed)
 data/cache/
 
-# Generated Tailwind CSS (rebuild with: pytailwindcss -i static/tailwind.css -o static/dist/tailwind.css --minify)
-#static/dist/
 
 # PyCharm
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
