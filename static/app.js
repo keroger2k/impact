@@ -355,6 +355,7 @@ Router.register('devices', async (el) => {
         <div class="search-input"><input class="input" id="dev-hostname" placeholder="Hostname…" style="width:160px"></div>
         <div class="search-input"><input class="input" id="dev-ip" placeholder="IP address…" style="width:140px"></div>
         <input class="input" id="dev-platform" placeholder="Platform…" style="width:130px">
+        <input class="input" id="dev-site" placeholder="Site…" style="width:150px">
         <select class="select" id="dev-reach" style="width:130px">
           <option value="">All reachability</option>
           <option value="reachable">Reachable</option>
@@ -447,6 +448,7 @@ Router.register('devices', async (el) => {
       hostname:     document.getElementById('dev-hostname').value,
       ip:           document.getElementById('dev-ip').value,
       platform:     document.getElementById('dev-platform').value,
+      site:         document.getElementById('dev-site').value,
       reachability: document.getElementById('dev-reach').value,
       limit:        2000,
     });
@@ -464,7 +466,7 @@ Router.register('devices', async (el) => {
   }
 
   document.getElementById('dev-search').addEventListener('click', doSearch);
-  ['dev-hostname','dev-ip','dev-platform'].forEach(id => {
+  ['dev-hostname','dev-ip','dev-platform','dev-site'].forEach(id => {
     document.getElementById(id)?.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
   });
   doSearch();

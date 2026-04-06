@@ -48,6 +48,7 @@ async def list_devices(
     platform:     Optional[str] = None,
     role:         Optional[str] = None,
     reachability: Optional[str] = None,
+    site:         Optional[str] = None,
     limit:        int = Query(500, le=2000),
     offset:       int = Query(0, ge=0),
 ):
@@ -75,6 +76,9 @@ async def list_devices(
             filtered = [d for d in filtered if d.get("reachabilityStatus") != "Reachable"]
 
     dev_site_map = cache.get("device_site_map") or {}
+
+    if site:
+        filtered = [d for d in filtered if site.lower() in (dev_site_map.get(d.get("id")) or "").lower()]
 
     total = len(filtered)
     paged = []
