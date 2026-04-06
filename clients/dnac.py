@@ -157,30 +157,38 @@ def build_device_site_map(dnac, site_cache: list[dict]) -> dict:
 
 def get_or_create_tag(dnac, tag_name: str) -> str:
     """Return the ID of a tag with the given name, creating it if it doesn't exist."""
-    resp = dnac.tag.get_tag(name=tag_name)
-    items = getattr(resp, "response", None) or []
-    for t in items:
-        if _dictify(t).get("name") == tag_name:
-            return _dictify(t)["id"]
-    created = dnac.tag.create_tag(name=tag_name)
-    tag_id  = getattr(created, "response", {})
-    if isinstance(tag_id, dict):
-        task_id = tag_id.get("taskId")
-        if task_id:
-            for _ in range(10):
-                import time as _time
-                _time.sleep(0.5)
-                task = dnac.task.get_task_by_id(task_id=task_id)
-                progress = getattr(task.response, "progress", None)
-                if progress:
-                    return progress          # DNAC returns the new tag ID as task progress
-    raise RuntimeError(f"Failed to create or find tag '{tag_name}'")
+    def _lookup() -> str | None:
+        resp  = dnac.tag.get_tag(name=tag_name)
+        items = getattr(resp, "response", None) or []
+        for t in items:
+            d = _dictify(t)
+            if d.get("name") == tag_name:
+                return d["id"]
+        return None
+
+    existing = _lookup()
+    if existing:
+        return existing
+
+    dnac.tag.create_tag(name=tag_name)
+
+    # Wait for DNAC to commit the tag, then look it up by name
+    import time as _time
+    for _ in range(10):
+        _time.sleep(0.5)
+        tag_id = _lookup()
+        if tag_id:
+            return tag_id
+
+    raise RuntimeError(f"Tag '{tag_name}' was created but could not be found afterwards")
 
 
 def tag_network_devices(dnac, tag_id: str, device_ids: list[str]) -> dict:
-    """Add the given device UUIDs as members of the tag. Returns the raw response dict."""
+    """Add the given device UUIDs as members of the tag."""
     payload = {"networkDevice": [{"id": uid} for uid in device_ids]}
-    resp    = dnac.tag.add_members_to_the_tag(id=tag_id, payload=payload)
+    resp    = dnac.custom_caller.call_api(
+        "POST", f"/dna/intent/api/v1/tag/{tag_id}/member", json=payload
+    )
     return _dictify(getattr(resp, "response", resp) or {})
 
 
