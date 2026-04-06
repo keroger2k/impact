@@ -2205,7 +2205,7 @@ function renderLogin(errorMsg) {
         <form id="login-form" autocomplete="on">
           <div style="margin-bottom:14px">
             <label style="display:block;font-size:12px;font-weight:600;color:var(--text-light);margin-bottom:6px">Username</label>
-            <input id="login-user" class="input" type="text" placeholder="domain\\username or username" autocomplete="username" style="width:100%">
+            <input id="login-user" class="input" type="text" placeholder="username" autocomplete="username" style="width:100%">
           </div>
           <div style="margin-bottom:20px">
             <label style="display:block;font-size:12px;font-weight:600;color:var(--text-light);margin-bottom:6px">Password</label>
