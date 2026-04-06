@@ -153,11 +153,14 @@ async def ip_lookup(ip: str):
     if not ifaces:
         return {"ip": ip, "found": False, "interfaces": []}
 
-    devices    = cache.get("devices") or []
-    id_to_dev  = {d.get("id"): d for d in devices if d.get("id")}
+    devices   = cache.get("devices") or []
+    id_to_dev = {d.get("id"): d for d in devices if d.get("id")}
 
-    sites      = cache.get("sites") or []
-    id_to_site = {s.get("id"): s.get("name") for s in sites if s.get("id")}
+    dev_site_map = cache.get("device_site_map")
+    if dev_site_map is None:
+        sites = cache.get("sites") or []
+        dev_site_map = await loop.run_in_executor(None, dc.build_device_site_map, dnac, sites)
+        cache.set("device_site_map", dev_site_map, TTL_SITES)
 
     enriched = []
     for iface in ifaces:
@@ -176,7 +179,7 @@ async def ip_lookup(ip: str):
             except ValueError:
                 subnet = mask
 
-        site_name = id_to_site.get(device.get("siteId")) if device else None
+        site_name = dev_site_map.get(dev_id) if dev_id else None
 
         enriched.append({
             "interface": {

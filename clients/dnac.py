@@ -119,6 +119,33 @@ def get_device_config(dnac, device_id: str) -> str:
         return ""
 
 
+def build_device_site_map(dnac, site_cache: list[dict]) -> dict:
+    """Return a mapping of {device_instanceUuid: site_name} by querying
+    the Global root site membership which returns all sites recursively."""
+    id_to_site = {s["id"]: s["name"] for s in site_cache if s.get("id")}
+    root = next((s for s in site_cache if s.get("name") == "Global"), None)
+    if not root:
+        return {}
+    try:
+        resp  = dnac.sites.get_membership(site_id=root["id"])
+        items = getattr(resp, "device", None) or []
+        result = {}
+        for group in items:
+            g        = _dictify(group)
+            site_id  = g.get("siteId")
+            site_name = id_to_site.get(site_id)
+            if not site_name:
+                continue
+            for dev in (g.get("response") or []):
+                uid = _dictify(dev).get("instanceUuid")
+                if uid:
+                    result[uid] = site_name
+        return result
+    except Exception as e:
+        logger.warning(f"Device-site map build failed: {e}")
+        return {}
+
+
 def get_interface_by_ip(dnac, ip: str) -> list[dict]:
     try:
         result = dnac.custom_caller.call_api(
