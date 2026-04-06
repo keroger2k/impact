@@ -183,13 +183,10 @@ def get_or_create_tag(dnac, tag_name: str) -> str:
     raise RuntimeError(f"Tag '{tag_name}' was created but could not be found afterwards")
 
 
-def tag_network_devices(dnac, tag_id: str, device_ids: list[str]) -> dict:
-    """Add the given device UUIDs as members of the tag."""
-    payload = {"networkDevice": [{"id": uid} for uid in device_ids]}
-    resp    = dnac.custom_caller.call_api(
-        "POST", f"/dna/intent/api/v1/tag/{tag_id}/member", json=payload
-    )
-    return _dictify(getattr(resp, "response", resp) or {})
+def tag_network_devices(dnac, tag_id: str, device_ids: list[str]) -> None:
+    """Associate tag_id with each device UUID using the bulk memberships endpoint."""
+    payload = [{"id": dev_id, "tags": [{"id": tag_id}]} for dev_id in device_ids]
+    dnac.tag.update_tags_associated_with_the_network_devices(payload=payload)
 
 
 def get_interface_by_ip(dnac, ip: str) -> list[dict]:
