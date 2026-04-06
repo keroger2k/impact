@@ -2075,7 +2075,7 @@ Router.register('reports', async (el) => {
         <div class="table-wrap">
           <div class="table-toolbar">
             <span class="table-count">${data.total_matches} device(s) with matches — click a row to expand</span>
-            <button class="btn btn-ghost btn-sm ml-auto" onclick="downloadCsAll()">⬇️ Download all</button>
+            <button class="btn btn-ghost btn-sm ml-auto" onclick="downloadCsAll()">⬇️ Download CSV</button>
           </div>
           <table>
             <thead><tr>
@@ -2129,11 +2129,12 @@ Router.register('reports', async (el) => {
     window.downloadCsAll = function() {
       const data = window._csData;
       if (!data) return;
-      const text = data.results.map(r =>
-        `${'='.repeat(60)}\nDevice: ${r.hostname} (${r.ip})\nPlatform: ${r.platform || '—'}\nMatches: ${r.match_count}\nSearch: "${data.search_string}"\n${'='.repeat(60)}\n` +
-        r.lines.map(l => `${String(l.line_num).padStart(5)}: ${l.text}`).join('\n')
-      ).join('\n\n');
-      dlText(text, `config_search_${new Date().toISOString().slice(0,10)}.txt`);
+      const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+      const header = 'Hostname,IP,Platform,Role,Line Number,Match Text\n';
+      const rows = data.results.flatMap(r =>
+        r.lines.map(l => [r.hostname, r.ip, r.platform, r.role, l.line_num, l.text].map(esc).join(','))
+      ).join('\n');
+      dlText(header + rows, `config_search_${new Date().toISOString().slice(0,10)}.csv`);
     };
 
     function highlightMatch(html, query) {
