@@ -202,6 +202,18 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); }
 @keyframes slideLeft { from { transform: translateX(24px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 @keyframes shimmer   { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 
+/* ── Pagination ─────────────────────────────────────────────── */
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0 4px;
+}
+.pagination-info {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
 /* ── Responsive ─────────────────────────────────────────────── */
 @media (max-width: 900px) {
   .grid-2, .detail-grid { grid-template-columns: 1fr; }

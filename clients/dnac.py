@@ -157,6 +157,8 @@ def get_interface_by_ip(dnac, ip: str) -> list[dict]:
         if isinstance(resp, list):
             return [_dictify(r) for r in resp]
     except Exception as e:
+        if "404" in str(e):
+            return []   # IP not found — normal, not an error
         logger.warning(f"IP lookup failed for {ip}: {e}")
     return []
 

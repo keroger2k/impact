@@ -74,8 +74,14 @@ async def list_devices(
         elif reachability.lower() == "unreachable":
             filtered = [d for d in filtered if d.get("reachabilityStatus") != "Reachable"]
 
-    total  = len(filtered)
-    paged  = [_enrich(d) for d in filtered[offset: offset + limit]]
+    dev_site_map = cache.get("device_site_map") or {}
+
+    total = len(filtered)
+    paged = []
+    for d in filtered[offset: offset + limit]:
+        enriched = _enrich(d)
+        enriched["siteName"] = dev_site_map.get(d.get("id"))
+        paged.append(enriched)
     return {"total": total, "offset": offset, "limit": limit, "items": paged}
 
 

@@ -374,12 +374,73 @@ Router.register('devices', async (el) => {
     { key: 'platformId',          label: 'Platform' },
     { key: 'softwareVersion',     label: 'IOS Version', mono: true },
     { key: 'role',                label: 'Role' },
+    { key: 'siteName',            label: 'Site' },
     { key: 'reachabilityStatus',  label: 'Status',
       render: v => reachBadge(v) },
     { key: 'lastContactFormatted', label: 'Last Contact' },
   ];
 
-  let allDevices = [];
+  const PAGE_SIZE = 50;
+  let allDevices = [], devPage = 0, devSortCol = null, devSortDir = 1;
+
+  function renderDeviceTable() {
+    const tableEl = document.getElementById('dev-table');
+    const total      = allDevices.length;
+    const totalPages = Math.ceil(total / PAGE_SIZE) || 1;
+    const start      = devPage * PAGE_SIZE;
+    const pageItems  = allDevices.slice(start, start + PAGE_SIZE);
+
+    if (!total) {
+      tableEl.innerHTML = `<div class="empty-state"><div class="empty-state-icon">📭</div>
+        <div class="empty-state-title">No results</div></div>`;
+      return;
+    }
+
+    const head = cols.map(c =>
+      `<th data-col="${c.key}" class="${devSortCol === c.key ? 'sorted' : ''}">${c.label}<span class="sort-arrow">↕</span></th>`
+    ).join('');
+    const body = pageItems.map((r, i) =>
+      `<tr data-idx="${start + i}">${cols.map(c => {
+        const raw = r[c.key];
+        const val = c.render ? c.render(raw, r) : (raw ?? '—');
+        return `<td class="${c.mono ? 'mono' : ''}">${val}</td>`;
+      }).join('')}</tr>`
+    ).join('');
+
+    const showStart = start + 1, showEnd = Math.min(start + PAGE_SIZE, total);
+    tableEl.innerHTML = `
+      <table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>
+      <div class="pagination">
+        <button class="btn btn-ghost btn-sm" id="dev-prev" ${devPage === 0 ? 'disabled' : ''}>← Prev</button>
+        <span class="pagination-info">Showing ${showStart}–${showEnd} of ${total.toLocaleString()}</span>
+        <button class="btn btn-ghost btn-sm" id="dev-next" ${devPage >= totalPages - 1 ? 'disabled' : ''}>Next →</button>
+      </div>`;
+
+    tableEl.querySelectorAll('tbody tr').forEach(tr => {
+      tr.addEventListener('click', () => {
+        tableEl.querySelectorAll('tbody tr').forEach(r => r.classList.remove('selected'));
+        tr.classList.add('selected');
+        showDeviceDetail(allDevices[parseInt(tr.dataset.idx)]);
+      });
+    });
+
+    tableEl.querySelectorAll('thead th').forEach(th => {
+      th.addEventListener('click', () => {
+        const col = th.dataset.col;
+        if (devSortCol === col) devSortDir *= -1;
+        else { devSortCol = col; devSortDir = 1; }
+        allDevices.sort((a, b) => {
+          const av = a[col] ?? '', bv = b[col] ?? '';
+          return String(av).localeCompare(String(bv), undefined, { numeric: true }) * devSortDir;
+        });
+        devPage = 0;
+        renderDeviceTable();
+      });
+    });
+
+    document.getElementById('dev-prev')?.addEventListener('click', () => { devPage--; renderDeviceTable(); });
+    document.getElementById('dev-next')?.addEventListener('click', () => { devPage++; renderDeviceTable(); });
+  }
 
   async function doSearch() {
     const params = new URLSearchParams({
@@ -392,11 +453,11 @@ Router.register('devices', async (el) => {
     const tableEl = document.getElementById('dev-table');
     tableEl.innerHTML = '<div class="empty-state"><div class="spinner spinner-lg"></div></div>';
     try {
-      const data   = await API.get(`/dnac/devices?${params}`);
-      allDevices   = data.items;
+      const data = await API.get(`/dnac/devices?${params}`);
+      allDevices  = data.items;
+      devPage     = 0;
       document.getElementById('dev-count').textContent = `${data.total.toLocaleString()} device(s)`;
-      tableEl.innerHTML = makeTable(cols, allDevices, showDeviceDetail);
-      bindTableSort(tableEl, cols, allDevices, showDeviceDetail);
+      renderDeviceTable();
     } catch (e) {
       tableEl.innerHTML = `<div class="alert alert-danger">${e.message}</div>`;
     }
@@ -436,6 +497,7 @@ Router.register('devices', async (el) => {
               ${kvRow('IOS Version', device.softwareVersion)}
               ${kvRow('Serial', device.serialNumber)}
               ${kvRow('Vendor', device.vendor)}
+              ${kvRow('Site', device.siteName)}
             </div>
             <div class="detail-section">
               <div class="detail-section-title">Status</div>
