@@ -245,6 +245,83 @@ async def refresh_cache():
     return {"status": "refreshed"}
 
 
+# ── Tag devices ───────────────────────────────────────────────────────────────
+
+class TagDevicesRequest(BaseModel):
+    tag_name: str
+    ips:      list[str]
+
+
+@router.post("/tag-devices")
+async def tag_devices(req: TagDevicesRequest):
+    """Look up or create a tag and apply it to devices by management IP. Streams SSE progress."""
+    from fastapi.responses import StreamingResponse
+    import json
+
+    async def generate():
+        def emit(data: dict) -> str:
+            return f"data: {json.dumps(data)}\n\n"
+
+        loop = asyncio.get_event_loop()
+        dnac = _get_dnac()
+
+        # Resolve IPs → device IDs using the device cache
+        devices   = cache.get("devices") or []
+        ip_to_id  = {d.get("managementIpAddress"): d.get("id") for d in devices if d.get("managementIpAddress")}
+        ip_to_host = {d.get("managementIpAddress"): d.get("hostname") for d in devices if d.get("managementIpAddress")}
+
+        found, not_found = [], []
+        for ip in req.ips:
+            dev_id = ip_to_id.get(ip)
+            if dev_id:
+                found.append({"ip": ip, "id": dev_id, "hostname": ip_to_host.get(ip, ip)})
+            else:
+                not_found.append(ip)
+
+        yield emit({"type": "log", "level": "info",
+                    "message": f"{len(found)} device(s) found in inventory, {len(not_found)} not found"})
+        for ip in not_found:
+            yield emit({"type": "log", "level": "warn", "message": f"{ip}: not found in DNAC inventory — skipped"})
+
+        if not found:
+            yield emit({"type": "complete", "tagged": 0, "skipped": len(not_found), "tag_name": req.tag_name})
+            return
+
+        # Get or create the tag
+        try:
+            yield emit({"type": "log", "level": "info", "message": f"Resolving tag '{req.tag_name}'…"})
+            tag_id = await loop.run_in_executor(None, dc.get_or_create_tag, dnac, req.tag_name)
+            yield emit({"type": "log", "level": "info", "message": f"Tag ID: {tag_id}"})
+        except Exception as e:
+            yield emit({"type": "log", "level": "error", "message": f"Tag lookup/create failed: {e}"})
+            yield emit({"type": "complete", "tagged": 0, "skipped": len(not_found), "tag_name": req.tag_name})
+            return
+
+        # Apply tag to all found devices in one call
+        device_ids = [d["id"] for d in found]
+        try:
+            await loop.run_in_executor(None, dc.tag_network_devices, dnac, tag_id, device_ids)
+            for d in found:
+                yield emit({"type": "log", "level": "success",
+                            "message": f"{d['hostname']} ({d['ip']}): tagged ✓"})
+        except Exception as e:
+            yield emit({"type": "log", "level": "error", "message": f"Tagging failed: {e}"})
+            yield emit({"type": "complete", "tagged": 0, "skipped": len(not_found), "tag_name": req.tag_name})
+            return
+
+        yield emit({"type": "complete",
+                    "tagged":   len(found),
+                    "skipped":  len(not_found),
+                    "tag_name": req.tag_name,
+                    "results":  found})
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 # ── Config search ─────────────────────────────────────────────────────────────
 
 class ConfigSearchRequest(BaseModel):

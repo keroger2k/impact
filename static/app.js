@@ -91,7 +91,7 @@ const Router = {
       ise: 'Cisco ISE',
       firewall: '🔥 Security Policy Lookup',
       'command-runner': 'Command Runner',
-      import: 'Device Import',
+      import: 'Device Management',
       reports: 'Reports & Exports',
     };
     document.getElementById('page-title').textContent = titles[page] || page;
@@ -1548,9 +1548,29 @@ Router.register('command-runner', async (el) => {
   };
 });
 
-/* ── Import ─────────────────────────────────────────────────── */
+/* ── Device Management ──────────────────────────────────────── */
 Router.register('import', async (el) => {
   el.innerHTML = `
+    <div class="tabs" id="mgmt-tabs">
+      <div class="tab active" data-tab="discovery">Discovery &amp; Import</div>
+      <div class="tab" data-tab="tag">Tag Devices</div>
+    </div>
+    <div id="mgmt-content"></div>`;
+
+  document.querySelectorAll('#mgmt-tabs .tab').forEach(t => {
+    t.addEventListener('click', () => {
+      document.querySelectorAll('#mgmt-tabs .tab').forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+      if (t.dataset.tab === 'discovery') renderDiscovery(document.getElementById('mgmt-content'));
+      else renderTagDevices(document.getElementById('mgmt-content'));
+    });
+  });
+
+  renderDiscovery(document.getElementById('mgmt-content'));
+
+  /* ── Discovery tab ── */
+  function renderDiscovery(area) {
+    area.innerHTML = `
     <div class="card mb-4">
       <div class="card-header"><span class="card-title">Device Discovery & Import</span></div>
       <div class="card-body">
@@ -1574,7 +1594,6 @@ Router.register('import', async (el) => {
         <button class="btn btn-primary" id="imp-preview">Preview</button>
       </div>
     </div>
-
     <div id="imp-preview-area" class="mb-4"></div>
     <div id="imp-progress" style="display:none" class="mb-4">
       <div class="progress-outer"><div class="progress-inner" id="imp-bar" style="width:0%"></div></div>
@@ -1583,7 +1602,7 @@ Router.register('import', async (el) => {
     </div>
     <div id="imp-results"></div>`;
 
-  document.getElementById('imp-preview').addEventListener('click', () => {
+    document.getElementById('imp-preview').addEventListener('click', () => {
     const raw = document.getElementById('imp-input').value;
     const lines = raw.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
     const entries = lines.map(l => {
@@ -1687,6 +1706,81 @@ Router.register('import', async (el) => {
         </table>
       </div>`;
   }
+  } // end renderDiscovery
+
+  /* ── Tag Devices tab ── */
+  function renderTagDevices(area) {
+    area.innerHTML = `
+    <div class="card mb-4">
+      <div class="card-header"><span class="card-title">Tag Devices</span></div>
+      <div class="card-body">
+        <div class="alert alert-warn mb-4">
+          ⚠️ <strong>Write operation.</strong> This applies a tag to devices in Catalyst Center.
+        </div>
+        <div class="form-group">
+          <label class="form-label">Tag Name</label>
+          <input class="input" id="tag-name" placeholder="e.g. CRITICAL-INFRA" style="max-width:300px">
+        </div>
+        <div class="form-group">
+          <label class="form-label">IP Addresses (one per line)</label>
+          <textarea class="textarea" id="tag-ips" style="min-height:140px" placeholder="10.16.1.1&#10;10.12.4.1&#10;10.14.1.2"></textarea>
+        </div>
+        <button class="btn btn-primary" id="tag-run">🏷️ Apply Tag</button>
+      </div>
+    </div>
+    <div id="tag-progress" style="display:none" class="mb-4">
+      <div class="log-stream" id="tag-log"></div>
+    </div>
+    <div id="tag-results"></div>`;
+
+    document.getElementById('tag-run').addEventListener('click', () => {
+      const tagName = document.getElementById('tag-name').value.trim();
+      const ips     = document.getElementById('tag-ips').value
+        .split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
+
+      if (!tagName) { alert('Please enter a tag name.'); return; }
+      if (!ips.length) { alert('Please enter at least one IP address.'); return; }
+
+      document.getElementById('tag-progress').style.display = '';
+      document.getElementById('tag-results').innerHTML = '';
+      const logEl = document.getElementById('tag-log');
+      logEl.innerHTML = '';
+
+      function log(msg, level = 'info') {
+        const ts = new Date().toLocaleTimeString();
+        logEl.innerHTML += `<div class="log-line ${level}"><span class="log-time">${ts}</span><span class="log-msg">${escHtml(msg)}</span></div>`;
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+
+      API.stream('/dnac/tag-devices', { tag_name: tagName, ips }, ev => {
+        if (ev.type === 'log') {
+          log(ev.message, ev.level);
+        } else if (ev.type === 'complete') {
+          const resEl = document.getElementById('tag-results');
+          resEl.innerHTML = `
+            <div class="kpi-row cols-2 mb-4">
+              <div class="kpi-card success"><div class="kpi-label">Tagged</div><div class="kpi-value">${ev.tagged}</div></div>
+              <div class="kpi-card warn"><div class="kpi-label">Not Found</div><div class="kpi-value">${ev.skipped}</div></div>
+            </div>
+            ${ev.tagged ? `<div class="table-wrap">
+              <table>
+                <thead><tr><th>Hostname</th><th>IP</th><th>Tag</th></tr></thead>
+                <tbody>
+                  ${(ev.results || []).map(r => `<tr>
+                    <td>${r.hostname}</td>
+                    <td class="mono">${r.ip}</td>
+                    <td><span class="badge badge-info">${escHtml(ev.tag_name)}</span></td>
+                  </tr>`).join('')}
+                </tbody>
+              </table>
+            </div>` : ''}`;
+        } else if (ev.type === 'error') {
+          log(`Error: ${ev.message}`, 'error');
+        }
+      });
+    });
+  }
+
 });
 
 /* ── Reports ────────────────────────────────────────────────── */
