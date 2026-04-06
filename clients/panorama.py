@@ -129,6 +129,11 @@ def connectivity_check() -> tuple[bool, str]:
     key = get_api_key()
     if not key:
         return False, "Cannot obtain API key — check PANORAMA_HOST/USERNAME/PASSWORD"
+    return connectivity_check_with_key(key)
+
+
+def connectivity_check_with_key(key: str) -> tuple[bool, str]:
+    """Version check using an already-obtained API key."""
     result = _op("<show><system><info></info></system></show>", key)
     if result is not None:
         hostname = result.findtext(".//hostname", "Unknown")

@@ -1,6 +1,6 @@
 """routers/commands.py — Ad-hoc SSH command runner with SSE streaming.
 
-Credentials come from the logged-in user's session (AD credentials).
+SSH credentials come from the logged-in user's session.
 """
 
 import asyncio

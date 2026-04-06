@@ -9,12 +9,13 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from auth import require_auth
+import auth as auth_module
+from auth import require_auth, SessionEntry
 from cache import AppCache
 from routers import dnac, ise, firewall, commands, import_, auth as auth_router
 
@@ -66,11 +67,43 @@ app.include_router(import_.router,   prefix="/api/import",   tags=["Import"],   
 
 # ── System status ──────────────────────────────────────────────────────────────
 @app.get("/api/status")
-async def status():
-    """Live connectivity check for all three systems."""
-    from cache import cache
-    results = await cache.check_all_systems()
-    return results
+async def status(session: SessionEntry = Depends(require_auth)):
+    """Live connectivity check for all three systems using the user's credentials."""
+    import asyncio
+    loop = asyncio.get_event_loop()
+
+    async def check_dnac():
+        try:
+            dnac = auth_module.get_dnac_for_session(session)
+            result = await loop.run_in_executor(
+                None,
+                lambda: dnac.custom_caller.call_api("GET", "/dna/intent/api/v1/network-device/count")
+            )
+            count = getattr(result, "response", 0)
+            return {"ok": True, "detail": f"{count:,} devices"}
+        except Exception as e:
+            return {"ok": False, "detail": str(e)[:80]}
+
+    async def check_ise():
+        try:
+            import clients.ise as ic
+            ise = auth_module.get_ise_for_session(session)
+            ok  = await loop.run_in_executor(None, ic.connectivity_check, ise)
+            return {"ok": ok, "detail": "Connected" if ok else "Unreachable"}
+        except Exception as e:
+            return {"ok": False, "detail": str(e)[:80]}
+
+    async def check_panorama():
+        try:
+            import clients.panorama as pc
+            key = auth_module.get_panorama_key_for_session(session)
+            ok, detail = await loop.run_in_executor(None, pc.connectivity_check_with_key, key)
+            return {"ok": ok, "detail": detail}
+        except Exception as e:
+            return {"ok": False, "detail": str(e)[:80]}
+
+    dnac_r, ise_r, pan_r = await asyncio.gather(check_dnac(), check_ise(), check_panorama())
+    return {"dnac": dnac_r, "ise": ise_r, "panorama": pan_r}
 
 # ── Static frontend ────────────────────────────────────────────────────────────
 static_dir = Path(__file__).parent / "static"

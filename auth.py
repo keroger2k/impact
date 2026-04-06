@@ -2,8 +2,8 @@
 auth.py — In-memory session management and AD authentication for IMPACT II.
 
 Sessions are stored entirely in memory and are never written to disk.
-Vendor clients (DNAC, ISE, Panorama) are created lazily per session
-using the logged-in user's own credentials.
+Each session holds the user's credentials; vendor clients are created
+lazily on first use and cached for the life of the session.
 """
 
 import logging
@@ -25,13 +25,13 @@ SESSION_TTL = float(os.getenv("SESSION_TTL_HOURS", "8")) * 3600  # seconds
 
 @dataclass
 class SessionEntry:
-    username:      str
-    password:      str          # never logged, never persisted
-    expires_at:    float
-    dnac_client:   Any = field(default=None, repr=False)
-    ise_client:    Any = field(default=None, repr=False)
-    panorama_key:  str | None = field(default=None, repr=False)
-    _lock:         Any = field(default_factory=threading.Lock, repr=False)
+    username:     str
+    password:     str          # never logged, never persisted to disk
+    expires_at:   float
+    dnac_client:  Any = field(default=None, repr=False)
+    ise_client:   Any = field(default=None, repr=False)
+    panorama_key: str | None = field(default=None, repr=False)
+    _lock:        Any = field(default_factory=threading.Lock, repr=False)
 
 
 _sessions: dict[str, SessionEntry] = {}
@@ -136,10 +136,10 @@ def _extract_domain(ldap_url: str) -> str:
     return ldap_url.split("://")[-1].split(":")[0]
 
 
-# ── Lazy vendor client helpers ─────────────────────────────────────────────────
+# ── Vendor client helpers ──────────────────────────────────────────────────────
 
 def get_dnac_for_session(session: SessionEntry):
-    """Return (or create) the DNAC client for this session."""
+    """Return (or lazily create) a DNAC client authenticated as this user."""
     with session._lock:
         if session.dnac_client is None:
             import clients.dnac as dc
@@ -148,7 +148,7 @@ def get_dnac_for_session(session: SessionEntry):
 
 
 def get_ise_for_session(session: SessionEntry):
-    """Return (or create) the ISE client for this session."""
+    """Return (or lazily create) an ISE client authenticated as this user."""
     with session._lock:
         if session.ise_client is None:
             import clients.ise as ic
@@ -157,13 +157,13 @@ def get_ise_for_session(session: SessionEntry):
 
 
 def get_panorama_key_for_session(session: SessionEntry) -> str:
-    """Return (or generate) the Panorama API key for this session."""
+    """Return (or lazily generate) a Panorama API key for this user."""
     with session._lock:
         if session.panorama_key is None:
             import clients.panorama as pc
             session.panorama_key = pc.get_user_api_key(session.username, session.password)
     if not session.panorama_key:
-        raise HTTPException(503, "Panorama authentication failed for your credentials")
+        raise HTTPException(503, "Panorama authentication failed — check your credentials")
     return session.panorama_key
 
 
