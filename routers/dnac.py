@@ -156,6 +156,9 @@ async def ip_lookup(ip: str):
     devices    = cache.get("devices") or []
     id_to_dev  = {d.get("id"): d for d in devices if d.get("id")}
 
+    sites      = cache.get("sites") or []
+    id_to_site = {s.get("id"): s.get("name") for s in sites if s.get("id")}
+
     enriched = []
     for iface in ifaces:
         dev_id = iface.get("deviceId")
@@ -173,6 +176,8 @@ async def ip_lookup(ip: str):
             except ValueError:
                 subnet = mask
 
+        site_name = id_to_site.get(device.get("siteId")) if device else None
+
         enriched.append({
             "interface": {
                 "portName":    iface.get("portName"),
@@ -185,7 +190,8 @@ async def ip_lookup(ip: str):
                 "operStatus":  iface.get("status"),
                 "speed":       iface.get("speed"),
             },
-            "device": _enrich(device) if device else None,
+            "device":    _enrich(device) if device else None,
+            "siteName":  site_name,
         })
 
     return {"ip": ip, "found": True, "interfaces": enriched}

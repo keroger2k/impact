@@ -563,6 +563,7 @@ Router.register('ip-lookup', async (el) => {
                 ${kvRow('IOS Version', device.softwareVersion)}
                 ${kvRow('Serial', device.serialNumber)}
                 ${kvRow('Role', device.role)}
+                ${kvRow('Site', r.siteName)}
                 ${kvRow('Uptime', device.upTime)}
                 ${kvRow('Last Contact', device.lastContactFormatted)}
                 ${kvRow('Reachability', reachBadge(device.reachabilityStatus))}
