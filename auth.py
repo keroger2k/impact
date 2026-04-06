@@ -100,6 +100,7 @@ def validate_ldap(username: str, password: str) -> bool:
     else:
         bind_user = username
 
+    logger.info(f"LDAP bind attempt: {bind_user} → {ldap_url}")
     try:
         from ldap3 import Connection, Server, SIMPLE, SYNC, ALL
         server = Server(ldap_url, get_info=ALL, connect_timeout=5)
@@ -122,11 +123,17 @@ def validate_ldap(username: str, password: str) -> bool:
 
 
 def _extract_domain(ldap_url: str) -> str:
-    """Pull the domain from ldap(s)://host or ldap(s)://host:port."""
-    host = ldap_url.split("://")[-1].split(":")[0]
-    # Strip the first component (dc01.domain.com → domain.com)
-    parts = host.split(".")
-    return ".".join(parts[1:]) if len(parts) > 2 else host
+    """Return the AD domain to use for UPN construction.
+
+    Checks AD_DOMAIN env var first (explicit override).
+    Falls back to the full hostname from the LDAP URL — e.g.
+    ldaps://network.ad.tsa.gov:636 → network.ad.tsa.gov.
+    """
+    explicit = os.getenv("AD_DOMAIN", "").strip()
+    if explicit:
+        return explicit
+    # Use the full hostname — the URL host IS the domain in most AD configs
+    return ldap_url.split("://")[-1].split(":")[0]
 
 
 # ── Lazy vendor client helpers ─────────────────────────────────────────────────
