@@ -57,10 +57,11 @@ async def list_devices(
     session:      SessionEntry = Depends(require_auth),
 ):
     """Return filtered device list from cache."""
+    loop = asyncio.get_event_loop()
+    dnac = _get_dnac(session)
+
     devices = cache.get("devices")
     if devices is None:
-        loop = asyncio.get_event_loop()
-        dnac    = _get_dnac(session)
         devices = await loop.run_in_executor(None, dc.get_all_devices, dnac)
         cache.set("devices", devices, TTL_DEVICES)
 
@@ -79,7 +80,14 @@ async def list_devices(
         elif reachability.lower() == "unreachable":
             filtered = [d for d in filtered if d.get("reachabilityStatus") != "Reachable"]
 
-    dev_site_map = cache.get("device_site_map") or {}
+    dev_site_map = cache.get("device_site_map")
+    if dev_site_map is None:
+        sites = cache.get("sites")
+        if sites is None:
+            sites = await loop.run_in_executor(None, dc.get_site_cache, dnac)
+            cache.set("sites", sites, TTL_SITES)
+        dev_site_map = await loop.run_in_executor(None, dc.build_device_site_map, dnac, sites)
+        cache.set("device_site_map", dev_site_map, TTL_SITES)
 
     if site:
         filtered = [d for d in filtered if site.lower() in (dev_site_map.get(d.get("id")) or "").lower()]
@@ -172,7 +180,10 @@ async def ip_lookup(ip: str, session: SessionEntry = Depends(require_auth)):
 
     dev_site_map = cache.get("device_site_map")
     if dev_site_map is None:
-        sites        = cache.get("sites") or []
+        sites = cache.get("sites")
+        if sites is None:
+            sites = await loop.run_in_executor(None, dc.get_site_cache, dnac)
+            cache.set("sites", sites, TTL_SITES)
         dev_site_map = await loop.run_in_executor(None, dc.build_device_site_map, dnac, sites)
         cache.set("device_site_map", dev_site_map, TTL_SITES)
 
