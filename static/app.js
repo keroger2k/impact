@@ -2248,23 +2248,92 @@ function renderLogin(errorMsg) {
 }
 
 function bootApp() {
-  // Restore the main app shell
   document.getElementById('sidebar').style.display = '';
   const main = document.getElementById('main');
   main.style.gridColumn = '';
   main.innerHTML = `
     <header id="topbar">
-      <span id="page-title">Dashboard</span>
+      <span id="page-title">Loading…</span>
       <div id="topbar-actions">
         <span style="font-size:13px;color:var(--text-light);margin-right:12px">👤 ${Auth.username()}</span>
-        <button class="btn btn-ghost btn-sm" onclick="refreshCache()">🔄 Refresh Cache</button>
-        <button class="btn btn-ghost btn-sm" onclick="logout()" style="margin-left:8px">Sign Out</button>
+        <button class="btn btn-ghost btn-sm" onclick="logout()">Sign Out</button>
       </div>
     </header>
-    <div id="content">
-      <div class="empty-state"><div class="spinner spinner-lg"></div></div>
+    <div id="content"></div>`;
+
+  renderWarmup();
+}
+
+function renderWarmup() {
+  const STEPS = [
+    { id: 'devices',  label: 'Catalyst Center',    sub: 'Device inventory' },
+    { id: 'sites',    label: 'Catalyst Center',    sub: 'Site hierarchy' },
+    { id: 'sitemap',  label: 'Catalyst Center',    sub: 'Device → site map' },
+    { id: 'ise',      label: 'Cisco ISE',           sub: 'Policy & endpoint data' },
+    { id: 'panorama', label: 'Palo Alto Panorama',  sub: 'Firewall policies' },
+  ];
+
+  document.getElementById('content').innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:center;min-height:calc(100vh - 56px);background:var(--bg-secondary)">
+      <div class="card" style="width:520px;padding:36px 40px">
+        <div style="text-align:center;margin-bottom:28px">
+          <div style="font-size:22px;font-weight:700;color:var(--cisco-blue);margin-bottom:6px">Connecting to Network Systems</div>
+          <div style="font-size:13px;color:var(--text-light)">Authenticating and loading data for ${Auth.username()}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          ${STEPS.map(s => `
+            <div id="ws-${s.id}" style="display:flex;align-items:center;gap:14px;padding:12px 16px;border-radius:8px;background:var(--bg-secondary);border:1px solid var(--border)">
+              <span id="wi-${s.id}" style="font-size:20px;min-width:24px;text-align:center">⏳</span>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:13px;font-weight:600;color:var(--text-primary)">${s.label}</div>
+                <div id="wm-${s.id}" style="font-size:12px;color:var(--text-light);margin-top:2px">${s.sub}</div>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+        <div id="warm-ready" style="display:none;text-align:center;margin-top:24px;font-size:14px;font-weight:600;color:var(--success)">
+          ✅ All systems ready — launching dashboard…
+        </div>
+      </div>
     </div>`;
 
+  let launched = false;
+
+  API.stream('/warm', {}, ev => {
+    if (ev.step === 'done') {
+      if (launched) return;
+      launched = true;
+      const el = document.getElementById('warm-ready');
+      if (el) el.style.display = '';
+      setTimeout(startApp, 1000);
+      return;
+    }
+    const icon = { loading: '⏳', done: '✅', cached: '✅', error: '❌' }[ev.status] || '⏳';
+    const bg   = { done: '#f0fdf4', cached: '#f0fdf4', error: '#fff1f2' }[ev.status];
+    const rowEl = document.getElementById(`ws-${ev.step}`);
+    const icEl  = document.getElementById(`wi-${ev.step}`);
+    const msgEl = document.getElementById(`wm-${ev.step}`);
+    if (rowEl && bg) rowEl.style.background = bg;
+    if (icEl)  icEl.textContent  = icon;
+    if (msgEl) msgEl.textContent = ev.message;
+  }, () => {
+    if (!launched) { launched = true; startApp(); }
+  });
+}
+
+function startApp() {
+  document.getElementById('page-title').textContent = 'Dashboard';
+  // Add Refresh Cache button now that we're in the app
+  const actions = document.getElementById('topbar-actions');
+  if (actions && !actions.querySelector('[data-refresh]')) {
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-ghost btn-sm';
+    btn.dataset.refresh = '1';
+    btn.style.marginRight = '8px';
+    btn.textContent = '🔄 Refresh Cache';
+    btn.onclick = refreshCache;
+    actions.prepend(btn);
+  }
   Router.init();
   loadStatus();
   setInterval(loadStatus, 60_000);

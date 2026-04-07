@@ -28,13 +28,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("IMPACT II starting up — warming cache...")
-    # Pre-warm DNAC device and site cache in the background
-    try:
-        from cache import cache
-        await cache.warm()
-    except Exception as e:
-        logger.warning(f"Cache warm-up failed (non-fatal): {e}")
+    logger.info("IMPACT II starting up.")
     yield
     logger.info("IMPACT II shutting down.")
 
@@ -64,6 +58,116 @@ app.include_router(ise.router,       prefix="/api/ise",      tags=["ISE"],      
 app.include_router(firewall.router,  prefix="/api/firewall", tags=["Firewall"], **_auth_dep)
 app.include_router(commands.router,  prefix="/api/commands", tags=["Commands"], **_auth_dep)
 app.include_router(import_.router,   prefix="/api/import",   tags=["Import"],   **_auth_dep)
+
+# ── Post-login cache warm ──────────────────────────────────────────────────────
+@app.post("/api/warm")
+async def warm_cache(session: SessionEntry = Depends(require_auth)):
+    """Stream cache warm-up progress after login using the user's credentials."""
+    from fastapi.responses import StreamingResponse
+    import asyncio
+    import json
+    import clients.dnac as dc
+    import clients.ise as ic
+    import clients.panorama as pc
+    from cache import cache, TTL_DEVICES, TTL_SITES
+
+    async def generate():
+        loop = asyncio.get_event_loop()
+
+        def emit(data: dict) -> str:
+            return f"data: {json.dumps(data)}\n\n"
+
+        # ── DNAC client ────────────────────────────────────────────────────────
+        try:
+            dnac = auth_module.get_dnac_for_session(session)
+        except Exception as e:
+            yield emit({"step": "devices", "status": "error", "message": f"DNAC connection failed: {str(e)[:80]}"})
+            yield emit({"step": "done"})
+            return
+
+        # ── Devices ────────────────────────────────────────────────────────────
+        devices = cache.get("devices")
+        if devices is not None:
+            yield emit({"step": "devices", "status": "cached",
+                        "message": f"{len(devices):,} devices (from cache)"})
+        else:
+            yield emit({"step": "devices", "status": "loading",
+                        "message": "Loading devices from Catalyst Center…"})
+            try:
+                devices = await loop.run_in_executor(None, dc.get_all_devices, dnac)
+                cache.set("devices", devices, TTL_DEVICES)
+                yield emit({"step": "devices", "status": "done",
+                            "message": f"{len(devices):,} devices loaded from Catalyst Center"})
+            except Exception as e:
+                yield emit({"step": "devices", "status": "error",
+                            "message": f"Devices failed: {str(e)[:80]}"})
+                devices = []
+
+        # ── Sites ──────────────────────────────────────────────────────────────
+        sites = cache.get("sites")
+        if sites is not None:
+            yield emit({"step": "sites", "status": "cached",
+                        "message": f"{len(sites):,} sites (from cache)"})
+        else:
+            yield emit({"step": "sites", "status": "loading", "message": "Loading sites…"})
+            try:
+                sites = await loop.run_in_executor(None, dc.get_site_cache, dnac)
+                cache.set("sites", sites, TTL_SITES)
+                yield emit({"step": "sites", "status": "done",
+                            "message": f"{len(sites):,} sites loaded"})
+            except Exception as e:
+                yield emit({"step": "sites", "status": "error",
+                            "message": f"Sites failed: {str(e)[:80]}"})
+                sites = []
+
+        # ── Device → Site map ──────────────────────────────────────────────────
+        dev_site_map = cache.get("device_site_map")
+        if dev_site_map is not None:
+            yield emit({"step": "sitemap", "status": "cached",
+                        "message": f"Device-to-site map ({len(dev_site_map):,} entries, from cache)"})
+        else:
+            yield emit({"step": "sitemap", "status": "loading",
+                        "message": "Building device-to-site map (this may take a minute)…"})
+            try:
+                dev_site_map = await loop.run_in_executor(
+                    None, dc.build_device_site_map, dnac, sites or []
+                )
+                cache.set("device_site_map", dev_site_map, TTL_SITES)
+                yield emit({"step": "sitemap", "status": "done",
+                            "message": f"Site map built — {len(dev_site_map):,} devices mapped"})
+            except Exception as e:
+                yield emit({"step": "sitemap", "status": "error",
+                            "message": f"Site map failed: {str(e)[:80]}"})
+
+        # ── ISE ────────────────────────────────────────────────────────────────
+        yield emit({"step": "ise", "status": "loading", "message": "Connecting to Cisco ISE…"})
+        try:
+            ise = auth_module.get_ise_for_session(session)
+            ok  = await loop.run_in_executor(None, ic.connectivity_check, ise)
+            yield emit({"step": "ise", "status": "done" if ok else "error",
+                        "message": "ISE connected" if ok else "ISE unreachable"})
+        except Exception as e:
+            yield emit({"step": "ise", "status": "error", "message": f"ISE: {str(e)[:80]}"})
+
+        # ── Panorama ───────────────────────────────────────────────────────────
+        yield emit({"step": "panorama", "status": "loading", "message": "Connecting to Panorama…"})
+        try:
+            key      = auth_module.get_panorama_key_for_session(session)
+            ok, detail = await loop.run_in_executor(None, pc.connectivity_check_with_key, key)
+            yield emit({"step": "panorama", "status": "done" if ok else "error",
+                        "message": detail if ok else f"Panorama: {detail}"})
+        except Exception as e:
+            yield emit({"step": "panorama", "status": "error",
+                        "message": f"Panorama: {str(e)[:80]}"})
+
+        yield emit({"step": "done"})
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
 
 # ── System status ──────────────────────────────────────────────────────────────
 @app.get("/api/status")
