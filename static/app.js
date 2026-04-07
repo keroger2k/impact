@@ -997,75 +997,135 @@ Router.register('ise', async (el) => {
 /* ── Firewall ───────────────────────────────────────────────── */
 Router.register('firewall', async (el) => {
   let deviceGroups = [];
+  let managedDevices = [];
+  
   try { const d = await API.get('/firewall/device-groups'); deviceGroups = d.items || []; } catch {}
+  try { const d = await API.get('/firewall/devices'); managedDevices = d.items || []; } catch {}
 
+  // Create tabbed interface
   el.innerHTML = `
-    <div class="card mb-4">
-      <div class="card-header"><span class="card-title">Security Policy Lookup</span><div class="cache-bar" id="fw-cache-bar"></div></div>
-      <div class="card-body">
-        <div style="display:grid;grid-template-columns:1fr 1fr 120px 120px auto;gap:12px;align-items:flex-end">
-          <div class="form-group m-0">
-            <label class="form-label">Source IP</label>
-            <input class="input" id="fw-src" placeholder="10.47.31.195">
-          </div>
-          <div class="form-group m-0">
-            <label class="form-label">Destination IP</label>
-            <input class="input" id="fw-dst" placeholder="10.16.97.122">
-          </div>
-          <div class="form-group m-0">
-            <label class="form-label">Protocol</label>
-            <select class="select" id="fw-proto">
-              <option value="any">Any</option>
-              <option value="tcp">TCP</option>
-              <option value="udp">UDP</option>
-            </select>
-          </div>
-          <div class="form-group m-0">
-            <label class="form-label">Dest Port</label>
-            <input class="input" id="fw-port" placeholder="443">
-          </div>
-          <button class="btn btn-primary" id="fw-go">🔍 Search</button>
-        </div>
-        <div class="flex gap-4 mt-3 items-center">
-          <label class="flex items-center gap-1.5 text-xs cursor-pointer">
-            <input type="checkbox" id="fw-disabled"> Include disabled rules
-          </label>
-          <label class="flex items-center gap-1.5 text-xs cursor-pointer">
-            <input type="checkbox" id="fw-all" checked> Show all matches
-          </label>
-          ${deviceGroups.length ? `
-          <div class="dg-select ml-auto" id="fw-dg-wrap">
-            <button type="button" class="dg-select-btn" id="fw-dg-btn">
-              <span id="fw-dg-label">All device groups</span>
-              <span class="dg-select-arrow">▾</span>
-            </button>
-            <div class="dg-select-panel" id="fw-dg-panel" hidden>
-              <label class="dg-select-item dg-select-all-item">
-                <input type="checkbox" id="fw-dg-all" checked>
-                <span>All device groups</span>
-              </label>
-              <div class="dg-select-divider"></div>
-              <div class="dg-select-items">
-                ${deviceGroups.map(dg => `
-                  <label class="dg-select-item">
-                    <input type="checkbox" class="fw-dg-cb" value="${dg}" checked>
-                    <span>${dg}</span>
-                  </label>`).join('')}
-              </div>
-            </div>
-          </div>` : ''}
-        </div>
+    <div class="tabs mb-4" id="fw-tabs" style="border-bottom: 1px solid var(--border); padding-bottom: 0; display: flex; gap: 0; margin-bottom: 0;">
+      <div class="tab active" data-fw-tab="lookup" style="flex: 0 0 auto; padding: 12px 16px; cursor: pointer; border-bottom: 2px solid; border-bottom-color: var(--primary);">
+        Policy Lookup
+      </div>
+      <div class="tab" data-fw-tab="by-device" style="flex: 0 0 auto; padding: 12px 16px; cursor: pointer; border-bottom: 2px solid; border-bottom-color: transparent;">
+        By Device
       </div>
     </div>
-    <div id="fw-result"></div>`;
+    
+    <!-- Lookup Tab -->
+    <div data-fw-tab-panel="lookup">
+      <div class="card mb-4">
+        <div class="card-header"><span class="card-title">Security Policy Lookup</span><div class="cache-bar" id="fw-cache-bar"></div></div>
+        <div class="card-body">
+          <div style="display:grid;grid-template-columns:1fr 1fr 120px 120px auto;gap:12px;align-items:flex-end">
+            <div class="form-group m-0">
+              <label class="form-label">Source IP</label>
+              <input class="input" id="fw-src" placeholder="10.47.31.195">
+            </div>
+            <div class="form-group m-0">
+              <label class="form-label">Destination IP</label>
+              <input class="input" id="fw-dst" placeholder="10.16.97.122">
+            </div>
+            <div class="form-group m-0">
+              <label class="form-label">Protocol</label>
+              <select class="select" id="fw-proto">
+                <option value="any">Any</option>
+                <option value="tcp">TCP</option>
+                <option value="udp">UDP</option>
+              </select>
+            </div>
+            <div class="form-group m-0">
+              <label class="form-label">Dest Port</label>
+              <input class="input" id="fw-port" placeholder="443">
+            </div>
+            <button class="btn btn-primary" id="fw-go">🔍 Search</button>
+          </div>
+          <div class="flex gap-4 mt-3 items-center">
+            <label class="flex items-center gap-1.5 text-xs cursor-pointer">
+              <input type="checkbox" id="fw-disabled"> Include disabled rules
+            </label>
+            <label class="flex items-center gap-1.5 text-xs cursor-pointer">
+              <input type="checkbox" id="fw-all" checked> Show all matches
+            </label>
+            ${deviceGroups.length ? `
+            <div class="dg-select ml-auto" id="fw-dg-wrap">
+              <button type="button" class="dg-select-btn" id="fw-dg-btn">
+                <span id="fw-dg-label">All device groups</span>
+                <span class="dg-select-arrow">▾</span>
+              </button>
+              <div class="dg-select-panel" id="fw-dg-panel" hidden>
+                <label class="dg-select-item dg-select-all-item">
+                  <input type="checkbox" id="fw-dg-all" checked>
+                  <span>All device groups</span>
+                </label>
+                <div class="dg-select-divider"></div>
+                <div class="dg-select-items">
+                  ${deviceGroups.map(dg => `
+                    <label class="dg-select-item">
+                      <input type="checkbox" class="fw-dg-cb" value="${dg}" checked>
+                      <span>${dg}</span>
+                    </label>`).join('')}
+                </div>
+              </div>
+            </div>` : ''}
+          </div>
+        </div>
+      </div>
+      <div id="fw-result"></div>
+    </div>
 
+    <!-- By-Device Tab -->
+    <div data-fw-tab-panel="by-device" style="display: none;">
+      <div class="card mb-4">
+        <div class="card-header"><span class="card-title">Firewall Policies</span><div class="cache-bar" id="fw-dev-cache-bar"></div></div>
+        <div class="card-body">
+          <div class="form-group">
+            <label class="form-label">Select Firewall Device</label>
+            <select class="select" id="fw-device-select">
+              <option value="">-- Choose a firewall --</option>
+              ${managedDevices.map(d => `<option value="${d.serial}">${d.hostname || d.serial} (${d.model || 'Unknown'}) · ${d.device_group}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+      </div>
+      <div id="fw-device-result"></div>
+    </div>`;
+
+  // Setup tabs switching
+  const tabButtons = el.querySelectorAll('#fw-tabs .tab');
+  tabButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tabName = btn.dataset.fwTab;
+      
+      // Update button styles
+      tabButtons.forEach(b => {
+        b.style.borderBottomColor = b.dataset.fwTab === tabName ? 'var(--primary)' : 'transparent';
+      });
+      
+      // Show/hide panels
+      el.querySelectorAll('[data-fw-tab-panel]').forEach(p => {
+        p.style.display = p.dataset.fwTabPanel === tabName ? '' : 'none';
+      });
+    });
+  });
+
+  // Setup cache bars
   initCacheBar(
     el.querySelector('#fw-cache-bar'),
     '/firewall/cache/info',
     '/firewall/cache/refresh',
     () => Router.go('firewall')
   );
+  
+  initCacheBar(
+    el.querySelector('#fw-dev-cache-bar'),
+    '/firewall/cache/info',
+    '/firewall/cache/refresh',
+    () => Router.go('firewall')
+  );
 
+  // Setup device group selector for lookup tab
   if (deviceGroups.length) {
     const wrap    = el.querySelector('#fw-dg-wrap');
     const btn     = el.querySelector('#fw-dg-btn');
@@ -1083,7 +1143,6 @@ Router.register('firewall', async (el) => {
 
     btn.addEventListener('click', () => { panel.hidden = !panel.hidden; });
 
-    // Close when clicking outside
     document.addEventListener('click', function outsideClick(e) {
       if (!wrap.contains(e.target)) { panel.hidden = true; }
     });
@@ -1101,6 +1160,7 @@ Router.register('firewall', async (el) => {
     });
   }
 
+  // Setup lookup button
   document.getElementById('fw-go').addEventListener('click', async () => {
     const src  = document.getElementById('fw-src').value.trim();
     const dst  = document.getElementById('fw-dst').value.trim();
@@ -1172,7 +1232,6 @@ Router.register('firewall', async (el) => {
 
       bindTableSort(document.getElementById('fw-table'), cols, rows, rule => showRuleDetail(rule, data));
 
-      // Auto-select first match
       const firstMatchRow = document.querySelector('#fw-table tbody tr');
       if (firstMatchRow) { firstMatchRow.classList.add('selected'); showRuleDetail(rows[0], data); }
 
@@ -1181,10 +1240,83 @@ Router.register('firewall', async (el) => {
     }
   });
 
+  // Setup device selector for by-device tab
+  document.getElementById('fw-device-select').addEventListener('change', async (e) => {
+    const serial = e.target.value;
+    const res = document.getElementById('fw-device-result');
+    
+    if (!serial) {
+      res.innerHTML = '<div class="empty-state"><p style="color:var(--text-secondary)">Select a firewall to view its policies</p></div>';
+      return;
+    }
+    
+    res.innerHTML = '<div class="empty-state"><div class="spinner spinner-lg"></div><p style="margin-top:12px;color:var(--text-secondary)">Loading policies…</p></div>';
+    
+    try {
+      const data = await API.get(`/firewall/device-policies/${serial}`);
+      const policies = data.policies || [];
+      
+      if (!policies.length) {
+        res.innerHTML = '<div class="alert alert-info">ℹ️ No policies found for this device.</div>';
+        return;
+      }
+      
+      // Display policy table
+      const cols = [
+        { key: '_icon', label: '', width: '30px',
+          render: (_, r) => r.action === 'allow' ? '✅' : '🔴' },
+        { key: 'name', label: 'Rule Name', width: '200px' },
+        { key: 'device_group', label: 'Device Group', width: '120px' },
+        { key: 'rulebase', label: 'Rulebase', width: '80px' },
+        { key: 'action', label: 'Action', width: '80px',
+          render: v => `<span class="badge ${v === 'allow' ? 'badge-success' : 'badge-danger'}">${v.toUpperCase()}</span>` },
+        { key: 'from_zones', label: 'From Zones', width: '150px',
+          render: v => v?.length ? v.join(', ') : '—' },
+        { key: 'to_zones', label: 'To Zones', width: '150px',
+          render: v => v?.length ? v.join(', ') : '—' },
+        { key: 'source', label: 'Source', width: '150px',
+          render: v => fmtList(v) },
+        { key: 'destination', label: 'Destination', width: '150px',
+          render: v => fmtList(v) },
+        { key: 'application', label: 'Application', width: '150px',
+          render: v => fmtList(v) },
+        { key: 'service', label: 'Service', width: '150px',
+          render: v => fmtList(v) },
+        { key: 'description', label: 'Description', width: '200px',
+          render: v => v || '—' },
+      ];
+      
+      const rows = policies.map(p => ({ ...p, _icon: '' }));
+      
+      const kpi = `
+        <div class="kpi-row cols-3 mb-4">
+          <div class="kpi-card"><div class="kpi-label">Total Policies</div><div class="kpi-value">${policies.length}</div></div>
+          <div class="kpi-card"><div class="kpi-label">Allow Rules</div><div class="kpi-value" style="color:var(--success)">${policies.filter(p => p.action === 'allow').length}</div></div>
+          <div class="kpi-card"><div class="kpi-label">Deny Rules</div><div class="kpi-value" style="color:var(--danger)">${policies.filter(p => p.action === 'deny' || p.action === 'drop').length}</div></div>
+        </div>`;
+      
+      res.innerHTML = `
+        ${kpi}
+        <div class="table-wrap" id="fw-device-table">
+          <div class="table-toolbar"><span class="table-count">${policies.length} policy(ies) — click a row for detail</span></div>
+          ${makeTable(cols, rows, rule => showDevicePolicyDetail(rule))}
+        </div>
+        <div id="fw-device-rule-detail" class="mt-4"></div>`;
+      
+      bindTableSort(document.getElementById('fw-device-table'), cols, rows, rule => showDevicePolicyDetail(rule));
+      
+      const firstRow = document.querySelector('#fw-device-table tbody tr');
+      if (firstRow) { firstRow.classList.add('selected'); showDevicePolicyDetail(rows[0]); }
+      
+    } catch (e) {
+      res.innerHTML = `<div class="alert alert-danger">${e.message}</div>`;
+    }
+  });
+
   function fmtList(arr) {
     if (!arr || !arr.length) return '—';
     if (arr.includes('any')) return '<span class="badge badge-neutral">any</span>';
-    if (arr.length <= 3) return arr.join(', ');
+    if (arr.length <= 2) return arr.join(', ');
     return `${arr.slice(0,2).join(', ')} <span class="badge badge-neutral">+${arr.length-2}</span>`;
   }
 
@@ -1270,7 +1402,68 @@ Router.register('firewall', async (el) => {
         </div>
       </div>`;
   }
+
+  function showDevicePolicyDetail(policy) {
+    const detEl = document.getElementById('fw-device-rule-detail');
+    
+    detEl.innerHTML = `
+      <div class="detail-panel">
+        <div class="detail-header">
+          <span style="font-size:18px">${policy.action === 'allow' ? '✅' : '🔴'}</span>
+          <div>
+            <div class="detail-hostname">${policy.name}</div>
+            <div style="font-size:11px;opacity:.7">
+              ${policy.device_group} · ${policy.rulebase}-rulebase
+              ${policy.disabled ? ' · DISABLED' : ''}
+            </div>
+          </div>
+          <span class="action-badge action-${policy.action}" style="margin-left:auto;padding:4px 12px;border-radius:3px;font-weight:700">${policy.action.toUpperCase()}</span>
+        </div>
+        <div class="detail-body">
+          <div class="detail-grid">
+            <div class="detail-section">
+              <div class="detail-section-title">Traffic & Zones</div>
+              ${kvRow('From Zones', policy.from_zones?.length ? policy.from_zones.join(', ') : '—')}
+              ${kvRow('To Zones', policy.to_zones?.length ? policy.to_zones.join(', ') : '—')}
+              ${kvRow('Source Addresses', fmtList(policy.source))}
+              ${kvRow('Source Negate', policy.source_negate ? 'Yes' : 'No')}
+              ${kvRow('Destination Addresses', fmtList(policy.destination))}
+              ${kvRow('Dest Negate', policy.dest_negate ? 'Yes' : 'No')}
+            </div>
+            <div class="detail-section">
+              <div class="detail-section-title">Application & Services</div>
+              ${kvRow('Application', fmtList(policy.application))}
+              ${kvRow('Service', fmtList(policy.service))}
+              ${kvRow('Category', fmtList(policy.category))}
+            </div>
+            <div class="detail-section">
+              <div class="detail-section-title">Security & Logging</div>
+              ${kvRow('Action', `<span class="badge badge-${policy.action === 'allow' ? 'success' : 'danger'}">${policy.action.toUpperCase()}</span>`)}
+              ${kvRow('Security Profile', policy.profile_group || '—')}
+              ${kvRow('HIP Profiles', fmtList(policy.hip_profiles))}
+              ${kvRow('Log Start', policy.log_start ? '✓' : '—')}
+              ${kvRow('Log End', policy.log_end ? '✓' : '—')}
+              ${kvRow('Log Setting', policy.log_setting || '—')}
+            </div>
+            <div class="detail-section">
+              <div class="detail-section-title">Advanced</div>
+              ${kvRow('Source User', fmtList(policy.source_user))}
+              ${kvRow('Source User Negate', policy.source_user_negate ? 'Yes' : 'No')}
+              ${kvRow('Source Device', fmtList(policy.source_device))}
+              ${kvRow('Source Device Negate', policy.source_device_negate ? 'Yes' : 'No')}
+              ${kvRow('Dest Device', fmtList(policy.destination_device))}
+              ${kvRow('Dest Device Negate', policy.destination_device_negate ? 'Yes' : 'No')}
+              ${kvRow('Schedule', policy.schedule || '—')}
+              ${kvRow('QoS Type', policy.qos_type || '—')}
+              ${kvRow('Tags', policy.tag?.length ? policy.tag.join(', ') : '—')}
+            </div>
+          </div>
+          ${kvRow('Description', policy.description || '(no description)', true)}
+        </div>
+      </div>`;
+  }
 });
+
 
 /* ── Command Runner ─────────────────────────────────────────── */
 Router.register('command-runner', async (el) => {

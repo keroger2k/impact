@@ -474,43 +474,96 @@ def _members(entry: ET.Element, tag: str) -> list[str]:
     return [m.text for m in entry.findall(f".//{tag}/member") if m.text]
 
 
+def get_managed_devices(api_key: str) -> list[dict]:
+    """
+    Fetch the list of managed firewalls from Panorama.
+    Returns a list of dicts with keys: serial, hostname, model, ip_address, device_group.
+    """
+    devices = []
+    try:
+        result = _op("<show><devices><all/></devices></show>", api_key)
+        if result is None:
+            return devices
+        
+        # Parse device entries: <entry name="serial">
+        for entry in result.findall(".//device/entry"):
+            serial = entry.get("name", "")
+            if not serial:
+                continue
+            
+            devices.append({
+                "serial":        serial,
+                "hostname":      entry.findtext("hostname") or "",
+                "model":         entry.findtext("model") or "",
+                "ip_address":    entry.findtext("ip-address") or "",
+                "device_group":  entry.findtext("device-group") or "N/A",
+                "os_version":    entry.findtext("os-version") or "",
+            })
+    except Exception as e:
+        logger.warning(f"Failed to fetch managed devices: {e}")
+    
+    return devices
+
+
 def _parse_rules(
     parent:       ET.Element | None,
     device_group: str,
     rulebase:     str,
 ) -> list[dict]:
-    """Parse a <rules> element into a list of rule dicts."""
+    """Parse a <rules> element into a list of rule dicts with all available fields."""
     if parent is None:
         return []
     rules = []
     for entry in parent.findall("entry"):
         name = entry.get("name", "unnamed")
         rules.append({
+            # Identifiers
             "device_group": device_group,
             "rulebase":     rulebase,
             "name":         name,
+            
+            # Action & Control
             "action":       entry.findtext("action") or "allow",
             "disabled":     entry.findtext("disabled") == "yes",
-
+            
             # Source
             "source":          _members(entry, "source"),
             "source_negate":   entry.findtext("negate-source") == "yes",
             "from_zones":      _members(entry, "from"),
-
+            "source_user":     _members(entry, "source-user"),
+            "source_user_negate": entry.findtext("negate-source-user") == "yes",
+            
             # Destination
             "destination":     _members(entry, "destination"),
             "dest_negate":     entry.findtext("negate-destination") == "yes",
             "to_zones":        _members(entry, "to"),
-
+            
             # What
             "application":     _members(entry, "application"),
             "service":         _members(entry, "service"),
-
-            # Meta
+            "category":        _members(entry, "category"),
+            
+            # Source/Dest Device (for HIP matching)
+            "source_device":   _members(entry, "source-device"),
+            "source_device_negate": entry.findtext("negate-source-device") == "yes",
+            "destination_device": _members(entry, "destination-device"),
+            "destination_device_negate": entry.findtext("negate-destination-device") == "yes",
+            
+            # Security Controls & Logging
+            "profile_group":   entry.findtext(".//profile-setting/group/member") or "",
+            "hip_profiles":    _members(entry, ".//hip-profiles/member") if entry.find(".//hip-profiles") is not None else [],
+            "log_start":       entry.findtext("log-start") == "yes",
+            "log_end":         entry.findtext("log-end") == "yes",
+            "log_setting":     entry.findtext("log-setting") or "",
+            
+            # Schedule, QoS, etc
+            "schedule":        entry.findtext("schedule") or "",
+            "qos_type":        entry.findtext(".//qos/type") or "",
+            "qos_marking":     entry.findtext(".//qos/marking") or "",
+            
+            # Metadata
             "description":     entry.findtext("description") or "",
             "tag":             _members(entry, "tag"),
-            "log_setting":     entry.findtext("log-setting") or "",
-            "profile_group":   entry.findtext(".//profile-setting/group/member") or "",
         })
     return rules
 
@@ -556,6 +609,70 @@ def get_all_security_rules(
         r = _config_get(f"{dg_base}/entry[@name='{dg}']/post-rulebase/security/rules", api_key)
         all_rules.extend(_parse_rules(_unwrap(r, "rules"), dg, "post"))
         _progress(f"{dg} post-rules")
+
+    # Shared post
+    r = _config_get(f"{BASE_XPATH}/post-rulebase/security/rules", api_key)
+    all_rules.extend(_parse_rules(_unwrap(r, "rules"), "shared", "post"))
+    _progress("Shared post-rules")
+
+    return all_rules
+
+
+def get_device_policies(
+    api_key:        str,
+    device_serial:  str,
+    device_groups:  list[str],
+    progress_cb=None,
+) -> list[dict]:
+    """
+    Fetch security policies applicable to a specific managed firewall device.
+    Returns rules that apply to this device from its assigned device group(s).
+    
+    Rules are returned in evaluation order:
+      1. Shared pre-rules
+      2. Device group pre-rules
+      3. Device group post-rules
+      4. Shared post-rules
+    """
+    all_rules = []
+    
+    # Get device info to find its primary device group
+    devices = get_managed_devices(api_key)
+    device_info = next((d for d in devices if d.get("serial") == device_serial), None)
+    if not device_info:
+        logger.warning(f"Device {device_serial} not found in managed devices")
+        return []
+    
+    device_dg = device_info.get("device_group", "N/A")
+    if device_dg == "N/A":
+        return []
+    
+    # Only fetch rules from the device's assigned device group (plus shared)
+    target_dgs = [device_dg]
+    total      = 2 + 2   # shared pre/post + dg pre/post
+    step       = 0
+
+    def _progress(msg):
+        nonlocal step
+        step += 1
+        if progress_cb:
+            progress_cb(step, total, msg)
+
+    # Shared pre
+    r = _config_get(f"{BASE_XPATH}/pre-rulebase/security/rules", api_key)
+    all_rules.extend(_parse_rules(_unwrap(r, "rules"), "shared", "pre"))
+    _progress("Shared pre-rules")
+
+    # Device group pre
+    dg_base = f"{BASE_XPATH}/device-group"
+    r = _config_get(f"{dg_base}/entry[@name='{device_dg}']/pre-rulebase/security/rules", api_key)
+    all_rules.extend(_parse_rules(_unwrap(r, "rules"), device_dg, "pre"))
+    _progress(f"{device_dg} pre-rules")
+
+    # Device group post
+    r = _config_get(f"{dg_base}/entry[@name='{device_dg}']/post-rulebase/security/rules", api_key)
+    all_rules.extend(_parse_rules(_unwrap(r, "rules"), device_dg, "post"))
+    _progress(f"{device_dg} post-rules")
 
     # Shared post
     r = _config_get(f"{BASE_XPATH}/post-rulebase/security/rules", api_key)

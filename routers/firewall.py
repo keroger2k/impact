@@ -209,3 +209,51 @@ async def firewall_cache_info():
 async def refresh_firewall_cache():
     cache.invalidate_prefix("pan_")
     return {"status": "firewall cache cleared"}
+
+
+@router.get("/devices")
+async def list_managed_devices(session: SessionEntry = Depends(require_auth)):
+    """Fetch list of firewalls managed by Panorama."""
+    cached = cache.get("pan_managed_devices")
+    if cached is not None:
+        return {"items": cached}
+    
+    key  = _get_key(session)
+    loop = asyncio.get_event_loop()
+    devices = await loop.run_in_executor(None, pc.get_managed_devices, key)
+    cache.set("pan_managed_devices", devices, PAN_TTL)
+    return {"items": devices}
+
+
+@router.get("/device-policies/{device_serial}")
+async def get_device_policies(
+    device_serial: str,
+    session: SessionEntry = Depends(require_auth)
+):
+    """Fetch security policies for a specific managed firewall device."""
+    cache_key = f"pan_device_policies_{device_serial}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return {"serial": device_serial, "policies": cached}
+    
+    key  = _get_key(session)
+    loop = asyncio.get_event_loop()
+    
+    # Get device groups for context
+    all_dgs = cache.get("pan_device_groups")
+    if all_dgs is None:
+        all_dgs = await loop.run_in_executor(None, pc.get_device_groups, key)
+        cache.set("pan_device_groups", all_dgs, PAN_TTL)
+    
+    # Fetch policies specific to this device
+    policies = await loop.run_in_executor(
+        None,
+        pc.get_device_policies,
+        key,
+        device_serial,
+        all_dgs,
+    )
+    
+    cache.set(cache_key, policies, PAN_TTL)
+    return {"serial": device_serial, "policies": policies}
+
