@@ -180,4 +180,6 @@ def require_auth(
     session = get_session(credentials.credentials)
     if not session:
         raise HTTPException(401, "Session expired or invalid — please log in again")
+    # Sliding expiration — every request resets the TTL
+    session.expires_at = time.monotonic() + SESSION_TTL
     return session
