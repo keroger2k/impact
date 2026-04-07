@@ -2128,8 +2128,10 @@ Router.register('import', async (el) => {
               <div class="kpi-card warn"><div class="kpi-label">Not Found</div><div class="kpi-value">${ev.skipped}</div></div>
             </div>
             ${ev.tagged ? `<div class="table-wrap">
-              <table>
-                `<tr>
+              <table class="table table-sm table-striped table-hover table-dark">
+                <thead><tr><th>Hostname</th><th>IP</th><th>Tag</th></tr></thead>
+                <tbody>
+                  ${(ev.results || []).map(r => `<tr>
                     <td>${r.hostname}</td>
                     <td class="font-monospace" style="font-size:12px">${r.ip}</td>
                     <td><span class="badge text-bg-info">${escHtml(ev.tag_name)}</span></td>
