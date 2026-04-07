@@ -544,15 +544,22 @@ def get_managed_devices(api_key: str) -> list[dict]:
                 print(f"[DEVICES] SKIPPING '{serial}' - no hostname or model (likely subsystem entry)")
                 continue
             
+            # Debug: print all available fields
+            device_group_val = entry.findtext("device-group") or ""
+            ha_state_val = entry.findtext("ha-state") or ""
+            ha_enabled_val = entry.findtext("ha-enabled") or ""
+            
+            print(f"[DEVICES] Serial: {serial}, DG field: '{device_group_val}', HA-state: '{ha_state_val}', HA-enabled: '{ha_enabled_val}'")
+            
             device_info = {
                 "serial":        serial,
                 "hostname":      hostname,
                 "model":         model,
                 "ip_address":    entry.findtext("ip-address") or "",
-                "device_group":  entry.findtext("device-group") or "N/A",
+                "device_group":  device_group_val or "N/A",
                 "os_version":    entry.findtext("os-version") or "",
-                "ha_state":      entry.findtext("ha-state") or "",  # active/standby
-                "ha_enabled":    entry.findtext("ha-enabled") == "yes",
+                "ha_state":      ha_state_val,
+                "ha_enabled":    ha_enabled_val == "yes",
             }
             devices.append(device_info)
             print(f"[DEVICES] Added: {serial} ({model}) - Hostname: {hostname} - HA: {device_info.get('ha_state', 'N/A')}")
