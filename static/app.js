@@ -2297,6 +2297,7 @@ function renderWarmup() {
     // Validate API.stream exists
     if (!API || typeof API.stream !== 'function') {
       console.error('[WARMUP] API.stream not available!', { API: !!API, stream: typeof API?.stream });
+      document.getElementById('content').innerHTML = `<div style="padding:40px;color:red;font-family:monospace">ERROR: API.stream not available</div>`;
       setTimeout(initApp, 100);
       return;
     }
@@ -2327,21 +2328,54 @@ function renderWarmup() {
               </div>
             `).join('')}
           </div>
+          <div id="warm-debug" style="margin-top:20px;padding:12px;border-radius:6px;background:#f5f5f5;border:1px solid #ddd;font-family:monospace;font-size:11px;color:#666;max-height:100px;overflow-y:auto;display:none"></div>
           <div id="warm-ready" style="display:none;text-align:center;margin-top:24px;font-size:14px;font-weight:600;color:var(--success)">
             ✅ All systems ready — launching dashboard…
           </div>
         </div>
       </div>`;
 
-    console.log('[WARMUP] Rendered warmup UI, calling API.stream()');
+    const debugEl = document.getElementById('warm-debug');
+    const addDebugLine = (text) => {
+      debugEl.style.display = '';
+      debugEl.innerHTML += text + '<br>';
+      debugEl.scrollTop = debugEl.scrollHeight;
+    };
+
+    addDebugLine('[' + new Date().toLocaleTimeString() + '] Starting API.stream() call...');
+    addDebugLine('Auth headers: ' + JSON.stringify(Auth.headers()));
 
     let launched = false;
     let streamComplete = false;
+    let eventCount = 0;
+    let streamStarted = false;
+
+    const streamTimeout = setTimeout(() => {
+      if (!streamStarted) {
+        addDebugLine('[TIMEOUT] Stream did not start within 5 seconds');
+        if (!launched) {
+          launched = true;
+          setTimeout(initApp, 500);
+        }
+      }
+    }, 5000);
 
     API.stream('/warm', {}, ev => {
-      console.log('[WARMUP] Event:', ev);
+      streamStarted = true;
+      eventCount++;
+      console.log(`[WARMUP] Event ${eventCount}:`, ev);
+      addDebugLine(`Event ${eventCount}: ${JSON.stringify(ev).substring(0, 100)}`);
+      
+      // Handle error events from the stream
+      if (ev.type === 'error') {
+        console.error('[WARMUP] Stream error:', ev.message);
+        addDebugLine('ERROR: ' + (ev.message || 'Unknown error'));
+        return;
+      }
+
       if (ev.step === 'done') {
         console.log('[WARMUP] Cache warmup complete!');
+        clearTimeout(streamTimeout);
         streamComplete = true;
         if (launched) return;
         launched = true;
@@ -2350,6 +2384,7 @@ function renderWarmup() {
         setTimeout(initApp, 1500);
         return;
       }
+
       const icon = { loading: '⏳', done: '✅', cached: '✅', error: '❌' }[ev.status] || '⏳';
       const bg   = { done: '#f0fdf4', cached: '#f0fdf4', error: '#fff1f2' }[ev.status];
       const rowEl = document.getElementById(`ws-${ev.step}`);
@@ -2359,7 +2394,9 @@ function renderWarmup() {
       if (icEl)  icEl.textContent  = icon;
       if (msgEl) msgEl.textContent = ev.message;
     }, () => {
-      console.log('[WARMUP] Stream ended. streamComplete:', streamComplete);
+      console.log('[WARMUP] Stream ended. streamComplete:', streamComplete, 'eventCount:', eventCount);
+      clearTimeout(streamTimeout);
+      addDebugLine(`[${new Date().toLocaleTimeString()}] Stream ended (${eventCount} events, complete: ${streamComplete})`);
       if (!launched) {
         launched = true;
         setTimeout(initApp, 500);
@@ -2367,6 +2404,7 @@ function renderWarmup() {
     });
   } catch (err) {
     console.error('[WARMUP] Error in renderWarmup():', err, err.stack);
+    document.getElementById('content').innerHTML = `<div style="padding:40px;color:red;font-family:monospace">ERROR: ${err.message}</div>`;
     setTimeout(initApp, 100);
   }
 }
