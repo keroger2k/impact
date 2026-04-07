@@ -483,10 +483,29 @@ def get_managed_devices(api_key: str) -> list[dict]:
     try:
         result = _op("<show><devices><all/></devices></show>", api_key)
         if result is None:
+            logger.warning("No result from Panorama devices op command")
             return devices
         
-        # Parse device entries: <entry name="serial">
-        for entry in result.findall(".//device/entry"):
+        # Try multiple XPath patterns (Panorama versions vary)
+        possible_paths = [
+            ".//device/entry",      # Most common
+            "./device/entry",       # Without leading dots
+            ".//entry",             # Generic
+            "devices/entry",        # Alternative nesting
+        ]
+        
+        entries = []
+        for xpath in possible_paths:
+            entries = result.findall(xpath)
+            if entries:
+                logger.info(f"Found {len(entries)} device(s) using xpath: {xpath}")
+                break
+        
+        if not entries:
+            logger.warning(f"No device entries found. Raw XML (first 1000 chars): {ET.tostring(result, encoding='unicode')[:1000]}")
+            return devices
+        
+        for entry in entries:
             serial = entry.get("name", "")
             if not serial:
                 continue
@@ -499,8 +518,10 @@ def get_managed_devices(api_key: str) -> list[dict]:
                 "device_group":  entry.findtext("device-group") or "N/A",
                 "os_version":    entry.findtext("os-version") or "",
             })
+        
+        logger.info(f"Fetched {len(devices)} managed device(s) from Panorama")
     except Exception as e:
-        logger.warning(f"Failed to fetch managed devices: {e}")
+        logger.error(f"Failed to fetch managed devices: {e}", exc_info=True)
     
     return devices
 
