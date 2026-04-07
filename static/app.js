@@ -163,7 +163,7 @@ function makeTable(cols, rows, onRowClick) {
     }).join('')}</tr>`
   ).join('');
 
-  return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+  return `<table class="table table-striped table-hover table-sm"><thead class="table-dark"><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
 }
 
 function bindTableSort(container, cols, rows, onRowClick) {
@@ -332,8 +332,8 @@ Router.register('dashboard', async (el) => {
         <div class="card">
           <div class="card-header"><span class="card-title">Top Platforms</span></div>
           <div class="card-body p-0">
-            <table>
-              <thead><tr><th>Platform</th><th>Count</th></tr></thead>
+            <table class="table table-striped table-hover table-sm">
+              <thead class="table-dark"><tr><th>Platform</th><th>Count</th></tr></thead>
               <tbody>
                 ${(stats.platforms || []).map(([p, c]) =>
                   `<tr><td>${p}</td><td><strong>${c}</strong></td></tr>`
@@ -345,8 +345,8 @@ Router.register('dashboard', async (el) => {
         <div class="card">
           <div class="card-header"><span class="card-title">Software Versions</span></div>
           <div class="card-body p-0">
-            <table>
-              <thead><tr><th>Version</th><th>Count</th></tr></thead>
+            <table class="table table-striped table-hover table-sm">
+              <thead class="table-dark"><tr><th>Version</th><th>Count</th></tr></thead>
               <tbody>
                 ${(stats.versions || []).map(([v, c]) =>
                   `<tr><td class="mono">${v}</td><td><strong>${c}</strong></td></tr>`
@@ -360,8 +360,8 @@ Router.register('dashboard', async (el) => {
       <div class="card">
         <div class="card-header"><span class="card-title">Devices by Role</span></div>
         <div class="card-body p-0">
-          <table>
-            <thead><tr><th>Role</th><th>Count</th></tr></thead>
+          <table class="table table-striped table-hover table-sm">
+            <thead class="table-dark"><tr><th>Role</th><th>Count</th></tr></thead>
             <tbody>
               ${(stats.roles || []).map(([r, c]) =>
                 `<tr><td>${r}</td><td><strong>${c}</strong></td></tr>`
@@ -2450,26 +2450,31 @@ function renderLogin(errorMsg) {
   // Hide the sidebar, expand main to full width
   document.getElementById('sidebar').style.display = 'none';
   const main = document.getElementById('main');
-  main.style.gridColumn = '1 / -1';   // span full width
+  main.style.marginLeft = '0';
   main.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:center;min-height:100vh;background:var(--bg-secondary)">
-      <div class="card" style="width:360px;padding:32px">
-        <div style="text-align:center;margin-bottom:24px">
-          <div style="font-size:32px;font-weight:800;color:var(--cisco-blue);letter-spacing:-1px">IMPACT II</div>
-          <div style="font-size:13px;color:var(--text-light);margin-top:4px">TSA Network Operations</div>
+    <div class="login-container">
+      <div class="login-card">
+        <div class="login-header">
+          <div class="login-logo">II</div>
+          <div style="margin-left:12px">
+            <div class="login-title">IMPACT II</div>
+            <div class="login-subtitle">TSA Network Operations</div>
+          </div>
         </div>
-        ${errorMsg ? `<div class="alert alert-danger" style="margin-bottom:16px">${errorMsg}</div>` : ''}
-        <form id="login-form" autocomplete="on">
-          <div style="margin-bottom:14px">
-            <label style="display:block;font-size:12px;font-weight:600;color:var(--text-light);margin-bottom:6px">Username</label>
-            <input id="login-user" class="input" type="text" placeholder="username" autocomplete="username" style="width:100%">
-          </div>
-          <div style="margin-bottom:20px">
-            <label style="display:block;font-size:12px;font-weight:600;color:var(--text-light);margin-bottom:6px">Password</label>
-            <input id="login-pass" class="input" type="password" placeholder="AD password" autocomplete="current-password" style="width:100%">
-          </div>
-          <button id="login-btn" class="btn btn-primary" style="width:100%">Sign In</button>
-        </form>
+        <div class="login-body">
+          ${errorMsg ? `<div class="alert alert-danger alert-sm"><strong>⚠️ Error:</strong> ${errorMsg}</div>` : ''}
+          <form id="login-form" autocomplete="on">
+            <div class="mb-3">
+              <label for="login-user" class="form-label">Username</label>
+              <input id="login-user" class="form-control" type="text" placeholder="Enter your username" autocomplete="username">
+            </div>
+            <div class="mb-3">
+              <label for="login-pass" class="form-label">Password</label>
+              <input id="login-pass" class="form-control" type="password" placeholder="Enter your password" autocomplete="current-password">
+            </div>
+            <button id="login-btn" type="submit" class="btn btn-primary w-100">Sign In</button>
+          </form>
+        </div>
       </div>
     </div>`;
 
