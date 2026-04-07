@@ -748,11 +748,31 @@ Router.register('ise', async (el) => {
     'ise-admin': renderAdmin,
   };
 
+  // Attach click handlers to tab buttons
   Object.entries(tabMap).forEach(([paneId, renderFn]) => {
-    const pane = document.getElementById(paneId);
-    if (pane) {
-      pane.addEventListener('shown.bs.tab', () => {
-        renderFn(pane);
+    const button = document.getElementById(paneId + '-tab');
+    if (button) {
+      button.addEventListener('click', (e) => {
+        e.preventDefault();
+        const pane = document.getElementById(paneId);
+        if (pane) {
+          // Update button states
+          document.querySelectorAll('#ise-tabs .nav-link').forEach(btn => {
+            btn.classList.remove('active');
+            btn.setAttribute('aria-selected', 'false');
+          });
+          button.classList.add('active');
+          button.setAttribute('aria-selected', 'true');
+          
+          // Hide all panes
+          document.querySelectorAll('#ise-content .tab-pane').forEach(p => {
+            p.classList.remove('show', 'active');
+          });
+          // Show this pane
+          pane.classList.add('show', 'active');
+          // Render content
+          renderFn(pane);
+        }
       });
     }
   });
@@ -1183,6 +1203,44 @@ Router.register('firewall', async (el) => {
     '/firewall/cache/refresh',
     () => Router.go('firewall')
   );
+
+  // Setup firewall tab click handlers
+  const lookupBtn = document.getElementById('fw-lookup-tab');
+  const byDeviceBtn = document.getElementById('fw-bydevice-tab');
+  
+  if (lookupBtn) {
+    lookupBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      document.querySelectorAll('#fw-tabs .nav-link').forEach(btn => {
+        btn.classList.remove('active');
+        btn.setAttribute('aria-selected', 'false');
+      });
+      lookupBtn.classList.add('active');
+      lookupBtn.setAttribute('aria-selected', 'true');
+      
+      document.querySelectorAll('#fw-content .tab-pane').forEach(p => {
+        p.classList.remove('show', 'active');
+      });
+      document.getElementById('fw-lookup').classList.add('show', 'active');
+    });
+  }
+  
+  if (byDeviceBtn) {
+    byDeviceBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      document.querySelectorAll('#fw-tabs .nav-link').forEach(btn => {
+        btn.classList.remove('active');
+        btn.setAttribute('aria-selected', 'false');
+      });
+      byDeviceBtn.classList.add('active');
+      byDeviceBtn.setAttribute('aria-selected', 'true');
+      
+      document.querySelectorAll('#fw-content .tab-pane').forEach(p => {
+        p.classList.remove('show', 'active');
+      });
+      document.getElementById('fw-bydevice').classList.add('show', 'active');
+    });
+  }
 
   // Setup device group selector for lookup tab
   if (deviceGroups.length) {
