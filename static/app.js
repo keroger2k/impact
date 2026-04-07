@@ -2228,11 +2228,13 @@ function renderLogin(errorMsg) {
     const password = document.getElementById('login-pass').value;
     if (!username || !password) return;
 
+    console.log('[LOGIN] Form submitted for user:', username);
     window._bootstrapping = true;  // Prevent 401 handlers from clearing form
     btn.disabled   = true;
     btn.textContent = 'Signing in…';
 
     try {
+      console.log('[LOGIN] Sending authentication request');
       const r = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2240,129 +2242,171 @@ function renderLogin(errorMsg) {
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
+        console.log('[LOGIN] Authentication failed:', data.detail || 'Check credentials');
         window._bootstrapping = false;
         renderLogin(data.detail || 'Login failed — check your credentials');
         return;
       }
+      console.log('[LOGIN] Authentication successful, saving token and calling bootApp()');
       Auth.save(data.token, data.username);
       bootApp();
     } catch (e) {
+      console.error('[LOGIN] Network error:', e);
       window._bootstrapping = false;
       renderLogin('Network error — please try again');
     }
   });
 }
 
-function bootApp() {
-  document.getElementById('sidebar').style.display = '';
-  const main = document.getElementById('main');
-  main.style.gridColumn = '';
-  main.innerHTML = `
-    <header id="topbar">
-      <span id="page-title">Loading…</span>
-      <div id="topbar-actions">
-        <span style="font-size:13px;color:var(--text-light);margin-right:12px">👤 ${Auth.username()}</span>
-        <button class="btn btn-ghost btn-sm" onclick="logout()">Sign Out</button>
-      </div>
-    </header>
-    <div id="content"></div>`;
+let _bootAppCalled = false;
 
-  renderWarmup();
+function bootApp() {
+  if (_bootAppCalled) {
+    console.log('[BOOT] bootApp() already called, skipping duplicate');
+    return;
+  }
+  _bootAppCalled = true;
+  console.log('[BOOT] bootApp() called, rendering warmup...');
+  
+  try {
+    document.getElementById('sidebar').style.display = '';
+    const main = document.getElementById('main');
+    main.style.gridColumn = '';
+    main.innerHTML = `
+      <header id="topbar">
+        <span id="page-title">Loading…</span>
+        <div id="topbar-actions">
+          <span style="font-size:13px;color:var(--text-light);margin-right:12px">👤 ${Auth.username()}</span>
+          <button class="btn btn-ghost btn-sm" onclick="logout()">Sign Out</button>
+        </div>
+      </header>
+      <div id="content"></div>`;
+
+    console.log('[BOOT] About to call renderWarmup()');
+    renderWarmup();
+  } catch (err) {
+    console.error('[BOOT] Error in bootApp():', err);
+    _bootAppCalled = false;
+  }
 }
 
 function renderWarmup() {
   console.log('[WARMUP] Starting cache warmup process...');
-  const STEPS = [
-    { id: 'devices',  label: 'Catalyst Center',    sub: 'Device inventory' },
-    { id: 'sites',    label: 'Catalyst Center',    sub: 'Site hierarchy' },
-    { id: 'sitemap',  label: 'Catalyst Center',    sub: 'Device → site map' },
-    { id: 'ise',      label: 'Cisco ISE',           sub: 'Policy & endpoint data' },
-    { id: 'panorama', label: 'Palo Alto Panorama',  sub: 'Firewall policies' },
-  ];
-
-  document.getElementById('content').innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:center;min-height:calc(100vh - 56px);background:var(--bg-secondary)">
-      <div class="card" style="width:520px;padding:36px 40px">
-        <div style="text-align:center;margin-bottom:28px">
-          <div style="font-size:22px;font-weight:700;color:var(--cisco-blue);margin-bottom:6px">Connecting to Network Systems</div>
-          <div style="font-size:13px;color:var(--text-light)">Authenticating and loading data for ${Auth.username()}</div>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:10px">
-          ${STEPS.map(s => `
-            <div id="ws-${s.id}" style="display:flex;align-items:center;gap:14px;padding:12px 16px;border-radius:8px;background:var(--bg-secondary);border:1px solid var(--border)">
-              <span id="wi-${s.id}" style="font-size:20px;min-width:24px;text-align:center">⏳</span>
-              <div style="flex:1;min-width:0">
-                <div style="font-size:13px;font-weight:600;color:var(--text-primary)">${s.label}</div>
-                <div id="wm-${s.id}" style="font-size:12px;color:var(--text-light);margin-top:2px">${s.sub}</div>
-              </div>
-            </div>
-          `).join('')}
-        </div>
-        <div id="warm-ready" style="display:none;text-align:center;margin-top:24px;font-size:14px;font-weight:600;color:var(--success)">
-          ✅ All systems ready — launching dashboard…
-        </div>
-      </div>
-    </div>`;
-
-  let launched = false;
-  let streamComplete = false;
-
-  API.stream('/warm', {}, ev => {
-    console.log('[WARMUP] Event:', ev);
-    if (ev.step === 'done') {
-      console.log('[WARMUP] Cache warmup complete!');
-      streamComplete = true;
-      if (launched) return;
-      launched = true;
-      const el = document.getElementById('warm-ready');
-      if (el) el.style.display = '';
-      setTimeout(initApp, 1500);
+  
+  try {
+    // Validate API.stream exists
+    if (!API || typeof API.stream !== 'function') {
+      console.error('[WARMUP] API.stream not available!', { API: !!API, stream: typeof API?.stream });
+      setTimeout(initApp, 100);
       return;
     }
-    const icon = { loading: '⏳', done: '✅', cached: '✅', error: '❌' }[ev.status] || '⏳';
-    const bg   = { done: '#f0fdf4', cached: '#f0fdf4', error: '#fff1f2' }[ev.status];
-    const rowEl = document.getElementById(`ws-${ev.step}`);
-    const icEl  = document.getElementById(`wi-${ev.step}`);
-    const msgEl = document.getElementById(`wm-${ev.step}`);
-    if (rowEl && bg) rowEl.style.background = bg;
-    if (icEl)  icEl.textContent  = icon;
-    if (msgEl) msgEl.textContent = ev.message;
-  }, () => {
-    console.log('[WARMUP] Stream ended. streamComplete:', streamComplete);
-    if (!launched) {
-      launched = true;
-      setTimeout(initApp, 500);
-    }
-  });
+
+    const STEPS = [
+      { id: 'devices',  label: 'Catalyst Center',    sub: 'Device inventory' },
+      { id: 'sites',    label: 'Catalyst Center',    sub: 'Site hierarchy' },
+      { id: 'sitemap',  label: 'Catalyst Center',    sub: 'Device → site map' },
+      { id: 'ise',      label: 'Cisco ISE',           sub: 'Policy & endpoint data' },
+      { id: 'panorama', label: 'Palo Alto Panorama',  sub: 'Firewall policies' },
+    ];
+
+    document.getElementById('content').innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:center;min-height:calc(100vh - 56px);background:var(--bg-secondary)">
+        <div class="card" style="width:520px;padding:36px 40px">
+          <div style="text-align:center;margin-bottom:28px">
+            <div style="font-size:22px;font-weight:700;color:var(--cisco-blue);margin-bottom:6px">Connecting to Network Systems</div>
+            <div style="font-size:13px;color:var(--text-light)">Authenticating and loading data for ${Auth.username()}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:10px">
+            ${STEPS.map(s => `
+              <div id="ws-${s.id}" style="display:flex;align-items:center;gap:14px;padding:12px 16px;border-radius:8px;background:var(--bg-secondary);border:1px solid var(--border)">
+                <span id="wi-${s.id}" style="font-size:20px;min-width:24px;text-align:center">⏳</span>
+                <div style="flex:1;min-width:0">
+                  <div style="font-size:13px;font-weight:600;color:var(--text-primary)">${s.label}</div>
+                  <div id="wm-${s.id}" style="font-size:12px;color:var(--text-light);margin-top:2px">${s.sub}</div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+          <div id="warm-ready" style="display:none;text-align:center;margin-top:24px;font-size:14px;font-weight:600;color:var(--success)">
+            ✅ All systems ready — launching dashboard…
+          </div>
+        </div>
+      </div>`;
+
+    console.log('[WARMUP] Rendered warmup UI, calling API.stream()');
+
+    let launched = false;
+    let streamComplete = false;
+
+    API.stream('/warm', {}, ev => {
+      console.log('[WARMUP] Event:', ev);
+      if (ev.step === 'done') {
+        console.log('[WARMUP] Cache warmup complete!');
+        streamComplete = true;
+        if (launched) return;
+        launched = true;
+        const el = document.getElementById('warm-ready');
+        if (el) el.style.display = '';
+        setTimeout(initApp, 1500);
+        return;
+      }
+      const icon = { loading: '⏳', done: '✅', cached: '✅', error: '❌' }[ev.status] || '⏳';
+      const bg   = { done: '#f0fdf4', cached: '#f0fdf4', error: '#fff1f2' }[ev.status];
+      const rowEl = document.getElementById(`ws-${ev.step}`);
+      const icEl  = document.getElementById(`wi-${ev.step}`);
+      const msgEl = document.getElementById(`wm-${ev.step}`);
+      if (rowEl && bg) rowEl.style.background = bg;
+      if (icEl)  icEl.textContent  = icon;
+      if (msgEl) msgEl.textContent = ev.message;
+    }, () => {
+      console.log('[WARMUP] Stream ended. streamComplete:', streamComplete);
+      if (!launched) {
+        launched = true;
+        setTimeout(initApp, 500);
+      }
+    });
+  } catch (err) {
+    console.error('[WARMUP] Error in renderWarmup():', err, err.stack);
+    setTimeout(initApp, 100);
+  }
 }
 
 function initApp() {
-  console.log('[WARMUP] Calling startApp...');
-  startApp();
+  console.log('[INIT] initApp() called, about to call startApp()');
+  try {
+    startApp();
+  } catch (err) {
+    console.error('[INIT] Error in startApp():', err);
+  }
 }
 
 function startApp() {
   console.log('[BOOT] Starting app initialization...');
   window._bootstrapping = false;  // Allow 401 handlers to work again now that app is loaded
   
-  // Add Refresh Cache button now that we're in the app
-  const actions = document.getElementById('topbar-actions');
-  if (actions && !actions.querySelector('[data-refresh]')) {
-    const btn = document.createElement('button');
-    btn.className = 'btn btn-ghost btn-sm';
-    btn.dataset.refresh = '1';
-    btn.style.marginRight = '8px';
-    btn.textContent = '🔄 Refresh Cache';
-    btn.onclick = refreshCache;
-    actions.prepend(btn);
+  try {
+    // Add Refresh Cache button now that we're in the app
+    const actions = document.getElementById('topbar-actions');
+    if (actions && !actions.querySelector('[data-refresh]')) {
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-ghost btn-sm';
+      btn.dataset.refresh = '1';
+      btn.style.marginRight = '8px';
+      btn.textContent = '🔄 Refresh Cache';
+      btn.onclick = refreshCache;
+      actions.prepend(btn);
+    }
+    
+    console.log('[BOOT] Initializing router...');
+    Router.init();
+    console.log('[BOOT] Loading system status...');
+    loadStatus();
+    setInterval(loadStatus, 60_000);
+    console.log('[BOOT] App fully initialized');
+  } catch (err) {
+    console.error('[BOOT] Error in startApp():', err, err.stack);
   }
-  
-  console.log('[BOOT] Initializing router...');
-  Router.init();
-  console.log('[BOOT] Loading system status...');
-  loadStatus();
-  setInterval(loadStatus, 60_000);
-  console.log('[BOOT] App fully initialized');
+}
 }
 
 async function logout() {
@@ -2374,18 +2418,25 @@ async function logout() {
 /* ── Bootstrap ──────────────────────────────────────────────── */
 (async () => {
   const token = Auth.token();
+  console.log('[BOOTSTRAP] Page load, checking for existing token:', !!token);
+  
   if (token) {
     // Validate the stored token
     try {
       const r = await fetch('/api/auth/me', { headers: { 'Authorization': `Bearer ${token}` } });
       if (r.ok) {
         const { username } = await r.json();
+        console.log('[BOOTSTRAP] Token valid, username:', username);
         Auth.save(token, username);   // refresh stored username
         bootApp();
         return;
       }
-    } catch {}
+      console.log('[BOOTSTRAP] Token invalid, status:', r.status);
+    } catch (err) {
+      console.error('[BOOTSTRAP] Error validating token:', err);
+    }
     Auth.clear();
   }
+  console.log('[BOOTSTRAP] Rendering login form');
   renderLogin();
 })();
