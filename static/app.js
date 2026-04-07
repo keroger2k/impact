@@ -135,6 +135,37 @@ const Router = {
   }
 };
 
+/* ── Sidebar Toggle ─────────────────────────────────────────── */
+function toggleSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const main = document.getElementById('main');
+  const isCollapsed = sidebar.classList.contains('collapsed');
+  
+  if (isCollapsed) {
+    sidebar.classList.remove('collapsed');
+    main.style.marginLeft = 'var(--sidebar-w)';
+    localStorage.setItem('sidebar-collapsed', 'false');
+  } else {
+    sidebar.classList.add('collapsed');
+    main.style.marginLeft = '70px';
+    localStorage.setItem('sidebar-collapsed', 'true');
+  }
+}
+
+/* ── Initialize Sidebar State ───────────────────────────────── */
+function initSidebarState() {
+  const collapsed = localStorage.getItem('sidebar-collapsed') === 'true';
+  const sidebar = document.getElementById('sidebar');
+  const main = document.getElementById('main');
+  
+  if (collapsed && sidebar) {
+    sidebar.classList.add('collapsed');
+    main.style.marginLeft = '70px';
+  } else if (main) {
+    main.style.marginLeft = 'var(--sidebar-w)';
+  }
+}
+
 /* ── Toast ──────────────────────────────────────────────────── */
 function toast(msg, type = 'info', ms = 3500) {
   const el = document.createElement('div');
@@ -2529,6 +2560,7 @@ function bootApp() {
   
   try {
     document.getElementById('sidebar').style.display = '';
+    initSidebarState();  // Restore sidebar state
     const main = document.getElementById('main');
     main.style.gridColumn = '';
     main.innerHTML = `
