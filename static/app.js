@@ -2445,7 +2445,6 @@ function startApp() {
     console.error('[BOOT] Error in startApp():', err, err.stack);
   }
 }
-}
 
 async function logout() {
   try { await API.post('/auth/logout', {}); } catch {}
