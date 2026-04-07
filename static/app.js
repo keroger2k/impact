@@ -930,26 +930,57 @@ Router.register('ise', async (el) => {
   /* TrustSec */
   async function renderTrustsec(area) {
     area.innerHTML = `
-      <div class="tabs" id="ts-tabs">
-        <div class="tab active" data-ts="sgts">SGTs</div>
-        <div class="tab" data-ts="sgacls">SGACLs</div>
-        <div class="tab" data-ts="egress">Egress Matrix</div>
-      </div>
-      <div id="ts-content"></div>`;
+      <ul class="nav nav-tabs mb-3" id="ts-tabs" role="tablist">
+        <li class="nav-item" role="presentation">
+          <button class="nav-link active" id="ts-sgts-tab" data-bs-toggle="tab" data-bs-target="#ts-sgts" type="button" role="tab" aria-controls="ts-sgts" aria-selected="true">SGTs</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="ts-sgacls-tab" data-bs-toggle="tab" data-bs-target="#ts-sgacls" type="button" role="tab" aria-controls="ts-sgacls" aria-selected="false">SGACLs</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="ts-egress-tab" data-bs-toggle="tab" data-bs-target="#ts-egress" type="button" role="tab" aria-controls="ts-egress" aria-selected="false">Egress Matrix</button>
+        </li>
+      </ul>
+      <div class="tab-content" id="ts-content">
+        <div class="tab-pane fade show active" id="ts-sgts" role="tabpanel" aria-labelledby="ts-sgts-tab"></div>
+        <div class="tab-pane fade" id="ts-sgacls" role="tabpanel" aria-labelledby="ts-sgacls-tab"></div>
+        <div class="tab-pane fade" id="ts-egress" role="tabpanel" aria-labelledby="ts-egress-tab"></div>
+      </div>`;
 
-    const tsPanels = {
-      sgts:   renderSgts,
-      sgacls: renderSgacls,
-      egress: renderEgress,
+    const tsTabs = {
+      'ts-sgts': renderSgts,
+      'ts-sgacls': renderSgacls,
+      'ts-egress': renderEgress,
     };
-    document.querySelectorAll('#ts-tabs .tab').forEach(t => {
-      t.addEventListener('click', () => {
-        document.querySelectorAll('#ts-tabs .tab').forEach(x => x.classList.remove('active'));
-        t.classList.add('active');
-        tsPanels[t.dataset.ts](document.getElementById('ts-content'));
-      });
+
+    Object.entries(tsTabs).forEach(([tabId, renderFn]) => {
+      const button = document.getElementById(tabId + '-tab');
+      if (button) {
+        button.addEventListener('click', (e) => {
+          e.preventDefault();
+          // Update button states
+          document.querySelectorAll('#ts-tabs .nav-link').forEach(btn => {
+            btn.classList.remove('active');
+            btn.setAttribute('aria-selected', 'false');
+          });
+          button.classList.add('active');
+          button.setAttribute('aria-selected', 'true');
+          
+          // Hide all panes
+          document.querySelectorAll('#ts-content .tab-pane').forEach(p => {
+            p.classList.remove('show', 'active');
+          });
+          // Show this pane
+          const pane = document.getElementById(tabId);
+          pane.classList.add('show', 'active');
+          // Render content
+          renderFn(pane);
+        });
+      }
     });
-    renderSgts(document.getElementById('ts-content'));
+
+    // Load initial tab
+    renderSgts(document.getElementById('ts-sgts'));
 
     async function renderSgts(a) {
       a.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
@@ -1385,7 +1416,7 @@ Router.register('firewall', async (el) => {
           <div class="card-body">
             <div class="form-group">
               <label class="form-label">Virtual System (VSYS)</label>
-              <select class="select" id="fw-vsys-select">
+              <select class="form-select form-select-sm" id="fw-vsys-select">
                 ${vsysList.map(vsys => `<option value="${vsys}">${vsys}</option>`).join('')}
               </select>
             </div>
