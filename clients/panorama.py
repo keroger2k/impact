@@ -693,6 +693,46 @@ def get_all_security_rules(
     return all_rules
 
 
+def get_device_to_group_mapping(api_key: str, device_groups: list[str]) -> dict[str, str]:
+    """
+    Build a mapping of device serial -> device group by querying each device group.
+    Returns {serial: device_group_name}.
+    """
+    print("\n[MAPPING] Building device-to-device-group mapping...")
+    mapping = {}
+    
+    dg_base = f"{BASE_XPATH}/device-group"
+    for dg in device_groups:
+        print(f"[MAPPING] Querying device group: {dg}")
+        try:
+            # Query the devices entry for this device group
+            xpath = f"{dg_base}/entry[@name='{dg}']/devices"
+            result = _config_get(xpath, api_key)
+            
+            if result is None:
+                print(f"[MAPPING]   No devices in {dg}")
+                continue
+            
+            # Parse device entries
+            entries = result.findall(".//entry")
+            if not entries:
+                entries = result.findall("entry")
+            
+            print(f"[MAPPING]   Found {len(entries)} device entries in {dg}")
+            
+            for entry in entries:
+                serial = entry.get("name", "")
+                if serial:
+                    mapping[serial] = dg
+                    print(f"[MAPPING]   - {serial} → {dg}")
+        except Exception as e:
+            print(f"[MAPPING]   Error querying {dg}: {e}")
+            logger.debug(f"Error querying device group {dg}: {e}")
+    
+    print(f"[MAPPING] Complete: {len(mapping)} device(s) mapped to device groups\n")
+    return mapping
+
+
 def get_device_policies(
     api_key:        str,
     device_serial:  str,
@@ -715,25 +755,18 @@ def get_device_policies(
     
     all_rules = []
     
-    # Get device info to find its primary device group
-    print(f"[POLICIES] Fetching devices to find {device_serial}...")
-    devices = get_managed_devices(api_key)
-    print(f"[POLICIES] Found {len(devices)} total managed devices")
+    # Build mapping of device serial -> device group
+    print(f"[POLICIES] Building device-to-group mapping...")
+    dg_mapping = get_device_to_group_mapping(api_key, device_groups)
     
-    device_info = next((d for d in devices if d.get("serial") == device_serial), None)
-    if not device_info:
-        print(f"[POLICIES] ERROR: Device {device_serial} not found in managed devices list!")
-        print(f"[POLICIES] Available serials: {[d.get('serial') for d in devices]}")
-        logger.warning(f"Device {device_serial} not found in managed devices")
+    device_dg = dg_mapping.get(device_serial)
+    if not device_dg:
+        print(f"[POLICIES] ERROR: Device {device_serial} not found in any device group!")
+        print(f"[POLICIES] Available device mappings: {dg_mapping}")
+        logger.warning(f"Device {device_serial} not found in any device group")
         return []
     
-    device_dg = device_info.get("device_group", "N/A")
     print(f"[POLICIES] Device {device_serial} assigned to device group: {device_dg}")
-    print(f"[POLICIES] Device info: {device_info}")
-    
-    if device_dg == "N/A":
-        print(f"[POLICIES] ERROR: Device has no device group assigned!")
-        return []
     
     # Only fetch rules from the device's assigned device group (plus shared)
     target_dgs = [device_dg]
