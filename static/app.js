@@ -245,8 +245,8 @@ function kvRow(label, value) {
 
 /* ── Reachability badge ─────────────────────────────────────── */
 function reachBadge(status) {
-  if (status === 'Reachable') return `<span class="badge badge-success">✅ Reachable</span>`;
-  return `<span class="badge badge-danger">🔴 ${status || 'Unknown'}</span>`;
+  if (status === 'Reachable') return `<span class="badge text-bg-success">✅ Reachable</span>`;
+  return `<span class="badge text-bg-danger">🔴 ${status || 'Unknown'}</span>`;
 }
 
 /* ── Format timestamp ───────────────────────────────────────── */
@@ -567,7 +567,7 @@ Router.register('devices', async (el) => {
               ${kvRow('Uptime', device.upTime)}
               ${kvRow('Last Contact', device.lastContactFormatted)}
               ${kvRow('Device ID', `<code style="font-size:10px">${device.id}</code>`)}
-              ${device.reachabilityFailureReason ? kvRow('Failure', `<span class="badge badge-danger">${device.reachabilityFailureReason}</span>`) : ''}
+              ${device.reachabilityFailureReason ? kvRow('Failure', `<span class="badge text-bg-danger">${device.reachabilityFailureReason}</span>`) : ''}
             </div>
           </div>
           <div id="config-area-${devId}"></div>
@@ -739,7 +739,7 @@ Router.register('ise', async (el) => {
     </div>`;
 
   // Set up Bootstrap tab event listeners
-  const tabs = {
+  const tabMap = {
     'ise-nads': renderNads,
     'ise-endpoints': renderEndpoints,
     'ise-trustsec': renderTrustsec,
@@ -748,13 +748,11 @@ Router.register('ise', async (el) => {
     'ise-admin': renderAdmin,
   };
 
-  Object.keys(tabs).forEach(tabId => {
-    const tab = document.getElementById(tabId);
-    if (tab) {
-      tab.addEventListener('shown.bs.tab', () => {
-        const paneId = tab.getAttribute('data-bs-target');
-        const pane = document.querySelector(paneId);
-        if (pane) tabs[tabId](pane);
+  Object.entries(tabMap).forEach(([paneId, renderFn]) => {
+    const pane = document.getElementById(paneId);
+    if (pane) {
+      pane.addEventListener('shown.bs.tab', () => {
+        renderFn(pane);
       });
     }
   });
@@ -1171,14 +1169,6 @@ Router.register('firewall', async (el) => {
       </div>
     </div>`;
 
-  // Setup Bootstrap tabs event listener
-  const fwLookupTab = el.querySelector('#fw-lookup-tab');
-  if (fwLookupTab) {
-    fwLookupTab.addEventListener('shown.bs.tab', () => {
-      // Lookup tab shown
-    });
-  }
-
   // Setup cache bars
   initCacheBar(
     el.querySelector('#fw-cache-bar'),
@@ -1269,7 +1259,7 @@ Router.register('firewall', async (el) => {
         { key: 'device_group', label: 'Device Group' },
         { key: 'rulebase', label: 'Rulebase' },
         { key: 'action', label: 'Action',
-          render: v => `<span class="badge ${v === 'allow' ? 'badge-success' : 'badge-danger'}">${v.toUpperCase()}</span>` },
+          render: v => `<span class="badge ${v === 'allow' ? 'text-bg-success' : 'text-bg-danger'}">${v.toUpperCase()}</span>` },
         { key: 'source', label: 'Source',
           render: v => fmtList(v) },
         { key: 'destination', label: 'Destination',
@@ -1373,7 +1363,7 @@ Router.register('firewall', async (el) => {
             { key: 'device_group', label: 'Context', width: '120px' },
             { key: 'rulebase', label: 'Base', width: '80px' },
             { key: 'action', label: 'Action', width: '80px',
-              render: v => `<span class="badge ${v === 'allow' ? 'badge-success' : 'badge-danger'}">${v.toUpperCase()}</span>` },
+              render: v => `<span class="badge ${v === 'allow' ? 'text-bg-success' : 'text-bg-danger'}">${v.toUpperCase()}</span>` },
             { key: 'from_zones', label: 'From', width: '120px',
               render: v => v?.length ? v.join(', ') : '—' },
             { key: 'to_zones', label: 'To', width: '120px',
@@ -1425,9 +1415,9 @@ Router.register('firewall', async (el) => {
 
   function fmtList(arr) {
     if (!arr || !arr.length) return '—';
-    if (arr.includes('any')) return '<span class="badge badge-neutral">any</span>';
+    if (arr.includes('any')) return '<span class="badge text-bg-secondary">any</span>';
     if (arr.length <= 2) return arr.join(', ');
-    return `${arr.slice(0,2).join(', ')} <span class="badge badge-neutral">+${arr.length-2}</span>`;
+    return `${arr.slice(0,2).join(', ')} <span class="badge text-bg-secondary">+${arr.length-2}</span>`;
   }
 
   function showRuleDetail(rule, data) {
@@ -1482,7 +1472,7 @@ Router.register('firewall', async (el) => {
               ${kvRow('Log Setting', rule.log_setting)}
               ${kvRow('Tags', rule.tag?.join(', '))}
               ${kvRow('Description', rule.description)}
-              ${kvRow('First Match', rule.first_match ? '<span class="badge badge-success">Yes — decides traffic</span>' : 'No')}
+              ${kvRow('First Match', rule.first_match ? '<span class="badge text-bg-success">Yes — decides traffic</span>' : 'No')}
             </div>
           </div>
 
@@ -1552,7 +1542,7 @@ Router.register('firewall', async (el) => {
             </div>
             <div class="detail-section">
               <div class="detail-section-title">Security & Logging</div>
-              ${kvRow('Action', `<span class="badge badge-${policy.action === 'allow' ? 'success' : 'danger'}">${policy.action.toUpperCase()}</span>`)}
+              ${kvRow('Action', `<span class="badge text-bg-${policy.action === 'allow' ? 'success' : 'danger'}">${policy.action.toUpperCase()}</span>`)}
               ${kvRow('Security Profile', policy.profile_group || '—')}
               ${kvRow('HIP Profiles', fmtList(policy.hip_profiles))}
               ${kvRow('Log Start', policy.log_start ? '✓' : '—')}

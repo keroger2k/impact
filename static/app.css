@@ -452,6 +452,41 @@ body {
   font-size: 11px;
 }
 
+/* ── Frozen table headers ────────────────────────────────────── */
+.table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--border-lt);
+  border-radius: var(--radius);
+}
+
+.table-wrap table {
+  border: none;
+}
+
+.table thead {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 11;
+}
+
+.table-dark thead {
+  background: var(--cisco-navy);
+}
+
+.table-dark thead th {
+  background: var(--cisco-navy);
+  position: sticky;
+  top: 0;
+  z-index: 11;
+}
+
 /* ── Cards ──────────────────────────────────────────────────── */
 /* ── Cards ──────────────────────────────────────────────────── */
 .card {
