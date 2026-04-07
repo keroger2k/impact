@@ -706,37 +706,61 @@ Router.register('ip-lookup', async (el) => {
 /* ── ISE ────────────────────────────────────────────────────── */
 Router.register('ise', async (el) => {
   el.innerHTML = `
-    <div class="flex items-center gap-3 mb-0.5">
-      <div class="tabs" id="ise-tabs" style="margin-bottom:0;border-bottom:none;flex:1">
-        <div class="tab active" data-tab="nads">NADs</div>
-        <div class="tab" data-tab="endpoints">Endpoints</div>
-        <div class="tab" data-tab="trustsec">TrustSec</div>
-        <div class="tab" data-tab="identity">Identity</div>
-        <div class="tab" data-tab="policy">Policy</div>
-        <div class="tab" data-tab="admin">Admin</div>
-      </div>
+    <div class="d-flex gap-3 align-items-center mb-0">
+      <ul class="nav nav-tabs flex-grow-1" id="ise-tabs" role="tablist" style="margin-bottom: 0;">
+        <li class="nav-item" role="presentation">
+          <button class="nav-link active" id="ise-nads-tab" data-bs-toggle="tab" data-bs-target="#ise-nads" type="button" role="tab" aria-controls="ise-nads" aria-selected="true">NADs</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="ise-endpoints-tab" data-bs-toggle="tab" data-bs-target="#ise-endpoints" type="button" role="tab" aria-controls="ise-endpoints" aria-selected="false">Endpoints</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="ise-trustsec-tab" data-bs-toggle="tab" data-bs-target="#ise-trustsec" type="button" role="tab" aria-controls="ise-trustsec" aria-selected="false">TrustSec</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="ise-identity-tab" data-bs-toggle="tab" data-bs-target="#ise-identity" type="button" role="tab" aria-controls="ise-identity" aria-selected="false">Identity</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="ise-policy-tab" data-bs-toggle="tab" data-bs-target="#ise-policy" type="button" role="tab" aria-controls="ise-policy" aria-selected="false">Policy</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="ise-admin-tab" data-bs-toggle="tab" data-bs-target="#ise-admin" type="button" role="tab" aria-controls="ise-admin" aria-selected="false">Admin</button>
+        </li>
+      </ul>
       <div class="cache-bar" id="ise-cache-bar"></div>
     </div>
-    <div id="ise-content"></div>`;
+    <div class="tab-content" id="ise-content" style="padding-top: 16px;">
+      <div class="tab-pane fade show active" id="ise-nads" role="tabpanel" aria-labelledby="ise-nads-tab"></div>
+      <div class="tab-pane fade" id="ise-endpoints" role="tabpanel" aria-labelledby="ise-endpoints-tab"></div>
+      <div class="tab-pane fade" id="ise-trustsec" role="tabpanel" aria-labelledby="ise-trustsec-tab"></div>
+      <div class="tab-pane fade" id="ise-identity" role="tabpanel" aria-labelledby="ise-identity-tab"></div>
+      <div class="tab-pane fade" id="ise-policy" role="tabpanel" aria-labelledby="ise-policy-tab"></div>
+      <div class="tab-pane fade" id="ise-admin" role="tabpanel" aria-labelledby="ise-admin-tab"></div>
+    </div>`;
 
-  const panels = {
-    nads:      renderNads,
-    endpoints: renderEndpoints,
-    trustsec:  renderTrustsec,
-    identity:  renderIdentity,
-    policy:    renderPolicy,
-    admin:     renderAdmin,
+  // Set up Bootstrap tab event listeners
+  const tabs = {
+    'ise-nads': renderNads,
+    'ise-endpoints': renderEndpoints,
+    'ise-trustsec': renderTrustsec,
+    'ise-identity': renderIdentity,
+    'ise-policy': renderPolicy,
+    'ise-admin': renderAdmin,
   };
 
-  document.querySelectorAll('#ise-tabs .tab').forEach(t => {
-    t.addEventListener('click', () => {
-      document.querySelectorAll('#ise-tabs .tab').forEach(x => x.classList.remove('active'));
-      t.classList.add('active');
-      panels[t.dataset.tab](document.getElementById('ise-content'));
-    });
+  Object.keys(tabs).forEach(tabId => {
+    const tab = document.getElementById(tabId);
+    if (tab) {
+      tab.addEventListener('shown.bs.tab', () => {
+        const paneId = tab.getAttribute('data-bs-target');
+        const pane = document.querySelector(paneId);
+        if (pane) tabs[tabId](pane);
+      });
+    }
   });
 
-  renderNads(document.getElementById('ise-content'));
+  // Load initial tab
+  renderNads(document.getElementById('ise-nads'));
 
   initCacheBar(
     el.querySelector('#ise-cache-bar'),
@@ -750,8 +774,8 @@ Router.register('ise', async (el) => {
     area.innerHTML = `
       <div class="table-wrap">
         <div class="table-toolbar">
-          <div class="search-input"><input class="input" id="nad-search" placeholder="Search by name or IP…" style="width:220px"></div>
-          <button class="btn btn-primary" id="nad-go">Search</button>
+          <div class="search-input"><input class="form-control form-control-sm" id="nad-search" placeholder="Search by name or IP…" style="width:220px"></div>
+          <button class="btn btn-primary btn-sm" id="nad-go">Search</button>
           <span class="table-count" id="nad-count"></span>
         </div>
         <div id="nad-table"></div>
@@ -1048,55 +1072,60 @@ Router.register('firewall', async (el) => {
 
   // Create tabbed interface
   el.innerHTML = `
-    <div class="tabs mb-4" id="fw-tabs" style="border-bottom: 1px solid var(--border); padding-bottom: 0; display: flex; gap: 0; margin-bottom: 0;">
-      <div class="tab active" data-fw-tab="lookup" style="flex: 0 0 auto; padding: 12px 16px; cursor: pointer; border-bottom: 2px solid; border-bottom-color: var(--primary);">
-        Policy Lookup
-      </div>
-      <div class="tab" data-fw-tab="by-device" style="flex: 0 0 auto; padding: 12px 16px; cursor: pointer; border-bottom: 2px solid; border-bottom-color: transparent;">
-        By Device
-      </div>
-    </div>
+    <ul class="nav nav-tabs mb-3" id="fw-tabs" role="tablist">
+      <li class="nav-item" role="presentation">
+        <button class="nav-link active" id="fw-lookup-tab" data-bs-toggle="tab" data-bs-target="#fw-lookup" type="button" role="tab" aria-controls="fw-lookup" aria-selected="true">Policy Lookup</button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="fw-bydevice-tab" data-bs-toggle="tab" data-bs-target="#fw-bydevice" type="button" role="tab" aria-controls="fw-bydevice" aria-selected="false">By Device</button>
+      </li>
+    </ul>
     
-    <!-- Lookup Tab -->
-    <div data-fw-tab-panel="lookup">
-      <div class="card mb-4">
-        <div class="card-header"><span class="card-title">Security Policy Lookup</span><div class="cache-bar" id="fw-cache-bar"></div></div>
-        <div class="card-body">
-          <div style="display:grid;grid-template-columns:1fr 1fr 120px 120px auto;gap:12px;align-items:flex-end">
-            <div class="form-group m-0">
-              <label class="form-label">Source IP</label>
-              <input class="input" id="fw-src" placeholder="10.47.31.195">
-            </div>
-            <div class="form-group m-0">
-              <label class="form-label">Destination IP</label>
-              <input class="input" id="fw-dst" placeholder="10.16.97.122">
-            </div>
-            <div class="form-group m-0">
-              <label class="form-label">Protocol</label>
-              <select class="select" id="fw-proto">
-                <option value="any">Any</option>
-                <option value="tcp">TCP</option>
-                <option value="udp">UDP</option>
-              </select>
-            </div>
-            <div class="form-group m-0">
-              <label class="form-label">Dest Port</label>
-              <input class="input" id="fw-port" placeholder="443">
-            </div>
-            <button class="btn btn-primary" id="fw-go">🔍 Search</button>
+    <div class="tab-content" id="fw-content">
+      <!-- Lookup Tab -->
+      <div class="tab-pane fade show active" id="fw-lookup" role="tabpanel" aria-labelledby="fw-lookup-tab">
+        <div class="card mb-4">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span class="card-title">Security Policy Lookup</span>
+            <div class="cache-bar" id="fw-cache-bar"></div>
           </div>
-          <div class="flex gap-4 mt-3 items-center">
-            <label class="flex items-center gap-1.5 text-xs cursor-pointer">
-              <input type="checkbox" id="fw-disabled"> Include disabled rules
-            </label>
-            <label class="flex items-center gap-1.5 text-xs cursor-pointer">
-              <input type="checkbox" id="fw-all" checked> Show all matches
-            </label>
+          <div class="card-body">
+            <div style="display:grid;grid-template-columns:1fr 1fr 120px 120px auto;gap:12px;align-items:flex-end">
+              <div class="form-group m-0">
+                <label class="form-label">Source IP</label>
+                <input class="form-control form-control-sm" id="fw-src" placeholder="10.47.31.195">
+              </div>
+              <div class="form-group m-0">
+                <label class="form-label">Destination IP</label>
+                <input class="form-control form-control-sm" id="fw-dst" placeholder="10.16.97.122">
+              </div>
+              <div class="form-group m-0">
+                <label class="form-label">Protocol</label>
+                <select class="form-select form-select-sm" id="fw-proto">
+                  <option value="any">Any</option>
+                  <option value="tcp">TCP</option>
+                  <option value="udp">UDP</option>
+                </select>
+              </div>
+              <div class="form-group m-0">
+                <label class="form-label">Dest Port</label>
+                <input class="form-control form-control-sm" id="fw-port" placeholder="443">
+              </div>
+              <button class="btn btn-primary btn-sm" id="fw-go">🔍 Search</button>
+          </div>
+          <div class="mt-3">
+            <div class="form-check form-check-inline">
+              <input type="checkbox" class="form-check-input" id="fw-disabled">
+              <label class="form-check-label" for="fw-disabled">Include disabled rules</label>
+            </div>
+            <div class="form-check form-check-inline">
+              <input type="checkbox" class="form-check-input" id="fw-all" checked>
+              <label class="form-check-label" for="fw-all">Show all matches</label>
+            </div>
             ${deviceGroups.length ? `
-            <div class="dg-select ml-auto" id="fw-dg-wrap">
-              <button type="button" class="dg-select-btn" id="fw-dg-btn">
+            <div class="dg-select d-inline-block" id="fw-dg-wrap">
+              <button type="button" class="btn btn-outline-secondary btn-sm" id="fw-dg-btn">
                 <span id="fw-dg-label">All device groups</span>
-                <span class="dg-select-arrow">▾</span>
               </button>
               <div class="dg-select-panel" id="fw-dg-panel" hidden>
                 <label class="dg-select-item dg-select-all-item">
@@ -1117,45 +1146,38 @@ Router.register('firewall', async (el) => {
         </div>
       </div>
       <div id="fw-result"></div>
-    </div>
 
-    <!-- By-Device Tab -->
-    <div data-fw-tab-panel="by-device" style="display: none;">
-      <div class="card mb-4">
-        <div class="card-header"><span class="card-title">Firewall Policies</span><div class="cache-bar" id="fw-dev-cache-bar"></div></div>
-        <div class="card-body">
-          <div class="form-group">
-            <label class="form-label">Select Firewall Device</label>
-            <select class="select" id="fw-device-select">
-              <option value="">-- Choose a firewall --</option>
-              ${managedDevices.map(d => {
-                const haStatus = d.ha_state ? ` [${d.ha_state.toUpperCase()}]` : '';
-                return `<option value="${d.serial}">${d.hostname || d.serial} (${d.model || 'Unknown'})${haStatus} · ${d.device_group}</option>`;
-              }).join('')}
-            </select>
+      <!-- By Device Tab -->
+      <div class="tab-pane fade" id="fw-bydevice" role="tabpanel" aria-labelledby="fw-bydevice-tab">
+        <div class="card mb-4">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span class="card-title">Firewall Policies</span>
+            <div class="cache-bar" id="fw-dev-cache-bar"></div>
+          </div>
+          <div class="card-body">
+            <div class="form-group">
+              <label class="form-label">Select Firewall Device</label>
+              <select class="form-select form-select-sm" id="fw-device-select">
+                <option value="">-- Choose a firewall --</option>
+                ${managedDevices.map(d => {
+                  const haStatus = d.ha_state ? ` [${d.ha_state.toUpperCase()}]` : '';
+                  return `<option value="${d.serial}">${d.hostname || d.serial} (${d.model || 'Unknown'})${haStatus} · ${d.device_group}</option>`;
+                }).join('')}
+              </select>
+            </div>
           </div>
         </div>
+        <div id="fw-device-result"></div>
       </div>
-      <div id="fw-device-result"></div>
     </div>`;
 
-  // Setup tabs switching
-  const tabButtons = el.querySelectorAll('#fw-tabs .tab');
-  tabButtons.forEach(btn => {
-    btn.addEventListener('click', () => {
-      const tabName = btn.dataset.fwTab;
-      
-      // Update button styles
-      tabButtons.forEach(b => {
-        b.style.borderBottomColor = b.dataset.fwTab === tabName ? 'var(--primary)' : 'transparent';
-      });
-      
-      // Show/hide panels
-      el.querySelectorAll('[data-fw-tab-panel]').forEach(p => {
-        p.style.display = p.dataset.fwTabPanel === tabName ? '' : 'none';
-      });
+  // Setup Bootstrap tabs event listener
+  const fwLookupTab = el.querySelector('#fw-lookup-tab');
+  if (fwLookupTab) {
+    fwLookupTab.addEventListener('shown.bs.tab', () => {
+      // Lookup tab shown
     });
-  });
+  }
 
   // Setup cache bars
   initCacheBar(
@@ -1864,22 +1886,45 @@ Router.register('command-runner', async (el) => {
 /* ── Device Management ──────────────────────────────────────── */
 Router.register('import', async (el) => {
   el.innerHTML = `
-    <div class="tabs" id="mgmt-tabs">
-      <div class="tab active" data-tab="discovery">Discovery &amp; Import</div>
-      <div class="tab" data-tab="tag">Tag Devices</div>
-    </div>
-    <div id="mgmt-content"></div>`;
+    <ul class="nav nav-tabs mb-3" id="mgmt-tabs" role="tablist">
+      <li class="nav-item" role="presentation">
+        <button class="nav-link active" id="mgmt-discovery-tab" data-bs-toggle="tab" data-bs-target="#mgmt-discovery" type="button" role="tab" aria-controls="mgmt-discovery" aria-selected="true">Discovery &amp; Import</button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="mgmt-tag-tab" data-bs-toggle="tab" data-bs-target="#mgmt-tag" type="button" role="tab" aria-controls="mgmt-tag" aria-selected="false">Tag Devices</button>
+      </li>
+    </ul>
+    
+    <div class="tab-content" id="mgmt-content">
+      <!-- Discovery Tab -->
+      <div class="tab-pane fade show active" id="mgmt-discovery" role="tabpanel" aria-labelledby="mgmt-discovery-tab">
+        <div id="mgmt-discovery-content"></div>
+      </div>
+      
+      <!-- Tag Devices Tab -->
+      <div class="tab-pane fade" id="mgmt-tag" role="tabpanel" aria-labelledby="mgmt-tag-tab">
+        <div id="mgmt-tag-content"></div>
+      </div>
+    </div>`;
 
-  document.querySelectorAll('#mgmt-tabs .tab').forEach(t => {
-    t.addEventListener('click', () => {
-      document.querySelectorAll('#mgmt-tabs .tab').forEach(x => x.classList.remove('active'));
-      t.classList.add('active');
-      if (t.dataset.tab === 'discovery') renderDiscovery(document.getElementById('mgmt-content'));
-      else renderTagDevices(document.getElementById('mgmt-content'));
+  // Setup tab event listeners
+  const discoveryTab = el.querySelector('#mgmt-discovery-tab');
+  const tagTab = el.querySelector('#mgmt-tag-tab');
+
+  if (discoveryTab) {
+    discoveryTab.addEventListener('shown.bs.tab', () => {
+      renderDiscovery(document.getElementById('mgmt-discovery-content'));
     });
-  });
+  }
 
-  renderDiscovery(document.getElementById('mgmt-content'));
+  if (tagTab) {
+    tagTab.addEventListener('shown.bs.tab', () => {
+      renderTagDevices(document.getElementById('mgmt-tag-content'));
+    });
+  }
+
+  // Initialize first tab content
+  renderDiscovery(document.getElementById('mgmt-discovery-content'));
 
   /* ── Discovery tab ── */
   function renderDiscovery(area) {
@@ -1887,31 +1932,37 @@ Router.register('import', async (el) => {
     <div class="card mb-4">
       <div class="card-header"><span class="card-title">Device Discovery & Import</span></div>
       <div class="card-body">
-        <div class="alert alert-warn mb-4">
+        <div class="alert alert-warning mb-4">
           ⚠️ <strong>Write operation.</strong> This discovers and assigns devices in Catalyst Center.
         </div>
         <div class="form-group">
           <label class="form-label">Device list  (site_code,ip_address — one per line)</label>
-          <textarea class="textarea" id="imp-input" style="min-height:140px" placeholder="# One entry per line&#10;ATL-T1,10.16.1.1&#10;DFW-T1,10.12.4.1&#10;ORD-T1,10.14.1.2"></textarea>
+          <textarea class="form-control" id="imp-input" style="min-height:140px" placeholder="# One entry per line&#10;ATL-T1,10.16.1.1&#10;DFW-T1,10.12.4.1&#10;ORD-T1,10.14.1.2"></textarea>
         </div>
-        <div class="grid-2 gap-3 mb-3">
-          <div class="form-group m-0">
-            <label class="form-label">CLI Username</label>
-            <input class="input" id="imp-cli" value="dnac-acct">
+        <div class="row mb-3 g-3">
+          <div class="col-md-6">
+            <div class="form-group m-0">
+              <label class="form-label">CLI Username</label>
+              <input class="form-control form-control-sm" id="imp-cli" value="dnac-acct">
+            </div>
           </div>
-          <div class="form-group m-0">
-            <label class="form-label">SNMP Username</label>
-            <input class="input" id="imp-snmp" value="tsa_mon_user">
+          <div class="col-md-6">
+            <div class="form-group m-0">
+              <label class="form-label">SNMP Username</label>
+              <input class="form-control form-control-sm" id="imp-snmp" value="tsa_mon_user">
+            </div>
           </div>
         </div>
-        <button class="btn btn-primary" id="imp-preview">Preview</button>
+        <button class="btn btn-primary btn-sm" id="imp-preview">Preview</button>
       </div>
     </div>
     <div id="imp-preview-area" class="mb-4"></div>
     <div id="imp-progress" style="display:none" class="mb-4">
-      <div class="progress-outer"><div class="progress-inner" id="imp-bar" style="width:0%"></div></div>
-      <div class="progress-label" id="imp-label">Starting…</div>
-      <div class="log-stream mt-2" id="imp-log"></div>
+      <div class="progress">
+        <div class="progress-bar" id="imp-bar" style="width:0%"></div>
+      </div>
+      <div class="small text-muted mt-2" id="imp-label">Starting…</div>
+      <div class="log-stream mt-2 small" id="imp-log"></div>
     </div>
     <div id="imp-results"></div>`;
 
@@ -1928,23 +1979,24 @@ Router.register('import', async (el) => {
 
     prevEl.innerHTML = `
       <div class="card">
-        <div class="card-header">
+        <div class="card-header d-flex justify-content-between align-items-center">
           <span class="card-title">Preview — ${entries.length} entries</span>
-          <div class="card-actions">
-            <label class="flex items-center gap-1.5 text-xs">
-              <input type="checkbox" id="imp-confirm"> I confirm I want to run this import
+          <div>
+            <label class="form-check">
+              <input type="checkbox" class="form-check-input" id="imp-confirm">
+              <span class="form-check-label small">I confirm I want to run this import</span>
             </label>
             <button class="btn btn-primary btn-sm" id="imp-run" disabled>🚀 Run Import</button>
           </div>
         </div>
         <div class="card-body p-0">
-          <table>
-            <thead><tr><th>Site Code</th><th>IP Address</th><th>Valid</th></tr></thead>
+          <table class="table table-sm table-striped table-hover mb-0">
+            <thead class="table-dark"><tr><th>Site Code</th><th>IP Address</th><th>Valid</th></tr></thead>
             <tbody>
               ${entries.map(e => `<tr>
-                <td>${e.site || '<span class="badge badge-danger">Missing</span>'}</td>
-                <td class="mono">${e.ip || '<span class="badge badge-danger">Missing</span>'}</td>
-                <td>${e.valid ? '<span class="badge badge-success">✅</span>' : '<span class="badge badge-danger">❌</span>'}</td>
+                <td>${e.site || '<span class="badge text-bg-danger">Missing</span>'}</td>
+                <td class="font-monospace" style="font-size:12px">${e.ip || '<span class="badge text-bg-danger">Missing</span>'}</td>
+                <td>${e.valid ? '<span class="badge text-bg-success">✅</span>' : '<span class="badge text-bg-danger">❌</span>'}</td>
               </tr>`).join('')}
             </tbody>
           </table>
@@ -2007,13 +2059,13 @@ Router.register('import', async (el) => {
         <div class="kpi-card danger"><div class="kpi-label">Failed</div><div class="kpi-value">${ev.failed + ev.no_site}</div></div>
       </div>
       <div class="table-wrap">
-        <table>
+        <table class="table table-sm table-striped table-hover table-dark">
           <thead><tr><th>IP</th><th>Site</th><th>Outcome</th></tr></thead>
           <tbody>
             ${(ev.results || []).map(r => `<tr>
-              <td class="mono">${r.ip}</td>
+              <td class="font-monospace" style="font-size:12px">${r.ip}</td>
               <td>${r.site}</td>
-              <td><span class="badge ${r.outcome === 'discovered' ? 'badge-success' : r.outcome === 'skipped_exists' ? 'badge-neutral' : 'badge-danger'}">${r.outcome}</span></td>
+              <td><span class="badge ${r.outcome === 'discovered' ? 'text-bg-success' : r.outcome === 'skipped_exists' ? 'text-bg-secondary' : 'text-bg-danger'}">${r.outcome}</span></td>
             </tr>`).join('')}
           </tbody>
         </table>
@@ -2027,22 +2079,22 @@ Router.register('import', async (el) => {
     <div class="card mb-4">
       <div class="card-header"><span class="card-title">Tag Devices</span></div>
       <div class="card-body">
-        <div class="alert alert-warn mb-4">
+        <div class="alert alert-warning mb-4">
           ⚠️ <strong>Write operation.</strong> This applies a tag to devices in Catalyst Center.
         </div>
         <div class="form-group">
           <label class="form-label">Tag Name</label>
-          <input class="input" id="tag-name" placeholder="e.g. CRITICAL-INFRA" style="max-width:300px">
+          <input class="form-control form-control-sm" id="tag-name" placeholder="e.g. CRITICAL-INFRA" style="max-width:300px">
         </div>
         <div class="form-group">
           <label class="form-label">IP Addresses (one per line)</label>
-          <textarea class="textarea" id="tag-ips" style="min-height:140px" placeholder="10.16.1.1&#10;10.12.4.1&#10;10.14.1.2"></textarea>
+          <textarea class="form-control" id="tag-ips" style="min-height:140px" placeholder="10.16.1.1&#10;10.12.4.1&#10;10.14.1.2"></textarea>
         </div>
-        <button class="btn btn-primary" id="tag-run">🏷️ Apply Tag</button>
+        <button class="btn btn-primary btn-sm" id="tag-run">🏷️ Apply Tag</button>
       </div>
     </div>
     <div id="tag-progress" style="display:none" class="mb-4">
-      <div class="log-stream" id="tag-log"></div>
+      <div class="log-stream small" id="tag-log"></div>
     </div>
     <div id="tag-results"></div>`;
 
@@ -2077,12 +2129,10 @@ Router.register('import', async (el) => {
             </div>
             ${ev.tagged ? `<div class="table-wrap">
               <table>
-                <thead><tr><th>Hostname</th><th>IP</th><th>Tag</th></tr></thead>
-                <tbody>
-                  ${(ev.results || []).map(r => `<tr>
+                `<tr>
                     <td>${r.hostname}</td>
-                    <td class="mono">${r.ip}</td>
-                    <td><span class="badge badge-info">${escHtml(ev.tag_name)}</span></td>
+                    <td class="font-monospace" style="font-size:12px">${r.ip}</td>
+                    <td><span class="badge text-bg-info">${escHtml(ev.tag_name)}</span></td>
                   </tr>`).join('')}
                 </tbody>
               </table>
@@ -2099,29 +2149,75 @@ Router.register('import', async (el) => {
 /* ── Reports ────────────────────────────────────────────────── */
 Router.register('reports', async (el) => {
   el.innerHTML = `
-    <div class="tabs" id="rep-tabs">
-      <div class="tab active" data-tab="inventory">Inventory Export</div>
-      <div class="tab" data-tab="unreachable">Unreachable</div>
-      <div class="tab" data-tab="sites">Sites</div>
-      <div class="tab" data-tab="config-search">Config Search</div>
-    </div>
-    <div id="rep-content"></div>`;
+    <ul class="nav nav-tabs mb-3" id="rep-tabs" role="tablist">
+      <li class="nav-item" role="presentation">
+        <button class="nav-link active" id="rep-inventory-tab" data-bs-toggle="tab" data-bs-target="#rep-inventory" type="button" role="tab" aria-controls="rep-inventory" aria-selected="true">Inventory Export</button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="rep-unreachable-tab" data-bs-toggle="tab" data-bs-target="#rep-unreachable" type="button" role="tab" aria-controls="rep-unreachable" aria-selected="false">Unreachable</button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="rep-sites-tab" data-bs-toggle="tab" data-bs-target="#rep-sites" type="button" role="tab" aria-controls="rep-sites" aria-selected="false">Sites</button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="rep-config-tab" data-bs-toggle="tab" data-bs-target="#rep-config" type="button" role="tab" aria-controls="rep-config" aria-selected="false">Config Search</button>
+      </li>
+    </ul>
+    
+    <div class="tab-content" id="rep-content">
+      <!-- Inventory Tab -->
+      <div class="tab-pane fade show active" id="rep-inventory" role="tabpanel" aria-labelledby="rep-inventory-tab">
+        <div id="rep-inventory-content"></div>
+      </div>
+      
+      <!-- Unreachable Tab -->
+      <div class="tab-pane fade" id="rep-unreachable" role="tabpanel" aria-labelledby="rep-unreachable-tab">
+        <div id="rep-unreachable-content"></div>
+      </div>
+      
+      <!-- Sites Tab -->
+      <div class="tab-pane fade" id="rep-sites" role="tabpanel" aria-labelledby="rep-sites-tab">
+        <div id="rep-sites-content"></div>
+      </div>
+      
+      <!-- Config Search Tab -->
+      <div class="tab-pane fade" id="rep-config" role="tabpanel" aria-labelledby="rep-config-tab">
+        <div id="rep-config-content"></div>
+      </div>
+    </div>`;
 
-  const panels = {
-    inventory:     renderInventory,
-    unreachable:   renderUnreachable,
-    sites:         renderSites,
-    'config-search': renderConfigSearch,
-  };
+  // Setup tab event listeners
+  const inventoryTab = el.querySelector('#rep-inventory-tab');
+  const unreachableTab = el.querySelector('#rep-unreachable-tab');
+  const sitesTab = el.querySelector('#rep-sites-tab');
+  const configTab = el.querySelector('#rep-config-tab');
 
-  document.querySelectorAll('#rep-tabs .tab').forEach(t => {
-    t.addEventListener('click', () => {
-      document.querySelectorAll('#rep-tabs .tab').forEach(x => x.classList.remove('active'));
-      t.classList.add('active');
-      panels[t.dataset.tab](document.getElementById('rep-content'));
+  if (inventoryTab) {
+    inventoryTab.addEventListener('shown.bs.tab', () => {
+      renderInventory(document.getElementById('rep-inventory-content'));
     });
-  });
-  renderInventory(document.getElementById('rep-content'));
+  }
+
+  if (unreachableTab) {
+    unreachableTab.addEventListener('shown.bs.tab', () => {
+      renderUnreachable(document.getElementById('rep-unreachable-content'));
+    });
+  }
+
+  if (sitesTab) {
+    sitesTab.addEventListener('shown.bs.tab', () => {
+      renderSites(document.getElementById('rep-sites-content'));
+    });
+  }
+
+  if (configTab) {
+    configTab.addEventListener('shown.bs.tab', () => {
+      renderConfigSearch(document.getElementById('rep-config-content'));
+    });
+  }
+
+  // Initialize first tab content
+  renderInventory(document.getElementById('rep-inventory-content'));
 
   async function renderInventory(area) {
     area.innerHTML = '<div class="empty-state"><div class="spinner spinner-lg"></div></div>';
@@ -2138,7 +2234,7 @@ Router.register('reports', async (el) => {
         { key: 'lastContactFormatted', label: 'Last Contact' },
       ];
       area.innerHTML = `
-        <div class="section-header">
+        <div class="section-header mb-3">
           <div class="section-title">Full Inventory — ${d.total.toLocaleString()} devices</div>
           <button class="btn btn-secondary btn-sm" onclick="downloadInventoryCsv()">⬇️ Download CSV</button>
         </div>
@@ -2209,49 +2305,61 @@ Router.register('reports', async (el) => {
           <!-- Search string -->
           <div class="form-group">
             <label class="form-label">Search string <span style="color:var(--danger)">*</span></label>
-            <input class="input" id="cs-query" placeholder="e.g.  summary-address  /  crypto map  /  ip route 0.0.0.0  /  aaa server">
+            <input class="form-control form-control-sm" id="cs-query" placeholder="e.g.  summary-address  /  crypto map  /  ip route 0.0.0.0  /  aaa server">
           </div>
 
           <!-- Device filters -->
-          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:12px">
-            <div class="form-group m-0">
-              <label class="form-label">Hostname contains</label>
-              <input class="input" id="cs-hostname" placeholder="e.g.  ATL  or  router">
+          <div class="row g-3 mb-3">
+            <div class="col-lg-4">
+              <div class="form-group m-0">
+                <label class="form-label">Hostname contains</label>
+                <input class="form-control form-control-sm" id="cs-hostname" placeholder="e.g.  ATL  or  router">
+              </div>
             </div>
-            <div class="form-group m-0">
-              <label class="form-label">Management IP contains</label>
-              <input class="input" id="cs-ip" placeholder="e.g.  10.16">
+            <div class="col-lg-4">
+              <div class="form-group m-0">
+                <label class="form-label">Management IP contains</label>
+                <input class="form-control form-control-sm" id="cs-ip" placeholder="e.g.  10.16">
+              </div>
             </div>
-            <div class="form-group m-0">
-              <label class="form-label">Platform contains</label>
-              <input class="input" id="cs-platform" placeholder="e.g.  C9300  or  ISR">
+            <div class="col-lg-4">
+              <div class="form-group m-0">
+                <label class="form-label">Platform contains</label>
+                <input class="form-control form-control-sm" id="cs-platform" placeholder="e.g.  C9300  or  ISR">
+              </div>
             </div>
-            <div class="form-group m-0">
-              <label class="form-label">Role contains</label>
-              <input class="input" id="cs-role" placeholder="e.g.  ACCESS  or  DISTRIBUTION">
+            <div class="col-lg-4">
+              <div class="form-group m-0">
+                <label class="form-label">Role contains</label>
+                <input class="form-control form-control-sm" id="cs-role" placeholder="e.g.  ACCESS  or  DISTRIBUTION">
+              </div>
             </div>
-            <div class="form-group m-0">
-              <label class="form-label">Device family contains</label>
-              <input class="input" id="cs-family" placeholder="e.g.  Switches  or  Routers">
+            <div class="col-lg-4">
+              <div class="form-group m-0">
+                <label class="form-label">Device family contains</label>
+                <input class="form-control form-control-sm" id="cs-family" placeholder="e.g.  Switches  or  Routers">
+              </div>
             </div>
-            <div class="form-group m-0">
-              <label class="form-label">Reachability</label>
-              <select class="select" id="cs-reach">
-                <option value="Reachable">Reachable only (recommended)</option>
-                <option value="unreachable">Unreachable only</option>
-                <option value="">All devices</option>
-              </select>
+            <div class="col-lg-4">
+              <div class="form-group m-0">
+                <label class="form-label">Reachability</label>
+                <select class="form-select form-select-sm" id="cs-reach">
+                  <option value="Reachable">Reachable only (recommended)</option>
+                  <option value="unreachable">Unreachable only</option>
+                  <option value="">All devices</option>
+                </select>
+              </div>
             </div>
           </div>
 
-          <div class="flex items-center gap-4">
+          <div class="d-flex align-items-flex-end gap-3">
             <div class="form-group m-0">
               <label class="form-label">Max devices to search</label>
-              <input class="input" type="number" id="cs-max" value="500" min="1" max="2700" style="width:100px">
+              <input class="form-control form-control-sm" type="number" id="cs-max" value="500" min="1" max="2700" style="width:100px">
             </div>
-            <div class="mt-5 flex gap-2">
-              <button class="btn btn-primary" id="cs-run">🔍 Search Configs</button>
-              <button class="btn btn-ghost" id="cs-clear">Clear</button>
+            <div class="d-flex gap-2">
+              <button class="btn btn-primary btn-sm" id="cs-run">🔍 Search Configs</button>
+              <button class="btn btn-outline-secondary btn-sm" id="cs-clear">Clear</button>
             </div>
             <span id="cs-status" style="font-size:12px;color:var(--text-secondary);margin-top:20px"></span>
           </div>
@@ -2360,20 +2468,20 @@ Router.register('reports', async (el) => {
 
       // Summary table — clickable rows expand to show matching lines
       const summaryRows = data.results.map((r, i) => `
-        <tr data-idx="${i}" onclick="toggleCsDetail(${i})">
+        <tr data-idx="${i}" onclick="toggleCsDetail(${i})" style="cursor: pointer;">
           <td>${r.hostname}</td>
-          <td class="mono">${r.ip || '—'}</td>
+          <td class="font-monospace" style="font-size:12px">${r.ip || '—'}</td>
           <td>${r.platform || '—'}</td>
           <td>${r.role || '—'}</td>
           <td><strong>${r.match_count}</strong></td>
-          <td style="text-align:right"><span class="badge badge-neutral">▼</span></td>
+          <td style="text-align:right"><span class="badge text-bg-secondary">▼</span></td>
         </tr>
         <tr id="cs-detail-${i}" style="display:none">
           <td colspan="6" style="padding:0;background:var(--bg)">
             <div style="padding:10px 14px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center">
-              <input class="input max-w-[260px]" id="cs-line-filter-${i}" placeholder="Filter these lines…"
+              <input class="form-control form-control-sm" id="cs-line-filter-${i}" placeholder="Filter these lines…" style="max-width:260px"
                 oninput="filterCsLines(${i})">
-              <button class="btn btn-ghost btn-sm" onclick="downloadCsDevice(${i})">⬇️ Download</button>
+              <button class="btn btn-outline-secondary btn-sm" onclick="downloadCsDevice(${i})">⬇️ Download</button>
               <span style="font-size:11px;color:var(--text-secondary)">${r.match_count} line(s) match</span>
             </div>
             <pre class="code-block" id="cs-pre-${i}" style="border-radius:0;margin:0;max-height:360px">${
@@ -2386,11 +2494,11 @@ Router.register('reports', async (el) => {
       resEl.innerHTML = `
         ${kpis}
         <div class="table-wrap">
-          <div class="table-toolbar">
+          <div class="table-toolbar d-flex justify-content-between align-items-center">
             <span class="table-count">${data.total_matches} device(s) with matches — click a row to expand</span>
-            <button class="btn btn-ghost btn-sm ml-auto" onclick="downloadCsAll()">⬇️ Download CSV</button>
+            <button class="btn btn-outline-secondary btn-sm" onclick="downloadCsAll()">⬇️ Download CSV</button>
           </div>
-          <table>
+          <table class="table table-sm table-striped table-hover table-dark">
             <thead><tr>
               <th>Hostname</th><th>IP</th><th>Platform</th><th>Role</th>
               <th>Match Count</th><th></th>
