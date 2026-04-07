@@ -28,7 +28,10 @@ const Auth = {
 const API = {
   _handle401() {
     Auth.clear();
-    renderLogin();
+    // Only re-render login if we're not already bootstrapping (avoid clearing form during login)
+    if (!window._bootstrapping) {
+      renderLogin();
+    }
   },
   async get(path) {
     const r = await fetch(`/api${path}`, { headers: Auth.headers() });
@@ -2225,6 +2228,7 @@ function renderLogin(errorMsg) {
     const password = document.getElementById('login-pass').value;
     if (!username || !password) return;
 
+    window._bootstrapping = true;  // Prevent 401 handlers from clearing form
     btn.disabled   = true;
     btn.textContent = 'Signing in…';
 
@@ -2236,12 +2240,14 @@ function renderLogin(errorMsg) {
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) {
+        window._bootstrapping = false;
         renderLogin(data.detail || 'Login failed — check your credentials');
         return;
       }
       Auth.save(data.token, data.username);
       bootApp();
     } catch (e) {
+      window._bootstrapping = false;
       renderLogin('Network error — please try again');
     }
   });
@@ -2322,6 +2328,7 @@ function renderWarmup() {
 }
 
 function startApp() {
+  window._bootstrapping = false;  // Allow 401 handlers to work again now that app is loaded
   document.getElementById('page-title').textContent = 'Dashboard';
   // Add Refresh Cache button now that we're in the app
   const actions = document.getElementById('topbar-actions');
