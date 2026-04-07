@@ -214,16 +214,44 @@ async def refresh_firewall_cache():
 @router.get("/devices")
 async def list_managed_devices(session: SessionEntry = Depends(require_auth)):
     """Fetch list of firewalls managed by Panorama."""
+    logger.info("=== list_managed_devices endpoint called ===")
     cached = cache.get("pan_managed_devices")
     if cached is not None:
+        logger.info(f"Returning {len(cached)} cached devices")
         return {"items": cached}
     
+    logger.info("Cache miss, fetching devices from Panorama...")
     key  = _get_key(session)
     loop = asyncio.get_event_loop()
     devices = await loop.run_in_executor(None, pc.get_managed_devices, key)
+    logger.info(f"Fetched {len(devices)} devices from Panorama")
+    logger.info(f"Device list: {devices}")
     cache.set("pan_managed_devices", devices, PAN_TTL)
     return {"items": devices}
 
+
+@router.get("/devices/test")
+async def test_devices(session: SessionEntry = Depends(require_auth)):
+    """Test endpoint to verify device fetching works."""
+    logger.info("=== test_devices endpoint called ===")
+    try:
+        key = _get_key(session)
+        logger.info(f"Got API key: {key[:20]}...")
+        
+        loop = asyncio.get_event_loop()
+        devices = await loop.run_in_executor(None, pc.get_managed_devices, key)
+        logger.info(f"Raw result from get_managed_devices: {devices}")
+        logger.info(f"Type: {type(devices)}, Length: {len(devices)}")
+        
+        return {
+            "success": True,
+            "device_count": len(devices),
+            "devices": devices,
+            "cache_key": "pan_managed_devices"
+        }
+    except Exception as e:
+        logger.error(f"Test endpoint error: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
 
 @router.get("/device-policies/{device_serial}")
 async def get_device_policies(

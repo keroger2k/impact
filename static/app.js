@@ -999,8 +999,21 @@ Router.register('firewall', async (el) => {
   let deviceGroups = [];
   let managedDevices = [];
   
-  try { const d = await API.get('/firewall/device-groups'); deviceGroups = d.items || []; } catch {}
-  try { const d = await API.get('/firewall/devices'); managedDevices = d.items || []; } catch {}
+  try { 
+    const d = await API.get('/firewall/device-groups'); 
+    deviceGroups = d.items || []; 
+    console.log('Loaded device groups:', deviceGroups);
+  } catch (e) { 
+    console.error('Failed to load device groups:', e);
+  }
+  
+  try { 
+    const d = await API.get('/firewall/devices'); 
+    managedDevices = d.items || []; 
+    console.log('Loaded managed devices:', managedDevices);
+  } catch (e) { 
+    console.error('Failed to load managed devices:', e);
+  }
 
   // Create tabbed interface
   el.innerHTML = `
