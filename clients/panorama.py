@@ -535,16 +535,25 @@ def get_managed_devices(api_key: str) -> list[dict]:
                 logger.debug(f"Skipping entry with no 'name' attribute: {ET.tostring(entry, encoding='unicode')[:200]}")
                 continue
             
+            # Filter to only actual device entries (must have hostname or model)
+            # Skip subsystem entries like vm_series, dlp, vsys1, openconfig, etc
+            hostname = entry.findtext("hostname") or ""
+            model = entry.findtext("model") or ""
+            
+            if not hostname and not model:
+                print(f"[DEVICES] SKIPPING '{serial}' - no hostname or model (likely subsystem entry)")
+                continue
+            
             device_info = {
                 "serial":        serial,
-                "hostname":      entry.findtext("hostname") or "",
-                "model":         entry.findtext("model") or "",
+                "hostname":      hostname,
+                "model":         model,
                 "ip_address":    entry.findtext("ip-address") or "",
                 "device_group":  entry.findtext("device-group") or "N/A",
                 "os_version":    entry.findtext("os-version") or "",
             }
             devices.append(device_info)
-            print(f"[DEVICES] Added: {serial} ({device_info.get('model', 'unknown')})")
+            print(f"[DEVICES] Added: {serial} ({model}) - Hostname: {hostname}")
             logger.debug(f"Added device: {serial} ({device_info.get('model', 'unknown')})")
         
         print(f"[DEVICES] SUCCESS: Fetched {len(devices)} managed devices\n")
