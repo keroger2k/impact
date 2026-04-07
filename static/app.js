@@ -2271,6 +2271,7 @@ function bootApp() {
 }
 
 function renderWarmup() {
+  console.log('[WARMUP] Starting cache warmup process...');
   const STEPS = [
     { id: 'devices',  label: 'Catalyst Center',    sub: 'Device inventory' },
     { id: 'sites',    label: 'Catalyst Center',    sub: 'Site hierarchy' },
@@ -2304,14 +2305,18 @@ function renderWarmup() {
     </div>`;
 
   let launched = false;
+  let streamComplete = false;
 
   API.stream('/warm', {}, ev => {
+    console.log('[WARMUP] Event:', ev);
     if (ev.step === 'done') {
+      console.log('[WARMUP] Cache warmup complete!');
+      streamComplete = true;
       if (launched) return;
       launched = true;
       const el = document.getElementById('warm-ready');
       if (el) el.style.display = '';
-      setTimeout(startApp, 1000);
+      setTimeout(initApp, 1500);
       return;
     }
     const icon = { loading: '⏳', done: '✅', cached: '✅', error: '❌' }[ev.status] || '⏳';
@@ -2323,13 +2328,23 @@ function renderWarmup() {
     if (icEl)  icEl.textContent  = icon;
     if (msgEl) msgEl.textContent = ev.message;
   }, () => {
-    if (!launched) { launched = true; startApp(); }
+    console.log('[WARMUP] Stream ended. streamComplete:', streamComplete);
+    if (!launched) {
+      launched = true;
+      setTimeout(initApp, 500);
+    }
   });
 }
 
+function initApp() {
+  console.log('[WARMUP] Calling startApp...');
+  startApp();
+}
+
 function startApp() {
+  console.log('[BOOT] Starting app initialization...');
   window._bootstrapping = false;  // Allow 401 handlers to work again now that app is loaded
-  document.getElementById('page-title').textContent = 'Dashboard';
+  
   // Add Refresh Cache button now that we're in the app
   const actions = document.getElementById('topbar-actions');
   if (actions && !actions.querySelector('[data-refresh]')) {
@@ -2341,9 +2356,13 @@ function startApp() {
     btn.onclick = refreshCache;
     actions.prepend(btn);
   }
+  
+  console.log('[BOOT] Initializing router...');
   Router.init();
+  console.log('[BOOT] Loading system status...');
   loadStatus();
   setInterval(loadStatus, 60_000);
+  console.log('[BOOT] App fully initialized');
 }
 
 async function logout() {
