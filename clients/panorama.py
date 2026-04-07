@@ -779,72 +779,57 @@ def get_device_vsys_policies(
     api_key:        str,
     device_serial:  str,
     vsys_name:      str,
-    device_groups:  list[str],
+    device_groups:  list[str] = None,  # No longer needed, kept for backward compat
     progress_cb=None,
 ) -> list[dict]:
     """
     Fetch security policies for a specific vsys on a managed device.
+    Queries device directly—no need to query device groups.
     Rules returned with rule numbers for easy correlation with device UI.
     
     Rules are returned in evaluation order:
-      1. Device shared pre-rules (if applicable)
+      1. Device shared pre-rules
       2. vsys pre-rules
       3. vsys post-rules
-      4. Device shared post-rules (if applicable)
+      4. Device shared post-rules
     """
-    print("\n" + "="*60)
-    print(f"GET_DEVICE_VSYS_POLICIES: device={device_serial}, vsys={vsys_name}")
-    print("="*60)
+    print(f"[VSYS-POLICIES] Fetching {vsys_name} policies for device {device_serial}")
     
     all_rules = []
     
-    # Build mapping of device serial -> device group
-    print(f"[VSYS-POLICIES] Building device-to-group mapping...")
-    dg_mapping = get_device_to_group_mapping(api_key, device_groups)
-    
-    device_dg = dg_mapping.get(device_serial)
-    if not device_dg:
-        print(f"[VSYS-POLICIES] ERROR: Device {device_serial} not found in any device group!")
-        logger.warning(f"Device {device_serial} not found in any device group")
-        return []
-    
-    print(f"[VSYS-POLICIES] Device {device_serial} in device group: {device_dg}")
-    
-    # Shared pre (device-level, applies to all vsys)
-    print(f"[VSYS-POLICIES] Fetching shared pre-rules (device level)...")
-    r = _config_get(f"{BASE_XPATH}/pre-rulebase/security/rules", api_key)
+    # Device shared pre-rules (applies to all vsys on this device)
+    print(f"[VSYS-POLICIES]   Querying device shared pre-rules...")
+    r = _config_get(f"/config/devices/entry[@name='{device_serial}']/pre-rulebase/security/rules", api_key)
     shared_pre = _parse_rules(_unwrap(r, "rules"), "shared", "pre")
     all_rules.extend(shared_pre)
-    print(f"[VSYS-POLICIES]   - Found {len(shared_pre)} shared pre-rules")
+    print(f"[VSYS-POLICIES]     Found {len(shared_pre)} rules")
 
     # vsys pre-rules
-    print(f"[VSYS-POLICIES] Fetching {vsys_name} pre-rules...")
-    vsys_xpath = f"/config/devices/entry[@name='{device_serial}']/vsys/entry[@name='{vsys_name}']/pre-rulebase/security/rules"
-    r = _config_get(vsys_xpath, api_key)
+    print(f"[VSYS-POLICIES]   Querying {vsys_name} pre-rules...")
+    r = _config_get(f"/config/devices/entry[@name='{device_serial}']/vsys/entry[@name='{vsys_name}']/pre-rulebase/security/rules", api_key)
     vsys_pre = _parse_rules(_unwrap(r, "rules"), vsys_name, "pre")
     all_rules.extend(vsys_pre)
-    print(f"[VSYS-POLICIES]   - Found {len(vsys_pre)} {vsys_name} pre-rules")
+    print(f"[VSYS-POLICIES]     Found {len(vsys_pre)} rules")
 
     # vsys post-rules
-    print(f"[VSYS-POLICIES] Fetching {vsys_name} post-rules...")
-    vsys_xpath = f"/config/devices/entry[@name='{device_serial}']/vsys/entry[@name='{vsys_name}']/post-rulebase/security/rules"
-    r = _config_get(vsys_xpath, api_key)
+    print(f"[VSYS-POLICIES]   Querying {vsys_name} post-rules...")
+    r = _config_get(f"/config/devices/entry[@name='{device_serial}']/vsys/entry[@name='{vsys_name}']/post-rulebase/security/rules", api_key)
     vsys_post = _parse_rules(_unwrap(r, "rules"), vsys_name, "post")
     all_rules.extend(vsys_post)
-    print(f"[VSYS-POLICIES]   - Found {len(vsys_post)} {vsys_name} post-rules")
+    print(f"[VSYS-POLICIES]     Found {len(vsys_post)} rules")
 
-    # Shared post (device-level)
-    print(f"[VSYS-POLICIES] Fetching shared post-rules (device level)...")
-    r = _config_get(f"{BASE_XPATH}/post-rulebase/security/rules", api_key)
+    # Device shared post-rules (applies to all vsys on this device)
+    print(f"[VSYS-POLICIES]   Querying device shared post-rules...")
+    r = _config_get(f"/config/devices/entry[@name='{device_serial}']/post-rulebase/security/rules", api_key)
     shared_post = _parse_rules(_unwrap(r, "rules"), "shared", "post")
     all_rules.extend(shared_post)
-    print(f"[VSYS-POLICIES]   - Found {len(shared_post)} shared post-rules")
+    print(f"[VSYS-POLICIES]     Found {len(shared_post)} rules")
 
     # Add rule numbers for correlation with device UI
     for idx, rule in enumerate(all_rules, 1):
         rule["rule_number"] = idx
 
-    print(f"[VSYS-POLICIES] SUCCESS: Fetched {len(all_rules)} total policies for {vsys_name}\n")
+    print(f"[VSYS-POLICIES] SUCCESS: Fetched {len(all_rules)} total policies\n")
     return all_rules
 
 

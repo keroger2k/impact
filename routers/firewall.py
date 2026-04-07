@@ -320,20 +320,13 @@ async def get_device_vsys_policies(
     key = _get_key(session)
     loop = asyncio.get_event_loop()
     
-    # Get device groups for context
-    all_dgs = cache.get("pan_device_groups")
-    if all_dgs is None:
-        all_dgs = await loop.run_in_executor(None, pc.get_device_groups, key)
-        cache.set("pan_device_groups", all_dgs, PAN_TTL)
-    
-    # Fetch policies for this vsys
+    # Fetch policies for this vsys directly (no device group lookup needed)
     policies = await loop.run_in_executor(
         None,
         pc.get_device_vsys_policies,
         key,
         device_serial,
         vsys_name,
-        all_dgs,
     )
     
     cache.set(cache_key, policies, PAN_TTL)
