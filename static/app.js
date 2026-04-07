@@ -1266,63 +1266,104 @@ Router.register('firewall', async (el) => {
       return;
     }
     
-    res.innerHTML = '<div class="empty-state"><div class="spinner spinner-lg"></div><p style="margin-top:12px;color:var(--text-secondary)">Loading policies…</p></div>';
+    res.innerHTML = '<div class="empty-state"><div class="spinner spinner-lg"></div><p style="margin-top:12px;color:var(--text-secondary)">Loading virtual systems…</p></div>';
     
     try {
-      const data = await API.get(`/firewall/device-policies/${serial}`);
-      const policies = data.policies || [];
+      // Fetch vsys list
+      const vsysData = await API.get(`/firewall/device-vsys/${serial}`);
+      const vsysList = vsysData.vsys || [];
       
-      if (!policies.length) {
-        res.innerHTML = '<div class="alert alert-info">ℹ️ No policies found for this device.</div>';
+      if (!vsysList.length) {
+        res.innerHTML = '<div class="alert alert-warn">⚠️ No virtual systems found for this device.</div>';
         return;
       }
       
-      // Display policy table
-      const cols = [
-        { key: '_icon', label: '', width: '30px',
-          render: (_, r) => r.action === 'allow' ? '✅' : '🔴' },
-        { key: 'name', label: 'Rule Name', width: '200px' },
-        { key: 'device_group', label: 'Device Group', width: '120px' },
-        { key: 'rulebase', label: 'Rulebase', width: '80px' },
-        { key: 'action', label: 'Action', width: '80px',
-          render: v => `<span class="badge ${v === 'allow' ? 'badge-success' : 'badge-danger'}">${v.toUpperCase()}</span>` },
-        { key: 'from_zones', label: 'From Zones', width: '150px',
-          render: v => v?.length ? v.join(', ') : '—' },
-        { key: 'to_zones', label: 'To Zones', width: '150px',
-          render: v => v?.length ? v.join(', ') : '—' },
-        { key: 'source', label: 'Source', width: '150px',
-          render: v => fmtList(v) },
-        { key: 'destination', label: 'Destination', width: '150px',
-          render: v => fmtList(v) },
-        { key: 'application', label: 'Application', width: '150px',
-          render: v => fmtList(v) },
-        { key: 'service', label: 'Service', width: '150px',
-          render: v => fmtList(v) },
-        { key: 'description', label: 'Description', width: '200px',
-          render: v => v || '—' },
-      ];
-      
-      const rows = policies.map(p => ({ ...p, _icon: '' }));
-      
-      const kpi = `
-        <div class="kpi-row cols-3 mb-4">
-          <div class="kpi-card"><div class="kpi-label">Total Policies</div><div class="kpi-value">${policies.length}</div></div>
-          <div class="kpi-card"><div class="kpi-label">Allow Rules</div><div class="kpi-value" style="color:var(--success)">${policies.filter(p => p.action === 'allow').length}</div></div>
-          <div class="kpi-card"><div class="kpi-label">Deny Rules</div><div class="kpi-value" style="color:var(--danger)">${policies.filter(p => p.action === 'deny' || p.action === 'drop').length}</div></div>
-        </div>`;
-      
+      // Show vsys selector
       res.innerHTML = `
-        ${kpi}
-        <div class="table-wrap" id="fw-device-table">
-          <div class="table-toolbar"><span class="table-count">${policies.length} policy(ies) — click a row for detail</span></div>
-          ${makeTable(cols, rows, rule => showDevicePolicyDetail(rule))}
+        <div class="card mb-4">
+          <div class="card-body">
+            <div class="form-group">
+              <label class="form-label">Virtual System (VSYS)</label>
+              <select class="select" id="fw-vsys-select">
+                ${vsysList.map(vsys => `<option value="${vsys}">${vsys}</option>`).join('')}
+              </select>
+            </div>
+          </div>
         </div>
-        <div id="fw-device-rule-detail" class="mt-4"></div>`;
+        <div id="fw-vsys-policies"></div>`;
       
-      bindTableSort(document.getElementById('fw-device-table'), cols, rows, rule => showDevicePolicyDetail(rule));
+      // Setup vsys selector change listener
+      document.getElementById('fw-vsys-select').addEventListener('change', async (evt) => {
+        const vsys = evt.target.value;
+        const policiesRes = document.getElementById('fw-vsys-policies');
+        
+        if (!vsys) return;
+        
+        policiesRes.innerHTML = '<div class="empty-state"><div class="spinner spinner-lg"></div><p style="margin-top:12px;color:var(--text-secondary)">Loading policies…</p></div>';
+        
+        try {
+          const policiesData = await API.get(`/firewall/device-vsys-policies/${serial}/${vsys}`);
+          const policies = policiesData.policies || [];
+          
+          if (!policies.length) {
+            policiesRes.innerHTML = '<div class="alert alert-info">ℹ️ No policies found for ' + vsys + '.</div>';
+            return;
+          }
+          
+          // Display policy table with rule numbers
+          const cols = [
+            { key: 'rule_number', label: '#', width: '40px',
+              render: v => `<span style="font-weight:bold;color:var(--primary)">${v}</span>` },
+            { key: '_icon', label: '', width: '30px',
+              render: (_, r) => r.action === 'allow' ? '✅' : '🔴' },
+            { key: 'name', label: 'Rule Name', width: '200px' },
+            { key: 'device_group', label: 'Context', width: '120px' },
+            { key: 'rulebase', label: 'Base', width: '80px' },
+            { key: 'action', label: 'Action', width: '80px',
+              render: v => `<span class="badge ${v === 'allow' ? 'badge-success' : 'badge-danger'}">${v.toUpperCase()}</span>` },
+            { key: 'from_zones', label: 'From', width: '120px',
+              render: v => v?.length ? v.join(', ') : '—' },
+            { key: 'to_zones', label: 'To', width: '120px',
+              render: v => v?.length ? v.join(', ') : '—' },
+            { key: 'source', label: 'Source', width: '150px',
+              render: v => fmtList(v) },
+            { key: 'destination', label: 'Destination', width: '150px',
+              render: v => fmtList(v) },
+            { key: 'application', label: 'App', width: '120px',
+              render: v => fmtList(v) },
+            { key: 'service', label: 'Service', width: '120px',
+              render: v => fmtList(v) },
+          ];
+          
+          const rows = policies.map(p => ({ ...p, _icon: '' }));
+          
+          const kpi = `
+            <div class="kpi-row cols-3 mb-4">
+              <div class="kpi-card"><div class="kpi-label">Total Policies</div><div class="kpi-value">${policies.length}</div></div>
+              <div class="kpi-card"><div class="kpi-label">Allow Rules</div><div class="kpi-value" style="color:var(--success)">${policies.filter(p => p.action === 'allow').length}</div></div>
+              <div class="kpi-card"><div class="kpi-label">Deny Rules</div><div class="kpi-value" style="color:var(--danger)">${policies.filter(p => p.action === 'deny' || p.action === 'drop').length}</div></div>
+            </div>`;
+          
+          policiesRes.innerHTML = `
+            ${kpi}
+            <div class="table-wrap" id="fw-vsys-table">
+              <div class="table-toolbar"><span class="table-count">${policies.length} policy(ies) — click a row for detail</span></div>
+              ${makeTable(cols, rows, rule => showDevicePolicyDetail(rule))}
+            </div>
+            <div id="fw-vsys-rule-detail" class="mt-4"></div>`;
+          
+          bindTableSort(document.getElementById('fw-vsys-table'), cols, rows, rule => showDevicePolicyDetail(rule));
+          
+          const firstRow = document.querySelector('#fw-vsys-table tbody tr');
+          if (firstRow) { firstRow.classList.add('selected'); showDevicePolicyDetail(rows[0]); }
+          
+        } catch (e) {
+          policiesRes.innerHTML = `<div class="alert alert-danger">${e.message}</div>`;
+        }
+      });
       
-      const firstRow = document.querySelector('#fw-device-table tbody tr');
-      if (firstRow) { firstRow.classList.add('selected'); showDevicePolicyDetail(rows[0]); }
+      // Trigger initial load with first vsys
+      document.getElementById('fw-vsys-select').dispatchEvent(new Event('change'));
       
     } catch (e) {
       res.innerHTML = `<div class="alert alert-danger">${e.message}</div>`;
@@ -1420,14 +1461,18 @@ Router.register('firewall', async (el) => {
   }
 
   function showDevicePolicyDetail(policy) {
-    const detEl = document.getElementById('fw-device-rule-detail');
+    const detEl = document.getElementById('fw-vsys-rule-detail');
+    if (!detEl) return; // In case we're in an old context
     
     detEl.innerHTML = `
       <div class="detail-panel">
         <div class="detail-header">
           <span style="font-size:18px">${policy.action === 'allow' ? '✅' : '🔴'}</span>
           <div>
-            <div class="detail-hostname">${policy.name}</div>
+            <div class="detail-hostname">
+              <span style="color:var(--primary);font-weight:bold;margin-right:8px">Rule #${policy.rule_number || '—'}</span>
+              ${policy.name}
+            </div>
             <div style="font-size:11px;opacity:.7">
               ${policy.device_group} · ${policy.rulebase}-rulebase
               ${policy.disabled ? ' · DISABLED' : ''}

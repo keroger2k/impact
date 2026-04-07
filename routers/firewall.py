@@ -286,4 +286,58 @@ async def get_device_policies(
     return {"serial": device_serial, "policies": policies}
 
 
+@router.get("/device-vsys/{device_serial}")
+async def get_device_vsys(
+    device_serial: str,
+    session: SessionEntry = Depends(require_auth)
+):
+    """Fetch list of virtual systems for a managed firewall device."""
+    cache_key = f"pan_device_vsys_{device_serial}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return {"serial": device_serial, "vsys": cached}
+    
+    key = _get_key(session)
+    loop = asyncio.get_event_loop()
+    vsys_list = await loop.run_in_executor(None, pc.get_device_vsys, key, device_serial)
+    
+    cache.set(cache_key, vsys_list, PAN_TTL)
+    return {"serial": device_serial, "vsys": vsys_list}
+
+
+@router.get("/device-vsys-policies/{device_serial}/{vsys_name}")
+async def get_device_vsys_policies(
+    device_serial: str,
+    vsys_name: str,
+    session: SessionEntry = Depends(require_auth)
+):
+    """Fetch security policies for a specific vsys on a managed firewall device."""
+    cache_key = f"pan_device_vsys_policies_{device_serial}_{vsys_name}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return {"serial": device_serial, "vsys": vsys_name, "policies": cached}
+    
+    key = _get_key(session)
+    loop = asyncio.get_event_loop()
+    
+    # Get device groups for context
+    all_dgs = cache.get("pan_device_groups")
+    if all_dgs is None:
+        all_dgs = await loop.run_in_executor(None, pc.get_device_groups, key)
+        cache.set("pan_device_groups", all_dgs, PAN_TTL)
+    
+    # Fetch policies for this vsys
+    policies = await loop.run_in_executor(
+        None,
+        pc.get_device_vsys_policies,
+        key,
+        device_serial,
+        vsys_name,
+        all_dgs,
+    )
+    
+    cache.set(cache_key, policies, PAN_TTL)
+    return {"serial": device_serial, "vsys": vsys_name, "policies": policies}
+
+
 
