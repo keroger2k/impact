@@ -551,10 +551,16 @@ def get_managed_devices(api_key: str) -> list[dict]:
                 "ip_address":    entry.findtext("ip-address") or "",
                 "device_group":  entry.findtext("device-group") or "N/A",
                 "os_version":    entry.findtext("os-version") or "",
+                "ha_state":      entry.findtext("ha-state") or "",  # active/standby
+                "ha_enabled":    entry.findtext("ha-enabled") == "yes",
             }
             devices.append(device_info)
-            print(f"[DEVICES] Added: {serial} ({model}) - Hostname: {hostname}")
+            print(f"[DEVICES] Added: {serial} ({model}) - Hostname: {hostname} - HA: {device_info.get('ha_state', 'N/A')}")
             logger.debug(f"Added device: {serial} ({device_info.get('model', 'unknown')})")
+        
+        # Sort by hostname, then by model
+        devices.sort(key=lambda d: (d.get("hostname", "").lower(), d.get("model", "")))
+        print(f"[DEVICES] Sorted {len(devices)} devices alphabetically\n")
         
         print(f"[DEVICES] SUCCESS: Fetched {len(devices)} managed devices\n")
         logger.info(f"✓ Fetched {len(devices)} managed device(s) from Panorama")
@@ -696,17 +702,30 @@ def get_device_policies(
       3. Device group post-rules
       4. Shared post-rules
     """
+    print("\n" + "="*60)
+    print(f"GET_DEVICE_POLICIES CALLED for device: {device_serial}")
+    print("="*60)
+    
     all_rules = []
     
     # Get device info to find its primary device group
+    print(f"[POLICIES] Fetching devices to find {device_serial}...")
     devices = get_managed_devices(api_key)
+    print(f"[POLICIES] Found {len(devices)} total managed devices")
+    
     device_info = next((d for d in devices if d.get("serial") == device_serial), None)
     if not device_info:
+        print(f"[POLICIES] ERROR: Device {device_serial} not found in managed devices list!")
+        print(f"[POLICIES] Available serials: {[d.get('serial') for d in devices]}")
         logger.warning(f"Device {device_serial} not found in managed devices")
         return []
     
     device_dg = device_info.get("device_group", "N/A")
+    print(f"[POLICIES] Device {device_serial} assigned to device group: {device_dg}")
+    print(f"[POLICIES] Device info: {device_info}")
+    
     if device_dg == "N/A":
+        print(f"[POLICIES] ERROR: Device has no device group assigned!")
         return []
     
     # Only fetch rules from the device's assigned device group (plus shared)
@@ -720,27 +739,42 @@ def get_device_policies(
         if progress_cb:
             progress_cb(step, total, msg)
 
+    print(f"[POLICIES] Fetching rules from device group: {device_dg}")
+    
     # Shared pre
+    print(f"[POLICIES] Fetching shared pre-rules...")
     r = _config_get(f"{BASE_XPATH}/pre-rulebase/security/rules", api_key)
-    all_rules.extend(_parse_rules(_unwrap(r, "rules"), "shared", "pre"))
+    shared_pre = _parse_rules(_unwrap(r, "rules"), "shared", "pre")
+    all_rules.extend(shared_pre)
+    print(f"[POLICIES]   - Found {len(shared_pre)} shared pre-rules")
     _progress("Shared pre-rules")
 
     # Device group pre
     dg_base = f"{BASE_XPATH}/device-group"
+    print(f"[POLICIES] Fetching {device_dg} pre-rules...")
     r = _config_get(f"{dg_base}/entry[@name='{device_dg}']/pre-rulebase/security/rules", api_key)
-    all_rules.extend(_parse_rules(_unwrap(r, "rules"), device_dg, "pre"))
+    dg_pre = _parse_rules(_unwrap(r, "rules"), device_dg, "pre")
+    all_rules.extend(dg_pre)
+    print(f"[POLICIES]   - Found {len(dg_pre)} {device_dg} pre-rules")
     _progress(f"{device_dg} pre-rules")
 
     # Device group post
+    print(f"[POLICIES] Fetching {device_dg} post-rules...")
     r = _config_get(f"{dg_base}/entry[@name='{device_dg}']/post-rulebase/security/rules", api_key)
-    all_rules.extend(_parse_rules(_unwrap(r, "rules"), device_dg, "post"))
+    dg_post = _parse_rules(_unwrap(r, "rules"), device_dg, "post")
+    all_rules.extend(dg_post)
+    print(f"[POLICIES]   - Found {len(dg_post)} {device_dg} post-rules")
     _progress(f"{device_dg} post-rules")
 
     # Shared post
+    print(f"[POLICIES] Fetching shared post-rules...")
     r = _config_get(f"{BASE_XPATH}/post-rulebase/security/rules", api_key)
-    all_rules.extend(_parse_rules(_unwrap(r, "rules"), "shared", "post"))
+    shared_post = _parse_rules(_unwrap(r, "rules"), "shared", "post")
+    all_rules.extend(shared_post)
+    print(f"[POLICIES]   - Found {len(shared_post)} shared post-rules")
     _progress("Shared post-rules")
 
+    print(f"[POLICIES] SUCCESS: Fetched {len(all_rules)} total policies for {device_serial}\n")
     return all_rules
 
 

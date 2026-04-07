@@ -1097,7 +1097,10 @@ Router.register('firewall', async (el) => {
             <label class="form-label">Select Firewall Device</label>
             <select class="select" id="fw-device-select">
               <option value="">-- Choose a firewall --</option>
-              ${managedDevices.map(d => `<option value="${d.serial}">${d.hostname || d.serial} (${d.model || 'Unknown'}) · ${d.device_group}</option>`).join('')}
+              ${managedDevices.map(d => {
+                const haStatus = d.ha_state ? ` [${d.ha_state.toUpperCase()}]` : '';
+                return `<option value="${d.serial}">${d.hostname || d.serial} (${d.model || 'Unknown'})${haStatus} · ${d.device_group}</option>`;
+              }).join('')}
             </select>
           </div>
         </div>
