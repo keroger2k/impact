@@ -7,11 +7,13 @@ import time
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+import auth as auth_module
 import clients.dnac as dc
+from auth import SessionEntry, require_auth
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -78,7 +80,7 @@ def _wait_for_discovery(dnac, task_id: str, max_tries: int, interval: int, log_f
 
 
 @router.post("/run")
-async def run_import(req: ImportRequest):
+async def run_import(req: ImportRequest, session: SessionEntry = Depends(require_auth)):
     """
     Discover and import devices via Catalyst Center.
     Streams progress as Server-Sent Events.
@@ -94,7 +96,7 @@ async def run_import(req: ImportRequest):
                     "message": f"Starting import of {len(req.entries)} entries"})
 
         try:
-            dnac = dc.get_client()
+            dnac = auth_module.get_dnac_for_session(session)
         except Exception as e:
             yield emit({"type": "error", "message": f"DNAC connection failed: {e}"})
             return

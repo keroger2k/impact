@@ -493,7 +493,25 @@ def _mnt_get(path: str) -> dict:
 _ise_client = None
 
 def get_client():
+    """Return the shared service-account ISE client (used for cache warming)."""
     global _ise_client
     if _ise_client is None:
         _ise_client = create_client()
     return _ise_client
+
+
+def create_user_client(username: str, password: str) -> IdentityServicesEngineAPI:
+    """Create a per-user ISE client (not cached globally)."""
+    host = os.getenv("ISE_HOST")
+    if not host:
+        raise EnvironmentError("ISE_HOST not set")
+    return IdentityServicesEngineAPI(
+        username         = username,
+        password         = password,
+        uses_api_gateway = True,
+        base_url         = f"https://{host}",
+        version          = ISE_SDK_VERSION,
+        verify           = False,
+        debug            = False,
+        uses_csrf_token  = False,
+    )

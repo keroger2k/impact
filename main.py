@@ -9,13 +9,15 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+import auth as auth_module
+from auth import require_auth, SessionEntry
 from cache import AppCache
-from routers import dnac, ise, firewall, commands, import_
+from routers import dnac, ise, firewall, commands, import_, auth as auth_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,19 +56,54 @@ app.add_middleware(
 )
 
 # ── API routers ────────────────────────────────────────────────────────────────
-app.include_router(dnac.router,      prefix="/api/dnac",     tags=["DNAC"])
-app.include_router(ise.router,       prefix="/api/ise",      tags=["ISE"])
-app.include_router(firewall.router,  prefix="/api/firewall", tags=["Firewall"])
-app.include_router(commands.router,  prefix="/api/commands", tags=["Commands"])
-app.include_router(import_.router,   prefix="/api/import",   tags=["Import"])
+_auth_dep = {"dependencies": [__import__("fastapi").Depends(require_auth)]}
+
+app.include_router(auth_router.router, prefix="/api/auth",     tags=["Auth"])
+app.include_router(dnac.router,      prefix="/api/dnac",     tags=["DNAC"],     **_auth_dep)
+app.include_router(ise.router,       prefix="/api/ise",      tags=["ISE"],      **_auth_dep)
+app.include_router(firewall.router,  prefix="/api/firewall", tags=["Firewall"], **_auth_dep)
+app.include_router(commands.router,  prefix="/api/commands", tags=["Commands"], **_auth_dep)
+app.include_router(import_.router,   prefix="/api/import",   tags=["Import"],   **_auth_dep)
 
 # ── System status ──────────────────────────────────────────────────────────────
 @app.get("/api/status")
-async def status():
-    """Live connectivity check for all three systems."""
-    from cache import cache
-    results = await cache.check_all_systems()
-    return results
+async def status(session: SessionEntry = Depends(require_auth)):
+    """Live connectivity check for all three systems using the user's credentials."""
+    import asyncio
+    loop = asyncio.get_event_loop()
+
+    async def check_dnac():
+        try:
+            dnac = auth_module.get_dnac_for_session(session)
+            result = await loop.run_in_executor(
+                None,
+                lambda: dnac.custom_caller.call_api("GET", "/dna/intent/api/v1/network-device/count")
+            )
+            count = getattr(result, "response", 0)
+            return {"ok": True, "detail": f"{count:,} devices"}
+        except Exception as e:
+            return {"ok": False, "detail": str(e)[:80]}
+
+    async def check_ise():
+        try:
+            import clients.ise as ic
+            ise = auth_module.get_ise_for_session(session)
+            ok  = await loop.run_in_executor(None, ic.connectivity_check, ise)
+            return {"ok": ok, "detail": "Connected" if ok else "Unreachable"}
+        except Exception as e:
+            return {"ok": False, "detail": str(e)[:80]}
+
+    async def check_panorama():
+        try:
+            import clients.panorama as pc
+            key = auth_module.get_panorama_key_for_session(session)
+            ok, detail = await loop.run_in_executor(None, pc.connectivity_check_with_key, key)
+            return {"ok": ok, "detail": detail}
+        except Exception as e:
+            return {"ok": False, "detail": str(e)[:80]}
+
+    dnac_r, ise_r, pan_r = await asyncio.gather(check_dnac(), check_ise(), check_panorama())
+    return {"dnac": dnac_r, "ise": ise_r, "panorama": pan_r}
 
 # ── Static frontend ────────────────────────────────────────────────────────────
 static_dir = Path(__file__).parent / "static"

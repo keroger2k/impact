@@ -4,10 +4,12 @@ import asyncio
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+import auth as auth_module
 import clients.panorama as pc
+from auth import SessionEntry, require_auth
 from cache import cache
 
 router = APIRouter()
@@ -26,11 +28,13 @@ class PolicyLookupRequest(BaseModel):
     show_all:         bool = True
 
 
-def _get_key():
-    key = pc.get_api_key()
-    if not key:
-        raise HTTPException(503, "Panorama not configured. Check PANORAMA_HOST, _USERNAME, _PASSWORD in .env")
-    return key
+def _get_key(session: SessionEntry) -> str:
+    try:
+        return auth_module.get_panorama_key_for_session(session)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(503, f"Panorama authentication failed: {e}")
 
 
 def _flatten_rules(rules_cache: dict, target_dgs: list[str] | None) -> list[dict]:
@@ -76,11 +80,11 @@ def _flatten_rules(rules_cache: dict, target_dgs: list[str] | None) -> list[dict
 
 
 @router.get("/device-groups")
-async def list_device_groups():
+async def list_device_groups(session: SessionEntry = Depends(require_auth)):
     cached = cache.get("pan_device_groups")
     if cached is not None:
         return {"items": cached}
-    key  = _get_key()
+    key  = _get_key(session)
     loop = asyncio.get_event_loop()
     dgs  = await loop.run_in_executor(None, pc.get_device_groups, key)
     cache.set("pan_device_groups", dgs, PAN_TTL)
@@ -88,7 +92,7 @@ async def list_device_groups():
 
 
 @router.post("/lookup")
-async def policy_lookup(req: PolicyLookupRequest):
+async def policy_lookup(req: PolicyLookupRequest, session: SessionEntry = Depends(require_auth)):
     """
     Find all Panorama security rules matching a src/dst IP pair,
     with optional port/protocol and device-group filtering.
@@ -103,7 +107,7 @@ async def policy_lookup(req: PolicyLookupRequest):
     if req.dst_port is not None and not (1 <= req.dst_port <= 65535):
         raise HTTPException(400, "dst_port must be between 1 and 65535")
 
-    key  = _get_key()
+    key  = _get_key(session)
     loop = asyncio.get_event_loop()
 
     # All device groups (needed to populate the full cache)

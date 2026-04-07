@@ -35,8 +35,27 @@ BASE_XPATH = "/config/devices/entry[@name='localhost.localdomain']"
 # CONNECTION & RAW CALLS
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _keygen(host: str, user: str, pwd: str) -> str | None:
+    """Exchange credentials for a Panorama API key."""
+    try:
+        resp = requests.get(
+            f"https://{host}/api/",
+            params={"type": "keygen", "user": user, "password": pwd},
+            verify=False,
+            timeout=15,
+        )
+        root   = ET.fromstring(resp.text)
+        key_el = root.find(".//key")
+        if key_el is not None and key_el.text:
+            return key_el.text
+        logger.warning(f"Panorama keygen failed: {resp.text[:200]}")
+    except Exception as e:
+        logger.warning(f"Panorama keygen error: {e}")
+    return None
+
+
 def get_api_key() -> str | None:
-    """Generate and cache a Panorama API key from env credentials."""
+    """Generate and cache a Panorama API key from shared env credentials."""
     host = os.getenv("PANORAMA_HOST")
     user = os.getenv("DOMAIN_USERNAME")
     pwd  = os.getenv("DOMAIN_PASSWORD")
@@ -48,22 +67,18 @@ def get_api_key() -> str | None:
     if cache_key in _key_cache:
         return _key_cache[cache_key]
 
-    try:
-        resp = requests.get(
-            f"https://{host}/api/",
-            params={"type": "keygen", "user": user, "password": pwd},
-            verify=False,
-            timeout=15,
-        )
-        root   = ET.fromstring(resp.text)
-        key_el = root.find(".//key")
-        if key_el is not None and key_el.text:
-            _key_cache[cache_key] = key_el.text
-            return key_el.text
-        logger.warning(f"Panorama keygen failed: {resp.text[:200]}")
-    except Exception as e:
-        logger.warning(f"Panorama keygen error: {e}")
-    return None
+    key = _keygen(host, user, pwd)
+    if key:
+        _key_cache[cache_key] = key
+    return key
+
+
+def get_user_api_key(username: str, password: str) -> str | None:
+    """Generate a Panorama API key for a specific user (not globally cached)."""
+    host = os.getenv("PANORAMA_HOST")
+    if not host:
+        return None
+    return _keygen(host, username, password)
 
 
 def _config_get(xpath: str, api_key: str) -> ET.Element | None:
@@ -114,6 +129,11 @@ def connectivity_check() -> tuple[bool, str]:
     key = get_api_key()
     if not key:
         return False, "Cannot obtain API key — check PANORAMA_HOST/USERNAME/PASSWORD"
+    return connectivity_check_with_key(key)
+
+
+def connectivity_check_with_key(key: str) -> tuple[bool, str]:
+    """Version check using an already-obtained API key."""
     result = _op("<show><system><info></info></system></show>", key)
     if result is not None:
         hostname = result.findtext(".//hostname", "Unknown")
