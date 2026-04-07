@@ -479,15 +479,23 @@ def get_managed_devices(api_key: str) -> list[dict]:
     Fetch the list of managed firewalls from Panorama.
     Returns a list of dicts with keys: serial, hostname, model, ip_address, device_group.
     """
+    print("\n" + "="*60)
+    print("GET_MANAGED_DEVICES CALLED")  # Simple print that always shows
+    print("="*60 + "\n")
+    
     devices = []
     try:
+        print("[DEVICES] Calling Panorama op command: <show><devices><all/></devices></show>")
         result = _op("<show><devices><all/></devices></show>", api_key)
+        
         if result is None:
+            print("[DEVICES] ERROR: result is None from _op()")
             logger.warning("No result from Panorama devices op command")
             return devices
         
         # Log the entire XML structure for debugging
         xml_str = ET.tostring(result, encoding='unicode')
+        print(f"[DEVICES] XML Response (first 2000 chars):\n{xml_str[:2000]}\n")
         logger.info(f"Panorama op response (first 2000 chars): {xml_str[:2000]}")
         logger.info(f"Result tag: {result.tag}, children tags: {[child.tag for child in result]}")
         
@@ -503,20 +511,24 @@ def get_managed_devices(api_key: str) -> list[dict]:
         entries = []
         for xpath in possible_paths:
             entries = result.findall(xpath)
+            print(f"[DEVICES] XPath '{xpath}' found {len(entries)} entries")
             logger.debug(f"XPath '{xpath}' found {len(entries)} entries")
             if entries:
+                print(f"[DEVICES] ✓ SUCCESS: Found {len(entries)} devices using xpath: {xpath}")
                 logger.info(f"✓ Found {len(entries)} device(s) using xpath: {xpath}")
                 break
         
         if not entries:
             # Try to list all descendants to understand the structure
             all_descendants = list(result.iter())
+            print(f"[DEVICES] FAILED: No entries found. Total XML descendants: {len(all_descendants)}")
+            print(f"[DEVICES] Descendant tag names: {set(e.tag for e in all_descendants)}")
             logger.warning(f"No device entries found using any XPath. Total descendants in XML: {len(all_descendants)}")
             logger.warning(f"Descendant tags: {set(e.tag for e in all_descendants)}")
-            logger.warning(f"Full XML (may be large): {xml_str[:3000]}")
+            logger.warning(f"Full XML (first 3000 chars): {xml_str[:3000]}")
             return devices
         
-        logger.info(f"Processing {len(entries)} device entries...")
+        print(f"[DEVICES] Processing {len(entries)} device entries...")
         for entry in entries:
             serial = entry.get("name", "")
             if not serial:
@@ -532,10 +544,15 @@ def get_managed_devices(api_key: str) -> list[dict]:
                 "os_version":    entry.findtext("os-version") or "",
             }
             devices.append(device_info)
+            print(f"[DEVICES] Added: {serial} ({device_info.get('model', 'unknown')})")
             logger.debug(f"Added device: {serial} ({device_info.get('model', 'unknown')})")
         
+        print(f"[DEVICES] SUCCESS: Fetched {len(devices)} managed devices\n")
         logger.info(f"✓ Fetched {len(devices)} managed device(s) from Panorama")
     except Exception as e:
+        print(f"[DEVICES] EXCEPTION: {e}")
+        import traceback
+        print(traceback.format_exc())
         logger.error(f"Failed to fetch managed devices: {e}", exc_info=True)
     
     return devices
