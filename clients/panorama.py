@@ -486,40 +486,55 @@ def get_managed_devices(api_key: str) -> list[dict]:
             logger.warning("No result from Panorama devices op command")
             return devices
         
+        # Log the entire XML structure for debugging
+        xml_str = ET.tostring(result, encoding='unicode')
+        logger.info(f"Panorama op response (first 2000 chars): {xml_str[:2000]}")
+        logger.info(f"Result tag: {result.tag}, children tags: {[child.tag for child in result]}")
+        
         # Try multiple XPath patterns (Panorama versions vary)
         possible_paths = [
-            ".//device/entry",      # Most common
+            ".//entry",             # Try generic first
+            ".//device/entry",      # Most common nested structure
             "./device/entry",       # Without leading dots
-            ".//entry",             # Generic
             "devices/entry",        # Alternative nesting
+            "./entry",              # Direct children
         ]
         
         entries = []
         for xpath in possible_paths:
             entries = result.findall(xpath)
+            logger.debug(f"XPath '{xpath}' found {len(entries)} entries")
             if entries:
-                logger.info(f"Found {len(entries)} device(s) using xpath: {xpath}")
+                logger.info(f"✓ Found {len(entries)} device(s) using xpath: {xpath}")
                 break
         
         if not entries:
-            logger.warning(f"No device entries found. Raw XML (first 1000 chars): {ET.tostring(result, encoding='unicode')[:1000]}")
+            # Try to list all descendants to understand the structure
+            all_descendants = list(result.iter())
+            logger.warning(f"No device entries found using any XPath. Total descendants in XML: {len(all_descendants)}")
+            logger.warning(f"Descendant tags: {set(e.tag for e in all_descendants)}")
+            logger.warning(f"Full XML (may be large): {xml_str[:3000]}")
             return devices
         
+        logger.info(f"Processing {len(entries)} device entries...")
         for entry in entries:
             serial = entry.get("name", "")
             if not serial:
+                logger.debug(f"Skipping entry with no 'name' attribute: {ET.tostring(entry, encoding='unicode')[:200]}")
                 continue
             
-            devices.append({
+            device_info = {
                 "serial":        serial,
                 "hostname":      entry.findtext("hostname") or "",
                 "model":         entry.findtext("model") or "",
                 "ip_address":    entry.findtext("ip-address") or "",
                 "device_group":  entry.findtext("device-group") or "N/A",
                 "os_version":    entry.findtext("os-version") or "",
-            })
+            }
+            devices.append(device_info)
+            logger.debug(f"Added device: {serial} ({device_info.get('model', 'unknown')})")
         
-        logger.info(f"Fetched {len(devices)} managed device(s) from Panorama")
+        logger.info(f"✓ Fetched {len(devices)} managed device(s) from Panorama")
     except Exception as e:
         logger.error(f"Failed to fetch managed devices: {e}", exc_info=True)
     
