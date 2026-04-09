@@ -1052,11 +1052,21 @@ body {
 }
 
 /* ── Devices page — fill viewport, table scrolls internally ─── */
+
+/* Lock the page scroll so only the table div scrolls */
+html:has(.dev-page-layout),
+body:has(.dev-page-layout) {
+  overflow: hidden;
+  height: 100%;
+}
+
 #content:has(.dev-page-layout) {
   display: flex;
   flex-direction: column;
   overflow: hidden;
   padding-bottom: 0;
+  /* Fill exactly: viewport minus topbar minus top padding */
+  height: calc(100vh - var(--header-h) - 24px);
 }
 
 .dev-page-layout {
