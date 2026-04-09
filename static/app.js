@@ -442,23 +442,25 @@ Router.register('dashboard', async (el) => {
 /* ── Devices ────────────────────────────────────────────────── */
 Router.register('devices', async (el) => {
   el.innerHTML = `
-    <div id="dev-detail"></div>
-    <div class="table-wrap">
-      <div class="table-toolbar">
-        <div class="search-input"><input class="input" id="dev-hostname" placeholder="Hostname…" style="width:160px"></div>
-        <div class="search-input"><input class="input" id="dev-ip" placeholder="IP address…" style="width:140px"></div>
-        <input class="input" id="dev-platform" placeholder="Platform…" style="width:130px">
-        <input class="input" id="dev-site" placeholder="Site…" style="width:150px">
-        <select class="select" id="dev-reach" style="width:130px">
-          <option value="">All reachability</option>
-          <option value="reachable">Reachable</option>
-          <option value="unreachable">Unreachable</option>
-        </select>
-        <button class="btn btn-primary" id="dev-search">Search</button>
-        <span class="table-count" id="dev-count"></span>
-        <div class="cache-bar" id="dev-cache-bar"></div>
+    <div class="dev-page-layout">
+      <div id="dev-detail"></div>
+      <div class="table-wrap dev-table-wrap">
+        <div class="table-toolbar">
+          <div class="search-input"><input class="input" id="dev-hostname" placeholder="Hostname…" style="width:160px"></div>
+          <div class="search-input"><input class="input" id="dev-ip" placeholder="IP address…" style="width:140px"></div>
+          <input class="input" id="dev-platform" placeholder="Platform…" style="width:130px">
+          <input class="input" id="dev-site" placeholder="Site…" style="width:150px">
+          <select class="select" id="dev-reach" style="width:130px">
+            <option value="">All reachability</option>
+            <option value="reachable">Reachable</option>
+            <option value="unreachable">Unreachable</option>
+          </select>
+          <button class="btn btn-primary" id="dev-search">Search</button>
+          <span class="table-count" id="dev-count"></span>
+          <div class="cache-bar" id="dev-cache-bar"></div>
+        </div>
+        <div id="dev-table"><div class="empty-state"><div class="spinner spinner-lg"></div></div></div>
       </div>
-      <div id="dev-table"><div class="empty-state"><div class="spinner spinner-lg"></div></div></div>
     </div>`;
 
   const cols = [
