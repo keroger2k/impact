@@ -1053,22 +1053,30 @@ body {
 
 /* ── Devices page — fill viewport, table scrolls internally ─── */
 
-/* Lock the page scroll so only the table div scrolls */
+/* Step 1: stop page-level scroll */
 html:has(.dev-page-layout),
 body:has(.dev-page-layout) {
   overflow: hidden;
-  height: 100%;
 }
 
+/* Step 2: #main's min-height:100vh is the culprit — neutralise it */
+#main:has(.dev-page-layout) {
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Step 3: #content fills remaining height after topbar */
 #content:has(.dev-page-layout) {
+  flex: 1;
   display: flex;
   flex-direction: column;
+  min-height: 0;
   overflow: hidden;
   padding-bottom: 0;
-  /* Fill exactly: viewport minus topbar minus top padding */
-  height: calc(100vh - var(--header-h) - 24px);
 }
 
+/* Step 4: inner wrapper fills #content, detail is fixed, table scrolls */
 .dev-page-layout {
   flex: 1;
   display: flex;
