@@ -1195,6 +1195,7 @@ Router.register('firewall', async (el) => {
         </div>
       </div>
       <div id="fw-result"></div>
+    </div>
 
       <!-- By Device Tab -->
       <div class="tab-pane fade" id="fw-bydevice" role="tabpanel" aria-labelledby="fw-bydevice-tab">
@@ -1218,7 +1219,8 @@ Router.register('firewall', async (el) => {
         </div>
         <div id="fw-device-result"></div>
       </div>
-    </div>`;
+    </div>
+  `;
 
   // Setup cache bars
   initCacheBar(
