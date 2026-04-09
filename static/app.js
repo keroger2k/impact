@@ -243,6 +243,39 @@ function kvRow(label, value) {
   return `<div class="kv-row"><span class="kv-label">${label}</span><span class="kv-value">${value ?? '—'}</span></div>`;
 }
 
+/* ── Numbered pagination ────────────────────────────────────── */
+function makePagination(page, totalPages, pageSize, total) {
+  if (totalPages <= 1) return '';
+  const start = page * pageSize + 1;
+  const end   = Math.min((page + 1) * pageSize, total);
+
+  const show = new Set([0, totalPages - 1]);
+  for (let i = Math.max(0, page - 2); i <= Math.min(totalPages - 1, page + 2); i++) show.add(i);
+  const sorted = [...show].sort((a, b) => a - b);
+
+  let btns = '', prev = -1;
+  for (const p of sorted) {
+    if (p - prev > 1) btns += `<span class="pagination-ellipsis">…</span>`;
+    btns += `<button class="btn btn-ghost btn-sm${p === page ? ' active' : ''}" data-page="${p}">${p + 1}</button>`;
+    prev = p;
+  }
+
+  return `<div class="pagination">
+    <button class="btn btn-ghost btn-sm" data-page="${page - 1}" ${page === 0 ? 'disabled' : ''}>‹</button>
+    ${btns}
+    <button class="btn btn-ghost btn-sm" data-page="${page + 1}" ${page >= totalPages - 1 ? 'disabled' : ''}>›</button>
+    <span class="pagination-info">${start.toLocaleString()}–${end.toLocaleString()} of ${total.toLocaleString()}</span>
+  </div>`;
+}
+
+/* ── Detail placeholder ─────────────────────────────────────── */
+const DETAIL_PLACEHOLDER = `<div class="detail-placeholder">
+  <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 6.75h7.5M8.25 12h7.5m-7.5 5.25h4.5M3.75 3h16.5a.75.75 0 01.75.75v16.5a.75.75 0 01-.75.75H3.75a.75.75 0 01-.75-.75V3.75A.75.75 0 013.75 3z"/>
+  </svg>
+  Select a row to view details
+</div>`;
+
 /* ── Reachability badge ─────────────────────────────────────── */
 function reachBadge(status) {
   if (status === 'Reachable') return `<span class="badge text-bg-success">✅ Reachable</span>`;
@@ -409,6 +442,7 @@ Router.register('dashboard', async (el) => {
 /* ── Devices ────────────────────────────────────────────────── */
 Router.register('devices', async (el) => {
   el.innerHTML = `
+    <div id="dev-detail">${DETAIL_PLACEHOLDER}</div>
     <div class="table-wrap">
       <div class="table-toolbar">
         <div class="search-input"><input class="input" id="dev-hostname" placeholder="Hostname…" style="width:160px"></div>
@@ -425,8 +459,7 @@ Router.register('devices', async (el) => {
         <div class="cache-bar" id="dev-cache-bar"></div>
       </div>
       <div id="dev-table"><div class="empty-state"><div class="spinner spinner-lg"></div></div></div>
-    </div>
-    <div id="dev-detail" class="mt-4"></div>`;
+    </div>`;
 
   const cols = [
     { key: 'hostname',            label: 'Hostname' },
@@ -467,14 +500,9 @@ Router.register('devices', async (el) => {
       }).join('')}</tr>`
     ).join('');
 
-    const showStart = start + 1, showEnd = Math.min(start + PAGE_SIZE, total);
     tableEl.innerHTML = `
-      <table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>
-      <div class="pagination">
-        <button class="btn btn-ghost btn-sm" id="dev-prev" ${devPage === 0 ? 'disabled' : ''}>← Prev</button>
-        <span class="pagination-info">Showing ${showStart}–${showEnd} of ${total.toLocaleString()}</span>
-        <button class="btn btn-ghost btn-sm" id="dev-next" ${devPage >= totalPages - 1 ? 'disabled' : ''}>Next →</button>
-      </div>`;
+      <table class="table table-striped table-hover table-sm"><thead class="table-dark"><tr>${head}</tr></thead><tbody>${body}</tbody></table>
+      ${makePagination(devPage, totalPages, PAGE_SIZE, total)}`;
 
     tableEl.querySelectorAll('tbody tr').forEach(tr => {
       tr.addEventListener('click', () => {
@@ -498,8 +526,12 @@ Router.register('devices', async (el) => {
       });
     });
 
-    document.getElementById('dev-prev')?.addEventListener('click', () => { devPage--; renderDeviceTable(); });
-    document.getElementById('dev-next')?.addEventListener('click', () => { devPage++; renderDeviceTable(); });
+    tableEl.querySelector('.pagination')?.addEventListener('click', e => {
+      const btn = e.target.closest('[data-page]');
+      if (!btn || btn.disabled) return;
+      devPage = parseInt(btn.dataset.page);
+      renderDeviceTable();
+    });
   }
 
   async function doSearch() {
@@ -573,8 +605,6 @@ Router.register('devices', async (el) => {
           <div id="config-area-${devId}"></div>
         </div>
       </div>`;
-
-    detEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
 
   window.loadConfig = async function(devId, hostname) {
@@ -790,6 +820,7 @@ Router.register('ise', async (el) => {
   /* NADs */
   async function renderNads(area) {
     area.innerHTML = `
+      <div id="nad-detail">${DETAIL_PLACEHOLDER}</div>
       <div class="table-wrap">
         <div class="table-toolbar">
           <div class="search-input"><input class="form-control form-control-sm" id="nad-search" placeholder="Search by name or IP…" style="width:220px"></div>
@@ -797,8 +828,7 @@ Router.register('ise', async (el) => {
           <span class="table-count" id="nad-count"></span>
         </div>
         <div id="nad-table"></div>
-      </div>
-      <div id="nad-detail" class="mt-4"></div>`;
+      </div>`;
 
     const cols = [
       { key: 'name', label: 'Name' },
@@ -864,6 +894,7 @@ Router.register('ise', async (el) => {
   /* Endpoints */
   async function renderEndpoints(area) {
     area.innerHTML = `
+      <div id="ep-detail">${DETAIL_PLACEHOLDER}</div>
       <div class="table-wrap">
         <div class="table-toolbar">
           <div class="search-input"><input class="input" id="ep-mac" placeholder="MAC address (partial OK)…" style="width:240px"></div>
@@ -871,8 +902,7 @@ Router.register('ise', async (el) => {
           <span class="table-count" id="ep-count"></span>
         </div>
         <div id="ep-table"></div>
-      </div>
-      <div id="ep-detail" class="mt-4"></div>`;
+      </div>`;
 
     document.getElementById('ep-go').addEventListener('click', async () => {
       const mac = document.getElementById('ep-mac').value.trim();
@@ -1374,11 +1404,11 @@ Router.register('firewall', async (el) => {
 
       res.innerHTML = `
         ${kpis}
+        <div id="fw-rule-detail">${DETAIL_PLACEHOLDER}</div>
         <div class="table-wrap" id="fw-table">
           <div class="table-toolbar"><span class="table-count">${data.match_count} rule(s) matched — click a row for detail</span></div>
           ${makeTable(cols, rows, rule => showRuleDetail(rule, data))}
-        </div>
-        <div id="fw-rule-detail" class="mt-4"></div>`;
+        </div>`;
 
       bindTableSort(document.getElementById('fw-table'), cols, rows, rule => showRuleDetail(rule, data));
 
@@ -1480,11 +1510,11 @@ Router.register('firewall', async (el) => {
           
           policiesRes.innerHTML = `
             ${kpi}
+            <div id="fw-vsys-rule-detail">${DETAIL_PLACEHOLDER}</div>
             <div class="table-wrap" id="fw-vsys-table">
               <div class="table-toolbar"><span class="table-count">${policies.length} policy(ies) — click a row for detail</span></div>
               ${makeTable(cols, rows, rule => showDevicePolicyDetail(rule))}
-            </div>
-            <div id="fw-vsys-rule-detail" class="mt-4"></div>`;
+            </div>`;
           
           bindTableSort(document.getElementById('fw-vsys-table'), cols, rows, rule => showDevicePolicyDetail(rule));
           
@@ -1902,6 +1932,7 @@ Router.register('command-runner', async (el) => {
         <div class="kpi-card danger"><div class="kpi-label">Failed</div><div class="kpi-value">${results.length - ok}</div></div>
         <div class="kpi-card"><div class="kpi-label">Avg Time</div><div class="kpi-value">${(results.reduce((s,r)=>s+r.elapsed,0)/results.length).toFixed(1)}s</div></div>
       </div>
+      <div id="cr-out-detail">${DETAIL_PLACEHOLDER}</div>
       <div class="table-wrap" id="cr-res-table">
         <div class="table-toolbar">
           <span class="table-count">Click a row to view output</span>
@@ -1909,8 +1940,7 @@ Router.register('command-runner', async (el) => {
           <button class="btn btn-ghost btn-sm" onclick="downloadCsv()">⬇️ CSV</button>
         </div>
         ${makeTable(cols, rows, r => showOutputDetail(r))}
-      </div>
-      <div id="cr-out-detail" class="mt-4"></div>`;
+      </div>`;
 
     bindTableSort(document.getElementById('cr-res-table'), cols, rows, r => showOutputDetail(r));
   }

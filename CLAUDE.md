@@ -18,12 +18,6 @@ pip install -r requirements.txt
 # Copy and fill in environment variables
 cp .env.template .env
 
-# Build Tailwind CSS (required after changing class names in app.js or index.html)
-python3 -m pytailwindcss -i static/tailwind.css -o static/dist/tailwind.css --minify
-
-# Watch mode for CSS development (rebuilds on every file change)
-python3 -m pytailwindcss -i static/tailwind.css -o static/dist/tailwind.css --watch
-
 # Run development server (auto-reload)
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
@@ -31,7 +25,7 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-No test framework or linter is configured. The frontend requires one build step for CSS — run `pytailwindcss` after changing Tailwind class names in `static/app.js` or `static/index.html`. The generated file goes to `static/dist/tailwind.css` (gitignored). `static/dist/` must exist before first build (`mkdir -p static/dist`).
+No test framework or linter is configured. No CSS build step is required — the project uses Bootstrap v5 (vendored at `static/bootstrap/`) with custom overrides in `static/app.css`.
 
 ## Architecture
 
@@ -43,7 +37,7 @@ The app is structured in three layers:
 - `clients/panorama.py` — direct XML API via `requests`; generates API keys, parses security policies
 
 **Cache layer** (`cache.py`) is a singleton in-memory TTL cache with disk persistence:
-- `devices` and `sites`: 1-hour TTL, pre-warmed at startup (skipped if valid disk cache exists)
+- `devices` and `sites`: 24-hour TTL, pre-warmed at startup (skipped if valid disk cache exists)
 - `pan_*` keys (Panorama): device groups, rules, address objects, services — 1-hour TTL
 - `ise_*` keys (ISE): all stable list endpoints — 1-hour TTL
 - System status checks (`status_*`): 5-minute TTL, memory-only
@@ -59,10 +53,10 @@ The app is structured in three layers:
 
 **Frontend** (`static/`) is a vanilla JS SPA with hash-based routing (`#/dashboard`, `#/devices`, etc.). All logic is in `static/app.js` (~1900 lines).
 
-CSS uses **Tailwind v4** (via `pytailwindcss`). There is no `tailwind.config.js` — v4 uses CSS-only configuration:
-- `static/tailwind.css` — input file: `@import "tailwindcss"`, `@theme {}` for Cisco color tokens, `@layer base {}` for table styles, `@layer components {}` for all named classes (`.btn`, `.card`, `.kpi-card`, `.badge`, `.modal`, `.tabs`, etc.)
-- `static/dist/tailwind.css` — generated output, gitignored, must be rebuilt after editing class names
-- `static/app.css` — hand-written, loads after dist; unlayered rules override `@layer components`; contains `:root` CSS variables, layout shell (`#sidebar`, `#main`, `#topbar`), sidebar/nav, keyframe animations, `.select` arrow, code block dark theme
+CSS uses **Bootstrap v5** (vendored, no CDN dependency) with a custom override layer:
+- `static/bootstrap/css/bootstrap.min.css` — Bootstrap v5 base (do not edit)
+- `static/bootstrap/js/bootstrap.bundle.min.js` — Bootstrap JS + Popper (do not edit)
+- `static/app.css` — all custom styles; loaded after Bootstrap so it overrides freely. Contains `:root` CSS variables (Cisco color tokens), layout shell (`#sidebar`, `#main`, `#topbar`), sidebar/nav, table overrides, component classes (`.btn`, `.card`, `.kpi-card`, `.badge`, `.modal`, `.tabs`, etc.), keyframe animations, and code block dark theme.
 
 ### Key Patterns
 
