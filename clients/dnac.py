@@ -143,29 +143,90 @@ def get_device_config(dnac, device_id: str) -> str:
 
 
 def build_device_site_map(dnac, site_cache: list[dict]) -> dict:
-    """Return {device_id: site_name} by querying direct members of each site.
+    """Return {device_id: site_name} for all site-assigned devices.
 
-    site_cache is already sorted most-specific-first so the first assignment
-    wins when a device appears under multiple levels of the hierarchy.
-    Skips the Global root to avoid re-counting everything.
+    Tier 1: uses the bulk assignedToSite endpoint via the Global site ID —
+    ~6 paginated calls for 3000 devices instead of 500+ sequential per-site calls.
+    Tier 2: falls back to parallel per-site fetches if Tier 1 returns nothing.
     """
+    global_site = next((s for s in site_cache if s.get("name") == "Global"), None)
+    if global_site:
+        result = _build_via_bulk(dnac, global_site["id"])
+        if result:
+            logger.info(f"Site map: {len(result)} devices mapped via bulk API")
+            return result
+
+    logger.info("Bulk site map empty or failed — falling back to parallel per-site fetch")
+    result = _build_via_per_site_parallel(dnac, site_cache)
+    logger.info(f"Site map: {len(result)} devices mapped via parallel per-site fetch")
+    return result
+
+
+def _build_via_bulk(dnac, site_id: str) -> dict:
+    """Fetch all device→site mappings in paginated bulk calls via the Global site ID.
+    Returns empty dict on error or if the endpoint rejects the site_id."""
     result = {}
-    for site in site_cache:
-        site_id   = site.get("id")
-        site_name = site.get("name")
-        if not site_id or site_name == "Global":
-            continue
+    offset = 1
+    while True:
         try:
-            resp  = dnac.sites.get_devices_that_are_assigned_to_a_site(
-                id=site_id, member_type="networkdevice"
+            resp  = dnac.site_design.get_site_assigned_network_devices(
+                site_id=site_id, offset=offset, limit=500
             )
             items = getattr(resp, "response", None) or []
-            for dev in items:
-                uid = _dictify(dev).get("instanceUuid")
-                if uid and uid not in result:
-                    result[uid] = site_name
+            if not items:
+                break
+            for rec in items:
+                r    = _dictify(rec)
+                uid  = r.get("deviceId")
+                name = r.get("siteNameHierarchy")
+                if uid and name and uid not in result:
+                    result[uid] = name
+            if len(items) < 500:
+                break
+            offset += 500
         except Exception as e:
-            logger.warning(f"Site member fetch failed for {site_name}: {e}")
+            logger.warning(f"Bulk site-device fetch failed (will try per-site): {e}")
+            return {}
+    return result
+
+
+def _build_via_per_site_parallel(dnac, site_cache: list[dict]) -> dict:
+    """Parallel per-site fallback. Runs all site fetches concurrently and paginates
+    each site so no devices are missed on larger sites."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    sites_to_fetch = [s for s in site_cache if s.get("id") and s.get("name") != "Global"]
+
+    def fetch_site(site):
+        uids, offset = [], 1
+        while True:
+            try:
+                resp  = dnac.sites.get_devices_that_are_assigned_to_a_site(
+                    id=site["id"], member_type="networkdevice",
+                    offset=offset, limit=500
+                )
+                items = getattr(resp, "response", None) or []
+                uids.extend(_dictify(dev).get("instanceUuid") for dev in items)
+                if len(items) < 500:
+                    break
+                offset += 500
+            except Exception as e:
+                logger.warning(f"Site member fetch failed for {site['name']}: {e}")
+                break
+        return site["name"], uids
+
+    ordered = [None] * len(sites_to_fetch)
+    with ThreadPoolExecutor(max_workers=20) as pool:
+        futures = {pool.submit(fetch_site, s): i for i, s in enumerate(sites_to_fetch)}
+        for fut in as_completed(futures):
+            ordered[futures[fut]] = fut.result()
+
+    # site_cache is sorted most-specific-first; first assignment wins
+    result = {}
+    for site_name, uids in ordered:
+        for uid in uids:
+            if uid and uid not in result:
+                result[uid] = site_name
     return result
 
 
