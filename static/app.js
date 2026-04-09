@@ -442,7 +442,7 @@ Router.register('dashboard', async (el) => {
 /* ── Devices ────────────────────────────────────────────────── */
 Router.register('devices', async (el) => {
   el.innerHTML = `
-    <div id="dev-detail">${DETAIL_PLACEHOLDER}</div>
+    <div id="dev-detail"></div>
     <div class="table-wrap">
       <div class="table-toolbar">
         <div class="search-input"><input class="input" id="dev-hostname" placeholder="Hostname…" style="width:160px"></div>
@@ -560,10 +560,38 @@ Router.register('devices', async (el) => {
   ['dev-hostname','dev-ip','dev-platform','dev-site'].forEach(id => {
     document.getElementById(id)?.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
   });
+  showDeviceDetail(null);
   doSearch();
 
   function showDeviceDetail(device) {
-    const detEl   = document.getElementById('dev-detail');
+    const detEl = document.getElementById('dev-detail');
+    if (!device) {
+      detEl.innerHTML = `
+        <div class="detail-panel" style="opacity:.6">
+          <div class="detail-header">
+            <span style="font-size:18px;opacity:.4">○</span>
+            <div>
+              <div class="detail-hostname" style="opacity:.5">No device selected</div>
+              <div style="font-size:11px;opacity:.4">Select a row from the table below</div>
+            </div>
+          </div>
+          <div class="detail-body">
+            <div class="detail-grid">
+              <div class="detail-section">
+                <div class="detail-section-title">Identity</div>
+                ${kvRow('Hostname', '—')}${kvRow('Management IP', '—')}${kvRow('Platform', '—')}
+                ${kvRow('IOS Version', '—')}${kvRow('Serial', '—')}${kvRow('Vendor', '—')}${kvRow('Site', '—')}
+              </div>
+              <div class="detail-section">
+                <div class="detail-section-title">Status</div>
+                ${kvRow('Reachability', '—')}${kvRow('Role', '—')}${kvRow('Uptime', '—')}
+                ${kvRow('Last Contact', '—')}${kvRow('Device ID', '—')}
+              </div>
+            </div>
+          </div>
+        </div>`;
+      return;
+    }
     const devId   = device.id;
     const dnacUrl = `${window.location.origin.replace(':8000','')}/dna/provision/devices/inventory/device-details?deviceId=${devId}`;
 

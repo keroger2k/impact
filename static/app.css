@@ -1051,6 +1051,13 @@ body {
   flex-shrink: 0;
 }
 
+/* ── Devices page — sticky detail panel ─────────────────────── */
+#dev-detail {
+  position: sticky;
+  top: 24px;
+  z-index: 50;
+}
+
 /* ── Cache bar ──────────────────────────────────────────────– */
 .cache-bar {
   display: flex;
