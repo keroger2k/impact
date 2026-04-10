@@ -1,4 +1,4 @@
-import { createApp }   from '/static/petite-vue.esm.js';
+import { createApp, reactive } from '/static/petite-vue.esm.js';
 import { API }          from '/static/js/api.js';
 import { fmtTs, escHtml, dlText, initCacheBar } from '/static/js/utils.js';
 import { Router }       from '/static/js/router.js';
@@ -6,7 +6,7 @@ import { Router }       from '/static/js/router.js';
 const PAGE_SIZE = 50;
 
 const template = `
-<div class="dev-page-layout" @vue:mounted="init()">
+<div class="dev-page-layout">
 
   <!-- ── Detail panel (always visible above table) ─────────── -->
   <div id="dev-detail">
@@ -159,7 +159,7 @@ const template = `
 
 export function mount(el) {
   el.innerHTML = template;
-  const comp = {
+  const comp = reactive({
     PAGE_SIZE,
 
     // Search form state
@@ -321,8 +321,13 @@ export function mount(el) {
       if (!this.configData || !this.selected) return;
       dlText(this.configData.config, `${this.selected.hostname}_config.txt`);
     },
-  };
+  });
   console.log('[DEVICES] Creating Vue app and mounting');
   createApp(comp).mount(el.firstElementChild);
-  console.log('[DEVICES] Vue app mounted');
+  console.log('[DEVICES] Vue app mounted, calling init()');
+  comp.init().catch(err => {
+    console.error('[DEVICES] Page init failed:', err);
+    comp.tableError = 'Page initialization failed: ' + err.message;
+    comp.loading = false;
+  });
 }
