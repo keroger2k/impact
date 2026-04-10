@@ -310,4 +310,9 @@ export function mount(el) {
     '/dnac/cache/refresh',
     () => Router.go('devices'),
   );
+  console.log('[Devices] Mount complete');
+  } catch (err) {
+    console.error('[Devices] Mount error:', err);
+    el.innerHTML = '<div class="alert alert-danger">Failed to load Devices page: ' + err.message + '</div>';
+  }
 }
