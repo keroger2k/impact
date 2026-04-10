@@ -173,7 +173,7 @@ export function mount(el) {
         platform:     comp.search.platform,
         site:         comp.search.site,
         reachability: comp.search.reachability,
-        limit:        10000,  // Load all devices at once
+        limit:        2000,  // Backend max is 2000
         offset:       0,
       });
       comp.loading    = true;
@@ -202,8 +202,9 @@ export function mount(el) {
         console.log('[Devices] Search complete. Total:', comp.total, 'Displayed:', comp.devices.length);
       } catch(e) {
         console.error('[Devices] Error in doSearch:', e);
-        comp.tableError = 'Error: ' + e.message;
-        alert('Device search error: ' + e.message);
+        const errorMsg = (e?.message || e?.toString?.() || String(e) || 'Unknown error');
+        comp.tableError = 'Error: ' + errorMsg;
+        alert('Device search error: ' + errorMsg);
       } finally {
         comp.loading = false;
         console.log('[Devices] Loading complete');
