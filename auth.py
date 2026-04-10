@@ -88,6 +88,11 @@ def validate_ldap(username: str, password: str) -> bool:
         ldaps://network.ad.tsa.gov:636
         ldap://dc01.network.ad.tsa.gov:389
     """
+    from dev import DEV_MODE
+    if DEV_MODE:
+        logger.info(f"DEV_MODE: bypassing LDAP for {username}")
+        return True
+
     ldap_url = os.getenv("AD_LDAP_URL", "")
     if not ldap_url:
         logger.warning("AD_LDAP_URL not set — auth will always fail")

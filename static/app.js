@@ -213,6 +213,16 @@ async function logout() {
 
 /* ── Bootstrap (runs on page load) ─────────────────────────────── */
 (async () => {
+  // Dev mode: auto-login with the server-issued dev token
+  try {
+    const dm = await fetch('/api/dev-mode').then(r => r.json());
+    if (dm.enabled) {
+      Auth.save(dm.token, dm.username);
+      bootApp();
+      return;
+    }
+  } catch {}
+
   const token = Auth.token();
   if (token) {
     try {

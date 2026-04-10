@@ -1,4 +1,4 @@
-import { createApp } from '/static/petite-vue.esm.js';
+import { createApp, reactive } from '/static/petite-vue.esm.js';
 import { API }        from '/static/js/api.js';
 import { toast, dlText } from '/static/js/utils.js';
 
@@ -241,10 +241,10 @@ const configSearchTemplate = `
                 <td>{{ r.role || '—' }}</td>
                 <td><strong>{{ r.match_count }}</strong></td>
                 <td style="text-align:right">
-                  <span class="badge text-bg-secondary">{{ expanded.has(i) ? '▲' : '▼' }}</span>
+                  <span class="badge text-bg-secondary">{{ expanded[i] ? '▲' : '▼' }}</span>
                 </td>
               </tr>
-              <tr v-if="expanded.has(i)">
+              <tr v-if="expanded[i]">
                 <td colspan="6" style="padding:0;background:var(--bg)">
                   <div style="padding:10px 14px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center">
                     <input class="input" v-model="lineFilters[i]" placeholder="Filter these lines…" style="max-width:260px">
@@ -371,83 +371,120 @@ export function mount(el) {
         if (pane._mounted) return;
         pane._mounted = true;
         pane.innerHTML = configSearchTemplate;
-        createApp({
-          query: '', lastQuery: '',
+        
+        // Define state FIRST so comp can reference it
+        const state = reactive({
+          query: '',  
+          lastQuery: '',
           f: { hostname: '', ip: '', platform: '', role: '', family: '', reachability: 'Reachable' },
           maxDevices: 500,
-          loading: false, error: null, statusMsg: '',
+          loading: false,
+          error: null,
+          statusMsg: '',
           csData: null,
-          expanded: new Set(),
+          expanded: {},
           lineFilters: {},
+        });
+
+        const comp = {
+          // Expose state properties directly  
+          get query() { return state.query; },
+          set query(v) { state.query = v; },
+          get lastQuery() { return state.lastQuery; },
+          set lastQuery(v) { state.lastQuery = v; },
+          get f() { return state.f; },
+          set f(v) { state.f = v; },
+          get maxDevices() { return state.maxDevices; },
+          set maxDevices(v) { state.maxDevices = v; },
+          get loading() { return state.loading; },
+          set loading(v) { state.loading = v; },
+          get error() { return state.error; },
+          set error(v) { state.error = v; },
+          get statusMsg() { return state.statusMsg; },
+          set statusMsg(v) { state.statusMsg = v; },
+          get csData() { return state.csData; },
+          set csData(v) { state.csData = v; },
+          get expanded() { return state.expanded; },
+          set expanded(v) { state.expanded = v; },
+          get lineFilters() { return state.lineFilters; },
+          set lineFilters(v) { state.lineFilters = v; },
 
           init() {},
 
           clear() {
-            this.query = ''; this.lastQuery = '';
-            Object.keys(this.f).forEach(k => { this.f[k] = k === 'reachability' ? 'Reachable' : ''; });
-            this.maxDevices = 500;
-            this.csData = null; this.statusMsg = '';
-            this.expanded = new Set(); this.lineFilters = {};
+            state.query = '';  
+            state.lastQuery = '';
+            Object.keys(state.f).forEach(k => { state.f[k] = k === 'reachability' ? 'Reachable' : ''; });
+            state.maxDevices = 500;
+            state.csData = null;  
+            state.statusMsg = '';
+            state.expanded = {};  
+            state.lineFilters = {};
           },
 
           async doSearch() {
-            const q = this.query.trim();
+            const q = state.query.trim();
             if (!q || q.length < 2) { toast('Enter at least 2 characters to search', 'warn'); return; }
-            this.loading = true; this.error = null; this.csData = null;
-            this.statusMsg = 'Searching…'; this.expanded = new Set(); this.lineFilters = {};
-            this.lastQuery = q;
+            state.loading = true;  
+            state.error = null;  
+            state.csData = null;
+            state.statusMsg = 'Searching…';  
+            state.expanded = {};  
+            state.lineFilters = {};
+            state.lastQuery = q;
             try {
               const body = {
                 search_string: q,
-                hostname:      this.f.hostname   || null,
-                ip:            this.f.ip          || null,
-                platform:      this.f.platform    || null,
-                role:          this.f.role         || null,
-                device_family: this.f.family       || null,
-                reachability:  this.f.reachability,
-                max_devices:   this.maxDevices,
+                hostname:      state.f.hostname   || null,
+                ip:            state.f.ip          || null,
+                platform:      state.f.platform    || null,
+                role:          state.f.role         || null,
+                device_family: state.f.family       || null,
+                reachability:  state.f.reachability,
+                max_devices:   state.maxDevices,
               };
               const data = await API.post('/dnac/config-search', body);
-              this.csData = data;
-              this.statusMsg = `${data.total_matches} device(s) matched in ${data.devices_matched_filter} searched`;
+              state.csData = data;
+              state.statusMsg = `${data.total_matches} device(s) matched in ${data.devices_matched_filter} searched`;
             } catch (e) {
-              this.error = e.message; this.statusMsg = '';
+              state.error = e.message;  
+              state.statusMsg = '';
             } finally {
-              this.loading = false;
+              state.loading = false;
             }
           },
 
           toggleExpand(i) {
-            const s = new Set(this.expanded);
-            if (s.has(i)) s.delete(i); else s.add(i);
-            this.expanded = s;
+            state.expanded[i] = !state.expanded[i];
           },
 
           filteredLines(i) {
-            if (!this.csData) return [];
-            const r = this.csData.results[i];
-            const q = (this.lineFilters[i] || '').toLowerCase();
+            if (!state.csData) return [];
+            const r = state.csData.results[i];
+            const q = (state.lineFilters[i] || '').toLowerCase();
             return q ? r.lines.filter(l => l.text.toLowerCase().includes(q)) : r.lines;
           },
 
           downloadDevice(i) {
-            if (!this.csData) return;
-            const r = this.csData.results[i];
-            const text = `Device: ${r.hostname} (${r.ip})\nSearch: "${this.lastQuery}"\n${'='.repeat(60)}\n` +
+            if (!state.csData) return;
+            const r = state.csData.results[i];
+            const text = `Device: ${r.hostname} (${r.ip})\nSearch: "${state.lastQuery}"\n${'='.repeat(60)}\n` +
               r.lines.map(l => `${String(l.line_num).padStart(5)}: ${l.text}`).join('\n');
             dlText(text, `${r.hostname}_matches.txt`);
           },
 
           downloadCsv() {
-            if (!this.csData) return;
+            if (!state.csData) return;
             const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
             const header = 'Hostname,IP,Platform,Role,Line Number,Match Text\n';
-            const rows = this.csData.results.flatMap(r =>
+            const rows = state.csData.results.flatMap(r =>
               r.lines.map(l => [r.hostname, r.ip, r.platform, r.role, l.line_num, l.text].map(esc).join(','))
             ).join('\n');
             dlText(header + rows, `config_search_${new Date().toISOString().slice(0,10)}.csv`);
           },
-        }).mount(pane.firstElementChild);
+        };
+        
+        createApp(comp).mount(pane.firstElementChild);
       });
     },
   };

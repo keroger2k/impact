@@ -72,6 +72,12 @@ async def list_nads(search: Optional[str] = None, session: SessionEntry = Depend
 
 @router.get("/nads/{nad_id}")
 async def get_nad(nad_id: str, session: SessionEntry = Depends(require_auth)):
+    from dev import DEV_MODE, MOCK_NADS
+    if DEV_MODE:
+        match = next((n for n in MOCK_NADS if n["id"] == nad_id), None)
+        if not match:
+            raise HTTPException(404, "NAD not found")
+        return match
     ise    = _get_ise(session)
     loop   = asyncio.get_event_loop()
     detail = await loop.run_in_executor(None, ic.get_network_device_detail, ise, nad_id)
@@ -93,6 +99,9 @@ async def list_device_groups(session: SessionEntry = Depends(require_auth)):
 
 @router.get("/endpoints")
 async def search_endpoints(mac: str = Query(..., min_length=2), session: SessionEntry = Depends(require_auth)):
+    from dev import DEV_MODE
+    if DEV_MODE:
+        return {"total": 0, "items": []}
     ise       = _get_ise(session)
     loop      = asyncio.get_event_loop()
     endpoints = await loop.run_in_executor(None, ic.get_endpoints, ise, mac)
@@ -101,6 +110,9 @@ async def search_endpoints(mac: str = Query(..., min_length=2), session: Session
 
 @router.get("/endpoints/{ep_id}")
 async def get_endpoint(ep_id: str, session: SessionEntry = Depends(require_auth)):
+    from dev import DEV_MODE
+    if DEV_MODE:
+        raise HTTPException(404, "Endpoint not found")
     ise    = _get_ise(session)
     loop   = asyncio.get_event_loop()
     detail = await loop.run_in_executor(None, ic.get_endpoint_detail, ise, ep_id)

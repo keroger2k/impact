@@ -28,6 +28,12 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from dev import DEV_MODE, seed_cache, create_dev_session
+    if DEV_MODE:
+        from cache import cache
+        seed_cache(cache)
+        create_dev_session()
+        logger.info("DEV_MODE enabled — mock data loaded, LDAP bypassed.")
     logger.info("IMPACT II starting up.")
     yield
     logger.info("IMPACT II shutting down.")
@@ -59,6 +65,15 @@ app.include_router(firewall.router,  prefix="/api/firewall", tags=["Firewall"], 
 app.include_router(commands.router,  prefix="/api/commands", tags=["Commands"], **_auth_dep)
 app.include_router(import_.router,   prefix="/api/import",   tags=["Import"],   **_auth_dep)
 
+# ── Dev mode info ─────────────────────────────────────────────────────────────
+@app.get("/api/dev-mode")
+async def dev_mode_info():
+    from dev import DEV_MODE, DEV_TOKEN, DEV_USER
+    if not DEV_MODE:
+        return {"enabled": False}
+    return {"enabled": True, "token": DEV_TOKEN, "username": DEV_USER}
+
+
 # ── Post-login cache warm ──────────────────────────────────────────────────────
 @app.post("/api/warm")
 async def warm_cache(session: SessionEntry = Depends(require_auth)):
@@ -70,12 +85,24 @@ async def warm_cache(session: SessionEntry = Depends(require_auth)):
     import clients.ise as ic
     import clients.panorama as pc
     from cache import cache, TTL_DEVICES, TTL_SITES
+    from dev import DEV_MODE, MOCK_DEVICES
 
     async def generate():
         loop = asyncio.get_event_loop()
 
         def emit(data: dict) -> str:
             return f"data: {json.dumps(data)}\n\n"
+
+        # ── DEV_MODE: skip all real connections ────────────────────────────────
+        if DEV_MODE:
+            n = len(MOCK_DEVICES)
+            yield emit({"step": "devices",  "status": "cached", "message": f"{n} devices (mock)"})
+            yield emit({"step": "sites",    "status": "cached", "message": "5 sites (mock)"})
+            yield emit({"step": "sitemap",  "status": "cached", "message": f"{n} devices mapped (mock)"})
+            yield emit({"step": "ise",      "status": "done",   "message": "ISE connected (mock)"})
+            yield emit({"step": "panorama", "status": "done",   "message": "Panorama connected (mock)"})
+            yield emit({"step": "done"})
+            return
 
         # ── DNAC client ────────────────────────────────────────────────────────
         try:
@@ -173,6 +200,14 @@ async def warm_cache(session: SessionEntry = Depends(require_auth)):
 @app.get("/api/status")
 async def status(session: SessionEntry = Depends(require_auth)):
     """Live connectivity check for all three systems using the user's credentials."""
+    from dev import DEV_MODE
+    if DEV_MODE:
+        return {
+            "dnac":     {"ok": True, "detail": "25 devices (mock)"},
+            "ise":      {"ok": True, "detail": "Connected (mock)"},
+            "panorama": {"ok": True, "detail": "Connected (mock)"},
+        }
+
     import asyncio
     loop = asyncio.get_event_loop()
 
