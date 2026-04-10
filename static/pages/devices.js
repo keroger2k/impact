@@ -6,7 +6,7 @@ import { Router }       from '/static/js/router.js';
 const PAGE_SIZE = 50;
 
 const template = `
-<div class="dev-page-layout">
+<div class="dev-page-layout" @vue:mounted="init()">
 
   <!-- ── Detail panel (always visible above table) ─────────── -->
   <div id="dev-detail">
@@ -324,11 +324,5 @@ export function mount(el) {
   };
   console.log('[DEVICES] Creating Vue app and mounting');
   createApp(comp).mount(el.firstElementChild);
-  console.log('[DEVICES] Vue app mounted, calling init()');
-  comp.init().catch(err => {
-    console.error('[DEVICES] Page init failed:', err);
-    comp.tableError = 'Page initialization failed: ' + err.message;
-    comp.loading = false;
-    alert('Devices page failed to initialize:\n\n' + err.message);
-  });
+  console.log('[DEVICES] Vue app mounted');
 }
