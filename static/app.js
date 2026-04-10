@@ -193,6 +193,12 @@ function bootApp() {
 
 function initApp() {
   window._bootstrapping = false;
+
+  // Wire up sidebar nav clicks
+  document.querySelectorAll('.nav-item[data-page]').forEach(el => {
+    el.addEventListener('click', () => Router.go(el.dataset.page));
+  });
+
   Router.init();
   loadStatus();
   setInterval(loadStatus, 60_000);
