@@ -344,27 +344,9 @@ body {
   border-color: #9d2817;
 }
 
-.btn-ghost {
-  background: transparent;
-  border: 1px solid #e0e0e0;
-  color: var(--text);
-  transition: all var(--transition);
-}
-
-.btn-ghost:hover:not(:disabled) {
-  background: #f5f7fa;
-  border-color: var(--cisco-blue);
-  color: var(--cisco-blue);
-}
-
 .btn-sm {
   padding: 6px 12px;
   font-size: 12px;
-}
-
-.btn-xs {
-  padding: 4px 8px;
-  font-size: 11px;
 }
 
 /* ── Bootstrap variable overrides ────────────────────────── */
