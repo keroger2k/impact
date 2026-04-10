@@ -170,6 +170,7 @@ export function mount(el) {
     loading:    false,
     searched:   false,
     tableError: null,
+    _mounted:   true,
     total:      0,
     sortCol:    null,
     sortDir:    1,
@@ -242,6 +243,13 @@ export function mount(el) {
       this.configData = null;
       try {
         const data = await API.get(`/dnac/devices?${p}`);
+        if (!data) {
+          throw new Error('No response from server');
+        }
+        if (!Array.isArray(data.items)) {
+          console.error('Unexpected API response format:', data);
+          throw new Error(`Invalid response: expected {items: Array}, got ${JSON.stringify(data).slice(0, 100)}`);
+        }
         this.devices  = data.items.map(d => ({
           ...d,
           lastContactFormatted: d.lastContactFormatted || fmtTs(d.lastUpdateTime),
@@ -251,6 +259,7 @@ export function mount(el) {
         this.searched = true;
       } catch(e) {
         this.tableError = e.message;
+        console.error('Device search error:', e);
       } finally {
         this.loading = false;
       }
@@ -289,5 +298,9 @@ export function mount(el) {
     },
   };
   createApp(comp).mount(el.firstElementChild);
-  comp.init();
+  comp.init().catch(err => {
+    console.error('Device page init failed:', err);
+    comp.tableError = err.message;
+    comp.loading = false;
+  });
 }
