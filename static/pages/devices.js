@@ -1,6 +1,6 @@
 import { createApp, reactive } from '/static/petite-vue.esm.js';
 import { API }          from '/static/js/api.js';
-import { fmtTs, escHtml, dlText, initCacheBar } from '/static/js/utils.js';
+import { fmtTs, dlText, initCacheBar } from '/static/js/utils.js';
 import { Router }       from '/static/js/router.js';
 
 const PAGE_SIZE = 50;
@@ -159,31 +159,69 @@ const template = `
 
 export function mount(el) {
   el.innerHTML = template;
+
+  // ── Async helpers defined as closures — reference comp directly, no 'this' ──
+  async function doSearch() {
+    const p = new URLSearchParams({
+      hostname:     comp.search.hostname,
+      ip:           comp.search.ip,
+      platform:     comp.search.platform,
+      site:         comp.search.site,
+      reachability: comp.search.reachability,
+      limit:        2000,
+    });
+    comp.loading    = true;
+    comp.tableError = null;
+    comp.selected   = null;
+    comp.configData = null;
+    try {
+      const data = await API.get(`/dnac/devices?${p}`);
+      if (!Array.isArray(data?.items)) throw new Error('Unexpected response from server');
+      comp.devices  = data.items.map(d => ({
+        ...d,
+        lastContactFormatted: d.lastContactFormatted || fmtTs(d.lastUpdateTime),
+      }));
+      comp.total    = data.total;
+      comp.page     = 0;
+      comp.searched = true;
+    } catch(e) {
+      comp.tableError = e.message;
+    } finally {
+      comp.loading = false;
+    }
+  }
+
+  async function loadConfig() {
+    if (!comp.selected) return;
+    comp.configLoading = true;
+    comp.configData    = null;
+    comp.configError   = null;
+    try {
+      comp.configData = await API.get(`/dnac/devices/${comp.selected.id}/config`);
+    } catch(e) {
+      comp.configError = e.message;
+    } finally {
+      comp.configLoading = false;
+    }
+  }
+
+  // ── Reactive scope ────────────────────────────────────────────────────────────
   const comp = reactive({
-    PAGE_SIZE,
-
-    // Search form state
-    search:    { hostname: '', ip: '', platform: '', site: '', reachability: '' },
-
-    // Table state
-    devices:    [],
-    loading:    false,
-    searched:   false,
-    tableError: null,
-    _mounted:   true,
-    total:      0,
-    sortCol:    null,
-    sortDir:    1,
-    page:       0,
-
-    // Detail panel state
+    search:       { hostname: '', ip: '', platform: '', site: '', reachability: '' },
+    devices:      [],
+    loading:      false,
+    searched:     false,
+    tableError:   null,
+    total:        0,
+    sortCol:      null,
+    sortDir:      1,
+    page:         0,
     selected:     null,
     configLoading: false,
     configData:    null,
     configError:   null,
     configFilter:  '',
 
-    // Computed
     get sorted() {
       if (!this.sortCol) return this.devices;
       const col = this.sortCol, dir = this.sortDir;
@@ -197,9 +235,9 @@ export function mount(el) {
       const n = this.totalPages, p = this.page;
       const show = new Set([0, n - 1]);
       for (let i = Math.max(0, p - 2); i <= Math.min(n - 1, p + 2); i++) show.add(i);
-      const sorted = [...show].sort((a, b) => a - b);
+      const pages = [...show].sort((a, b) => a - b);
       const result = []; let prev = -1;
-      for (const pg of sorted) {
+      for (const pg of pages) {
         if (pg - prev > 1) result.push('…');
         result.push(pg);
         prev = pg;
@@ -217,117 +255,34 @@ export function mount(el) {
       return this.configData.config.split('\n').filter(l => l.toLowerCase().includes(q)).join('\n');
     },
 
-    // Methods
-    async init() {
-      console.log('[DEVICES] init() called - starting device search');
-      try {
-        await this.doSearch();
-        console.log('[DEVICES] init() - doSearch completed');
-      } catch(err) {
-        console.error('[DEVICES] init() - doSearch failed:', err);
-        this.tableError = 'Failed to load devices: ' + err.message;
-        this.loading = false;
-      }
-      
-      initCacheBar(
-        document.getElementById('dev-cache-bar'),
-        '/dnac/cache/info',
-        '/dnac/cache/refresh',
-        () => Router.go('devices')
-      );
-    },
-
-    async doSearch() {
-      const p = new URLSearchParams({
-        hostname:     this.search.hostname,
-        ip:           this.search.ip,
-        platform:     this.search.platform,
-        site:         this.search.site,
-        reachability: this.search.reachability,
-        limit:        2000,
-      });
-      this.loading    = true;
-      this.tableError = null;
-      this.selected   = null;
-      this.configData = null;
-      
-      const url = `/dnac/devices?${p}`;
-      console.log('[DEVICES] Starting search with URL:', url);
-      
-      try {
-        console.log('[DEVICES] Calling API.get()');
-        const data = await API.get(url);
-        console.log('[DEVICES] API response received:', data);
-        
-        if (!data) {
-          throw new Error('No response from server');
-        }
-        
-        console.log('[DEVICES] Response type:', typeof data, 'has items?', 'items' in data);
-        
-        if (!Array.isArray(data.items)) {
-          console.error('[DEVICES] ERROR - data.items is not an array!', data);
-          const debugMsg = `Got response: ${JSON.stringify(data).slice(0, 200)}`;
-          alert('ERROR: API returned invalid format!\n\n' + debugMsg);
-          throw new Error(`Invalid response: expected {items: Array}, got ${JSON.stringify(data).slice(0, 100)}`);
-        }
-        
-        console.log('[DEVICES] Items count:', data.items.length);
-        this.devices  = data.items.map(d => ({
-          ...d,
-          lastContactFormatted: d.lastContactFormatted || fmtTs(d.lastUpdateTime),
-        }));
-        this.total   = data.total;
-        this.page    = 0;
-        this.searched = true;
-        console.log('[DEVICES] Successfully loaded', this.devices.length, 'devices');
-      } catch(e) {
-        console.error('[DEVICES] ERROR:', e);
-        this.tableError = e.message;
-        alert('Device search failed:\n\n' + e.message);
-      } finally {
-        this.loading = false;
-      }
-    },
-
+    // Methods delegate to closures — no 'this' dependency for async work
+    doSearch,
+    loadConfig,
     select(device) {
-      this.selected    = device;
-      this.configData  = null;
-      this.configError = null;
-      this.configFilter = '';
+      comp.selected    = device;
+      comp.configData  = null;
+      comp.configError = null;
+      comp.configFilter = '';
     },
-
     sort(col) {
-      if (this.sortCol === col) this.sortDir *= -1;
-      else { this.sortCol = col; this.sortDir = 1; }
-      this.page = 0;
+      if (comp.sortCol === col) comp.sortDir *= -1;
+      else { comp.sortCol = col; comp.sortDir = 1; }
+      comp.page = 0;
     },
-
-    async loadConfig() {
-      if (!this.selected) return;
-      this.configLoading = true;
-      this.configData    = null;
-      this.configError   = null;
-      try {
-        this.configData = await API.get(`/dnac/devices/${this.selected.id}/config`);
-      } catch(e) {
-        this.configError = e.message;
-      } finally {
-        this.configLoading = false;
-      }
-    },
-
     downloadConfig() {
-      if (!this.configData || !this.selected) return;
-      dlText(this.configData.config, `${this.selected.hostname}_config.txt`);
+      if (comp.configData && comp.selected)
+        dlText(comp.configData.config, `${comp.selected.hostname}_config.txt`);
     },
   });
-  console.log('[DEVICES] Creating Vue app and mounting');
+
   createApp(comp).mount(el.firstElementChild);
-  console.log('[DEVICES] Vue app mounted, calling init()');
-  comp.init().catch(err => {
-    console.error('[DEVICES] Page init failed:', err);
-    comp.tableError = 'Page initialization failed: ' + err.message;
-    comp.loading = false;
-  });
+
+  // Kick off initial load and cache bar — comp is the reactive proxy, no 'this' ambiguity
+  doSearch();
+  initCacheBar(
+    document.getElementById('dev-cache-bar'),
+    '/dnac/cache/info',
+    '/dnac/cache/refresh',
+    () => Router.go('devices'),
+  );
 }
