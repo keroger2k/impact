@@ -159,160 +159,182 @@ const template = `
 
 export function mount(el) {
   try {
-    console.log('[Devices] Mounting page...');
-    el.innerHTML = template;
-    console.log('[Devices] Template rendered');
-
-
-  // ── Async helpers defined as closures — reference comp directly, no 'this' ──
-  async function doSearch() {
-    const p = new URLSearchParams({
-      hostname:     comp.search.hostname,
-      ip:           comp.search.ip,
-      platform:     comp.search.platform,
-      site:         comp.search.site,
-      reachability: comp.search.reachability,
-      limit:        100,  // Load 100 at a time (2 pages)
-      offset:       0,     // Start from beginning
-    });
-    comp.loading    = true;
-    comp.tableError = null;
-    comp.selected   = null;
-    comp.configData = null;
-    comp.page       = 0;  // Reset to page 1
-    try {
-      console.log('[Devices] Sending request with params:', { limit: 100, offset: 0 });
-      console.log('[Devices] Full URL:', `/dnac/devices?${p}`);
-      
-      const data = await API.get(`/dnac/devices?${p}`);
-      console.log('[Devices] API response received:', { items: data?.items?.length, total: data?.total });
-      
-      if (!data || typeof data !== 'object') throw new Error('Invalid response: not an object');
-      if (!Array.isArray(data?.items)) throw new Error(`Invalid response: items is not an array (got ${typeof data?.items})`);
-      
-      console.log('[Devices] Starting to map/enrich ' + data.items.length + ' items...');
-      comp.devices  = data.items.map(d => ({
-        ...d,
-        lastContactFormatted: d.lastContactFormatted || fmtTs(d.lastUpdateTime),
-      }));
-      console.log('[Devices] Enrichment complete. Devices:', comp.devices.length);
-      
-      comp.total    = data.total || data.items.length;  // Total unfiltered count
-      comp.page     = 0;
-      comp.searched = true;
-      console.log('[Devices] Search complete. Total:', comp.total, 'Displayed:', comp.devices.length);
-    } catch(e) {
-      console.error('[Devices] Error in doSearch:', e);
-      comp.tableError = 'Error: ' + e.message;
-      alert('Device search error: ' + e.message);
-    } finally {
-      comp.loading = false;
-      console.log('[Devices] Loading complete. loading=false');
+    console.log('[Devices] Mount called with element:', el?.tagName, el?.id);
+    
+    // Create a wrapper to ensure we have proper DOM
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = template;
+    const rootElement = wrapper.firstElementChild;
+    
+    if (!rootElement) {
+      throw new Error('Template did not render a root element');
     }
-  }
+    
+    console.log('[Devices] Template rendered, root element:', rootElement.className);
+    
+    // Replace el's content with the rendered template
+    el.innerHTML = '';
+    el.appendChild(rootElement);
+    console.log('[Devices] Root element appended to DOM');
 
-  async function loadConfig() {
-    if (!comp.selected) return;
-    comp.configLoading = true;
-    comp.configData    = null;
-    comp.configError   = null;
-    try {
-      comp.configData = await API.get(`/dnac/devices/${comp.selected.id}/config`);
-    } catch(e) {
-      comp.configError = e.message;
-    } finally {
-      comp.configLoading = false;
-    }
-  }
-
-  // ── Reactive scope ────────────────────────────────────────────────────────────
-  const comp = reactive({
-    search:       { hostname: '', ip: '', platform: '', site: '', reachability: '' },
-    devices:      [],
-    loading:      false,
-    searched:     false,
-    tableError:   null,
-    total:        0,
-    sortCol:      null,
-    sortDir:      1,
-    page:         0,
-    selected:     null,
-    configLoading: false,
-    configData:    null,
-    configError:   null,
-    configFilter:  '',
-
-    get sorted() {
-      if (!this.sortCol) return this.devices;
-      const col = this.sortCol, dir = this.sortDir;
-      return [...this.devices].sort((a, b) =>
-        String(a[col] ?? '').localeCompare(String(b[col] ?? ''), undefined, { numeric: true }) * dir
-      );
-    },
-    get totalPages() { return Math.ceil(this.devices.length / PAGE_SIZE) || 1; },
-    get pageItems()  { return this.sorted.slice(this.page * PAGE_SIZE, (this.page + 1) * PAGE_SIZE); },
-    get visiblePages() {
-      const n = this.totalPages, p = this.page;
-      const show = new Set([0, n - 1]);
-      for (let i = Math.max(0, p - 2); i <= Math.min(n - 1, p + 2); i++) show.add(i);
-      const pages = [...show].sort((a, b) => a - b);
-      const result = []; let prev = -1;
-      for (const pg of pages) {
-        if (pg - prev > 1) result.push('…');
-        result.push(pg);
-        prev = pg;
+    // ── Async helpers defined as closures — reference comp directly, no 'this' ──
+    async function doSearch() {
+      const p = new URLSearchParams({
+        hostname:     comp.search.hostname,
+        ip:           comp.search.ip,
+        platform:     comp.search.platform,
+        site:         comp.search.site,
+        reachability: comp.search.reachability,
+        limit:        100,  // Load 100 at a time (2 pages)
+        offset:       0,     // Start from beginning
+      });
+      comp.loading    = true;
+      comp.tableError = null;
+      comp.selected   = null;
+      comp.configData = null;
+      comp.page       = 0;  // Reset to page 1
+      try {
+        console.log('[Devices] Sending request with params:', { limit: 100, offset: 0 });
+        console.log('[Devices] Full URL:', `/dnac/devices?${p}`);
+        
+        const data = await API.get(`/dnac/devices?${p}`);
+        console.log('[Devices] API response received:', { items: data?.items?.length, total: data?.total });
+        
+        if (!data || typeof data !== 'object') throw new Error('Invalid response: not an object');
+        if (!Array.isArray(data?.items)) throw new Error(`Invalid response: items is not an array (got ${typeof data?.items})`);
+        
+        console.log('[Devices] Starting to map/enrich ' + data.items.length + ' items...');
+        comp.devices  = data.items.map(d => ({
+          ...d,
+          lastContactFormatted: d.lastContactFormatted || fmtTs(d.lastUpdateTime),
+        }));
+        console.log('[Devices] Enrichment complete. Devices:', comp.devices.length);
+        
+        comp.total    = data.total || data.items.length;  // Total unfiltered count
+        comp.page     = 0;
+        comp.searched = true;
+        console.log('[Devices] Search complete. Total:', comp.total, 'Displayed:', comp.devices.length);
+      } catch(e) {
+        console.error('[Devices] Error in doSearch:', e);
+        comp.tableError = 'Error: ' + e.message;
+        alert('Device search error: ' + e.message);
+      } finally {
+        comp.loading = false;
+        console.log('[Devices] Loading complete. loading=false');
       }
-      return result;
-    },
-    get dnacUrl() {
-      if (!this.selected) return '#';
-      return `${window.location.origin.replace(':8000', '')}/dna/provision/devices/inventory/device-details?deviceId=${this.selected.id}`;
-    },
-    get filteredConfig() {
-      if (!this.configData) return '';
-      if (!this.configFilter) return this.configData.config;
-      const q = this.configFilter.toLowerCase();
-      return this.configData.config.split('\n').filter(l => l.toLowerCase().includes(q)).join('\n');
-    },
+    }
 
-    // Methods delegate to closures — no 'this' dependency for async work
-    doSearch,
-    loadConfig,
-    select(device) {
-      comp.selected    = device;
-      comp.configData  = null;
-      comp.configError = null;
-      comp.configFilter = '';
-    },
-    sort(col) {
-      if (comp.sortCol === col) comp.sortDir *= -1;
-      else { comp.sortCol = col; comp.sortDir = 1; }
-      comp.page = 0;
-    },
-    downloadConfig() {
-      if (comp.configData && comp.selected)
-        dlText(comp.configData.config, `${comp.selected.hostname}_config.txt`);
-    },
-  });
+    async function loadConfig() {
+      if (!comp.selected) return;
+      comp.configLoading = true;
+      comp.configData    = null;
+      comp.configError   = null;
+      try {
+        comp.configData = await API.get(`/dnac/devices/${comp.selected.id}/config`);
+      } catch(e) {
+        comp.configError = e.message;
+      } finally {
+        comp.configLoading = false;
+      }
+    }
 
-  createApp(comp).mount(el.firstElementChild);
+    // ── Reactive scope ────────────────────────────────────────────────────────────
+    const comp = reactive({
+      search:       { hostname: '', ip: '', platform: '', site: '', reachability: '' },
+      devices:      [],
+      loading:      false,
+      searched:     false,
+      tableError:   null,
+      total:        0,
+      sortCol:      null,
+      sortDir:      1,
+      page:         0,
+      selected:     null,
+      configLoading: false,
+      configData:    null,
+      configError:   null,
+      configFilter:  '',
 
-  // Kick off initial load and cache bar — comp is the reactive proxy, no 'this' ambiguity
-  doSearch().catch(err => {
-    console.error('[Devices] doSearch unhandled rejection:', err);
-    comp.tableError = 'Failed to load devices: ' + (err.message || err);
-    comp.loading = false;
-  });
-  
-  initCacheBar(
-    document.getElementById('dev-cache-bar'),
-    '/dnac/cache/info',
-    '/dnac/cache/refresh',
-    () => Router.go('devices'),
-  );
-  console.log('[Devices] Mount complete');
+      get sorted() {
+        if (!this.sortCol) return this.devices;
+        const col = this.sortCol, dir = this.sortDir;
+        return [...this.devices].sort((a, b) =>
+          String(a[col] ?? '').localeCompare(String(b[col] ?? ''), undefined, { numeric: true }) * dir
+        );
+      },
+      get totalPages() { return Math.ceil(this.devices.length / PAGE_SIZE) || 1; },
+      get pageItems()  { return this.sorted.slice(this.page * PAGE_SIZE, (this.page + 1) * PAGE_SIZE); },
+      get visiblePages() {
+        const n = this.totalPages, p = this.page;
+        const show = new Set([0, n - 1]);
+        for (let i = Math.max(0, p - 2); i <= Math.min(n - 1, p + 2); i++) show.add(i);
+        const pages = [...show].sort((a, b) => a - b);
+        const result = []; let prev = -1;
+        for (const pg of pages) {
+          if (pg - prev > 1) result.push('…');
+          result.push(pg);
+          prev = pg;
+        }
+        return result;
+      },
+      get dnacUrl() {
+        if (!this.selected) return '#';
+        return `${window.location.origin.replace(':8000', '')}/dna/provision/devices/inventory/device-details?deviceId=${this.selected.id}`;
+      },
+      get filteredConfig() {
+        if (!this.configData) return '';
+        if (!this.configFilter) return this.configData.config;
+        const q = this.configFilter.toLowerCase();
+        return this.configData.config.split('\n').filter(l => l.toLowerCase().includes(q)).join('\n');
+      },
+
+      // Methods delegate to closures — no 'this' dependency for async work
+      doSearch,
+      loadConfig,
+      select(device) {
+        comp.selected    = device;
+        comp.configData  = null;
+        comp.configError = null;
+        comp.configFilter = '';
+      },
+      sort(col) {
+        if (comp.sortCol === col) comp.sortDir *= -1;
+        else { comp.sortCol = col; comp.sortDir = 1; }
+        comp.page = 0;
+      },
+      downloadConfig() {
+        if (comp.configData && comp.selected)
+          dlText(comp.configData.config, `${comp.selected.hostname}_config.txt`);
+      },
+    });
+
+    console.log('[Devices] Reactive component created, mounting to root element...');
+    createApp(comp).mount(rootElement);
+    console.log('[Devices] Petite Vue mounted successfully');
+
+    // Kick off initial load and cache bar — comp is the reactive proxy, no 'this' ambiguity
+    console.log('[Devices] Calling doSearch()');
+    doSearch().catch(err => {
+      console.error('[Devices] doSearch unhandled rejection:', err);
+      comp.tableError = 'Failed to load devices: ' + (err.message || err);
+      comp.loading = false;
+    });
+    
+    const cacheBar = document.getElementById('dev-cache-bar');
+    if (cacheBar) {
+      console.log('[Devices] Cache bar found, initializing...');
+      initCacheBar(
+        cacheBar,
+        '/dnac/cache/info',
+        '/dnac/cache/refresh',
+        () => Router.go('devices'),
+      );
+    } else {
+      console.warn('[Devices] Cache bar element not found');
+    }
+    console.log('[Devices] Mount complete');
   } catch (err) {
     console.error('[Devices] Mount error:', err);
-    el.innerHTML = '<div class="alert alert-danger">Failed to load Devices page: ' + err.message + '</div>';
+    el.innerHTML = '<div class="alert alert-danger" style="margin: 20px;"><strong>Failed to load Devices page:</strong><br>' + (err.message || err) + '</div>';
   }
 }
