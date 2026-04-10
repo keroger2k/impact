@@ -219,7 +219,16 @@ export function mount(el) {
 
     // Methods
     async init() {
-      await this.doSearch();
+      console.log('[DEVICES] init() called - starting device search');
+      try {
+        await this.doSearch();
+        console.log('[DEVICES] init() - doSearch completed');
+      } catch(err) {
+        console.error('[DEVICES] init() - doSearch failed:', err);
+        this.tableError = 'Failed to load devices: ' + err.message;
+        this.loading = false;
+      }
+      
       initCacheBar(
         document.getElementById('dev-cache-bar'),
         '/dnac/cache/info',
@@ -241,15 +250,29 @@ export function mount(el) {
       this.tableError = null;
       this.selected   = null;
       this.configData = null;
+      
+      const url = `/dnac/devices?${p}`;
+      console.log('[DEVICES] Starting search with URL:', url);
+      
       try {
-        const data = await API.get(`/dnac/devices?${p}`);
+        console.log('[DEVICES] Calling API.get()');
+        const data = await API.get(url);
+        console.log('[DEVICES] API response received:', data);
+        
         if (!data) {
           throw new Error('No response from server');
         }
+        
+        console.log('[DEVICES] Response type:', typeof data, 'has items?', 'items' in data);
+        
         if (!Array.isArray(data.items)) {
-          console.error('Unexpected API response format:', data);
+          console.error('[DEVICES] ERROR - data.items is not an array!', data);
+          const debugMsg = `Got response: ${JSON.stringify(data).slice(0, 200)}`;
+          alert('ERROR: API returned invalid format!\n\n' + debugMsg);
           throw new Error(`Invalid response: expected {items: Array}, got ${JSON.stringify(data).slice(0, 100)}`);
         }
+        
+        console.log('[DEVICES] Items count:', data.items.length);
         this.devices  = data.items.map(d => ({
           ...d,
           lastContactFormatted: d.lastContactFormatted || fmtTs(d.lastUpdateTime),
@@ -257,9 +280,11 @@ export function mount(el) {
         this.total   = data.total;
         this.page    = 0;
         this.searched = true;
+        console.log('[DEVICES] Successfully loaded', this.devices.length, 'devices');
       } catch(e) {
+        console.error('[DEVICES] ERROR:', e);
         this.tableError = e.message;
-        console.error('Device search error:', e);
+        alert('Device search failed:\n\n' + e.message);
       } finally {
         this.loading = false;
       }
@@ -297,10 +322,13 @@ export function mount(el) {
       dlText(this.configData.config, `${this.selected.hostname}_config.txt`);
     },
   };
+  console.log('[DEVICES] Creating Vue app and mounting');
   createApp(comp).mount(el.firstElementChild);
+  console.log('[DEVICES] Vue app mounted, calling init()');
   comp.init().catch(err => {
-    console.error('Device page init failed:', err);
-    comp.tableError = err.message;
+    console.error('[DEVICES] Page init failed:', err);
+    comp.tableError = 'Page initialization failed: ' + err.message;
     comp.loading = false;
+    alert('Devices page failed to initialize:\n\n' + err.message);
   });
 }
