@@ -168,12 +168,14 @@ export function mount(el) {
       platform:     comp.search.platform,
       site:         comp.search.site,
       reachability: comp.search.reachability,
-      limit:        2000,
+      limit:        200,  // Load 200 at a time (4 pages)
+      offset:       0,     // Start from beginning
     });
     comp.loading    = true;
     comp.tableError = null;
     comp.selected   = null;
     comp.configData = null;
+    comp.page       = 0;  // Reset to page 1
     try {
       const data = await API.get(`/dnac/devices?${p}`);
       if (!Array.isArray(data?.items)) throw new Error('Unexpected response from server');
@@ -181,7 +183,7 @@ export function mount(el) {
         ...d,
         lastContactFormatted: d.lastContactFormatted || fmtTs(d.lastUpdateTime),
       }));
-      comp.total    = data.total;
+      comp.total    = data.total || data.items.length;  // Total unfiltered count
       comp.page     = 0;
       comp.searched = true;
     } catch(e) {

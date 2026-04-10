@@ -268,7 +268,7 @@ export function mount(el) {
       if (!ips.length) return;
       let dnacDevices = [];
       try {
-        const d = await API.get('/dnac/devices?limit=2000');
+        const d = await API.get('/dnac/devices?limit=500');
         dnacDevices = d.items;
       } catch {}
       const ipMap = {};

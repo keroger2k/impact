@@ -57,13 +57,18 @@ async def list_devices(
     session:      SessionEntry = Depends(require_auth),
 ):
     """Return filtered device list from cache."""
+    import time
+    start_time = time.time()
+    
     loop = asyncio.get_event_loop()
     dnac = _get_dnac(session)
 
     devices = cache.get("devices")
     if devices is None:
+        logger.info("Loading devices from DNAC (not in cache)")
         devices = await loop.run_in_executor(None, dc.get_all_devices, dnac)
         cache.set("devices", devices, TTL_DEVICES)
+        logger.info(f"Loaded {len(devices)} devices in {time.time() - start_time:.1f}s")
 
     filtered = devices
     if hostname:
@@ -98,6 +103,8 @@ async def list_devices(
         enriched = _enrich(d)
         enriched["siteName"] = dev_site_map.get(d.get("id"))
         paged.append(enriched)
+    
+    logger.info(f"Device list response: {len(paged)} items out of {total} total, took {time.time() - start_time:.1f}s")
     return {"total": total, "offset": offset, "limit": limit, "items": paged}
 
 
