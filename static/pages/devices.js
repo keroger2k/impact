@@ -3,7 +3,7 @@ import { API }          from '/static/js/api.js';
 import { fmtTs, dlText, initCacheBar } from '/static/js/utils.js';
 import { Router }       from '/static/js/router.js';
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 10000;  // No pagination - load all at once
 
 const template = `
 <div class="dev-page-layout">
@@ -159,23 +159,11 @@ const template = `
 
 export function mount(el) {
   try {
-    console.log('[Devices] Mount called with element:', el?.tagName, el?.id);
+    console.log('[Devices] Mount called');
     
-    // Create a wrapper to ensure we have proper DOM
-    const wrapper = document.createElement('div');
-    wrapper.innerHTML = template;
-    const rootElement = wrapper.firstElementChild;
-    
-    if (!rootElement) {
-      throw new Error('Template did not render a root element');
-    }
-    
-    console.log('[Devices] Template rendered, root element:', rootElement.className);
-    
-    // Replace el's content with the rendered template
-    el.innerHTML = '';
-    el.appendChild(rootElement);
-    console.log('[Devices] Root element appended to DOM');
+    // Simply set the template as innerHTML and mount to el directly
+    el.innerHTML = template;
+    console.log('[Devices] Template rendered to el');
 
     // ── Async helpers defined as closures — reference comp directly, no 'this' ──
     async function doSearch() {
@@ -185,18 +173,16 @@ export function mount(el) {
         platform:     comp.search.platform,
         site:         comp.search.site,
         reachability: comp.search.reachability,
-        limit:        100,  // Load 100 at a time (2 pages)
-        offset:       0,     // Start from beginning
+        limit:        10000,  // Load all devices at once
+        offset:       0,
       });
       comp.loading    = true;
       comp.tableError = null;
       comp.selected   = null;
       comp.configData = null;
-      comp.page       = 0;  // Reset to page 1
+      comp.page       = 0;
       try {
-        console.log('[Devices] Sending request with params:', { limit: 100, offset: 0 });
-        console.log('[Devices] Full URL:', `/dnac/devices?${p}`);
-        
+        console.log('[Devices] Fetching devices...');
         const data = await API.get(`/dnac/devices?${p}`);
         console.log('[Devices] API response received:', { items: data?.items?.length, total: data?.total });
         
@@ -210,7 +196,7 @@ export function mount(el) {
         }));
         console.log('[Devices] Enrichment complete. Devices:', comp.devices.length);
         
-        comp.total    = data.total || data.items.length;  // Total unfiltered count
+        comp.total    = data.total || data.items.length;
         comp.page     = 0;
         comp.searched = true;
         console.log('[Devices] Search complete. Total:', comp.total, 'Displayed:', comp.devices.length);
@@ -220,7 +206,7 @@ export function mount(el) {
         alert('Device search error: ' + e.message);
       } finally {
         comp.loading = false;
-        console.log('[Devices] Loading complete. loading=false');
+        console.log('[Devices] Loading complete');
       }
     }
 
@@ -308,33 +294,35 @@ export function mount(el) {
       },
     });
 
-    console.log('[Devices] Reactive component created, mounting to root element...');
-    createApp(comp).mount(rootElement);
-    console.log('[Devices] Petite Vue mounted successfully');
+    console.log('[Devices] Mounting Petite Vue to el...');
+    createApp(comp).mount(el);
+    console.log('[Devices] Petite Vue mounted');
 
-    // Kick off initial load and cache bar — comp is the reactive proxy, no 'this' ambiguity
+    // Kick off initial load
     console.log('[Devices] Calling doSearch()');
     doSearch().catch(err => {
-      console.error('[Devices] doSearch unhandled rejection:', err);
+      console.error('[Devices] doSearch error:', err);
       comp.tableError = 'Failed to load devices: ' + (err.message || err);
       comp.loading = false;
     });
     
-    const cacheBar = document.getElementById('dev-cache-bar');
-    if (cacheBar) {
-      console.log('[Devices] Cache bar found, initializing...');
-      initCacheBar(
-        cacheBar,
-        '/dnac/cache/info',
-        '/dnac/cache/refresh',
-        () => Router.go('devices'),
-      );
-    } else {
-      console.warn('[Devices] Cache bar element not found');
-    }
+    // Initialize cache bar
+    setTimeout(() => {
+      const cacheBar = document.getElementById('dev-cache-bar');
+      if (cacheBar) {
+        console.log('[Devices] Initializing cache bar...');
+        initCacheBar(
+          cacheBar,
+          '/dnac/cache/info',
+          '/dnac/cache/refresh',
+          () => Router.go('devices'),
+        );
+      }
+    }, 100);
+    
     console.log('[Devices] Mount complete');
   } catch (err) {
     console.error('[Devices] Mount error:', err);
-    el.innerHTML = '<div class="alert alert-danger" style="margin: 20px;"><strong>Failed to load Devices page:</strong><br>' + (err.message || err) + '</div>';
+    el.innerHTML = '<div class="alert alert-danger" style="margin: 20px;"><strong>Error loading Devices:</strong><br>' + (err.message || err) + '</div>';
   }
 }
