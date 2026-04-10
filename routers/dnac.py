@@ -59,6 +59,7 @@ async def list_devices(
     """Return filtered device list from cache."""
     import time
     start_time = time.time()
+    logger.info(f"[DEVICES_REQUEST] Received limit={limit}, offset={offset}")
     
     loop = asyncio.get_event_loop()
     dnac = _get_dnac(session)

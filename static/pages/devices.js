@@ -168,7 +168,7 @@ export function mount(el) {
       platform:     comp.search.platform,
       site:         comp.search.site,
       reachability: comp.search.reachability,
-      limit:        200,  // Load 200 at a time (4 pages)
+      limit:        100,  // Load 100 at a time (2 pages)
       offset:       0,     // Start from beginning
     });
     comp.loading    = true;
@@ -177,19 +177,33 @@ export function mount(el) {
     comp.configData = null;
     comp.page       = 0;  // Reset to page 1
     try {
+      console.log('[Devices] Sending request with params:', { limit: 100, offset: 0 });
+      console.log('[Devices] Full URL:', `/dnac/devices?${p}`);
+      
       const data = await API.get(`/dnac/devices?${p}`);
-      if (!Array.isArray(data?.items)) throw new Error('Unexpected response from server');
+      console.log('[Devices] API response received:', { items: data?.items?.length, total: data?.total });
+      
+      if (!data || typeof data !== 'object') throw new Error('Invalid response: not an object');
+      if (!Array.isArray(data?.items)) throw new Error(`Invalid response: items is not an array (got ${typeof data?.items})`);
+      
+      console.log('[Devices] Starting to map/enrich ' + data.items.length + ' items...');
       comp.devices  = data.items.map(d => ({
         ...d,
         lastContactFormatted: d.lastContactFormatted || fmtTs(d.lastUpdateTime),
       }));
+      console.log('[Devices] Enrichment complete. Devices:', comp.devices.length);
+      
       comp.total    = data.total || data.items.length;  // Total unfiltered count
       comp.page     = 0;
       comp.searched = true;
+      console.log('[Devices] Search complete. Total:', comp.total, 'Displayed:', comp.devices.length);
     } catch(e) {
-      comp.tableError = e.message;
+      console.error('[Devices] Error in doSearch:', e);
+      comp.tableError = 'Error: ' + e.message;
+      alert('Device search error: ' + e.message);
     } finally {
       comp.loading = false;
+      console.log('[Devices] Loading complete. loading=false');
     }
   }
 
