@@ -167,39 +167,64 @@ export function mount(el) {
 
     // ── Async helpers defined as closures — reference comp directly, no 'this' ──
     async function doSearch() {
-      const p = new URLSearchParams({
+      const filters = {
         hostname:     comp.search.hostname,
         ip:           comp.search.ip,
         platform:     comp.search.platform,
         site:         comp.search.site,
         reachability: comp.search.reachability,
-        limit:        2000,  // Backend max is 2000
-        offset:       0,
-      });
+      };
+      
       comp.loading    = true;
       comp.tableError = null;
       comp.selected   = null;
       comp.configData = null;
       comp.page       = 0;
+      
       try {
-        console.log('[Devices] Fetching devices...');
-        const data = await API.get(`/dnac/devices?${p}`);
-        console.log('[Devices] API response received:', { items: data?.items?.length, total: data?.total });
+        console.log('[Devices] Fetching all devices with pagination...');
+        let allDevices = [];
+        let offset = 0;
+        const pageSize = 2000;
+        let hasMore = true;
         
-        if (!data || typeof data !== 'object') throw new Error('Invalid response: not an object');
-        if (!Array.isArray(data?.items)) throw new Error(`Invalid response: items is not an array (got ${typeof data?.items})`);
+        while (hasMore) {
+          const p = new URLSearchParams({
+            ...filters,
+            limit: pageSize,
+            offset: offset,
+          });
+          
+          console.log(`[Devices] Fetching batch at offset ${offset}...`);
+          const data = await API.get(`/dnac/devices?${p}`);
+          console.log(`[Devices] Batch received: ${data.items.length} items`);
+          
+          if (!Array.isArray(data?.items)) throw new Error('Invalid response format');
+          
+          allDevices = allDevices.concat(data.items);
+          
+          // If we got fewer items than requested, we've reached the end
+          if (data.items.length < pageSize) {
+            hasMore = false;
+            console.log(`[Devices] Reached end - got ${data.items.length} items (< ${pageSize})`);
+          } else {
+            offset += pageSize;
+          }
+        }
         
-        console.log('[Devices] Starting to map/enrich ' + data.items.length + ' items...');
-        comp.devices  = data.items.map(d => ({
+        console.log(`[Devices] Total devices fetched: ${allDevices.length}`);
+        console.log('[Devices] Enriching devices...');
+        
+        comp.devices = allDevices.map(d => ({
           ...d,
           lastContactFormatted: d.lastContactFormatted || fmtTs(d.lastUpdateTime),
         }));
-        console.log('[Devices] Enrichment complete. Devices:', comp.devices.length);
         
-        comp.total    = data.total || data.items.length;
+        comp.total    = allDevices.length;
         comp.page     = 0;
         comp.searched = true;
-        console.log('[Devices] Search complete. Total:', comp.total, 'Displayed:', comp.devices.length);
+        
+        console.log(`[Devices] Search complete: ${comp.devices.length} devices loaded`);
       } catch(e) {
         console.error('[Devices] Error in doSearch:', e);
         const errorMsg = (e?.message || e?.toString?.() || String(e) || 'Unknown error');
