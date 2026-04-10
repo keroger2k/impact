@@ -5,7 +5,7 @@ import { Router }       from '/static/js/router.js';
 
 /* ── NADs sub-template ──────────────────────────────────────── */
 const nadsTemplate = `
-<div @vue:mounted="init()">
+<div>
   <div v-if="!loaded" class="detail-placeholder">
     <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
       <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 6.75h7.5M8.25 12h7.5m-7.5 5.25h4.5"/>
@@ -134,7 +134,7 @@ function simpleTableTemplate(cols) {
   const ths = cols.map(c => `<th @click="sort('${c.key}')" :class="{sorted: sortCol==='${c.key}'}">${c.label} <span class="sort-arrow">↕</span></th>`).join('');
   const tds = cols.map(c => `<td class="${c.mono ? 'mono' : ''}">{{ item.${c.key} ${c.falsy ? "|| '—'" : ''} }}</td>`).join('');
   return `
-<div @vue:mounted="load()">
+<div>
   <div v-if="loading" class="empty-state"><div class="spinner spinner-lg"></div></div>
   <div v-else-if="error" class="alert alert-danger">{{ error }}</div>
   <div v-else class="table-wrap">
@@ -152,7 +152,7 @@ function simpleTableTemplate(cols) {
 
 /* ── Page shell ─────────────────────────────────────────────── */
 const shellTemplate = `
-<div @vue:mounted="init()">
+<div>
   <div class="d-flex gap-3 align-items-center mb-0">
     <ul class="nav nav-tabs flex-grow-1" id="ise-tabs" role="tablist" style="margin-bottom:0">
       <li class="nav-item" role="presentation">
@@ -193,6 +193,8 @@ function mountSubApp(paneId, template, component) {
   pane._mounted = true;
   pane.innerHTML = template;
   createApp(component).mount(pane.firstElementChild);
+  if (component.init) component.init();
+  else if (component.load) component.load();
 }
 
 /* ── NADs component ──────────────────────────────────────────── */
@@ -297,7 +299,7 @@ function SimpleTableComponent(apiUrl) {
 
 /* ── TrustSec template ──────────────────────────────────────── */
 const trustsecTemplate = `
-<div @vue:mounted="init()">
+<div>
   <ul class="nav nav-tabs mb-3" id="ts-tabs" role="tablist">
     <li class="nav-item" role="presentation">
       <button class="nav-link active" id="ts-sgts-tab"  data-bs-toggle="tab" data-bs-target="#ts-sgts"  type="button">SGTs</button>
@@ -348,7 +350,7 @@ function TrustSecComponent() {
 
 /* ── Policy component ────────────────────────────────────────── */
 const policyTemplate = `
-<div @vue:mounted="load()">
+<div>
   <div v-if="loading" class="empty-state"><div class="spinner spinner-lg"></div></div>
   <div v-else-if="error" class="alert alert-info">{{ error }}</div>
   <template v-else>
@@ -410,7 +412,7 @@ function PolicyComponent() {
 export function mount(el) {
   el.innerHTML = shellTemplate;
 
-  createApp({
+  const shellComp = {
     async init() {
       // Mount NADs (default tab)
       mountSubApp('ise-nads', nadsTemplate, NadsComponent());
@@ -444,5 +446,7 @@ export function mount(el) {
         () => Router.go('ise')
       );
     },
-  }).mount(el.firstElementChild);
+  };
+  createApp(shellComp).mount(el.firstElementChild);
+  shellComp.init();
 }

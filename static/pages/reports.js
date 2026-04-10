@@ -12,7 +12,7 @@ function sortedItems(items, col, dir) {
 
 /* ── Inventory tab ───────────────────────────────────────────── */
 const inventoryTemplate = `
-<div @vue:mounted="load()">
+<div>
   <div v-if="loading" class="empty-state"><div class="spinner spinner-lg"></div></div>
   <div v-else-if="error" class="alert alert-danger">{{ error }}</div>
   <template v-else>
@@ -57,7 +57,7 @@ const inventoryTemplate = `
 
 /* ── Unreachable tab ─────────────────────────────────────────── */
 const unreachableTemplate = `
-<div @vue:mounted="load()">
+<div>
   <div v-if="loading" class="empty-state"><div class="spinner spinner-lg"></div></div>
   <div v-else-if="error" class="alert alert-danger">{{ error }}</div>
   <div v-else-if="!items.length" class="alert alert-success">✅ All devices are reachable.</div>
@@ -90,7 +90,7 @@ const unreachableTemplate = `
 
 /* ── Sites tab ───────────────────────────────────────────────── */
 const sitesTemplate = `
-<div @vue:mounted="load()">
+<div>
   <div v-if="loading" class="empty-state"><div class="spinner spinner-lg"></div></div>
   <div v-else-if="error" class="alert alert-danger">{{ error }}</div>
   <template v-else>
@@ -118,7 +118,7 @@ const sitesTemplate = `
 
 /* ── Config Search tab ───────────────────────────────────────── */
 const configSearchTemplate = `
-<div @vue:mounted="init()">
+<div>
   <div class="card mb-4">
     <div class="card-header"><span class="card-title">Configuration String Search</span></div>
     <div class="card-body">
@@ -266,7 +266,7 @@ const configSearchTemplate = `
 
 /* ── Shell (Bootstrap tabs) ──────────────────────────────────── */
 const shellTemplate = `
-<div @vue:mounted="init()">
+<div>
   <ul class="nav nav-tabs mb-3" role="tablist">
     <li class="nav-item" role="presentation">
       <button class="nav-link active" id="rep-inventory-tab" data-bs-toggle="tab"
@@ -318,12 +318,14 @@ function mountPane(pane, tmpl, component) {
   pane._mounted = true;
   pane.innerHTML = tmpl;
   createApp(component).mount(pane.firstElementChild);
+  if (component.init) component.init();
+  else if (component.load) component.load();
 }
 
 /* ── Public mount ────────────────────────────────────────────── */
 export function mount(el) {
   el.innerHTML = shellTemplate;
-  createApp({
+  const shellComp = {
     init() {
       // Inventory — mount immediately
       mountPane(
@@ -448,5 +450,7 @@ export function mount(el) {
         }).mount(pane.firstElementChild);
       });
     },
-  }).mount(el.firstElementChild);
+  };
+  createApp(shellComp).mount(el.firstElementChild);
+  shellComp.init();
 }

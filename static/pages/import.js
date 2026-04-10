@@ -4,7 +4,7 @@ import { API }        from '/static/js/api.js';
 
 /* ── Discovery & Import tab ───────────────────────────────────── */
 const discoveryTemplate = `
-<div @vue:mounted="init()">
+<div>
   <div class="card mb-4">
     <div class="card-header"><span class="card-title">Device Discovery &amp; Import</span></div>
     <div class="card-body">
@@ -117,7 +117,7 @@ const discoveryTemplate = `
 
 /* ── Tag Devices tab ──────────────────────────────────────────── */
 const tagTemplate = `
-<div @vue:mounted="init()">
+<div>
   <div class="card mb-4">
     <div class="card-header"><span class="card-title">Tag Devices</span></div>
     <div class="card-body">
@@ -176,7 +176,7 @@ const tagTemplate = `
 
 /* ── Shell (Bootstrap tabs) ──────────────────────────────────── */
 const shellTemplate = `
-<div @vue:mounted="init()">
+<div>
   <ul class="nav nav-tabs mb-3" role="tablist">
     <li class="nav-item" role="presentation">
       <button class="nav-link active" id="mgmt-discovery-tab" data-bs-toggle="tab"
@@ -292,12 +292,14 @@ function mountTag(pane) {
 /* ── Public mount ────────────────────────────────────────────── */
 export function mount(el) {
   el.innerHTML = shellTemplate;
-  createApp({
+  const shellComp = {
     init() {
       mountDiscovery(document.getElementById('mgmt-discovery'));
       document.getElementById('mgmt-tag-tab').addEventListener('shown.bs.tab', () => {
         mountTag(document.getElementById('mgmt-tag'));
       });
     },
-  }).mount(el.firstElementChild);
+  };
+  createApp(shellComp).mount(el.firstElementChild);
+  shellComp.init();
 }

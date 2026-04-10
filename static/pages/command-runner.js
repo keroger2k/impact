@@ -11,7 +11,7 @@ const QUICK_CMDS = [
 ];
 
 const template = `
-<div @vue:mounted="init()">
+<div>
   <div class="grid-2 gap-4 items-start">
     <!-- Step 1 — Devices -->
     <div>

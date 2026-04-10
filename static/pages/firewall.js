@@ -4,7 +4,7 @@ import { initCacheBar } from '/static/js/utils.js';
 
 /* ── Shell template (Bootstrap tabs) ─────────────────────────── */
 const shellTemplate = `
-<div @vue:mounted="init()">
+<div>
   <ul class="nav nav-tabs mb-3" id="fw-tabs" role="tablist">
     <li class="nav-item" role="presentation">
       <button class="nav-link active" id="fw-lookup-tab" data-bs-toggle="tab"
@@ -23,7 +23,7 @@ const shellTemplate = `
 
 /* ── Policy Lookup tab ────────────────────────────────────────── */
 const lookupTemplate = `
-<div @vue:mounted="init()">
+<div>
   <div class="card mb-4">
     <div class="card-header">
       <span class="card-title">🔥 Firewall Policy Lookup</span>
@@ -210,7 +210,7 @@ const lookupTemplate = `
 
 /* ── By Device tab ────────────────────────────────────────────── */
 const byDeviceTemplate = `
-<div @vue:mounted="init()">
+<div>
   <div class="card mb-4">
     <div class="card-header">
       <span class="card-title">Firewall Policies</span>
@@ -365,7 +365,7 @@ function mountLookup(pane) {
   pane._mounted = true;
   pane.innerHTML = lookupTemplate;
 
-  createApp({
+  const comp = {
     src: '', dst: '', port: '', proto: 'any',
     includeDisabled: false, showAll: true,
     deviceGroups: [], selectedDgs: [],
@@ -451,7 +451,9 @@ function mountLookup(pane) {
         this.loading = false;
       }
     },
-  }).mount(pane.firstElementChild);
+  };
+  createApp(comp).mount(pane.firstElementChild);
+  comp.init();
 }
 
 function mountByDevice(pane) {
@@ -459,7 +461,7 @@ function mountByDevice(pane) {
   pane._mounted = true;
   pane.innerHTML = byDeviceTemplate;
 
-  createApp({
+  const comp = {
     devices: [],
     selectedSerial: '',
     devLoading: false, devError: null,
@@ -535,13 +537,15 @@ function mountByDevice(pane) {
       if (this.devSortCol === col) this.devSortDir *= -1;
       else { this.devSortCol = col; this.devSortDir = 1; }
     },
-  }).mount(pane.firstElementChild);
+  };
+  createApp(comp).mount(pane.firstElementChild);
+  comp.init();
 }
 
 /* ── Public mount ────────────────────────────────────────────── */
 export function mount(el) {
   el.innerHTML = shellTemplate;
-  createApp({
+  const shellComp = {
     init() {
       // Mount lookup tab immediately
       mountLookup(document.getElementById('fw-lookup'));
@@ -551,5 +555,7 @@ export function mount(el) {
         mountByDevice(document.getElementById('fw-bydevice'));
       });
     },
-  }).mount(el.firstElementChild);
+  };
+  createApp(shellComp).mount(el.firstElementChild);
+  shellComp.init();
 }

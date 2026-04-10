@@ -2,7 +2,7 @@ import { createApp } from '/static/petite-vue.esm.js';
 import { API }        from '/static/js/api.js';
 
 const template = `
-<div @vue:mounted="load()">
+<div>
   <div v-if="loading" class="empty-state"><div class="spinner spinner-lg"></div></div>
   <div v-else-if="error" class="alert alert-danger">Failed to load dashboard: {{ error }}</div>
   <template v-else>
@@ -79,7 +79,7 @@ const template = `
 
 export function mount(el) {
   el.innerHTML = template;
-  createApp({
+  const comp = {
     loading: true,
     error:   null,
     stats:   null,
@@ -104,5 +104,7 @@ export function mount(el) {
         this.loading = false;
       }
     },
-  }).mount(el.firstElementChild);
+  };
+  createApp(comp).mount(el.firstElementChild);
+  comp.load();
 }

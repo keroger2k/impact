@@ -6,7 +6,7 @@ import { Router }       from '/static/js/router.js';
 const PAGE_SIZE = 50;
 
 const template = `
-<div class="dev-page-layout" @vue:mounted="init()">
+<div class="dev-page-layout">
 
   <!-- ── Detail panel (always visible above table) ─────────── -->
   <div id="dev-detail">
@@ -159,7 +159,7 @@ const template = `
 
 export function mount(el) {
   el.innerHTML = template;
-  createApp({
+  const comp = {
     PAGE_SIZE,
 
     // Search form state
@@ -287,5 +287,7 @@ export function mount(el) {
       if (!this.configData || !this.selected) return;
       dlText(this.configData.config, `${this.selected.hostname}_config.txt`);
     },
-  }).mount(el.firstElementChild);
+  };
+  createApp(comp).mount(el.firstElementChild);
+  comp.init();
 }

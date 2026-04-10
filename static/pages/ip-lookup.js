@@ -3,7 +3,7 @@ import { API }        from '/static/js/api.js';
 import { toast }      from '/static/js/utils.js';
 
 const template = `
-<div @vue:mounted="focus()">
+<div>
   <div class="card mb-4" style="max-width:700px">
     <div class="card-header"><span class="card-title">🔍 IP Address Lookup</span></div>
     <div class="card-body">
@@ -70,7 +70,7 @@ const template = `
 
 export function mount(el) {
   el.innerHTML = template;
-  createApp({
+  const comp = {
     ip:       '',
     lastIp:   '',
     loading:  false,
@@ -100,5 +100,7 @@ export function mount(el) {
         this.loading = false;
       }
     },
-  }).mount(el.firstElementChild);
+  };
+  createApp(comp).mount(el.firstElementChild);
+  comp.focus();
 }
