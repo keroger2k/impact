@@ -48,7 +48,18 @@
       });
 
       window.addEventListener('unhandledrejection', (event) => {
-        this.addLog('error', [`UNHANDLED PROMISE REJECTION:`, event.reason]);
+        const reason = event.reason;
+        let msg = 'UNHANDLED PROMISE REJECTION:';
+        if (reason && typeof reason === 'object') {
+          msg += ' ' + (reason.message || JSON.stringify(reason));
+        } else if (reason) {
+          msg += ' ' + String(reason);
+        } else {
+          msg += ' (empty error object)';
+        }
+        this.addLog('error', [msg, reason]);
+        // Prevent browser from logging duplicate
+        event.preventDefault();
       });
 
       // Create the overlay immediately

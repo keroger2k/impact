@@ -158,7 +158,11 @@ const template = `
 </div>`;
 
 export function mount(el) {
-  el.innerHTML = template;
+  try {
+    console.log('[Devices] Mounting page...');
+    el.innerHTML = template;
+    console.log('[Devices] Template rendered');
+
 
   // ── Async helpers defined as closures — reference comp directly, no 'this' ──
   async function doSearch() {
@@ -294,7 +298,12 @@ export function mount(el) {
   createApp(comp).mount(el.firstElementChild);
 
   // Kick off initial load and cache bar — comp is the reactive proxy, no 'this' ambiguity
-  doSearch();
+  doSearch().catch(err => {
+    console.error('[Devices] doSearch unhandled rejection:', err);
+    comp.tableError = 'Failed to load devices: ' + (err.message || err);
+    comp.loading = false;
+  });
+  
   initCacheBar(
     document.getElementById('dev-cache-bar'),
     '/dnac/cache/info',
