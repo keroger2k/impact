@@ -313,6 +313,53 @@ function makeSimpleTable(apiUrl, template, mapFn) {
   };
 }
 
+function makeSimpleTableWithPagination(baseUrl, template, mapFn) {
+  return {
+    loading: true, error: null, items: [],
+    col: null, dir: 1,
+    get sorted() { return sortedItems(this.items, this.col, this.dir); },
+    async load() {
+      try {
+        console.log('[Reports] Fetching all devices from:', baseUrl);
+        let allItems = [];
+        let offset = 0;
+        const pageSize = 2000;
+        let hasMore = true;
+        
+        while (hasMore) {
+          const separator = baseUrl.includes('?') ? '&' : '?';
+          const url = `${baseUrl}${separator}limit=${pageSize}&offset=${offset}`;
+          console.log(`[Reports] Fetching batch at offset ${offset}...`);
+          
+          const d = await API.get(url);
+          if (!Array.isArray(d.items)) throw new Error('Invalid response format');
+          
+          allItems = allItems.concat(d.items);
+          console.log(`[Reports] Batch received: ${d.items.length} items`);
+          
+          if (d.items.length < pageSize) {
+            hasMore = false;
+            console.log(`[Reports] Reached end - total items: ${allItems.length}`);
+          } else {
+            offset += pageSize;
+          }
+        }
+        
+        this.items = mapFn ? allItems.map(mapFn) : allItems;
+        console.log(`[Reports] Table load complete: ${this.items.length} items`);
+      } catch (e) { 
+        console.error('[Reports] Error loading table:', e);
+        this.error = e.message; 
+      }
+      finally { this.loading = false; }
+    },
+    sort(c) {
+      if (this.col === c) this.dir *= -1;
+      else { this.col = c; this.dir = 1; }
+    },
+  };
+}
+
 function mountPane(pane, tmpl, component) {
   if (pane._mounted) return;
   pane._mounted = true;
@@ -332,7 +379,7 @@ export function mount(el) {
         document.getElementById('rep-inventory'),
         inventoryTemplate,
         {
-          ...makeSimpleTable('/dnac/devices?limit=2000', inventoryTemplate),
+          ...makeSimpleTableWithPagination('/dnac/devices', inventoryTemplate),
           downloadCsv() {
             const header = 'Hostname,ManagementIP,Platform,Version,Reachability,Serial,Uptime,LastContact\n';
             const rows = this.items.map(d =>
@@ -350,7 +397,7 @@ export function mount(el) {
         mountPane(
           document.getElementById('rep-unreachable'),
           unreachableTemplate,
-          makeSimpleTable('/dnac/devices?reachability=unreachable&limit=2000', unreachableTemplate)
+          makeSimpleTableWithPagination('/dnac/devices?reachability=unreachable', unreachableTemplate)
         );
       });
 
