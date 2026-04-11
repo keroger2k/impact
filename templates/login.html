@@ -1,27 +1,39 @@
-<div class="login-container">
-  <div class="login-card">
-    <div class="login-header">
-      <div class="login-logo">II</div>
-      <div style="margin-left:12px">
-        <div class="login-title">IMPACT II</div>
-        <div class="login-subtitle">TSA Network Operations</div>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login — IMPACT II</title>
+  <link rel="stylesheet" href="/static/bootstrap/css/bootstrap.min.css">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="bg-navy">
+  <div class="login-container">
+    <div class="login-card">
+      <div class="login-header">
+        <div class="login-logo">II</div>
+        <div style="margin-left:12px">
+          <div class="login-title">IMPACT II</div>
+          <div class="login-subtitle">TSA Network Operations</div>
+        </div>
+      </div>
+      <div class="login-body">
+        {% if error %}
+        <div class="alert alert-danger alert-sm"><strong>⚠️ Error:</strong> {{ error }}</div>
+        {% endif %}
+        <form action="/login" method="POST">
+          <div class="mb-3">
+            <label for="username" class="form-label">Username</label>
+            <input name="username" id="username" class="form-control" type="text" placeholder="Enter your username" autocomplete="username" required>
+          </div>
+          <div class="mb-3">
+            <label for="password" class="form-label">Password</label>
+            <input name="password" id="password" class="form-control" type="password" placeholder="Enter your password" autocomplete="current-password" required>
+          </div>
+          <button type="submit" class="btn btn-primary w-100 py-2 fw-bold">Sign In</button>
+        </form>
       </div>
     </div>
-    <div class="login-body">
-      {% if error %}
-      <div class="alert alert-danger alert-sm"><strong>⚠️ Error:</strong> {{ error }}</div>
-      {% endif %}
-      <form action="/login" method="POST">
-        <div class="mb-3">
-          <label for="username" class="form-label">Username</label>
-          <input name="username" id="username" class="form-control" type="text" placeholder="Enter your username" required>
-        </div>
-        <div class="mb-3">
-          <label for="password" class="form-label">Password</label>
-          <input name="password" id="password" class="form-control" type="password" placeholder="Enter your password" required>
-        </div>
-        <button type="submit" class="btn btn-primary w-100">Sign In</button>
-      </form>
-    </div>
   </div>
-</div>
+</body>
+</html>
