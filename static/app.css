@@ -1333,3 +1333,45 @@ body:has(.dev-page-layout) {
   .table thead th { padding: 6px 8px; font-size: 9px; }
   .table tbody td { padding: 6px 8px; }
 }
+
+/* HTMX Transitions */
+.animate-fade-in {
+  animation: fadeIn 0.4s ease-out forwards;
+}
+
+.htmx-indicator {
+  display: none;
+}
+.htmx-request .htmx-indicator {
+  display: block;
+}
+.htmx-request.htmx-indicator {
+  display: block;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #aaa;
+}
+
+/* Sidebar active states fix */
+.nav-item[hx-get].active {
+  background: rgba(0,112,210,.35);
+  color: #fff;
+  border-left-color: var(--cisco-blue);
+}
+
+.no-transition {
+  transition: none !important;
+}

@@ -1,0 +1,27 @@
+<div class="card shadow-sm border-0 animate-fade-in">
+  <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center">
+    <span class="fw-bold">BGP Summary Results</span>
+    <button class="btn btn-sm btn-outline-light" onclick="this.closest('.card').remove()">Close</button>
+  </div>
+  <div class="card-body p-0">
+    <div class="p-3 bg-light border-bottom">
+      <h6 class="text-uppercase text-muted fw-bold mb-2 small">Parsed Next-Hop Correlations</h6>
+      <div class="d-flex flex-wrap gap-2">
+        {% if correlations %}
+          {% for ip, info in correlations.items() %}
+            <div class="badge bg-white border text-navy p-2 d-flex align-items-center gap-2 shadow-sm">
+              <span class="status-dot ok"></span>
+              <span class="fw-bold">{{ ip }}</span>
+              <span class="text-muted">→</span>
+              <span class="text-primary fw-bold">{{ info.hostname }}</span>
+              <span class="badge bg-light text-muted small">{{ info.type }}</span>
+            </div>
+          {% endfor %}
+        {% else %}
+          <span class="text-muted small italic">No inventory matches found for neighbor IPs.</span>
+        {% endif %}
+      </div>
+    </div>
+    <pre class="bg-dark text-success p-3 mb-0" style="max-height: 400px; overflow: auto; font-family: 'SF Mono', monospace; font-size: 12px;">{{ output }}</pre>
+  </div>
+</div>

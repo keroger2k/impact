@@ -4,7 +4,7 @@ import asyncio
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 import auth as auth_module
@@ -241,22 +241,21 @@ async def refresh_firewall_interfaces(session: SessionEntry = Depends(require_au
 
 
 @router.get("/devices")
-async def list_managed_devices(session: SessionEntry = Depends(require_auth)):
+async def list_managed_devices(request: __import__("fastapi").Request, session: SessionEntry = Depends(require_auth)):
     """Fetch list of firewalls managed by Panorama."""
     logger.info("=== list_managed_devices endpoint called ===")
     cached = cache.get("pan_managed_devices")
-    if cached is not None:
-        logger.info(f"Returning {len(cached)} cached devices")
-        return {"items": cached}
+    if cached is None:
+        logger.info("Cache miss, fetching devices from Panorama...")
+        key  = _get_key(session)
+        loop = asyncio.get_event_loop()
+        cached = await loop.run_in_executor(None, pc.get_managed_devices, key)
+        cache.set("pan_managed_devices", cached, PAN_TTL)
     
-    logger.info("Cache miss, fetching devices from Panorama...")
-    key  = _get_key(session)
-    loop = asyncio.get_event_loop()
-    devices = await loop.run_in_executor(None, pc.get_managed_devices, key)
-    logger.info(f"Fetched {len(devices)} devices from Panorama")
-    logger.info(f"Device list: {devices}")
-    cache.set("pan_managed_devices", devices, PAN_TTL)
-    return {"items": devices}
+    if request.headers.get("HX-Request"):
+        from main import templates
+        return templates.TemplateResponse(request, "partials/firewall_devices.html", {"items": cached})
+    return {"items": cached}
 
 
 @router.get("/devices/test")

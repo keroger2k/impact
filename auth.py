@@ -188,3 +188,17 @@ def require_auth(
     # Sliding expiration — every request resets the TTL
     session.expires_at = time.monotonic() + SESSION_TTL
     return session
+
+
+def verify_ldap_or_mock(username: str, password: str) -> tuple[str, str] | None:
+    """
+    Unified entry point for login. Returns (username, password) if successful.
+    """
+    from dev import DEV_MODE
+    if DEV_MODE:
+        return username, password
+
+    if validate_ldap(username, password):
+        return username, password
+
+    return None

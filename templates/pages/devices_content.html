@@ -1,0 +1,22 @@
+<div class="row g-4 h-100">
+  <div class="col-md-8 d-flex flex-column h-100">
+    <div id="dev-loading" class="htmx-indicator text-center p-5 animate-fade-in position-absolute w-100 h-100 bg-white" style="z-index: 1000; opacity: 0.8;">
+      <div class="spinner spinner-lg mt-5"></div>
+      <p class="text-muted small mt-2">Connecting to Catalyst Center and fetching inventory...</p>
+    </div>
+    <div id="dev-list" class="flex-grow-1" hx-get="/api/dnac/devices" hx-trigger="load"></div>
+  </div>
+  <div class="col-md-4 h-100">
+    <div id="dev-detail-panel" class="h-100 overflow-auto">
+      <div class="empty-state bg-white border rounded shadow-sm">
+        <div class="empty-state-icon text-muted">🖱️</div>
+        <div class="empty-state-title">No Device Selected</div>
+        <div class="empty-state-desc">Click 'Detail' on any device to view its hardware, software, and configuration.</div>
+      </div>
+    </div>
+    <div id="dev-detail-loading" class="htmx-indicator text-center p-4">
+      <div class="spinner spinner-md"></div>
+      <p class="text-muted small mt-2">Loading detailed data...</p>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,59 @@
+<div class="row g-4 h-100">
+  <div class="col-md-3">
+    <div class="card shadow-sm border-0 animate-fade-in h-100">
+      <div class="card-header bg-navy text-white d-flex align-items-center gap-2">
+        <i class="fas fa-terminal"></i>
+        <span class="fw-bold">Command Runner</span>
+      </div>
+      <div class="card-body">
+        <form hx-post="/api/commands/run" hx-target="#cmd-output" hx-indicator="#cmd-loading">
+          <div class="mb-3">
+            <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Device IP</label>
+            <input type="text" name="ip" class="form-control" placeholder="10.1.1.1" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Command Template</label>
+            <select name="command_preset" class="form-select" onchange="document.getElementById('custom-cmd').value = this.value">
+              <option value="">-- Custom --</option>
+              <option value="show ip route">Show IP Route</option>
+              <option value="show ip bgp summary">Show BGP Summary</option>
+              <option value="show ip eigrp topology">Show EIGRP Topology</option>
+              <option value="show version">Show Version</option>
+              <option value="show inventory">Show Inventory</option>
+              <option value="show running-config">Show Config</option>
+            </select>
+          </div>
+          <div class="mb-4">
+            <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Command</label>
+            <textarea id="custom-cmd" name="command" class="form-control" rows="5" placeholder="Enter custom command..." required></textarea>
+          </div>
+          <button type="submit" class="btn btn-primary w-100 py-2 fw-bold shadow-sm">
+            <i class="fas fa-play me-1"></i> Execute
+          </button>
+        </form>
+        <div id="cmd-loading" class="htmx-indicator mt-4 text-center">
+          <div class="spinner spinner-md"></div>
+          <p class="text-muted small mt-2">Connecting to device and executing command...</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-9 d-flex flex-column">
+    <div class="card shadow-sm border-0 animate-fade-in flex-grow-1 overflow-hidden">
+      <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+        <span class="fw-bold small text-uppercase letter-spacing-1">Console Output</span>
+        <div class="d-flex gap-2">
+          <button class="btn btn-sm btn-outline-light px-2" onclick="document.getElementById('cmd-output').innerText = ''">
+            <i class="fas fa-trash-alt me-1"></i> Clear
+          </button>
+          <button class="btn btn-sm btn-outline-light px-2" onclick="navigator.clipboard.writeText(document.getElementById('cmd-output').innerText)">
+            <i class="fas fa-copy me-1"></i> Copy
+          </button>
+        </div>
+      </div>
+      <div class="card-body p-0 bg-dark overflow-auto" style="min-height: 400px;">
+        <pre id="cmd-output" class="p-4 text-success mb-0" style="font-family: 'SF Mono', monospace; font-size: 13px; line-height: 1.6;"></pre>
+      </div>
+    </div>
+  </div>
+</div>

@@ -5,7 +5,7 @@ import json
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 import auth as auth_module
 import clients.ise as ic
@@ -59,7 +59,7 @@ async def refresh_ise_cache():
 # ── Network Access Devices ────────────────────────────────────────────────────
 
 @router.get("/nads")
-async def list_nads(search: Optional[str] = None, session: SessionEntry = Depends(require_auth)):
+async def list_nads(request: Request, search: Optional[str] = None, session: SessionEntry = Depends(require_auth)):
     ise  = _get_ise(session)
     loop = asyncio.get_event_loop()
     nads = await loop.run_in_executor(None, _cached, "ise_nads",
@@ -67,6 +67,10 @@ async def list_nads(search: Optional[str] = None, session: SessionEntry = Depend
     if search:
         s = search.lower()
         nads = [n for n in nads if s in json.dumps(n).lower()]
+
+    if request.headers.get("HX-Request"):
+        from main import templates
+        return templates.TemplateResponse(request, "partials/ise_nads.html", {"total": len(nads), "items": nads})
     return {"total": len(nads), "items": nads}
 
 

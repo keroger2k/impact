@@ -1,0 +1,13 @@
+<div class="sidebar-section-label">System Health</div>
+<div class="status-item">
+  <span class="status-dot {% if dnac.ok %}ok{% else %}err{% endif %}"></span>
+  <span>DNAC: {{ dnac.detail }}</span>
+</div>
+<div class="status-item">
+  <span class="status-dot {% if ise.ok %}ok{% else %}err{% endif %}"></span>
+  <span>ISE: {{ ise.detail }}</span>
+</div>
+<div class="status-item">
+  <span class="status-dot {% if panorama.ok %}ok{% else %}err{% endif %}"></span>
+  <span>Panorama: {{ panorama.detail }}</span>
+</div>

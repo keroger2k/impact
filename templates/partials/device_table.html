@@ -1,0 +1,39 @@
+<div class="table-wrap">
+  <table class="table table-striped table-hover table-sm">
+    <thead class="table-dark">
+      <tr>
+        <th>Hostname</th>
+        <th>Mgmt IP</th>
+        <th>Platform</th>
+        <th>IOS Version</th>
+        <th>Role</th>
+        <th>Site</th>
+        <th>Status</th>
+        <th>Last Contact</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for device in devices %}
+      <tr hx-get="/partials/devices/{{ device.id }}/detail" hx-target="#dev-detail" style="cursor: pointer;">
+        <td>{{ device.hostname }}</td>
+        <td class="mono">{{ device.managementIpAddress }}</td>
+        <td>{{ device.platformId }}</td>
+        <td class="mono">{{ device.softwareVersion }}</td>
+        <td>{{ device.role }}</td>
+        <td>{{ device.siteName }}</td>
+        <td>
+          <span class="badge {% if device.reachabilityStatus == 'Reachable' %}text-bg-success{% else %}text-bg-danger{% endif %}">
+            {{ device.reachabilityStatus|default('Unknown') }}
+          </span>
+        </td>
+        <td>{{ device.lastContactFormatted }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% if total > devices|length %}
+<div class="pagination">
+  <span class="pagination-info">Showing {{ devices|length }} of {{ total }} devices (filtered)</span>
+</div>
+{% endif %}

@@ -1,0 +1,16 @@
+<div class="card">
+  <div class="card-header"><span class="card-title">IP Address Lookup</span></div>
+  <div class="card-body">
+    <form hx-get="/api/dnac/ip-lookup" hx-target="#lookup-results">
+      <div class="row g-3">
+        <div class="col-md-10">
+          <input type="text" name="ip" class="form-control" placeholder="Enter IP address to lookup" required>
+        </div>
+        <div class="col-md-2">
+          <button class="btn btn-primary w-100">Lookup</button>
+        </div>
+      </div>
+    </form>
+    <div id="lookup-results" class="mt-4"></div>
+  </div>
+</div>

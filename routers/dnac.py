@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request, Depends
 from pydantic import BaseModel
 
 import clients.dnac as dc
@@ -14,7 +14,6 @@ import clients.panorama as pc
 import auth as auth_module
 from auth import SessionEntry, require_auth
 from cache import cache, TTL_DEVICES, TTL_SITES
-from fastapi import Depends
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -47,6 +46,7 @@ def _enrich(d: dict) -> dict:
 
 @router.get("/devices")
 async def list_devices(
+    request:      Request,
     hostname:     Optional[str] = None,
     ip:           Optional[str] = None,
     platform:     Optional[str] = None,
@@ -60,17 +60,14 @@ async def list_devices(
     """Return filtered device list from cache."""
     import time
     start_time = time.time()
-    logger.info(f"[DEVICES_REQUEST] Received limit={limit}, offset={offset}")
     
     loop = asyncio.get_event_loop()
     dnac = _get_dnac(session)
 
     devices = cache.get("devices")
     if devices is None:
-        logger.info("Loading devices from DNAC (not in cache)")
         devices = await loop.run_in_executor(None, dc.get_all_devices, dnac)
         cache.set("devices", devices, TTL_DEVICES)
-        logger.info(f"Loaded {len(devices)} devices in {time.time() - start_time:.1f}s")
 
     filtered = devices
     if hostname:
@@ -106,7 +103,10 @@ async def list_devices(
         enriched["siteName"] = dev_site_map.get(d.get("id"))
         paged.append(enriched)
     
-    logger.info(f"Device list response: {len(paged)} items out of {total} total, took {time.time() - start_time:.1f}s")
+    if request.headers.get("HX-Request"):
+        from main import templates
+        return templates.TemplateResponse(request, "partials/devices_list.html", {"total": total, "items": paged})
+
     return {"total": total, "offset": offset, "limit": limit, "items": paged}
 
 
@@ -148,12 +148,54 @@ async def get_device(device_id: str):
     return _enrich(device)
 
 
+@router.get("/devices/{device_id}/detail")
+async def get_device_detail_partial(
+    request:     Request,
+    device_id:   str,
+    session:     SessionEntry = Depends(require_auth)
+):
+    """Return a detailed HTML partial for a device."""
+    devices = cache.get("devices") or []
+    device  = next((d for d in devices if d.get("id") == device_id), None)
+    if not device:
+        loop = asyncio.get_event_loop()
+        dnac = _get_dnac(session)
+        try:
+            device = await loop.run_in_executor(None, dc.get_device_detail, dnac, device_id)
+        except:
+            raise HTTPException(404, "Device not found")
+
+    if not device:
+        raise HTTPException(404, "Device not found")
+
+    enriched = _enrich(device)
+    dev_site_map = cache.get("device_site_map") or {}
+    site_name = dev_site_map.get(device_id, "Unknown Site")
+
+    from main import templates
+    return templates.TemplateResponse(request, "partials/device_detail.html", {
+        "d": enriched,
+        "site_name": site_name
+    })
+
+
 @router.get("/devices/{device_id}/config")
-async def get_device_config(device_id: str, session: SessionEntry = Depends(require_auth)):
+async def get_device_config(
+    request:     Request,
+    device_id: str,
+    session: SessionEntry = Depends(require_auth)
+):
     """Running configuration for a device."""
     cache_key = f"config_{device_id}"
     cached    = cache.get(cache_key)
+
     if cached is not None:
+        if request.headers.get("HX-Request"):
+            from main import templates
+            return templates.TemplateResponse(request, "partials/device_config.html", {
+                "config": cached,
+                "cached": True
+            })
         return {"config": cached, "cached": True}
 
     loop   = asyncio.get_event_loop()
@@ -163,6 +205,13 @@ async def get_device_config(device_id: str, session: SessionEntry = Depends(requ
         raise HTTPException(404, "Config not available for this device")
 
     cache.set(cache_key, config, 600)   # cache configs for 10 min
+
+    if request.headers.get("HX-Request"):
+        from main import templates
+        return templates.TemplateResponse(request, "partials/device_config.html", {
+            "config": config,
+            "cached": False
+        })
     return {"config": config, "cached": False}
 
 

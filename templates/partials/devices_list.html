@@ -1,0 +1,48 @@
+<div class="card shadow-sm border-0 animate-fade-in h-100 d-flex flex-column">
+  <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center">
+    <div class="d-flex align-items-center gap-2">
+      <i class="fas fa-microchip"></i>
+      <span class="fw-bold">Inventory ({{ total }})</span>
+    </div>
+    <div class="d-flex gap-2">
+       <input type="text" class="form-control form-control-sm bg-white border-0" placeholder="Filter devices..." hx-get="/api/dnac/devices" hx-trigger="keyup changed delay:500ms" name="hostname" hx-target="#dev-list">
+       <button class="btn btn-sm btn-outline-light px-2" hx-get="/api/dnac/devices" hx-target="#dev-list" hx-indicator="#dev-loading"><i class="fas fa-sync"></i></button>
+    </div>
+  </div>
+  <div class="card-body p-0 overflow-auto flex-grow-1" style="max-height: calc(100vh - 250px);">
+    <table class="table table-hover table-striped mb-0">
+      <thead class="bg-light sticky-top">
+        <tr>
+          <th>Hostname</th>
+          <th>IP Address</th>
+          <th>Platform</th>
+          <th>Role</th>
+          <th>Site</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in items %}
+        <tr>
+          <td class="fw-bold text-navy">{{ d.hostname }}</td>
+          <td class="mono">{{ d.managementIpAddress }}</td>
+          <td class="small">{{ d.platformId }}</td>
+          <td class="small uppercase">{{ d.role }}</td>
+          <td class="small">{{ d.siteName }}</td>
+          <td>
+            <span class="badge {% if d.reachabilityStatus == 'Reachable' %}bg-success-subtle text-success{% else %}bg-danger-subtle text-danger{% endif %} px-2">
+              {{ d.reachabilityStatus }}
+            </span>
+          </td>
+          <td>
+            <button class="btn btn-sm btn-outline-primary px-2 py-0" hx-get="/api/dnac/devices/{{ d.id }}/detail" hx-target="#dev-detail-panel" hx-indicator="#dev-detail-loading">
+              <i class="fas fa-info-circle"></i> Detail
+            </button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
