@@ -294,7 +294,7 @@ const shellTemplate = `
 </div>`;
 
 /* ── Component factories ─────────────────────────────────────── */
-function makeSimpleTable(apiUrl, template, mapFn) {
+function makeSimpleTable(apiUrl, template, mapFn, alive) {
   return {
     loading: true, error: null, items: [],
     col: null, dir: 1,
@@ -302,9 +302,12 @@ function makeSimpleTable(apiUrl, template, mapFn) {
     async load() {
       try {
         const d = await API.get(apiUrl);
+        if (!alive()) return;
         this.items = mapFn ? d.items.map(mapFn) : d.items;
-      } catch (e) { this.error = e.message; }
-      finally { this.loading = false; }
+      } catch (e) {
+        if (!alive()) return;
+        this.error = e.message;
+      } finally { if (alive()) this.loading = false; }
     },
     sort(c) {
       if (this.col === c) this.dir *= -1;
@@ -313,45 +316,37 @@ function makeSimpleTable(apiUrl, template, mapFn) {
   };
 }
 
-function makeSimpleTableWithPagination(baseUrl, template, mapFn) {
+function makeSimpleTableWithPagination(baseUrl, template, mapFn, alive) {
   return {
     loading: true, error: null, items: [],
     col: null, dir: 1,
     get sorted() { return sortedItems(this.items, this.col, this.dir); },
     async load() {
       try {
-        console.log('[Reports] Fetching all devices from:', baseUrl);
         let allItems = [];
         let offset = 0;
         const pageSize = 2000;
         let hasMore = true;
-        
+
         while (hasMore) {
           const separator = baseUrl.includes('?') ? '&' : '?';
           const url = `${baseUrl}${separator}limit=${pageSize}&offset=${offset}`;
-          console.log(`[Reports] Fetching batch at offset ${offset}...`);
-          
           const d = await API.get(url);
+          if (!alive()) return;
           if (!Array.isArray(d.items)) throw new Error('Invalid response format');
-          
           allItems = allItems.concat(d.items);
-          console.log(`[Reports] Batch received: ${d.items.length} items`);
-          
           if (d.items.length < pageSize) {
             hasMore = false;
-            console.log(`[Reports] Reached end - total items: ${allItems.length}`);
           } else {
             offset += pageSize;
           }
         }
-        
+
         this.items = mapFn ? allItems.map(mapFn) : allItems;
-        console.log(`[Reports] Table load complete: ${this.items.length} items`);
-      } catch (e) { 
-        console.error('[Reports] Error loading table:', e);
-        this.error = e.message; 
-      }
-      finally { this.loading = false; }
+      } catch (e) {
+        if (!alive()) return;
+        this.error = e.message;
+      } finally { if (alive()) this.loading = false; }
     },
     sort(c) {
       if (this.col === c) this.dir *= -1;
@@ -372,6 +367,7 @@ function mountPane(pane, tmpl, component) {
 /* ── Public mount ────────────────────────────────────────────── */
 export function mount(el) {
   el.innerHTML = shellTemplate;
+  const alive = () => el.isConnected;
   const shellComp = {
     init() {
       // Inventory — mount immediately
@@ -379,7 +375,7 @@ export function mount(el) {
         document.getElementById('rep-inventory'),
         inventoryTemplate,
         {
-          ...makeSimpleTableWithPagination('/dnac/devices', inventoryTemplate),
+          ...makeSimpleTableWithPagination('/dnac/devices', inventoryTemplate, null, alive),
           downloadCsv() {
             const header = 'Hostname,ManagementIP,Platform,Version,Reachability,Serial,Uptime,LastContact\n';
             const rows = this.items.map(d =>
@@ -397,7 +393,7 @@ export function mount(el) {
         mountPane(
           document.getElementById('rep-unreachable'),
           unreachableTemplate,
-          makeSimpleTableWithPagination('/dnac/devices?reachability=unreachable', unreachableTemplate)
+          makeSimpleTableWithPagination('/dnac/devices?reachability=unreachable', unreachableTemplate, null, alive)
         );
       });
 
@@ -408,7 +404,7 @@ export function mount(el) {
           sitesTemplate,
           makeSimpleTable('/dnac/sites', sitesTemplate, s => ({
             ...s, depth: s.name.split('/').length - 1,
-          }))
+          }), alive)
         );
       });
 
@@ -472,11 +468,11 @@ export function mount(el) {
           async doSearch() {
             const q = state.query.trim();
             if (!q || q.length < 2) { toast('Enter at least 2 characters to search', 'warn'); return; }
-            state.loading = true;  
-            state.error = null;  
+            state.loading = true;
+            state.error = null;
             state.csData = null;
-            state.statusMsg = 'Searching…';  
-            state.expanded = {};  
+            state.statusMsg = 'Searching…';
+            state.expanded = {};
             state.lineFilters = {};
             state.lastQuery = q;
             try {
@@ -491,13 +487,15 @@ export function mount(el) {
                 max_devices:   state.maxDevices,
               };
               const data = await API.post('/dnac/config-search', body);
+              if (!alive()) return;
               state.csData = data;
               state.statusMsg = `${data.total_matches} device(s) matched in ${data.devices_matched_filter} searched`;
             } catch (e) {
-              state.error = e.message;  
+              if (!alive()) return;
+              state.error = e.message;
               state.statusMsg = '';
             } finally {
-              state.loading = false;
+              if (alive()) state.loading = false;
             }
           },
 

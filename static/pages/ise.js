@@ -198,7 +198,7 @@ function mountSubApp(paneId, template, component) {
 }
 
 /* ── NADs component ──────────────────────────────────────────── */
-function NadsComponent() {
+function NadsComponent(alive) {
   return {
     loaded: false, loading: false, error: null,
     query: '', items: [], sortCol: null, sortDir: 1,
@@ -223,9 +223,12 @@ function NadsComponent() {
       this.loading = true; this.error = null;
       try {
         const d = await API.get(`/ise/nads?search=${encodeURIComponent(this.query)}`);
+        if (!alive()) return;
         this.items = d.items;
-      } catch(e) { this.error = e.message; }
-      finally { this.loading = false; }
+      } catch(e) {
+        if (!alive()) return;
+        this.error = e.message;
+      } finally { if (alive()) this.loading = false; }
     },
     sort(col) {
       if (this.sortCol === col) this.sortDir *= -1;
@@ -235,15 +238,17 @@ function NadsComponent() {
       this.selected = nad; this.loaded = true;
       this.detail = null; this.detailLoading = true;
       try {
-        this.detail = await API.get(`/ise/nads/${nad.id}`);
-      } catch(e) { this.detail = null; }
-      finally { this.detailLoading = false; }
+        const d = await API.get(`/ise/nads/${nad.id}`);
+        if (!alive()) return;
+        this.detail = d;
+      } catch(e) { if (alive()) this.detail = null; }
+      finally { if (alive()) this.detailLoading = false; }
     },
   };
 }
 
 /* ── Endpoints component ─────────────────────────────────────── */
-function EndpointsComponent() {
+function EndpointsComponent(alive) {
   return {
     loading: false, error: null,
     query: '', items: [],
@@ -259,22 +264,28 @@ function EndpointsComponent() {
       this.loading = true; this.error = null;
       try {
         const d = await API.get(`/ise/endpoints?mac=${encodeURIComponent(q)}`);
+        if (!alive()) return;
         this.items = d.items;
         if (d.items.length === 1) this.selectEp(d.items[0]);
-      } catch(e) { this.error = e.message; }
-      finally { this.loading = false; }
+      } catch(e) {
+        if (!alive()) return;
+        this.error = e.message;
+      } finally { if (alive()) this.loading = false; }
     },
     async selectEp(ep) {
       this.selected = ep; this.detail = null; this.detailLoading = true;
-      try { this.detail = await API.get(`/ise/endpoints/${ep.id}`); }
-      catch {}
-      finally { this.detailLoading = false; }
+      try {
+        const d = await API.get(`/ise/endpoints/${ep.id}`);
+        if (!alive()) return;
+        this.detail = d;
+      } catch {}
+      finally { if (alive()) this.detailLoading = false; }
     },
   };
 }
 
 /* ── Simple table component factory ─────────────────────────── */
-function SimpleTableComponent(apiUrl) {
+function SimpleTableComponent(apiUrl, alive) {
   return {
     loading: true, error: null, items: [],
     sortCol: null, sortDir: 1,
@@ -290,9 +301,14 @@ function SimpleTableComponent(apiUrl) {
       else { this.sortCol = col; this.sortDir = 1; }
     },
     async load() {
-      try { const d = await API.get(apiUrl); this.items = d.items; }
-      catch(e) { this.error = e.message; }
-      finally { this.loading = false; }
+      try {
+        const d = await API.get(apiUrl);
+        if (!alive()) return;
+        this.items = d.items;
+      } catch(e) {
+        if (!alive()) return;
+        this.error = e.message;
+      } finally { if (alive()) this.loading = false; }
     },
   };
 }
@@ -318,7 +334,7 @@ const trustsecTemplate = `
   </div>
 </div>`;
 
-function TrustSecComponent() {
+function TrustSecComponent(alive) {
   return {
     async init() {
       mountSubApp('ts-sgts', simpleTableTemplate([
@@ -326,14 +342,14 @@ function TrustSecComponent() {
         { key: 'value',           label: 'Tag Value',   falsy: true },
         { key: 'propagateToApic', label: 'To APIC',     falsy: true },
         { key: 'description',     label: 'Description', falsy: true },
-      ]), SimpleTableComponent('/ise/sgts'));
+      ]), SimpleTableComponent('/ise/sgts', alive));
 
       document.getElementById('ts-sgacls-tab')?.addEventListener('shown.bs.tab', () => {
         mountSubApp('ts-sgacls', simpleTableTemplate([
           { key: 'name',        label: 'Name',        falsy: true },
           { key: 'ipVersion',   label: 'IP Version',  falsy: true },
           { key: 'description', label: 'Description', falsy: true },
-        ]), SimpleTableComponent('/ise/sgacls'));
+        ]), SimpleTableComponent('/ise/sgacls', alive));
       });
 
       document.getElementById('ts-egress-tab')?.addEventListener('shown.bs.tab', () => {
@@ -342,7 +358,7 @@ function TrustSecComponent() {
           { key: 'destinationSgtId', label: 'Dst SGT',     falsy: true },
           { key: 'matrixCellStatus', label: 'Status',      falsy: true },
           { key: 'defaultRule',      label: 'Default Rule',falsy: true },
-        ]), SimpleTableComponent('/ise/egress-matrix'));
+        ]), SimpleTableComponent('/ise/egress-matrix', alive));
       });
     },
   };
@@ -385,25 +401,31 @@ const policyTemplate = `
   </template>
 </div>`;
 
-function PolicyComponent() {
+function PolicyComponent(alive) {
   return {
     loading: true, error: null, items: [],
     selected: null, rules: null, rulesLoading: false,
     async load() {
       try {
         const d = await API.get('/ise/policy-sets');
+        if (!alive()) return;
         if (!d.items.length) {
           this.error = 'ℹ️ No policy sets returned — ensure OpenAPI is enabled on ISE (Administration → System → Settings → API Settings).';
         }
         this.items = d.items;
-      } catch(e) { this.error = e.message; }
-      finally { this.loading = false; }
+      } catch(e) {
+        if (!alive()) return;
+        this.error = e.message;
+      } finally { if (alive()) this.loading = false; }
     },
     async loadDetail(ps) {
       this.selected = ps; this.rules = null; this.rulesLoading = true;
-      try { const d = await API.get(`/ise/policy-sets/${ps.id}/auth-rules`); this.rules = d.items; }
-      catch {}
-      finally { this.rulesLoading = false; }
+      try {
+        const d = await API.get(`/ise/policy-sets/${ps.id}/auth-rules`);
+        if (!alive()) return;
+        this.rules = d.items;
+      } catch {}
+      finally { if (alive()) this.rulesLoading = false; }
     },
   };
 }
@@ -411,28 +433,29 @@ function PolicyComponent() {
 /* ── Main mount ──────────────────────────────────────────────── */
 export function mount(el) {
   el.innerHTML = shellTemplate;
+  const alive = () => el.isConnected;
 
   const shellComp = {
     async init() {
       // Mount NADs (default tab)
-      mountSubApp('ise-nads', nadsTemplate, NadsComponent());
+      mountSubApp('ise-nads', nadsTemplate, NadsComponent(alive));
 
       // Mount other tabs lazily on first click
       const lazy = {
-        'ise-endpoints-tab': () => mountSubApp('ise-endpoints', epTemplate, EndpointsComponent()),
-        'ise-trustsec-tab':  () => mountSubApp('ise-trustsec', trustsecTemplate, TrustSecComponent()),
+        'ise-endpoints-tab': () => mountSubApp('ise-endpoints', epTemplate, EndpointsComponent(alive)),
+        'ise-trustsec-tab':  () => mountSubApp('ise-trustsec', trustsecTemplate, TrustSecComponent(alive)),
         'ise-identity-tab':  () => mountSubApp('ise-identity', simpleTableTemplate([
           { key: 'name',        label: 'Name',        falsy: true },
           { key: 'parent',      label: 'Parent',      falsy: true },
           { key: 'description', label: 'Description', falsy: true },
-        ]), SimpleTableComponent('/ise/identity-groups')),
-        'ise-policy-tab':    () => mountSubApp('ise-policy', policyTemplate, PolicyComponent()),
+        ]), SimpleTableComponent('/ise/identity-groups', alive)),
+        'ise-policy-tab':    () => mountSubApp('ise-policy', policyTemplate, PolicyComponent(alive)),
         'ise-admin-tab':     () => mountSubApp('ise-admin', simpleTableTemplate([
           { key: 'hostname',  label: 'Hostname', falsy: true },
           { key: 'ipAddress', label: 'IP',       mono: true,  falsy: true },
           { key: 'fqdn',      label: 'FQDN',     falsy: true },
           { key: 'nodeType',  label: 'Type',     falsy: true },
-        ]), SimpleTableComponent('/ise/deployment-nodes')),
+        ]), SimpleTableComponent('/ise/deployment-nodes', alive)),
       };
 
       Object.entries(lazy).forEach(([btnId, fn]) => {

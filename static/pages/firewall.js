@@ -360,7 +360,7 @@ function fmtArr(arr) {
   return arr.join(', ');
 }
 
-function mountLookup(pane) {
+function mountLookup(pane, alive) {
   if (pane._mounted) return;
   pane._mounted = true;
   pane.innerHTML = lookupTemplate;
@@ -403,6 +403,7 @@ function mountLookup(pane) {
       );
       try {
         const d = await API.get('/firewall/device-groups');
+        if (!alive()) return;
         this.deviceGroups = d.items || [];
       } catch {}
       // Close dropdown on outside click
@@ -442,13 +443,15 @@ function mountLookup(pane) {
       };
       try {
         const data = await API.post('/firewall/lookup', body);
+        if (!alive()) return;
         if (!data.match_count) { this.noMatch = true; this.result = data; return; }
         this.result = data;
         if (data.matches?.length) this.selectedRule = data.matches[0];
       } catch (e) {
+        if (!alive()) return;
         this.lookupError = e.message;
       } finally {
-        this.loading = false;
+        if (alive()) this.loading = false;
       }
     },
   };
@@ -456,7 +459,7 @@ function mountLookup(pane) {
   comp.init();
 }
 
-function mountByDevice(pane) {
+function mountByDevice(pane, alive) {
   if (pane._mounted) return;
   pane._mounted = true;
   pane.innerHTML = byDeviceTemplate;
@@ -488,6 +491,7 @@ function mountByDevice(pane) {
       );
       try {
         const d = await API.get('/firewall/devices');
+        if (!alive()) return;
         this.devices = d.items || [];
       } catch {}
     },
@@ -502,15 +506,17 @@ function mountByDevice(pane) {
       this.devLoading = true;
       try {
         const d = await API.get(`/firewall/device-vsys/${serial}`);
+        if (!alive()) return;
         this.vsysList = d.vsys || [];
         if (this.vsysList.length) {
           this.selectedVsys = this.vsysList[0];
           await this.loadPolicies();
         }
       } catch (e) {
+        if (!alive()) return;
         this.devError = e.message;
       } finally {
-        this.devLoading = false;
+        if (alive()) this.devLoading = false;
       }
     },
 
@@ -524,12 +530,14 @@ function mountByDevice(pane) {
       this.policiesLoading = true; this.policiesError = null;
       try {
         const d = await API.get(`/firewall/device-vsys-policies/${this.selectedSerial}/${this.selectedVsys}`);
+        if (!alive()) return;
         this.policies = d.policies || [];
         if (this.policies.length) this.selectedPolicy = this.policies[0];
       } catch (e) {
+        if (!alive()) return;
         this.policiesError = e.message;
       } finally {
-        this.policiesLoading = false;
+        if (alive()) this.policiesLoading = false;
       }
     },
 
@@ -545,14 +553,15 @@ function mountByDevice(pane) {
 /* ── Public mount ────────────────────────────────────────────── */
 export function mount(el) {
   el.innerHTML = shellTemplate;
+  const alive = () => el.isConnected;
   const shellComp = {
     init() {
       // Mount lookup tab immediately
-      mountLookup(document.getElementById('fw-lookup'));
+      mountLookup(document.getElementById('fw-lookup'), alive);
 
       // Lazy-mount by-device tab on first show
       document.getElementById('fw-bydevice-tab').addEventListener('shown.bs.tab', () => {
-        mountByDevice(document.getElementById('fw-bydevice'));
+        mountByDevice(document.getElementById('fw-bydevice'), alive);
       });
     },
   };

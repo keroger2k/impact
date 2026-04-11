@@ -198,6 +198,7 @@ function mountDiscovery(pane) {
   if (pane._mounted) return;
   pane._mounted = true;
   pane.innerHTML = discoveryTemplate;
+  const alive = () => pane.isConnected;
 
   createApp({
     raw: '', cliUser: 'dnac-acct', snmpUser: 'tsa_mon_user',
@@ -234,6 +235,7 @@ function mountDiscovery(pane) {
       };
 
       API.stream('/import/run', body, ev => {
+        if (!alive()) return;
         if (ev.type === 'log') {
           log(ev.message, ev.level);
         } else if (ev.type === 'progress') {
@@ -247,7 +249,7 @@ function mountDiscovery(pane) {
         } else if (ev.type === 'error') {
           log(`Error: ${ev.message}`, 'error');
         }
-      }, () => { this.running = false; });
+      }, () => { if (alive()) this.running = false; });
     },
   }).mount(pane.firstElementChild);
 }
@@ -256,6 +258,7 @@ function mountTag(pane) {
   if (pane._mounted) return;
   pane._mounted = true;
   pane.innerHTML = tagTemplate;
+  const alive = () => pane.isConnected;
 
   createApp({
     tagName: '', tagIps: '',
@@ -276,6 +279,7 @@ function mountTag(pane) {
       };
 
       API.stream('/dnac/tag-devices', { tag_name: tagName, ips }, ev => {
+        if (!alive()) return;
         if (ev.type === 'log') {
           log(ev.message, ev.level);
         } else if (ev.type === 'complete') {
@@ -284,7 +288,7 @@ function mountTag(pane) {
         } else if (ev.type === 'error') {
           log(`Error: ${ev.message}`, 'error');
         }
-      }, () => { this.running = false; });
+      }, () => { if (alive()) this.running = false; });
     },
   }).mount(pane.firstElementChild);
 }

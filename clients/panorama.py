@@ -124,6 +124,181 @@ def _op(cmd: str, api_key: str) -> ET.Element | None:
         return None
 
 
+def _op_targeted(cmd: str, api_key: str, target: str) -> ET.Element | None:
+    """Like _op but targets a specific managed firewall by serial number."""
+    host = os.getenv("PANORAMA_HOST")
+    try:
+        resp = requests.get(
+            f"https://{host}/api/",
+            params={"type": "op", "cmd": cmd, "key": api_key, "target": target},
+            verify=False,
+            timeout=20,
+        )
+        root = ET.fromstring(resp.text)
+        if root.attrib.get("status") == "error":
+            msg = root.findtext(".//msg/line") or root.findtext(".//msg") or "unknown error"
+            logger.debug(f"Targeted op skipped ({target}): {msg}")
+            return None
+        return root.find("result")
+    except Exception as e:
+        logger.warning(f"Panorama targeted op error ({target}): {e}")
+        return None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# FIREWALL INTERFACE INVENTORY
+# ──────────────────────────────────────────────────────────────────────────────
+
+def fetch_firewall_interfaces(api_key: str) -> list[dict]:
+    """
+    Fetch all managed firewall interface IP addresses from Panorama.
+
+    For each connected managed device, collects:
+      - Device metadata: serial, hostname, model, management_ip, device_group,
+        os_version, ha_state, ha_enabled
+      - Per-interface: name, ipv4 (with prefix), ipv6 list
+
+    Skips disconnected/unreachable devices gracefully.
+    Returns a list of device dicts ordered by hostname.
+    """
+    result = _op("<show><devices><all/></devices></show>", api_key)
+    if result is None:
+        logger.warning("fetch_firewall_interfaces: no result from Panorama device list")
+        return []
+
+    entries = result.findall(".//entry")
+    if not entries:
+        entries = result.findall("./entry")
+
+    processed_serials: set[str] = set()
+    devices: list[dict] = []
+
+    for dev in entries:
+        serial   = dev.get("name", "") or dev.findtext("serial", "")
+        hostname = dev.findtext("hostname", "")
+
+        if not serial or not hostname:
+            continue
+        if serial in processed_serials:
+            continue
+
+        # Skip pseudo-entries (no model means it's a sub-system entry)
+        model = dev.findtext("model", "")
+        if not model and not hostname:
+            continue
+
+        mgmt_ip      = dev.findtext("ip-address", "")
+        device_group = dev.findtext("device-group", "") or "N/A"
+        os_version   = dev.findtext("os-version", "")
+        ha_state     = dev.findtext("ha-state", "")
+        ha_enabled   = dev.findtext("ha-enabled", "") == "yes"
+
+        # Seed iface_map with management interface from device list
+        iface_map: dict[str, dict] = {}
+        _SKIP_VALUES = {"", "unknown", "none", "n/a", "0.0.0.0", "::", "::/0"}
+
+        if mgmt_ip and mgmt_ip.lower() not in _SKIP_VALUES:
+            iface_map["management"] = {"name": "management", "ipv4": mgmt_ip, "ipv6": []}
+
+        mgmt_v6 = (dev.findtext("ipv6-address") or "").strip()
+        if mgmt_v6 and mgmt_v6.lower() not in _SKIP_VALUES:
+            iface_map.setdefault("management", {"name": "management", "ipv4": "", "ipv6": []})
+            iface_map["management"]["ipv6"].append(mgmt_v6)
+
+        # Fetch detailed interface info from the device itself
+        iface_result = _op_targeted(
+            "<show><interface>all</interface></show>", api_key, serial
+        )
+        if iface_result is not None:
+            for entry in iface_result.findall(".//entry"):
+                name = entry.findtext("name")
+                if not name:
+                    continue
+                iface_map.setdefault(name, {"name": name, "ipv4": "", "ipv6": []})
+
+                # IPv4
+                v4 = (entry.findtext("ip") or "").strip()
+                if v4 and v4.lower() not in _SKIP_VALUES:
+                    iface_map[name]["ipv4"] = v4  # may include /prefix
+
+                # IPv6 — handles <addr6>, <ipv6>, <ipv6ll> with nested member/entry
+                for tag in ("addr6", "ipv6", "ipv6ll"):
+                    node = entry.find(tag)
+                    if node is None:
+                        continue
+                    sub_nodes = node.findall(".//member") + node.findall(".//entry")
+                    if sub_nodes:
+                        for sub in sub_nodes:
+                            val = (sub.text or sub.get("name") or "").strip()
+                            if val and val.lower() not in _SKIP_VALUES:
+                                if val not in iface_map[name]["ipv6"]:
+                                    iface_map[name]["ipv6"].append(val)
+                    elif node.text:
+                        val = node.text.strip()
+                        if val.lower() not in _SKIP_VALUES and val not in iface_map[name]["ipv6"]:
+                            iface_map[name]["ipv6"].append(val)
+
+        # Only include devices that have at least one IP
+        interfaces = [v for v in iface_map.values() if v["ipv4"] or v["ipv6"]]
+        if not interfaces:
+            continue
+
+        devices.append({
+            "serial":       serial,
+            "hostname":     hostname,
+            "model":        model,
+            "management_ip": mgmt_ip,
+            "device_group": device_group,
+            "os_version":   os_version,
+            "ha_state":     ha_state,
+            "ha_enabled":   ha_enabled,
+            "interfaces":   interfaces,
+        })
+        processed_serials.add(serial)
+        logger.info(f"fetch_firewall_interfaces: {hostname} ({serial}) — {len(interfaces)} interfaces")
+
+    devices.sort(key=lambda d: d["hostname"].lower())
+    logger.info(f"fetch_firewall_interfaces: collected {len(devices)} devices")
+    return devices
+
+
+def search_firewall_interfaces(ip: str, devices: list[dict]) -> list[dict]:
+    """
+    Search the interface inventory for a matching IP address.
+    Strips any /prefix from stored interface IPs before comparing.
+    Returns a list of match dicts: {device, interface_name, ipv4, ipv6}.
+    """
+    import ipaddress as _ipa
+    try:
+        query = _ipa.ip_address(ip)
+    except ValueError:
+        return []
+
+    matches = []
+    for dev in devices:
+        for iface in dev.get("interfaces", []):
+            raw_v4 = iface.get("ipv4", "")
+            bare_v4 = raw_v4.split("/")[0].strip()
+            if bare_v4:
+                try:
+                    if _ipa.ip_address(bare_v4) == query:
+                        matches.append({"device": dev, "interface": iface})
+                        continue
+                except ValueError:
+                    pass
+
+            for raw_v6 in iface.get("ipv6", []):
+                bare_v6 = raw_v6.split("/")[0].strip()
+                try:
+                    if _ipa.ip_address(bare_v6) == query:
+                        matches.append({"device": dev, "interface": iface})
+                        break
+                except ValueError:
+                    pass
+
+    return matches
+
+
 def connectivity_check() -> tuple[bool, str]:
     """Return (ok, detail_string). Lightweight auth + version check."""
     key = get_api_key()

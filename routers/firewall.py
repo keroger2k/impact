@@ -10,7 +10,7 @@ from pydantic import BaseModel
 import auth as auth_module
 import clients.panorama as pc
 from auth import SessionEntry, require_auth
-from cache import cache
+from cache import cache, TTL_PAN_INTERFACES
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -209,6 +209,35 @@ async def firewall_cache_info():
 async def refresh_firewall_cache():
     cache.invalidate_prefix("pan_")
     return {"status": "firewall cache cleared"}
+
+
+@router.get("/interfaces")
+async def list_firewall_interfaces(session: SessionEntry = Depends(require_auth)):
+    """
+    Return all managed firewall interface IPs (IPv4 + IPv6) from Panorama.
+    Results are cached for 7 days and persisted to disk.
+    Each item contains device metadata plus a list of interface objects.
+    """
+    cached = cache.get("pan_interfaces")
+    if cached is not None:
+        return {"items": cached, "total": len(cached)}
+
+    key  = _get_key(session)
+    loop = asyncio.get_event_loop()
+    devices = await loop.run_in_executor(None, pc.fetch_firewall_interfaces, key)
+    cache.set("pan_interfaces", devices, TTL_PAN_INTERFACES)
+    return {"items": devices, "total": len(devices)}
+
+
+@router.post("/interfaces/refresh")
+async def refresh_firewall_interfaces(session: SessionEntry = Depends(require_auth)):
+    """Bust the firewall interface inventory cache and re-fetch immediately."""
+    cache.invalidate("pan_interfaces")
+    key  = _get_key(session)
+    loop = asyncio.get_event_loop()
+    devices = await loop.run_in_executor(None, pc.fetch_firewall_interfaces, key)
+    cache.set("pan_interfaces", devices, TTL_PAN_INTERFACES)
+    return {"status": "ok", "total": len(devices)}
 
 
 @router.get("/devices")

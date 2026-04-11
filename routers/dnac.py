@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 import clients.dnac as dc
+import clients.panorama as pc
 import auth as auth_module
 from auth import SessionEntry, require_auth
 from cache import cache, TTL_DEVICES, TTL_SITES
@@ -169,68 +170,94 @@ async def get_device_config(device_id: str, session: SessionEntry = Depends(requ
 
 @router.get("/ip-lookup/{ip}")
 async def ip_lookup(ip: str, session: SessionEntry = Depends(require_auth)):
-    """Find what interface and device owns an IP address."""
+    """
+    Find what interface and device owns an IP address.
+    Searches both Catalyst Center (DNAC) and the Palo Alto interface inventory.
+    """
     import ipaddress as _ip
     try:
         _ip.ip_address(ip)
     except ValueError:
         raise HTTPException(400, f"'{ip}' is not a valid IP address")
 
-    loop   = asyncio.get_event_loop()
-    dnac   = _get_dnac(session)
+    loop = asyncio.get_event_loop()
+    dnac = _get_dnac(session)
+
+    # ── DNAC lookup ───────────────────────────────────────────────────────────
     ifaces = await loop.run_in_executor(None, dc.get_interface_by_ip, dnac, ip)
 
-    if not ifaces:
-        return {"ip": ip, "found": False, "interfaces": []}
-
-    devices   = cache.get("devices") or []
-    id_to_dev = {d.get("id"): d for d in devices if d.get("id")}
-
-    dev_site_map = cache.get("device_site_map")
-    if dev_site_map is None:
-        sites = cache.get("sites")
-        if sites is None:
-            sites = await loop.run_in_executor(None, dc.get_site_cache, dnac)
-            cache.set("sites", sites, TTL_SITES)
-        dev_site_map = await loop.run_in_executor(None, dc.build_device_site_map, dnac, sites)
-        cache.set("device_site_map", dev_site_map, TTL_SITES)
-
     enriched = []
-    for iface in ifaces:
-        dev_id = iface.get("deviceId")
-        device = id_to_dev.get(dev_id, {})
+    if ifaces:
+        devices   = cache.get("devices") or []
+        id_to_dev = {d.get("id"): d for d in devices if d.get("id")}
 
-        # Build subnet string
-        subnet = None
-        addr   = iface.get("ipv4Address")
-        mask   = iface.get("ipv4Mask")
-        if addr and mask:
-            try:
-                import ipaddress as _ip2
-                net    = _ip2.ip_network(f"{addr}/{mask}", strict=False)
-                subnet = f"{net}  (/{net.prefixlen})"
-            except ValueError:
-                subnet = mask
+        dev_site_map = cache.get("device_site_map")
+        if dev_site_map is None:
+            sites = cache.get("sites")
+            if sites is None:
+                sites = await loop.run_in_executor(None, dc.get_site_cache, dnac)
+                cache.set("sites", sites, TTL_SITES)
+            dev_site_map = await loop.run_in_executor(None, dc.build_device_site_map, dnac, sites)
+            cache.set("device_site_map", dev_site_map, TTL_SITES)
 
-        site_name = dev_site_map.get(dev_id) if dev_id else None
+        for iface in ifaces:
+            dev_id = iface.get("deviceId")
+            device = id_to_dev.get(dev_id, {})
 
-        enriched.append({
-            "interface": {
-                "portName":    iface.get("portName"),
-                "ipAddress":   ip,
-                "subnet":      subnet,
-                "macAddress":  iface.get("macAddress"),
-                "vlanId":      iface.get("vlanId"),
-                "description": iface.get("description"),
-                "adminStatus": iface.get("adminStatus"),
-                "operStatus":  iface.get("status"),
-                "speed":       iface.get("speed"),
-            },
-            "device":    _enrich(device) if device else None,
-            "siteName":  site_name,
+            subnet = None
+            addr   = iface.get("ipv4Address")
+            mask   = iface.get("ipv4Mask")
+            if addr and mask:
+                try:
+                    import ipaddress as _ip2
+                    net    = _ip2.ip_network(f"{addr}/{mask}", strict=False)
+                    subnet = f"{net}  (/{net.prefixlen})"
+                except ValueError:
+                    subnet = mask
+
+            enriched.append({
+                "interface": {
+                    "portName":    iface.get("portName"),
+                    "ipAddress":   ip,
+                    "subnet":      subnet,
+                    "macAddress":  iface.get("macAddress"),
+                    "vlanId":      iface.get("vlanId"),
+                    "description": iface.get("description"),
+                    "adminStatus": iface.get("adminStatus"),
+                    "operStatus":  iface.get("status"),
+                    "speed":       iface.get("speed"),
+                },
+                "device":   _enrich(device) if device else None,
+                "siteName": dev_site_map.get(dev_id) if dev_id else None,
+            })
+
+    # ── Palo Alto interface lookup (cache-only — no live fetch at query time) ─
+    pan_devices    = cache.get("pan_interfaces") or []
+    pan_matches    = pc.search_firewall_interfaces(ip, pan_devices)
+    firewall_hits  = []
+    for m in pan_matches:
+        dev   = m["device"]
+        iface = m["interface"]
+        firewall_hits.append({
+            "hostname":     dev.get("hostname"),
+            "serial":       dev.get("serial"),
+            "model":        dev.get("model"),
+            "management_ip": dev.get("management_ip"),
+            "device_group": dev.get("device_group"),
+            "os_version":   dev.get("os_version"),
+            "ha_state":     dev.get("ha_state"),
+            "interface":    iface.get("name"),
+            "ipv4":         iface.get("ipv4"),
+            "ipv6":         iface.get("ipv6", []),
         })
 
-    return {"ip": ip, "found": True, "interfaces": enriched}
+    found = bool(enriched or firewall_hits)
+    return {
+        "ip":                ip,
+        "found":             found,
+        "interfaces":        enriched,
+        "firewall_interfaces": firewall_hits,
+    }
 
 
 # ── Sites ─────────────────────────────────────────────────────────────────────

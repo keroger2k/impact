@@ -79,6 +79,7 @@ const template = `
 
 export function mount(el) {
   el.innerHTML = template;
+  const alive = () => el.isConnected;
   const comp = {
     loading: true,
     error:   null,
@@ -96,12 +97,14 @@ export function mount(el) {
           API.get('/dnac/devices/stats'),
           API.get('/status'),
         ]);
+        if (!alive()) return;
         this.stats  = stats;
         this.status = status;
       } catch(e) {
+        if (!alive()) return;
         this.error = e.message;
       } finally {
-        this.loading = false;
+        if (alive()) this.loading = false;
       }
     },
   };

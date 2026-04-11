@@ -216,6 +216,7 @@ const template = `
 
 export function mount(el) {
   el.innerHTML = template;
+  const alive = () => el.isConnected;
   createApp({
     quickCmds: QUICK_CMDS,
     quickCmd:  QUICK_CMDS[0],
@@ -269,8 +270,10 @@ export function mount(el) {
       let dnacDevices = [];
       try {
         const d = await API.get('/dnac/devices?limit=500');
+        if (!alive()) return;
         dnacDevices = d.items;
       } catch {}
+      if (!alive()) return;
       const ipMap = {};
       dnacDevices.forEach(d => { ipMap[d.managementIpAddress] = d; });
       this.devices = ips.map(ip => ({
@@ -287,11 +290,12 @@ export function mount(el) {
       });
       try {
         const d = await API.get(`/dnac/devices?${params}`);
+        if (!alive()) return;
         this.devices = d.items.map(dev => ({
           ip: dev.managementIpAddress, hostname: dev.hostname, platform: dev.platformId,
         }));
-      } catch (e) { toast(e.message, 'error'); }
-      finally { this.filterLoading = false; }
+      } catch (e) { if (alive()) toast(e.message, 'error'); }
+      finally { if (alive()) this.filterLoading = false; }
     },
 
     sort(col) {
@@ -325,6 +329,7 @@ export function mount(el) {
       };
 
       API.stream('/commands/run', body, ev => {
+        if (!alive()) return;
         if (ev.type === 'progress') {
           this.results.push(ev);
           const pct = Math.round((ev.done / ev.total) * 100);
@@ -339,7 +344,7 @@ export function mount(el) {
         } else if (ev.type === 'error') {
           logLine(`Error: ${ev.message}`, 'error');
         }
-      }, () => { this.running = false; });
+      }, () => { if (alive()) this.running = false; });
     },
 
     downloadDevice() {

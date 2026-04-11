@@ -19,9 +19,10 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-TTL_DEVICES = 86400  # 24 hours
-TTL_SITES   = 86400  # 24 hours
-TTL_STATUS  = 300    # 5 minutes
+TTL_DEVICES        = 86400   # 24 hours
+TTL_SITES          = 86400   # 24 hours
+TTL_STATUS         = 300     # 5 minutes
+TTL_PAN_INTERFACES = 604800  # 7 days
 
 # Absolute path so disk cache works regardless of where uvicorn is invoked from
 CACHE_DIR    = Path(__file__).parent / "data" / "cache"
