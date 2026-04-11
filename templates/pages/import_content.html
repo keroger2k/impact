@@ -6,40 +6,57 @@
         <span class="fw-bold">Inventory Import Tool</span>
       </div>
       <div class="card-body p-4">
-        <p class="text-muted small mb-4">Upload a CSV or Excel file to bulk import devices into the Catalyst Center and Panorama inventory. Our tool will automatically resolve sites and push the initial configuration.</p>
-        <form hx-post="/api/import/bulk" hx-encoding="multipart/form-data" hx-target="#import-results" hx-indicator="#import-loading">
+        <p class="text-muted small mb-4">Upload a JSON import request to bulk provision devices. Our tool will automatically resolve sites and push the initial configuration.</p>
+        <form id="import-form">
           <div class="mb-4">
-            <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Inventory File</label>
-            <div class="input-group">
-              <input type="file" name="file" class="form-control" accept=".csv,.xlsx" required>
-              <span class="input-group-text bg-white"><i class="fas fa-file-csv text-muted"></i></span>
-            </div>
+            <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Import Payload (JSON)</label>
+            <textarea id="import-payload" class="form-control" rows="10" placeholder='{ "devices": [...], "dry_run": true }'></textarea>
           </div>
-          <div class="mb-4">
-            <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Import Mode</label>
-            <div class="form-check mb-2">
-              <input class="form-check-input" type="radio" name="mode" value="dry-run" id="dry-run" checked>
-              <label class="form-check-label small" for="dry-run">
-                <strong>Dry Run</strong> (Verify inventory and sites, no changes)
-              </label>
-            </div>
-            <div class="form-check">
-              <input class="form-check-input" type="radio" name="mode" value="commit" id="commit">
-              <label class="form-check-label small" for="commit">
-                <strong>Commit Changes</strong> (Import and provision devices)
-              </label>
-            </div>
-          </div>
-          <button type="submit" class="btn btn-primary w-100 py-3 fw-bold shadow-sm">
-            <i class="fas fa-cloud-upload-alt me-1"></i> Start Import Process
+          <button type="button" onclick="startImport()" class="btn btn-primary w-100 py-3 fw-bold shadow-sm">
+            <i class="fas fa-cloud-upload-alt me-1"></i> Execute Import Request
           </button>
         </form>
-        <div id="import-loading" class="htmx-indicator mt-4 text-center">
+        <div id="import-loading" class="mt-4 d-none text-center">
           <div class="spinner spinner-md"></div>
-          <p class="text-muted small mt-2">Processing inventory file and validating with systems...</p>
+          <p class="text-muted small mt-2">Processing import and validating with systems...</p>
         </div>
       </div>
     </div>
     <div id="import-results" class="mt-4"></div>
   </div>
 </div>
+
+<script>
+  function startImport() {
+    const payloadStr = document.getElementById('import-payload').value;
+    let payload;
+    try {
+      payload = JSON.parse(payloadStr);
+    } catch(e) {
+      alert("Invalid JSON payload.");
+      return;
+    }
+
+    const results = document.getElementById('import-results');
+    const loading = document.getElementById('import-loading');
+    loading.classList.remove('d-none');
+    results.innerHTML = '';
+
+    fetch('/api/import/run', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer {{ token }}'
+      },
+      body: JSON.stringify(payload)
+    }).then(response => {
+       loading.classList.add('d-none');
+       return response.json();
+    }).then(data => {
+       results.innerHTML = '<div class="card shadow-sm"><div class="card-body"><pre class="text-navy">' + JSON.stringify(data, null, 2) + '</pre></div></div>';
+    }).catch(err => {
+       loading.classList.add('d-none');
+       results.innerHTML = '<div class="alert alert-danger">Import Failed: ' + err + '</div>';
+    });
+  }
+</script>

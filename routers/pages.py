@@ -130,3 +130,19 @@ async def import_page(request: Request, user: SessionEntry = Depends(get_current
     if request.headers.get("HX-Request"):
         return templates.TemplateResponse(request, "pages/import_content.html", context)
     return templates.TemplateResponse(request, "import.html", context)
+
+@router.get("/config-search", response_class=HTMLResponse)
+async def config_search_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
+    if not user: return RedirectResponse(url="/login")
+    context = {"active_page": "config-search", "username": user.username, "token": request.cookies.get("impact_token")}
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse(request, "pages/config_search_content.html", context)
+    return templates.TemplateResponse(request, "config_search.html", context)
+
+@router.get("/ip-lookup", response_class=HTMLResponse)
+async def ip_lookup_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
+    if not user: return RedirectResponse(url="/login")
+    context = {"active_page": "ip-lookup", "username": user.username, "token": request.cookies.get("impact_token")}
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse(request, "pages/ip_lookup_content.html", context)
+    return templates.TemplateResponse(request, "ip_lookup.html", context)

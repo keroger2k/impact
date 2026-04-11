@@ -1,3 +1,5 @@
+import json
+from fastapi.responses import HTMLResponse
 """routers/dnac.py — Catalyst Center API endpoints."""
 
 import asyncio
@@ -6,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, Request, Depends
+from fastapi import APIRouter, HTTPException, Query, Request, Depends, Form
 from pydantic import BaseModel
 
 import clients.dnac as dc
@@ -557,3 +559,112 @@ async def config_search(req: ConfigSearchRequest, session: SessionEntry = Depend
         "total_matching_lines":   sum(r["match_count"] for r in results),
         "results":                results,
     }
+
+@router.post("/config-search/ui", response_class=HTMLResponse)
+async def config_search_ui(
+    request: Request,
+    search_string: str = Form(...),
+    hostname: Optional[str] = Form(None),
+    platform: Optional[str] = Form(None),
+    role: Optional[str] = Form(None),
+    session: SessionEntry = Depends(require_auth)
+):
+    req = ConfigSearchRequest(
+        search_string=search_string,
+        hostname=hostname,
+        platform=platform,
+        role=role
+    )
+    results = await config_search(req, session)
+
+    from main import templates
+    return templates.TemplateResponse(request, "partials/config_search_results.html", {
+        "results": results,
+        "search_string": search_string
+    })
+
+@router.post("/path-trace/ui", response_class=HTMLResponse)
+async def path_trace_ui(
+    request: Request,
+    source_ip: str = Form(...),
+    dest_ip: str = Form(...),
+    protocol: str = Form("TCP"),
+    dest_port: int = Form(80),
+    session: SessionEntry = Depends(require_auth)
+):
+    loop = asyncio.get_event_loop()
+    dnac = _get_dnac(session)
+
+    try:
+        # Check if the method name is correct in dc
+        # Based on previous context, we might need to handle SDK version variants
+        task = await loop.run_in_executor(None, dc.initiate_path_trace, dnac, source_ip, dest_ip, protocol, dest_port)
+        flow_id = task.get("response", {}).get("flowAnalysisId")
+
+        # Wait for result (in a real app we'd poll or use SSE, but for UI simplicity here...)
+        # We'll return a 'pending' state partial that polls itself
+        return HTMLResponse(f"""
+            <div class="card shadow-sm animate-fade-in" hx-get="/api/dnac/path-trace/result/{flow_id}" hx-trigger="load delay:3s" hx-swap="outerHTML">
+                <div class="card-body p-5 text-center">
+                    <div class="spinner spinner-lg mb-3"></div>
+                    <h5 class="fw-bold">Path Trace Initiated</h5>
+                    <p class="text-muted">Analysis ID: {flow_id}</p>
+                    <p class="small">Collecting hop-by-hop data from Catalyst Center...</p>
+                </div>
+            </div>
+        """)
+    except Exception as e:
+        return HTMLResponse(f"<div class='alert alert-danger'>Path Trace Failed: {str(e)}</div>")
+
+@router.get("/path-trace/result/{flow_id}", response_class=HTMLResponse)
+async def path_trace_result_ui(request: Request, flow_id: str, session: SessionEntry = Depends(require_auth)):
+    loop = asyncio.get_event_loop()
+    dnac = _get_dnac(session)
+
+    result = await loop.run_in_executor(None, dc.get_path_trace_result, dnac, flow_id)
+    status = result.get("response", {}).get("request", {}).get("status", "")
+
+    if status in ("INPROGRESS", "PENDING"):
+         return HTMLResponse(f"""
+            <div class="card shadow-sm animate-fade-in" hx-get="/api/dnac/path-trace/result/{flow_id}" hx-trigger="load delay:3s" hx-swap="outerHTML">
+                <div class="card-body p-5 text-center">
+                    <div class="spinner spinner-lg mb-3"></div>
+                    <h5 class="fw-bold">Analysis in Progress...</h5>
+                    <p class="text-muted">Status: {status}</p>
+                </div>
+            </div>
+        """)
+
+    hops = result.get("response", {}).get("networkElementsInfo", [])
+
+    from main import templates
+    return templates.TemplateResponse(request, "partials/path_trace_result.html", {
+        "hops": hops,
+        "source": result.get("response", {}).get("request", {}).get("sourceIP"),
+        "dest": result.get("response", {}).get("request", {}).get("destIP")
+    })
+
+@router.get("/devices-select", response_class=HTMLResponse)
+async def device_select_partial(request: Request, session: SessionEntry = Depends(require_auth)):
+    devices = cache.get("devices") or []
+    if not devices:
+        dnac = _get_dnac(session)
+        devices = await asyncio.get_event_loop().run_in_executor(None, dc.get_all_devices, dnac)
+        cache.set("devices", devices, TTL_DEVICES)
+
+    html = '<select id="device-multi-select" class="form-select" multiple style="height: 150px;">'
+    for d in sorted(devices, key=lambda x: x.get("hostname", "")):
+        data_json = json.dumps({
+            "ip": d.get("managementIpAddress"),
+            "hostname": d.get("hostname"),
+            "platform": d.get("platformId")
+        })
+        html += f'<option value="{d.get("id")}" data-device=\'{data_json}\'>{d.get("hostname")} ({d.get("managementIpAddress")})</option>'
+    html += '</select>'
+    return HTMLResponse(html)
+
+@router.get("/ip-lookup/ui", response_class=HTMLResponse)
+async def ip_lookup_ui(request: Request, ip: str, session: SessionEntry = Depends(require_auth)):
+    results = await ip_lookup(ip, session)
+    from main import templates
+    return templates.TemplateResponse(request, "partials/ip_lookup_results.html", {"r": results})

@@ -1,0 +1,28 @@
+<div class="card shadow-sm border-0 animate-fade-in">
+  <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center">
+    <span class="fw-bold">Interface Inventory ({{ items|length }})</span>
+    <button class="btn btn-sm btn-outline-light px-2" hx-get="/api/firewall/interfaces" hx-target="#pan-results" hx-indicator="#pan-loading"><i class="fas fa-sync"></i></button>
+  </div>
+  <div class="card-body p-0 overflow-auto" style="max-height: calc(100vh - 200px);">
+    <table class="table table-hover table-striped mb-0">
+      <thead class="bg-light sticky-top">
+        <tr>
+          <th>Firewall</th>
+          <th>Interface</th>
+          <th>IPv4 Address</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for dev in items %}
+          {% for iface in dev.interfaces %}
+          <tr>
+            <td class="fw-bold text-navy">{{ dev.device.hostname }}</td>
+            <td class="small">{{ iface.name }}</td>
+            <td class="mono small">{{ iface.ipv4 }}</td>
+          </tr>
+          {% endfor %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>

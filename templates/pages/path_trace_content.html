@@ -7,7 +7,7 @@
       </div>
       <div class="card-body">
         <p class="text-muted small mb-4">Visualize the path between two endpoints using Cisco Catalyst Center.</p>
-        <form hx-post="/api/dnac/path-trace" hx-target="#pt-results" hx-indicator="#pt-loading">
+        <form hx-post="/api/dnac/path-trace/ui" hx-target="#pt-results" hx-indicator="#pt-loading">
           <div class="mb-3">
             <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Source IP</label>
             <input type="text" name="source_ip" class="form-control" placeholder="e.g. 10.1.1.50" required>

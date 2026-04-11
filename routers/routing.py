@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 async def bgp_summary(
     request: Request,
     ip: str = Form(...),
-    session: SessionEntry = Depends(__import__("routers.pages").pages.get_current_user_from_cookie)
+    session: SessionEntry = Depends(require_auth)
 ):
     from main import templates
     from dev import DEV_MODE
@@ -69,7 +69,7 @@ Neighbor        V           AS MsgRcvd MsgSent   TblVer  InQ OutQ Up/Down  State
 async def eigrp_topology(
     request: Request,
     ip: str = Form(...),
-    session: SessionEntry = Depends(__import__("routers.pages").pages.get_current_user_from_cookie)
+    session: SessionEntry = Depends(require_auth)
 ):
     from main import templates
     from dev import DEV_MODE
@@ -126,7 +126,7 @@ P 10.30.0.0/16, 1 successors, FD is 3328
 async def ospf_neighbors(
     request: Request,
     ip: str = Form(...),
-    session: SessionEntry = Depends(__import__("routers.pages").pages.get_current_user_from_cookie)
+    session: SessionEntry = Depends(require_auth)
 ):
     from main import templates
     from dev import DEV_MODE

@@ -7,24 +7,15 @@
       </div>
       <div class="card-body p-0">
         <div class="list-group list-group-flush">
-          <button class="list-group-item list-group-item-action active" hx-get="/api/firewall/inventory" hx-target="#pan-results" hx-indicator="#pan-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
-            🔥 Firewall Inventory
+          <button class="list-group-item list-group-item-action active" hx-get="/api/firewall/devices" hx-target="#pan-results" hx-indicator="#pan-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            🔥 Managed Devices
           </button>
           <button class="list-group-item list-group-item-action" hx-get="/api/firewall/device-groups" hx-target="#pan-results" hx-indicator="#pan-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
             🏢 Device Groups
           </button>
-          <button class="list-group-item list-group-item-action" hx-get="/api/firewall/templates" hx-target="#pan-results" hx-indicator="#pan-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
-            🏗️ Panorama Templates
+          <button class="list-group-item list-group-item-action" hx-get="/api/firewall/interfaces" hx-target="#pan-results" hx-indicator="#pan-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            🔌 Interface Inventory
           </button>
-        </div>
-        <div class="p-3 bg-light border-top">
-           <form hx-get="/api/firewall/interfaces/search" hx-target="#pan-results" hx-indicator="#pan-loading">
-            <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">IP Search</label>
-            <div class="input-group">
-              <input type="text" name="ip" class="form-control" placeholder="10.200.1.50" required>
-              <button class="btn btn-primary btn-sm"><i class="fas fa-search"></i></button>
-            </div>
-          </form>
         </div>
       </div>
     </div>
@@ -34,6 +25,6 @@
       <div class="spinner spinner-lg"></div>
       <p class="text-muted small mt-2">Connecting to Panorama and fetching data...</p>
     </div>
-    <div id="pan-results" hx-get="/api/firewall/inventory" hx-trigger="load"></div>
+    <div id="pan-results" hx-get="/api/firewall/devices" hx-trigger="load"></div>
   </div>
 </div>

@@ -6,6 +6,7 @@
   <title>{% block title %}IMPACT II — Network Operations{% endblock %}</title>
   <link rel="stylesheet" href="/static/bootstrap/css/bootstrap.min.css">
   <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
   <script src="/static/js/htmx.min.js"></script>
 </head>
 <body hx-headers='{"Authorization": "Bearer {{ token }}"}'>
@@ -44,17 +45,17 @@
          hx-get="/routing/bgp" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
         <span class="nav-icon">🌐</span> <span>Routing Ops</span>
       </a>
-      <a class="nav-item {% if active_page == 'ip-lookup' %}active{% endif %}"
-         hx-get="/ip-lookup" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
-        <span class="nav-icon">🔍</span> <span>IP Lookup</span>
+      <a class="nav-item {% if active_page == 'config-search' %}active{% endif %}"
+         hx-get="/config-search" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+        <span class="nav-icon">🔍</span> <span>Config Search</span>
       </a>
       <a class="nav-item {% if active_page == 'ise' %}active{% endif %}"
          hx-get="/ise" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
-        <span class="nav-icon">🔐</span> <span>ISE</span>
+        <span class="nav-icon">🔐</span> <span>ISE Control</span>
       </a>
       <a class="nav-item {% if active_page == 'firewall' %}active{% endif %}"
          hx-get="/firewall" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
-        <span class="nav-icon">🔥</span> <span>Firewall</span>
+        <span class="nav-icon">🔥</span> <span>Firewall Ops</span>
       </a>
       <a class="nav-item {% if active_page == 'command-runner' %}active{% endif %}"
          hx-get="/command-runner" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
@@ -111,9 +112,6 @@
       document.getElementById("main").classList.remove("no-transition");
     }, 100);
   }
-  if (localStorage.getItem('sidebarCollapsed') === '1') {
-    document.getElementById('sidebar').classList.add('collapsed');
-  }
 
   function logout() {
     fetch('/api/auth/logout', { method: 'POST', headers: {'Authorization': 'Bearer {{ token }}'} })
@@ -132,8 +130,8 @@
         const hxGet = el.getAttribute('hx-get');
         if (hxGet === path) {
           el.classList.add('active');
-          const title = el.querySelector('span:last-child').textContent;
-          document.getElementById('page-title').textContent = title;
+          const titleSpan = el.querySelector('span:last-child');
+          if (titleSpan) document.getElementById('page-title').textContent = titleSpan.textContent;
         } else {
           el.classList.remove('active');
         }

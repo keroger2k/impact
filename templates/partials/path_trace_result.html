@@ -1,41 +1,38 @@
-<div class="card">
-  <div class="card-header d-flex justify-content-between align-items-center">
-    <span class="card-title">Path: {{ result.request.sourceIP }} ➔ {{ result.request.destIP }}</span>
-    <span class="badge {% if result.networkElementsInfo %}text-bg-success{% else %}text-bg-warning{% endif %}">
-      {{ result.status|upper }}
-    </span>
+<div class="card shadow-sm border-0 animate-fade-in">
+  <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center">
+    <span class="fw-bold">Path Trace Result: {{ source }} → {{ dest }}</span>
+    <button class="btn btn-sm btn-outline-light" onclick="this.closest('.card').remove()">Close</button>
   </div>
-  <div class="card-body p-0">
-    <div class="list-group list-group-flush">
-      {% if result.networkElementsInfo %}
-        {% for hop in result.networkElementsInfo %}
-        <div class="list-group-item">
-          <div class="d-flex w-100 justify-content-between">
-            <h6 class="mb-1 font-weight-bold">{{ hop.name|default('Unknown Device') }}</h6>
-            <small class="text-muted">{{ hop.ip }}</small>
-          </div>
-          <p class="mb-1 text-secondary small">
-            {% if hop.ingressInterface %}
-              <span class="badge text-bg-light">In: {{ hop.ingressInterface.name }}</span>
+  <div class="card-body p-4 bg-light">
+    <div class="path-viz d-flex flex-column gap-3">
+      {% for hop in hops %}
+        <div class="path-hop d-flex align-items-center gap-4">
+          <div class="hop-icon bg-white border border-navy rounded-circle d-flex align-items-center justify-content-center shadow-sm" style="width: 50px; height: 50px; z-index: 2;">
+            {% if 'Switch' in hop.role or 'Router' in hop.role %}
+              <i class="fas fa-network-wired text-navy"></i>
+            {% else %}
+              <i class="fas fa-laptop text-muted"></i>
             {% endif %}
-            {% if hop.egressInterface %}
-              <span class="badge text-bg-light">Out: {{ hop.egressInterface.name }}</span>
-            {% endif %}
-          </p>
-          {% if hop.problems %}
-          <div class="mt-2">
-            {% for prob in hop.problems %}
-            <div class="alert alert-danger py-1 px-2 mb-1 small">{{ prob }}</div>
-            {% endfor %}
           </div>
-          {% endif %}
+          <div class="hop-details flex-grow-1 bg-white p-3 rounded shadow-sm border-start border-4 border-navy">
+            <div class="d-flex justify-content-between">
+              <span class="fw-bold text-navy">{{ hop.name or hop.ip }}</span>
+              <span class="badge bg-light text-muted small">{{ hop.role }}</span>
+            </div>
+            <div class="small text-muted mt-1">
+              {% if hop.ingressInterface %}
+                <span class="me-3"><i class="fas fa-sign-in-alt me-1"></i> In: {{ hop.ingressInterface.interfaceName }}</span>
+              {% endif %}
+              {% if hop.egressInterface %}
+                <span><i class="fas fa-sign-out-alt me-1"></i> Out: {{ hop.egressInterface.interfaceName }}</span>
+              {% endif %}
+            </div>
+          </div>
         </div>
-        {% endfor %}
-      {% else %}
-        <div class="p-4 text-center text-muted">
-          No path elements found. Status: {{ result.status }}
-        </div>
-      {% endif %}
+        {% if not loop.last %}
+          <div class="path-line ms-4 px-1 bg-navy opacity-25" style="width: 4px; height: 30px;"></div>
+        {% endif %}
+      {% endfor %}
     </div>
   </div>
 </div>

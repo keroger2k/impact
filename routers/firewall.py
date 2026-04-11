@@ -1,10 +1,11 @@
+from fastapi.responses import HTMLResponse
 """routers/firewall.py — Panorama security policy lookup endpoints."""
 
 import asyncio
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Form
 from pydantic import BaseModel
 
 import auth as auth_module
@@ -80,7 +81,7 @@ def _flatten_rules(rules_cache: dict, target_dgs: list[str] | None) -> list[dict
 
 
 @router.get("/device-groups")
-async def list_device_groups(session: SessionEntry = Depends(require_auth)):
+async def list_device_groups(request: Request, session: SessionEntry = Depends(require_auth)):
     cached = cache.get("pan_device_groups")
     if cached is not None:
         return {"items": cached}
@@ -89,6 +90,9 @@ async def list_device_groups(session: SessionEntry = Depends(require_auth)):
     dgs  = await loop.run_in_executor(None, pc.get_device_groups, key)
     cache.set("pan_device_groups", dgs, PAN_TTL)
     return {"items": dgs}
+    if request.headers.get("HX-Request"):
+        from main import templates
+        return templates.TemplateResponse(request, "partials/firewall_device_groups.html", {"items": dgs})
 
 
 @router.post("/lookup")
@@ -212,7 +216,7 @@ async def refresh_firewall_cache():
 
 
 @router.get("/interfaces")
-async def list_firewall_interfaces(session: SessionEntry = Depends(require_auth)):
+async def list_firewall_interfaces(request: Request, session: SessionEntry = Depends(require_auth)):
     """
     Return all managed firewall interface IPs (IPv4 + IPv6) from Panorama.
     Results are cached for 7 days and persisted to disk.
@@ -227,6 +231,9 @@ async def list_firewall_interfaces(session: SessionEntry = Depends(require_auth)
     devices = await loop.run_in_executor(None, pc.fetch_firewall_interfaces, key)
     cache.set("pan_interfaces", devices, TTL_PAN_INTERFACES)
     return {"items": devices, "total": len(devices)}
+    if request.headers.get("HX-Request"):
+        from main import templates
+        return templates.TemplateResponse(request, "partials/firewall_interfaces.html", {"items": devices})
 
 
 @router.post("/interfaces/refresh")
