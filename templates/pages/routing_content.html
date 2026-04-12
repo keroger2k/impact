@@ -4,13 +4,13 @@
       <div class="card-header bg-navy text-white"><span class="fw-bold">Routing Ops</span></div>
       <div class="card-body p-0">
         <div class="list-group list-group-flush">
-          <button class="list-group-item list-group-item-action active" onclick="showRoutingTab('bgp')">
+          <button class="list-group-item list-group-item-action active" onclick="showRoutingTab(this, 'bgp')">
             🌐 BGP Summary
           </button>
-          <button class="list-group-item list-group-item-action" onclick="showRoutingTab('eigrp')">
+          <button class="list-group-item list-group-item-action" onclick="showRoutingTab(this, 'eigrp')">
             🌿 EIGRP Topology
           </button>
-          <button class="list-group-item list-group-item-action" onclick="showRoutingTab('ospf')">
+          <button class="list-group-item list-group-item-action" onclick="showRoutingTab(this, 'ospf')">
             👁️ OSPF Neighbors
           </button>
         </div>
@@ -90,12 +90,11 @@
 </div>
 
 <script>
-  function showRoutingTab(tab) {
+  function showRoutingTab(btn, tab) {
     document.querySelectorAll('.routing-tab').forEach(el => el.classList.add('d-none'));
     document.getElementById('routing-' + tab).classList.remove('d-none');
 
     // Update active state in list
-    const btn = event.currentTarget;
     btn.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active'));
     btn.classList.add('active');
   }
