@@ -276,18 +276,34 @@ def get_device_detail(dnac, device_id):
     return _dictify(resp.response) if hasattr(resp, "response") else _dictify(resp)
 
 def get_recent_issues(dnac) -> list:
-    """Fetch recent global issues/alerts from DNAC."""
+    """Fetch and normalize recent global issues/alerts from DNAC."""
     from dev import DEV_MODE, MOCK_ISSUES
     if DEV_MODE: return MOCK_ISSUES
     try:
-        # Get issues from the last 24 hours
         import time
         end_time = int(time.time() * 1000)
         start_time = end_time - (24 * 60 * 60 * 1000)
 
-        resp = dnac.issues.get_issues(start_time=start_time, end_time=end_time)
-        issues = getattr(resp, "response", None) or []
-        return [_dictify(i) for i in issues]
+        # We target P1/P2 issues specifically for the dashboard
+        resp = dnac.issues.get_issues(start_time=start_time, end_time=end_time, priority="P1,P2")
+        raw_issues = getattr(resp, "response", None) or []
+
+        normalized = []
+        for issue in raw_issues:
+            d = _dictify(issue)
+            ts = d.get("lastOccurrenceTime") or d.get("timestamp") or ""
+            if isinstance(ts, (int, float)):
+                from datetime import datetime
+                ts = datetime.fromtimestamp(ts/1000.0).strftime('%Y-%m-%d %H:%M')
+
+            normalized.append({
+                "priority": d.get("priority", "P2"),
+                "issue_title": d.get("name") or d.get("issueTitle") or "Unknown Issue",
+                "device_name": d.get("device_name") or d.get("deviceName") or "Multiple",
+                "site_name": d.get("site_name") or d.get("siteName") or "—",
+                "last_occurrence_time": ts
+            })
+        return normalized
     except Exception as e:
         logger.warning(f"Failed to fetch issues: {e}")
         return []

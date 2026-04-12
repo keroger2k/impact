@@ -70,12 +70,20 @@
 </div>
 
 <script>
-  let ALL_DEVICES = [];
-  let FILTERED_DEVICES = [];
-  let CURRENT_PAGE = 1;
-  const PAGE_SIZE = 50;
-  let SORT_COL = 'hostname';
-  let SORT_DIR = 1;
+  // Use var or direct window assignment to avoid "Identifier already declared" errors on HTMX re-nav
+  if (typeof ALL_DEVICES === 'undefined') {
+    var ALL_DEVICES = [];
+    var FILTERED_DEVICES = [];
+    var CURRENT_PAGE = 1;
+    var PAGE_SIZE = 50;
+    var SORT_COL = 'hostname';
+    var SORT_DIR = 1;
+  } else {
+    // Reset state for new load
+    CURRENT_PAGE = 1;
+    SORT_COL = 'hostname';
+    SORT_DIR = 1;
+  }
 
   async function loadInitialDevices() {
     const loader = document.getElementById('dev-master-loading');
