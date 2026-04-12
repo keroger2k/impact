@@ -1,15 +1,27 @@
 <div class="card shadow-sm border-0 animate-fade-in">
-  <div class="card-header bg-navy text-white">
-    <span class="fw-bold">Device Groups</span>
+  <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center">
+    <span class="fw-bold">Firewall Device Groups</span>
   </div>
   <div class="card-body p-0">
-    <ul class="list-group list-group-flush">
-      {% for dg in items %}
-      <li class="list-group-item d-flex align-items-center gap-2">
-        <i class="fas fa-folder text-warning"></i>
-        <span>{{ dg }}</span>
-      </li>
-      {% endfor %}
-    </ul>
+    <table class="table table-hover table-striped mb-0">
+      <thead class="bg-light">
+        <tr>
+          <th>Group Name</th>
+          <th>Type</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for dg in items %}
+        <tr>
+          <td class="fw-bold text-navy">{{ dg }}</td>
+          <td><span class="badge bg-info-subtle text-info">Panorama DG</span></td>
+          <td>
+             <button class="btn btn-xs btn-outline-primary px-2 py-0">Explore</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </div>
 </div>

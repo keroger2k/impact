@@ -1,27 +1,45 @@
 <div class="card shadow-sm border-0 animate-fade-in mt-4">
   <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center">
-    <span class="fw-bold">OSPF Neighbor Results</span>
+    <div class="d-flex align-items-center gap-2">
+      <i class="fas fa-eye"></i>
+      <span class="fw-bold">OSPF Neighborhood Analysis</span>
+    </div>
     <button class="btn btn-sm btn-outline-light" onclick="this.closest('.card').remove()">Close</button>
   </div>
   <div class="card-body p-0">
     <div class="p-3 bg-light border-bottom">
-      <h6 class="text-uppercase text-muted fw-bold mb-2 small">Parsed Neighbor Correlations</h6>
-      <div class="d-flex flex-wrap gap-2">
-        {% if correlations %}
+      <h6 class="text-uppercase text-navy fw-bold mb-3 small letter-spacing-1">Next-Hop Inventory Correlation</h6>
+      {% if correlations %}
+        <div class="row g-3">
           {% for ip, info in correlations.items() %}
-            <div class="badge bg-white border text-navy p-2 d-flex align-items-center gap-2 shadow-sm">
-              <span class="status-dot ok"></span>
-              <span class="fw-bold">{{ ip }}</span>
-              <span class="text-muted">→</span>
-              <span class="text-primary fw-bold">{{ info.hostname }}</span>
-              <span class="badge bg-light text-muted small">{{ info.type }}</span>
+            <div class="col-md-6">
+              <div class="d-flex align-items-center p-3 bg-white border rounded shadow-sm border-start border-4 border-success h-100">
+                <div class="bg-success-subtle text-success rounded-circle p-2 me-3">
+                  <i class="fas fa-server"></i>
+                </div>
+                <div class="flex-grow-1">
+                  <div class="small text-muted fw-bold uppercase mb-1">Neighbor IP: {{ ip }}</div>
+                  <div class="fw-bold text-navy h5 mb-0">{{ info.hostname }}</div>
+                  <div class="badge bg-light text-muted small mt-1">{{ info.type }}</div>
+                </div>
+                <div class="ms-auto">
+                   <button class="btn btn-xs btn-outline-primary" hx-get="/ip-lookup/ui?ip={{ ip }}" hx-target="#ospf-results" hx-swap="afterend">
+                     Trace Path
+                   </button>
+                </div>
+              </div>
             </div>
           {% endfor %}
-        {% else %}
-          <span class="text-muted small italic">No inventory matches found for OSPF neighbors.</span>
-        {% endif %}
-      </div>
+        </div>
+      {% else %}
+        <div class="alert alert-info py-2 mb-0">
+          <i class="fas fa-info-circle me-2"></i> No inventory matches found for these neighbor IPs.
+        </div>
+      {% endif %}
     </div>
-    <pre class="bg-dark text-info p-3 mb-0" style="max-height: 400px; overflow: auto; font-family: 'SF Mono', monospace; font-size: 12px;">{{ output }}</pre>
+    <div class="bg-dark p-0">
+       <div class="px-3 py-2 border-bottom border-secondary small text-info opacity-50 fw-bold uppercase">Raw SSH Output</div>
+       <pre class="p-3 mb-0 text-info" style="max-height: 400px; overflow: auto; font-family: 'SF Mono', monospace; font-size: 12px; line-height: 1.5;">{{ output }}</pre>
+    </div>
   </div>
 </div>

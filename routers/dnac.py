@@ -53,7 +53,7 @@ async def list_devices(
     role:         Optional[str] = None,
     reachability: Optional[str] = None,
     site:         Optional[str] = None,
-    limit:        int = Query(500, le=2000),
+    limit:        int = Query(500, le=5000),
     offset:       int = Query(0, ge=0),
     session:      SessionEntry = Depends(require_auth),
 ):

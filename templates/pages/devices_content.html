@@ -1,22 +1,202 @@
-<div class="row g-4 h-100">
-  <div class="col-md-8 d-flex flex-column h-100">
-    <div id="dev-loading" class="htmx-indicator text-center p-5 animate-fade-in position-absolute w-100 h-100 bg-white" style="z-index: 1000; opacity: 0.8;">
-      <div class="spinner spinner-lg mt-5"></div>
-      <p class="text-muted small mt-2">Connecting to Catalyst Center and fetching inventory...</p>
-    </div>
-    <div id="dev-list" class="flex-grow-1" hx-get="/api/dnac/devices" hx-trigger="load"></div>
-  </div>
-  <div class="col-md-4 h-100">
-    <div id="dev-detail-panel" class="h-100 overflow-auto">
-      <div class="empty-state bg-white border rounded shadow-sm">
-        <div class="empty-state-icon text-muted">🖱️</div>
-        <div class="empty-state-title">No Device Selected</div>
-        <div class="empty-state-desc">Click 'Detail' on any device to view its hardware, software, and configuration.</div>
+<div class="dev-page-layout d-flex flex-column h-100 overflow-hidden">
+
+  <!-- ── Top: Device Details Section ────────────────────────────────────────── -->
+  <div id="dev-detail" class="mb-3 border rounded bg-white shadow-sm" style="min-height: 250px;">
+    <div id="dev-detail-panel" class="h-100">
+      <div class="empty-state p-5 text-center">
+        <div class="empty-state-icon text-muted" style="font-size: 3rem;">🖥️</div>
+        <div class="empty-state-title h5 fw-bold">Select a device to view details</div>
+        <div class="empty-state-desc text-muted">Scroll through the inventory below and click on any row.</div>
       </div>
     </div>
-    <div id="dev-detail-loading" class="htmx-indicator text-center p-4">
+    <div id="dev-detail-loading" class="htmx-indicator p-5 text-center">
       <div class="spinner spinner-md"></div>
-      <p class="text-muted small mt-2">Loading detailed data...</p>
+      <p class="text-muted small mt-2">Fetching device configuration and health metrics...</p>
     </div>
   </div>
+
+  <!-- ── Bottom: Inventory Table Section ───────────────────────────────────── -->
+  <div class="card shadow-sm border-0 flex-grow-1 overflow-hidden d-flex flex-column">
+    <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center">
+      <div class="d-flex align-items-center gap-2">
+        <i class="fas fa-list"></i>
+        <span class="fw-bold">Program Inventory</span>
+        <span id="dev-count-badge" class="badge bg-light text-navy ms-2">Loading...</span>
+      </div>
+      <div class="d-flex gap-3">
+        <div class="input-group input-group-sm">
+          <span class="input-group-text bg-white border-0"><i class="fas fa-search text-muted"></i></span>
+          <input type="text" id="dev-table-filter" class="form-control border-0" placeholder="Filter inventory..." onkeyup="filterDevices()">
+        </div>
+        <button class="btn btn-sm btn-outline-light px-2" onclick="refreshLocalInventory()">
+          <i class="fas fa-sync"></i>
+        </button>
+      </div>
+    </div>
+
+    <div class="dev-table-wrap flex-grow-1 overflow-auto bg-white" style="position: relative;">
+      <table class="table table-hover table-sm mb-0 sticky-header" id="devices-master-table">
+        <thead class="table-light">
+          <tr>
+            <th onclick="sortDevices('hostname')">Hostname <i class="fas fa-sort small opacity-50"></i></th>
+            <th onclick="sortDevices('managementIpAddress')">IP Address <i class="fas fa-sort small opacity-50"></i></th>
+            <th onclick="sortDevices('platformId')">Platform <i class="fas fa-sort small opacity-50"></i></th>
+            <th onclick="sortDevices('role')">Role <i class="fas fa-sort small opacity-50"></i></th>
+            <th onclick="sortDevices('siteName')">Site <i class="fas fa-sort small opacity-50"></i></th>
+            <th onclick="sortDevices('reachabilityStatus')">Status <i class="fas fa-sort small opacity-50"></i></th>
+          </tr>
+        </thead>
+        <tbody id="dev-table-body">
+          <!-- Populated via JS -->
+        </tbody>
+      </table>
+      <div id="dev-master-loading" class="position-absolute top-50 start-50 translate-middle text-center">
+         <div class="spinner spinner-lg"></div>
+         <p class="text-muted mt-2 fw-bold">Loading full inventory...</p>
+      </div>
+    </div>
+
+    <!-- Paging Footer -->
+    <div class="card-footer bg-light border-top d-flex justify-content-between align-items-center py-2">
+      <div class="small text-muted" id="paging-info">Showing 0-0 of 0</div>
+      <div class="pagination-controls d-flex gap-1">
+        <button class="btn btn-xs btn-outline-secondary px-2" onclick="prevPage()"><i class="fas fa-chevron-left"></i></button>
+        <div id="page-numbers" class="d-flex gap-1"></div>
+        <button class="btn btn-xs btn-outline-secondary px-2" onclick="nextPage()"><i class="fas fa-chevron-right"></i></button>
+      </div>
+    </div>
+  </div>
+
 </div>
+
+<script>
+  // Device Data Store
+  let ALL_DEVICES = [];
+  let FILTERED_DEVICES = [];
+  let CURRENT_PAGE = 1;
+  const PAGE_SIZE = 50;
+  let SORT_COL = 'hostname';
+  let SORT_DIR = 1;
+
+  async function loadInitialDevices() {
+    const loader = document.getElementById('dev-master-loading');
+    loader.classList.remove('d-none');
+
+    try {
+      // Fetch ALL devices from API (unlimited/max)
+      const res = await fetch('/api/dnac/devices?limit=3000', {
+        headers: { 'Authorization': 'Bearer {{ token }}' }
+      });
+      const data = await res.json();
+      ALL_DEVICES = data.items || [];
+      FILTERED_DEVICES = [...ALL_DEVICES];
+
+      document.getElementById('dev-count-badge').textContent = ALL_DEVICES.length;
+      renderTable();
+    } catch (e) {
+      console.error("Failed to load inventory:", e);
+    } finally {
+      loader.classList.add('d-none');
+    }
+  }
+
+  function filterDevices() {
+    const term = document.getElementById('dev-table-filter').value.toLowerCase();
+    FILTERED_DEVICES = ALL_DEVICES.filter(d => {
+        return (d.hostname || '').toLowerCase().includes(term) ||
+               (d.managementIpAddress || '').toLowerCase().includes(term) ||
+               (d.platformId || '').toLowerCase().includes(term) ||
+               (d.siteName || '').toLowerCase().includes(term);
+    });
+    CURRENT_PAGE = 1;
+    renderTable();
+  }
+
+  function sortDevices(col) {
+    if (SORT_COL === col) SORT_DIR *= -1;
+    else { SORT_COL = col; SORT_DIR = 1; }
+
+    FILTERED_DEVICES.sort((a, b) => {
+        const valA = (a[col] || '').toString().toLowerCase();
+        const valB = (b[col] || '').toString().toLowerCase();
+        return valA < valB ? -1 * SORT_DIR : (valA > valB ? 1 * SORT_DIR : 0);
+    });
+    renderTable();
+  }
+
+  function renderTable() {
+    const tbody = document.getElementById('dev-table-body');
+    const start = (CURRENT_PAGE - 1) * PAGE_SIZE;
+    const end = start + PAGE_SIZE;
+    const pageData = FILTERED_DEVICES.slice(start, end);
+
+    tbody.innerHTML = pageData.map(d => `
+      <tr class="clickable-row" onclick="selectDevice('${d.id}', this)">
+        <td class="fw-bold text-navy">${d.hostname}</td>
+        <td class="mono">${d.managementIpAddress}</td>
+        <td class="small">${d.platformId}</td>
+        <td class="small uppercase">${d.role}</td>
+        <td class="small">${d.siteName || '—'}</td>
+        <td>
+           <span class="badge ${d.reachabilityStatus === 'Reachable' ? 'bg-success-subtle text-success' : 'bg-danger-subtle text-danger'} px-2">
+             ${d.reachabilityStatus}
+           </span>
+        </td>
+      </tr>
+    `).join('');
+
+    updatePaging(start, end);
+  }
+
+  function updatePaging(start, end) {
+    const total = FILTERED_DEVICES.length;
+    const actualEnd = Math.min(end, total);
+    document.getElementById('paging-info').textContent = `Showing ${total > 0 ? start + 1 : 0}-${actualEnd} of ${total}`;
+
+    const pageCount = Math.ceil(total / PAGE_SIZE);
+    const container = document.getElementById('page-numbers');
+    container.innerHTML = '';
+
+    // Show current page and neighbors
+    for (let i = Math.max(1, CURRENT_PAGE - 2); i <= Math.min(pageCount, CURRENT_PAGE + 2); i++) {
+        const btn = document.createElement('button');
+        btn.className = `btn btn-xs ${i === CURRENT_PAGE ? 'btn-primary' : 'btn-outline-secondary'} px-2`;
+        btn.textContent = i;
+        btn.onclick = () => { CURRENT_PAGE = i; renderTable(); };
+        container.appendChild(btn);
+    }
+  }
+
+  function prevPage() { if (CURRENT_PAGE > 1) { CURRENT_PAGE--; renderTable(); } }
+  function nextPage() { if (CURRENT_PAGE * PAGE_SIZE < FILTERED_DEVICES.length) { CURRENT_PAGE++; renderTable(); } }
+
+  function selectDevice(id, rowEl) {
+    // UI highlight
+    document.querySelectorAll('.clickable-row').forEach(el => el.classList.remove('table-active'));
+    rowEl.classList.add('table-active');
+
+    // HTMX request for details into top panel
+    htmx.ajax('GET', '/api/dnac/devices/' + id + '/detail', {
+        target: '#dev-detail-panel',
+        indicator: '#dev-detail-loading'
+    });
+  }
+
+  function refreshLocalInventory() {
+     loadInitialDevices();
+  }
+
+  // Auto-init
+  loadInitialDevices();
+</script>
+
+<style>
+  .dev-page-layout {
+    height: calc(100vh - 120px);
+  }
+  .clickable-row { cursor: pointer; }
+  .clickable-row:hover { background-color: rgba(0, 112, 210, 0.05); }
+  .table-active { background-color: rgba(0, 112, 210, 0.1) !important; }
+  .btn-xs { padding: 1px 5px; font-size: 0.75rem; }
+  .sticky-header thead th { position: sticky; top: 0; background: #f8f9fa; z-index: 5; border-bottom: 2px solid var(--border); }
+</style>
