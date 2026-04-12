@@ -274,3 +274,20 @@ def get_path_trace_result(dnac, flow_id):
 def get_device_detail(dnac, device_id):
     resp = dnac.devices.get_network_device_by_id(id=device_id)
     return _dictify(resp.response) if hasattr(resp, "response") else _dictify(resp)
+
+def get_recent_issues(dnac) -> list:
+    """Fetch recent global issues/alerts from DNAC."""
+    from dev import DEV_MODE, MOCK_ISSUES
+    if DEV_MODE: return MOCK_ISSUES
+    try:
+        # Get issues from the last 24 hours
+        import time
+        end_time = int(time.time() * 1000)
+        start_time = end_time - (24 * 60 * 60 * 1000)
+
+        resp = dnac.issues.get_issues(start_time=start_time, end_time=end_time)
+        issues = getattr(resp, "response", None) or []
+        return [_dictify(i) for i in issues]
+    except Exception as e:
+        logger.warning(f"Failed to fetch issues: {e}")
+        return []

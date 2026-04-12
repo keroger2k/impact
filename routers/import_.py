@@ -101,19 +101,98 @@ async def run_import(req: ImportRequest, session: SessionEntry = Depends(require
             sites = await loop.run_in_executor(None, dc.get_site_cache, dnac)
             existing = await loop.run_in_executor(None, dc.get_managed_ips, dnac)
 
+            results = []
+            total   = len(req.entries)
+
             for idx, entry in enumerate(req.entries):
                 site_id, site_name = dc.find_best_site_match(sites, entry.site_code)
+                progress_pct       = round((idx / total) * 100)
+
                 if not site_id:
-                     yield emit({"type": "log", "level": "error", "message": f"{entry.ip}: Site {entry.site_code} not found"})
-                     continue
+                    yield emit({"type": "progress", "done": idx + 1, "total": total, "pct": progress_pct})
+                    yield emit({"type": "log", "level": "warn",
+                                "message": f"{entry.ip}: site '{entry.site_code}' not found — skipping"})
+                    results.append({"ip": entry.ip, "site": entry.site_code, "outcome": "site_not_found"})
+                    continue
+
                 if entry.ip in existing:
-                     yield emit({"type": "log", "level": "info", "message": f"{entry.ip}: Already exists"})
-                     continue
+                    yield emit({"type": "progress", "done": idx + 1, "total": total, "pct": progress_pct})
+                    yield emit({"type": "log", "level": "info",
+                                "message": f"{entry.ip}: already in inventory — skipping"})
+                    results.append({"ip": entry.ip, "site": site_name, "outcome": "skipped_exists"})
+                    continue
 
-                # ... rest of real logic ...
-                yield emit({"type": "progress", "done": idx + 1, "total": len(req.entries)})
+                yield emit({"type": "log", "level": "info",
+                            "message": f"{entry.ip}: initiating discovery (site: {site_name})"})
 
-            yield emit({"type": "complete", "total": len(req.entries), "discovered": 0, "skipped": 0, "failed": 0})
+                def do_discovery(ip=entry.ip, site_id=site_id, site_name=site_name):
+                    events = []
+                    try:
+                        disc_name = f"Auto-{ip.replace('.', '-')}-{uuid.uuid4().hex[:4]}"
+                        job       = dnac.discovery.start_discovery(
+                            name=disc_name, ipAddressList=ip,
+                            discoveryType="Single", globalCredentialIdList=cred_ids,
+                            protocolOrder="ssh",
+                        )
+                        discovery_id = _wait_for_discovery(
+                            dnac, job.response.taskId,
+                            req.max_retries, req.poll_interval,
+                            lambda e: events.append(e),
+                        )
+                        if not discovery_id:
+                            return None, "discovery_failed", events
+
+                        res   = dnac.discovery.get_discovered_network_devices_by_discovery_id(id=discovery_id)
+                        items = res.response if hasattr(res, "response") else []
+                        assign_list = []
+                        for dev in (items or []):
+                            m_ip        = dev.get("managementIpAddress")
+                            reachability = dev.get("reachabilityStatus")
+                            hostname    = dev.get("hostname", "Unknown")
+                            events.append({"type": "log", "level": "info",
+                                           "message": f"  [{hostname}] {m_ip} — {reachability}"})
+                            if m_ip and reachability == "Success":
+                                assign_list.append({"ip": m_ip})
+
+                        if assign_list:
+                            dnac.sites.assign_devices_to_site(site_id=site_id, device=assign_list)
+                            return ip, "discovered", events
+                        else:
+                            return None, "no_reachable_devices", events
+
+                    except Exception as e:
+                        events.append({"type": "log", "level": "error", "message": f"{ip}: {e}"})
+                        return None, f"error: {str(e)[:80]}", events
+
+                result_ip, outcome, sub_events = await loop.run_in_executor(None, do_discovery)
+
+                for ev in sub_events:
+                    yield emit(ev)
+
+                yield emit({"type": "progress", "done": idx + 1, "total": total, "pct": progress_pct})
+
+                if outcome == "discovered":
+                    existing.add(entry.ip)
+                    yield emit({"type": "log", "level": "success",
+                                "message": f"{entry.ip}: assigned to {site_name}"})
+                else:
+                    yield emit({"type": "log", "level": "warn",
+                                "message": f"{entry.ip}: outcome = {outcome}"})
+
+                results.append({"ip": entry.ip, "site": site_name, "outcome": outcome})
+
+            # Summary
+            discovered = sum(1 for r in results if r["outcome"] == "discovered")
+            skipped    = sum(1 for r in results if r["outcome"] == "skipped_exists")
+            failed     = sum(1 for r in results if r["outcome"] not in ("discovered", "skipped_exists", "site_not_found"))
+            no_site    = sum(1 for r in results if r["outcome"] == "site_not_found")
+
+            yield emit({
+                "type": "complete",
+                "total": total, "discovered": discovered,
+                "skipped": skipped, "failed": failed, "no_site": no_site,
+                "results": results,
+            })
         except Exception as e:
             yield emit({"type": "error", "message": str(e)})
 

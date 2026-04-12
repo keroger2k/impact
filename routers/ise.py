@@ -69,7 +69,7 @@ async def list_nads(request: Request, search: Optional[str] = None, session: Ses
         nads = [n for n in nads if s in json.dumps(n).lower()]
 
     if request.headers.get("HX-Request"):
-        from main import templates
+        from templates_module import templates
         return templates.TemplateResponse(request, "partials/ise_nads.html", {"total": len(nads), "items": nads})
     return {"total": len(nads), "items": nads}
 

@@ -64,7 +64,7 @@ async def list_device_groups(request: Request, session: SessionEntry = Depends(r
         cache.set("pan_device_groups", dgs, PAN_TTL)
 
     if request.headers.get("HX-Request"):
-        from main import templates
+        from templates_module import templates
         return templates.TemplateResponse(request, "partials/firewall_device_groups.html", {"items": dgs})
     return {"items": dgs}
 
@@ -153,7 +153,7 @@ async def list_firewall_interfaces(request: Request, session: SessionEntry = Dep
         cache.set("pan_interfaces", devices, TTL_PAN_INTERFACES)
 
     if request.headers.get("HX-Request"):
-        from main import templates
+        from templates_module import templates
         return templates.TemplateResponse(request, "partials/firewall_interfaces.html", {"items": devices})
     return {"items": devices, "total": len(devices)}
 
@@ -165,7 +165,7 @@ async def refresh_firewall_interfaces(request: Request, session: SessionEntry = 
     devices = await loop.run_in_executor(None, pc.fetch_firewall_interfaces, key)
     cache.set("pan_interfaces", devices, TTL_PAN_INTERFACES)
     if request.headers.get("HX-Request"):
-        from main import templates
+        from templates_module import templates
         return templates.TemplateResponse(request, "partials/firewall_interfaces.html", {"items": devices})
     return {"items": devices, "total": len(devices)}
 
@@ -178,7 +178,7 @@ async def list_managed_devices(request: Request, session: SessionEntry = Depends
         cached = await loop.run_in_executor(None, pc.get_managed_devices, key)
         cache.set("pan_managed_devices", cached, PAN_TTL)
     if request.headers.get("HX-Request"):
-        from main import templates
+        from templates_module import templates
         return templates.TemplateResponse(request, "partials/firewall_devices.html", {"items": cached})
     return {"items": cached}
 
@@ -192,7 +192,7 @@ async def search_firewall_interfaces_ui(request: Request, ip: str = Query(...), 
         if hostname not in grouped:
             grouped[hostname] = {"device": m["device"], "interfaces": []}
         grouped[hostname]["interfaces"].append(m["interface"])
-    from main import templates
+    from templates_module import templates
     return templates.TemplateResponse(request, "partials/firewall_interfaces.html", {"items": list(grouped.values())})
 
 @router.get("/templates", response_class=HTMLResponse)

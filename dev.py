@@ -47,18 +47,19 @@ MOCK_DEVICES: list[dict] = []
 MOCK_DEVICE_SITE_MAP: dict[str, str] = {}
 
 for _si, (_site, _subnet) in enumerate(_SITES):
-    for _di in range(5):
-        _idx   = _si * 5 + _di
+    for _di in range(20):
+        _idx   = _si * 20 + _di
         _reach = "Unreachable" if _idx % 7 == 0 else "Reachable"
         _id    = _uid(f"device-{_idx}")
-        _host  = f"SW-{_site.split('-')[1]}-{_di+1:02d}" if _ROLES[_di] == "ACCESS" else f"CORE-{_site.split('-')[1]}-{_di+1:02d}"
+        _role  = _ROLES[_di % len(_ROLES)]
+        _host  = f"SW-{_site.split('-')[1]}-{_di+1:02d}" if _role == "ACCESS" else f"CORE-{_site.split('-')[1]}-{_di+1:02d}"
         _dev   = {
             "id":                    _id,
             "hostname":              _host,
             "managementIpAddress":   f"{_subnet}.{_di+1}.1",
-            "platformId":            _PLATFORM[_di],
-            "softwareVersion":       _VERSION[_di],
-            "role":                  _ROLES[_di],
+            "platformId":            _PLATFORM[_di % len(_PLATFORM)],
+            "softwareVersion":       _VERSION[_di % len(_VERSION)],
+            "role":                  _role,
             "serialNumber":          f"FCW{2300+_idx:04d}A{_si:02d}",
             "vendor":                "Cisco",
             "reachabilityStatus":    _reach,
@@ -72,6 +73,37 @@ for _si, (_site, _subnet) in enumerate(_SITES):
         MOCK_DEVICE_SITE_MAP[_id] = _site
 
 MOCK_SITES = [{"id": _uid(f"site-{s}"), "name": s} for s, _ in _SITES]
+
+MOCK_ISSUES = [
+    {
+        "priority": "P1",
+        "issue_title": "Network Device Unreachable",
+        "device_name": "SW-DCA-HQ-01",
+        "site_name": "TSA-DCA-HQ",
+        "last_occurrence_time": "2026-04-09 10:15",
+    },
+    {
+        "priority": "P2",
+        "issue_title": "Interface GigabitEthernet1/0/1 flapping",
+        "device_name": "SW-LAX-T1-03",
+        "site_name": "TSA-LAX-T1",
+        "last_occurrence_time": "2026-04-09 11:30",
+    },
+    {
+        "priority": "P1",
+        "issue_title": "BGP Neighbor Adjacency Down",
+        "device_name": "CORE-ORD-T1-01",
+        "site_name": "TSA-ORD-T1",
+        "last_occurrence_time": "2026-04-09 09:45",
+    },
+    {
+        "priority": "P3",
+        "issue_title": "Power Supply Failure (Redundant)",
+        "device_name": "SW-BOS-T1-02",
+        "site_name": "TSA-BOS-T1",
+        "last_occurrence_time": "2026-04-09 12:00",
+    }
+]
 
 
 # ── Mock ISE data ─────────────────────────────────────────────────────────────

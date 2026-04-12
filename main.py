@@ -14,7 +14,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
+from templates_module import templates
 
 import auth as auth_module
 from auth import require_auth, SessionEntry
@@ -39,8 +39,6 @@ async def lifespan(app: FastAPI):
     yield
     logger.info("IMPACT II shutting down.")
 
-
-templates = Jinja2Templates(directory="templates")
 
 app = FastAPI(
     title="IMPACT II Network Operations",

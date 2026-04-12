@@ -1055,7 +1055,15 @@ body:has(.dev-page-layout) {
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
-  padding-bottom: 0;
+  padding: 0; /* Remove padding for full-bleed layout */
+}
+
+#main-content:has(.dev-page-layout) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 24px;
 }
 
 /* Step 4: inner wrapper fills #content, detail is fixed, table scrolls */
@@ -1065,6 +1073,7 @@ body:has(.dev-page-layout) {
   flex-direction: column;
   min-height: 0;
   gap: 16px;
+  overflow: hidden;
 }
 
 #dev-detail {
@@ -1351,18 +1360,20 @@ body:has(.dev-page-layout) {
 
 /* Scrollbar styling */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 ::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: #f0f0f0;
+  border-left: 1px solid #e0e0e0;
 }
 ::-webkit-scrollbar-thumb {
-  background: #ccc;
-  border-radius: 4px;
+  background: #888;
+  border-radius: 5px;
+  border: 2px solid #f0f0f0;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #aaa;
+  background: #555;
 }
 
 /* Sidebar active states fix */

@@ -15,7 +15,7 @@ async def bgp_summary(
     ip: str = Form(...),
     session: SessionEntry = Depends(require_auth)
 ):
-    from main import templates
+    from templates_module import templates
     from dev import DEV_MODE
     if DEV_MODE:
         mock_output = """BGP router identifier 10.10.1.1, local AS number 65001
@@ -71,7 +71,7 @@ async def eigrp_topology(
     ip: str = Form(...),
     session: SessionEntry = Depends(require_auth)
 ):
-    from main import templates
+    from templates_module import templates
     from dev import DEV_MODE
     if DEV_MODE:
         mock_output = """IP-EIGRP Topology Table for AS(1)/ID(10.10.1.1)
@@ -128,7 +128,7 @@ async def ospf_neighbors(
     ip: str = Form(...),
     session: SessionEntry = Depends(require_auth)
 ):
-    from main import templates
+    from templates_module import templates
     from dev import DEV_MODE
     if DEV_MODE:
         mock_output = """Neighbor ID      Pri   State           Dead Time   Address         Interface

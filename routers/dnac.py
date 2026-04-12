@@ -101,7 +101,7 @@ async def list_devices(
         paged.append(enriched)
     
     if request.headers.get("HX-Request"):
-        from main import templates
+        from templates_module import templates
         return templates.TemplateResponse(request, "partials/devices_list.html", {"total": total, "items": paged})
 
     return {"total": total, "offset": offset, "limit": limit, "items": paged}
@@ -169,7 +169,7 @@ async def get_device_detail_partial(
     dev_site_map = cache.get("device_site_map") or {}
     site_name = dev_site_map.get(device_id, "Unknown Site")
 
-    from main import templates
+    from templates_module import templates
     return templates.TemplateResponse(request, "partials/device_detail.html", {
         "d": enriched,
         "site_name": site_name
@@ -188,7 +188,7 @@ async def get_device_config(
 
     if cached is not None:
         if request.headers.get("HX-Request"):
-            from main import templates
+            from templates_module import templates
             return templates.TemplateResponse(request, "partials/device_config.html", {
                 "config": cached,
                 "cached": True
@@ -204,7 +204,7 @@ async def get_device_config(
     cache.set(cache_key, config, 600)
 
     if request.headers.get("HX-Request"):
-        from main import templates
+        from templates_module import templates
         return templates.TemplateResponse(request, "partials/device_config.html", {
             "config": config,
             "cached": False
@@ -300,7 +300,7 @@ async def ip_lookup_handler(ip: str, session: SessionEntry = Depends(require_aut
 @router.get("/ip-lookup/ui", response_class=HTMLResponse)
 async def ip_lookup_ui(request: Request, ip: str, session: SessionEntry = Depends(require_auth)):
     results = await ip_lookup_handler(ip, session)
-    from main import templates
+    from templates_module import templates
     return templates.TemplateResponse(request, "partials/ip_lookup_results.html", {"r": results})
 
 
@@ -537,7 +537,7 @@ async def config_search_ui(
         tag=tag
     )
     results = await config_search(req, session)
-    from main import templates
+    from templates_module import templates
     return templates.TemplateResponse(request, "partials/config_search_results.html", {
         "results": results, "search_string": search_string
     })
@@ -587,7 +587,7 @@ async def path_trace_result_ui(request: Request, flow_id: str, session: SessionE
             </div>
         """)
     hops = result.get("response", {}).get("networkElementsInfo", [])
-    from main import templates
+    from templates_module import templates
     return templates.TemplateResponse(request, "partials/path_trace_result.html", {
         "hops": hops,
         "source": result.get("response", {}).get("request", {}).get("sourceIP"),

@@ -1,4 +1,4 @@
-<div class="dev-page-layout d-flex flex-column h-100 overflow-hidden">
+<div class="dev-page-layout">
 
   <!-- ── Top: Device Details Section (Fixed Height) ────────────────────────── -->
   <div id="dev-detail" class="mb-3 border rounded bg-white shadow-sm overflow-hidden" style="height: 320px; flex-shrink: 0;">
@@ -16,7 +16,7 @@
   </div>
 
   <!-- ── Bottom: Inventory Table Section (Flex Grow + Inner Scroll) ────────── -->
-  <div class="card shadow-sm border-0 flex-grow-1 overflow-hidden d-flex flex-column min-h-0">
+  <div class="card shadow-sm border-0 flex-grow-1 d-flex flex-column min-h-0 overflow-hidden">
     <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center flex-shrink-0">
       <div class="d-flex align-items-center gap-2">
         <i class="fas fa-list"></i>
@@ -34,7 +34,7 @@
       </div>
     </div>
 
-    <div class="dev-table-wrap flex-grow-1 overflow-auto bg-white min-h-0" style="position: relative;">
+    <div class="dev-table-wrap flex-grow-1 bg-white min-h-0" style="position: relative; overflow-y: scroll !important;">
       <table class="table table-hover table-sm mb-0 sticky-header" id="devices-master-table">
         <thead class="table-light">
           <tr>
@@ -185,9 +185,6 @@
 </script>
 
 <style>
-  .dev-page-layout {
-    height: calc(100vh - 100px); /* Fill available space below topbar */
-  }
   .clickable-row { cursor: pointer; }
   .clickable-row:hover { background-color: rgba(0, 112, 210, 0.05); }
   .table-active { background-color: rgba(0, 112, 210, 0.1) !important; }

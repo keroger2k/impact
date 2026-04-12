@@ -1,11 +1,10 @@
 from fastapi import APIRouter, Request, Depends, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
+from templates_module import templates
 import auth as auth_module
 from auth import SessionEntry, verify_ldap_or_mock
 
 router = APIRouter(include_in_schema=False)
-templates = Jinja2Templates(directory="templates")
 
 async def get_current_user_from_cookie(request: Request):
     token = request.cookies.get("impact_token")
@@ -38,8 +37,16 @@ async def root(user: SessionEntry = Depends(get_current_user_from_cookie)):
 @router.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
     if not user: return RedirectResponse(url="/login")
-    from routers.dnac import device_stats
+    from routers.dnac import device_stats, _get_dnac
+    import clients.dnac as dc
+    import asyncio
+
+    loop = asyncio.get_event_loop()
+    dnac = _get_dnac(user)
+
     stats = await device_stats(user)
+    issues = await loop.run_in_executor(None, dc.get_recent_issues, dnac)
+
     # Status check is live
     from main import status
     current_status = await status(user)
@@ -48,6 +55,7 @@ async def dashboard(request: Request, user: SessionEntry = Depends(get_current_u
         "username": user.username,
         "token": request.cookies.get("impact_token"),
         "stats": stats,
+        "issues": issues,
         "systems_online": len([s for s in current_status.values() if s.get("ok")]),
         **current_status
     }
