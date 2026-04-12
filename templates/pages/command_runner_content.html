@@ -8,16 +8,21 @@
       <div class="card-body">
         <form id="cmd-form">
           <div class="mb-3">
-            <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Target Devices</label>
+            <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">DNAC Devices</label>
             <div id="device-selector-wrap" hx-get="/api/dnac/devices-select" hx-trigger="load" hx-target="#device-select-container">
                <div id="device-select-container">
                   <div class="spinner spinner-sm"></div>
                </div>
             </div>
-            <div class="small text-muted mt-1">Hold Ctrl/Cmd to select multiple</div>
           </div>
+
           <div class="mb-3">
-            <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Quick Diagnostic</label>
+            <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Manual IP List</label>
+            <textarea id="manual-ips" class="form-control form-control-sm" rows="3" placeholder="Paste IP addresses here (one per line)..."></textarea>
+          </div>
+
+          <div class="mb-3 border-top pt-3">
+            <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Diagnostic Template</label>
             <select name="command_preset" class="form-select" onchange="document.getElementById('custom-cmd').value = this.value">
               <option value="">-- Custom --</option>
               <option value="show ip route">Show IP Route</option>
@@ -30,10 +35,10 @@
           </div>
           <div class="mb-4">
             <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Command</label>
-            <textarea id="custom-cmd" name="command" class="form-control" rows="5" placeholder="Enter custom command..." required></textarea>
+            <textarea id="custom-cmd" name="command" class="form-control" rows="4" placeholder="Enter command to run..." required></textarea>
           </div>
           <button type="button" onclick="executeCommands()" class="btn btn-primary w-100 py-2 fw-bold shadow-sm">
-            <i class="fas fa-play me-1"></i> Execute on Targets
+            <i class="fas fa-play me-1"></i> Run on Targets
           </button>
         </form>
       </div>
@@ -61,23 +66,41 @@
   function executeCommands() {
     const form = document.getElementById('cmd-form');
     const command = form.command.value;
-    const select = document.getElementById('device-multi-select');
-    if (!select) return;
-    const selectedOptions = Array.from(select.selectedOptions);
+    const output = document.getElementById('cmd-output');
+    const progress = document.getElementById('cmd-progress-label');
 
-    if (selectedOptions.length === 0) {
-      alert("Please select at least one device.");
+    if (!command) {
+        alert("Please enter a command.");
+        return;
+    }
+
+    // 1. Gather devices from dropdown
+    let devices = [];
+    const select = document.getElementById('device-multi-select');
+    if (select) {
+        Array.from(select.selectedOptions).forEach(opt => {
+           const data = JSON.parse(opt.getAttribute('data-device'));
+           devices.push({ ip: data.ip, hostname: data.hostname, platform: data.platform });
+        });
+    }
+
+    // 2. Gather devices from textarea
+    const manualIps = document.getElementById('manual-ips').value;
+    if (manualIps) {
+        manualIps.split('\n').map(ip => ip.trim()).filter(ip => ip.length > 0).forEach(ip => {
+            // Avoid duplicates
+            if (!devices.some(d => d.ip === ip)) {
+                devices.push({ ip: ip, hostname: ip, platform: 'unknown' });
+            }
+        });
+    }
+
+    if (devices.length === 0) {
+      alert("Please select a device or enter an IP address.");
       return;
     }
 
-    const devices = selectedOptions.map(opt => {
-       const data = JSON.parse(opt.getAttribute('data-device'));
-       return { ip: data.ip, hostname: data.hostname, platform: data.platform };
-    });
-
-    const output = document.getElementById('cmd-output');
-    const progress = document.getElementById('cmd-progress-label');
-    output.innerHTML = '<div class="text-info">>> Initializing multi-device SSH session...</div>';
+    output.innerHTML = '<div class="text-info">>> Initializing session for ' + devices.length + ' targets...</div>';
 
     const payload = {
       devices: devices,
