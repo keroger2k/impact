@@ -154,6 +154,9 @@ def get_dnac_for_session(session: SessionEntry):
 
 def get_ise_for_session(session: SessionEntry):
     """Return (or lazily create) an ISE client authenticated as this user."""
+    from dev import DEV_MODE
+    if DEV_MODE:
+        return "mock-ise-client"
     with session._lock:
         if session.ise_client is None:
             import clients.ise as ic

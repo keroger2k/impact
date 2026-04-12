@@ -146,7 +146,7 @@ async def list_identity_groups(session: SessionEntry = Depends(require_auth)):
 
 
 @router.get("/users")
-async def list_users(search: Optional[str] = None, session: SessionEntry = Depends(require_auth)):
+async def list_users(request: Request, search: Optional[str] = None, session: SessionEntry = Depends(require_auth)):
     ise  = _get_ise(session)
     loop = asyncio.get_event_loop()
     users = await loop.run_in_executor(None, _cached, "ise_users",
@@ -154,13 +154,17 @@ async def list_users(search: Optional[str] = None, session: SessionEntry = Depen
     if search:
         s = search.lower()
         users = [u for u in users if s in json.dumps(u).lower()]
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/ise_users.html", {"total": len(users), "items": users})
     return {"total": len(users), "items": users}
 
 
 # ── TrustSec ──────────────────────────────────────────────────────────────────
 
 @router.get("/sgts")
-async def list_sgts(session: SessionEntry = Depends(require_auth)):
+async def list_sgts(request: Request, session: SessionEntry = Depends(require_auth)):
     ise  = _get_ise(session)
     loop = asyncio.get_event_loop()
     raw  = await loop.run_in_executor(None, _cached, "ise_sgts",
@@ -173,6 +177,10 @@ async def list_sgts(session: SessionEntry = Depends(require_auth)):
         prop  = s.get("propogateToApic", False) if isinstance(s, dict) else getattr(s, "propogateToApic", False)
         rows.append({"name": name, "value": value, "description": desc, "propagateToApic": prop})
     rows.sort(key=lambda r: int(str(r["value"])) if str(r["value"]).isdigit() else 9999)
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/ise_sgts.html", {"total": len(rows), "items": rows})
     return {"total": len(rows), "items": rows}
 
 
@@ -197,11 +205,15 @@ async def egress_matrix(session: SessionEntry = Depends(require_auth)):
 # ── Policy ────────────────────────────────────────────────────────────────────
 
 @router.get("/policy-sets")
-async def list_policy_sets(session: SessionEntry = Depends(require_auth)):
+async def list_policy_sets(request: Request, session: SessionEntry = Depends(require_auth)):
     ise  = _get_ise(session)
     loop = asyncio.get_event_loop()
     sets = await loop.run_in_executor(None, _cached, "ise_policy_sets",
                lambda: ic.get_policy_sets(ise))
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/ise_policy_sets.html", {"total": len(sets), "items": sets})
     return {"total": len(sets), "items": sets}
 
 
