@@ -22,6 +22,11 @@
                   <div class="fw-bold text-navy mb-1">{{ info.hostname }}</div>
                   <div class="badge bg-light text-muted x-small">{{ info.type }}</div>
                 </div>
+                <div class="ms-auto">
+                   <button class="btn btn-xs btn-outline-primary" hx-get="/api/dnac/ip-lookup/ui?ip={{ ip }}" hx-target="#eigrp-results" hx-swap="afterend">
+                     View Node
+                   </button>
+                </div>
               </div>
             </div>
           {% endfor %}

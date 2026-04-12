@@ -231,6 +231,25 @@ def tag_network_devices(dnac, tag_id: str, device_ids: list[str]) -> None:
 
 
 def get_interface_by_ip(dnac, ip: str) -> list[dict]:
+    from dev import DEV_MODE, MOCK_DEVICES
+    if DEV_MODE:
+        # Find if this IP belongs to a mock device
+        match = next((d for d in MOCK_DEVICES if d.get("managementIpAddress") == ip), None)
+        if match:
+            return [{
+                "deviceId": match["id"],
+                "portName": "GigabitEthernet0/1",
+                "ipv4Address": ip,
+                "ipv4Mask": "255.255.255.0",
+                "macAddress": "00:11:22:33:44:55",
+                "vlanId": "10",
+                "description": "Mock Management Interface",
+                "adminStatus": "UP",
+                "status": "up",
+                "speed": "1000000"
+            }]
+        return []
+
     try:
         result = dnac.custom_caller.call_api(
             "GET", f"/dna/intent/api/v1/interface/ip-address/{ip}"
