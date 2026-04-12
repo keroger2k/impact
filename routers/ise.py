@@ -218,11 +218,15 @@ async def list_policy_sets(request: Request, session: SessionEntry = Depends(req
 
 
 @router.get("/policy-sets/{policy_id}/auth-rules")
-async def get_auth_rules(policy_id: str, session: SessionEntry = Depends(require_auth)):
+async def get_auth_rules(request: Request, policy_id: str, session: SessionEntry = Depends(require_auth)):
     ise  = _get_ise(session)
     loop = asyncio.get_event_loop()
     rules = await loop.run_in_executor(None, _cached, f"ise_auth_rules_{policy_id}",
                 lambda: ic.get_auth_rules(ise, policy_id))
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/ise_auth_rules.html", {"total": len(rules), "items": rules})
     return {"total": len(rules), "items": rules}
 
 

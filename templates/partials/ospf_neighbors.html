@@ -23,7 +23,7 @@
                   <div class="badge bg-light text-muted small mt-1">{{ info.type }}</div>
                 </div>
                 <div class="ms-auto">
-                   <button class="btn btn-xs btn-outline-primary" hx-get="/ip-lookup/ui?ip={{ ip }}" hx-target="#ospf-results" hx-swap="afterend">
+                   <button class="btn btn-xs btn-outline-primary" hx-get="/api/dnac/ip-lookup/ui?ip={{ ip }}" hx-target="#ospf-results" hx-swap="afterend">
                      Trace Path
                    </button>
                 </div>
