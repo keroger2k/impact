@@ -1,23 +1,23 @@
 <div class="dev-page-layout d-flex flex-column h-100 overflow-hidden">
 
-  <!-- ── Top: Device Details Section ────────────────────────────────────────── -->
-  <div id="dev-detail" class="mb-3 border rounded bg-white shadow-sm" style="min-height: 250px;">
-    <div id="dev-detail-panel" class="h-100">
-      <div class="empty-state p-5 text-center">
+  <!-- ── Top: Device Details Section (Fixed Height) ────────────────────────── -->
+  <div id="dev-detail" class="mb-3 border rounded bg-white shadow-sm overflow-hidden" style="height: 320px; flex-shrink: 0;">
+    <div id="dev-detail-panel" class="h-100 overflow-auto">
+      <div class="empty-state p-5 text-center h-100 d-flex flex-column justify-content-center">
         <div class="empty-state-icon text-muted" style="font-size: 3rem;">🖥️</div>
-        <div class="empty-state-title h5 fw-bold">Select a device to view details</div>
+        <div class="empty-state-title h5 fw-bold mt-2">Select a device to view details</div>
         <div class="empty-state-desc text-muted">Scroll through the inventory below and click on any row.</div>
       </div>
     </div>
-    <div id="dev-detail-loading" class="htmx-indicator p-5 text-center">
-      <div class="spinner spinner-md"></div>
+    <div id="dev-detail-loading" class="htmx-indicator p-5 text-center h-100 d-flex flex-column justify-content-center bg-white">
+      <div class="spinner spinner-md mx-auto"></div>
       <p class="text-muted small mt-2">Fetching device configuration and health metrics...</p>
     </div>
   </div>
 
-  <!-- ── Bottom: Inventory Table Section ───────────────────────────────────── -->
-  <div class="card shadow-sm border-0 flex-grow-1 overflow-hidden d-flex flex-column">
-    <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center">
+  <!-- ── Bottom: Inventory Table Section (Flex Grow + Inner Scroll) ────────── -->
+  <div class="card shadow-sm border-0 flex-grow-1 overflow-hidden d-flex flex-column min-h-0">
+    <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center flex-shrink-0">
       <div class="d-flex align-items-center gap-2">
         <i class="fas fa-list"></i>
         <span class="fw-bold">Program Inventory</span>
@@ -34,7 +34,7 @@
       </div>
     </div>
 
-    <div class="dev-table-wrap flex-grow-1 overflow-auto bg-white" style="position: relative;">
+    <div class="dev-table-wrap flex-grow-1 overflow-auto bg-white min-h-0" style="position: relative;">
       <table class="table table-hover table-sm mb-0 sticky-header" id="devices-master-table">
         <thead class="table-light">
           <tr>
@@ -57,7 +57,7 @@
     </div>
 
     <!-- Paging Footer -->
-    <div class="card-footer bg-light border-top d-flex justify-content-between align-items-center py-2">
+    <div class="card-footer bg-light border-top d-flex justify-content-between align-items-center py-2 flex-shrink-0">
       <div class="small text-muted" id="paging-info">Showing 0-0 of 0</div>
       <div class="pagination-controls d-flex gap-1">
         <button class="btn btn-xs btn-outline-secondary px-2" onclick="prevPage()"><i class="fas fa-chevron-left"></i></button>
@@ -70,7 +70,6 @@
 </div>
 
 <script>
-  // Device Data Store
   let ALL_DEVICES = [];
   let FILTERED_DEVICES = [];
   let CURRENT_PAGE = 1;
@@ -83,8 +82,7 @@
     loader.classList.remove('d-none');
 
     try {
-      // Fetch ALL devices from API (unlimited/max)
-      const res = await fetch('/api/dnac/devices?limit=3000', {
+      const res = await fetch('/api/dnac/devices?limit=5000', {
         headers: { 'Authorization': 'Bearer {{ token }}' }
       });
       const data = await res.json();
@@ -133,10 +131,10 @@
     tbody.innerHTML = pageData.map(d => `
       <tr class="clickable-row" onclick="selectDevice('${d.id}', this)">
         <td class="fw-bold text-navy">${d.hostname}</td>
-        <td class="mono">${d.managementIpAddress}</td>
+        <td class="mono small">${d.managementIpAddress}</td>
         <td class="small">${d.platformId}</td>
         <td class="small uppercase">${d.role}</td>
-        <td class="small">${d.siteName || '—'}</td>
+        <td class="small text-truncate" style="max-width: 150px;">${d.siteName || '—'}</td>
         <td>
            <span class="badge ${d.reachabilityStatus === 'Reachable' ? 'bg-success-subtle text-success' : 'bg-danger-subtle text-danger'} px-2">
              ${d.reachabilityStatus}
@@ -157,7 +155,6 @@
     const container = document.getElementById('page-numbers');
     container.innerHTML = '';
 
-    // Show current page and neighbors
     for (let i = Math.max(1, CURRENT_PAGE - 2); i <= Math.min(pageCount, CURRENT_PAGE + 2); i++) {
         const btn = document.createElement('button');
         btn.className = `btn btn-xs ${i === CURRENT_PAGE ? 'btn-primary' : 'btn-outline-secondary'} px-2`;
@@ -171,11 +168,9 @@
   function nextPage() { if (CURRENT_PAGE * PAGE_SIZE < FILTERED_DEVICES.length) { CURRENT_PAGE++; renderTable(); } }
 
   function selectDevice(id, rowEl) {
-    // UI highlight
     document.querySelectorAll('.clickable-row').forEach(el => el.classList.remove('table-active'));
     rowEl.classList.add('table-active');
 
-    // HTMX request for details into top panel
     htmx.ajax('GET', '/api/dnac/devices/' + id + '/detail', {
         target: '#dev-detail-panel',
         indicator: '#dev-detail-loading'
@@ -186,17 +181,24 @@
      loadInitialDevices();
   }
 
-  // Auto-init
   loadInitialDevices();
 </script>
 
 <style>
   .dev-page-layout {
-    height: calc(100vh - 120px);
+    height: calc(100vh - 100px); /* Fill available space below topbar */
   }
   .clickable-row { cursor: pointer; }
   .clickable-row:hover { background-color: rgba(0, 112, 210, 0.05); }
   .table-active { background-color: rgba(0, 112, 210, 0.1) !important; }
   .btn-xs { padding: 1px 5px; font-size: 0.75rem; }
-  .sticky-header thead th { position: sticky; top: 0; background: #f8f9fa; z-index: 5; border-bottom: 2px solid var(--border); }
+  .min-h-0 { min-height: 0; }
+  .sticky-header thead th {
+    position: sticky;
+    top: 0;
+    background: #f8f9fa;
+    z-index: 5;
+    border-bottom: 2px solid var(--border);
+    white-space: nowrap;
+  }
 </style>
