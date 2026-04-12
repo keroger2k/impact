@@ -132,6 +132,8 @@ def find_best_site_match(site_cache: list, term: str) -> tuple[str | None, str |
 
 
 def get_device_config(dnac, device_id: str) -> str:
+    from dev import DEV_MODE, get_mock_config
+    if DEV_MODE: return get_mock_config(device_id)
     try:
         resp = dnac.custom_caller.call_api(
             "GET", f"/dna/intent/api/v1/network-device/{device_id}/config"
@@ -252,3 +254,23 @@ def get_global_credentials(dnac, sub_type: str) -> list:
     except Exception as e:
         logger.warning(f"Credential fetch failed: {e}")
         return []
+
+def initiate_path_trace(dnac, source_ip, dest_ip, protocol="TCP", dest_port=80):
+    payload = {
+        "sourceIP": source_ip,
+        "destIP": dest_ip,
+        "protocol": protocol,
+        "destPort": str(dest_port)
+    }
+    # SDK method name can vary, try initiate_a_new_pathtrace or initiate_new_path_trace
+    try:
+        return dnac.path_trace.initiate_a_new_pathtrace(payload=payload)
+    except AttributeError:
+        return dnac.path_trace.initiate_new_path_trace(payload=payload)
+
+def get_path_trace_result(dnac, flow_id):
+    return dnac.path_trace.retrives_all_previous_pathtrace_results(flow_analysis_id=flow_id)
+
+def get_device_detail(dnac, device_id):
+    resp = dnac.devices.get_network_device_by_id(id=device_id)
+    return _dictify(resp.response) if hasattr(resp, "response") else _dictify(resp)

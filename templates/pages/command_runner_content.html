@@ -14,6 +14,7 @@
                   <div class="spinner spinner-sm"></div>
                </div>
             </div>
+            <div class="small text-muted mt-1">Hold Ctrl/Cmd to select multiple</div>
           </div>
           <div class="mb-3">
             <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Quick Diagnostic</label>
@@ -61,6 +62,7 @@
     const form = document.getElementById('cmd-form');
     const command = form.command.value;
     const select = document.getElementById('device-multi-select');
+    if (!select) return;
     const selectedOptions = Array.from(select.selectedOptions);
 
     if (selectedOptions.length === 0) {
@@ -75,7 +77,7 @@
 
     const output = document.getElementById('cmd-output');
     const progress = document.getElementById('cmd-progress-label');
-    output.innerHTML = '<div class="text-info">>> Initializing session...</div>';
+    output.innerHTML = '<div class="text-info">>> Initializing multi-device SSH session...</div>';
 
     const payload = {
       devices: devices,

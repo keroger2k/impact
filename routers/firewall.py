@@ -5,7 +5,7 @@ import asyncio
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Form
+from fastapi import APIRouter, Depends, HTTPException, Request, Form, Query
 from pydantic import BaseModel
 
 import auth as auth_module
@@ -369,3 +369,40 @@ async def get_device_vsys_policies(
 
 
 
+
+@router.get("/interfaces/search", response_class=HTMLResponse)
+async def search_firewall_interfaces_ui(
+    request: Request,
+    ip: str = Query(...),
+    session: SessionEntry = Depends(require_auth)
+):
+    pan_devices = cache.get("pan_interfaces") or []
+    matches = pc.search_firewall_interfaces(ip, pan_devices)
+
+    # Reformat matches for the template which expects items with device and interfaces
+    # search_firewall_interfaces returns [{device, interface}]
+    # We want to group by device for the firewall_interfaces.html template
+    grouped = {}
+    for m in matches:
+        hostname = m["device"]["hostname"]
+        if hostname not in grouped:
+            grouped[hostname] = {"device": m["device"], "interfaces": []}
+        grouped[hostname]["interfaces"].append(m["interface"])
+
+    from main import templates
+    return templates.TemplateResponse(request, "partials/firewall_interfaces.html", {"items": list(grouped.values())})
+
+@router.get("/templates", response_class=HTMLResponse)
+async def list_panorama_templates_ui(request: Request, session: SessionEntry = Depends(require_auth)):
+    # Mock templates for now
+    templates_list = ["Standard-Branch-Template", "HQ-DataCenter-Template", "Remote-VPN-Template"]
+    return HTMLResponse(f"""
+        <div class="card shadow-sm border-0 animate-fade-in">
+            <div class="card-header bg-navy text-white fw-bold">Panorama Templates</div>
+            <div class="card-body p-0">
+                <ul class="list-group list-group-flush">
+                    {"".join(f'<li class="list-group-item"><i class="fas fa-layer-group text-primary me-2"></i>{t}</li>' for t in templates_list)}
+                </ul>
+            </div>
+        </div>
+    """)

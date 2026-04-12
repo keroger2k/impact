@@ -268,3 +268,27 @@ def create_dev_session() -> None:
     )
     with auth_module._store_lock:
         auth_module._sessions[DEV_TOKEN] = entry
+
+MOCK_CONFIGS = {
+    dev["id"]: f"""!
+hostname {dev['hostname']}
+!
+interface GigabitEthernet0/1
+ description Primary Uplink
+ ip address {dev['managementIpAddress']} 255.255.255.0
+ speed 1000
+ duplex full
+!
+snmp-server community TSA-RO RO
+snmp-server community TSA-RW RW
+!
+router eigrp 1
+ network {dev['managementIpAddress'].rsplit('.', 1)[0]}.0 0.0.0.255
+!
+end
+"""
+    for dev in MOCK_DEVICES
+}
+
+def get_mock_config(device_id):
+    return MOCK_CONFIGS.get(device_id, "! No config found")

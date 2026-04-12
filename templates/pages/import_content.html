@@ -6,22 +6,28 @@
         <span class="fw-bold">Inventory Import Tool</span>
       </div>
       <div class="card-body p-4">
-        <p class="text-muted small mb-4">Upload a JSON import request to bulk provision devices. Our tool will automatically resolve sites and push the initial configuration.</p>
+        <p class="text-muted small mb-4">Paste a JSON import request to bulk provision devices via discovery and site assignment.</p>
         <form id="import-form">
           <div class="mb-4">
             <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Import Payload (JSON)</label>
-            <textarea id="import-payload" class="form-control" rows="10" placeholder='{ "devices": [...], "dry_run": true }'></textarea>
+            <textarea id="import-payload" class="form-control" rows="10" placeholder='{
+  "entries": [
+    { "ip": "10.99.1.1", "site_code": "TSA-DCA-HQ" }
+  ],
+  "cli_username": "dnac-acct",
+  "snmp_username": "tsa_mon_user"
+}'></textarea>
           </div>
           <button type="button" onclick="startImport()" class="btn btn-primary w-100 py-3 fw-bold shadow-sm">
-            <i class="fas fa-cloud-upload-alt me-1"></i> Execute Import Request
+            <i class="fas fa-cloud-upload-alt me-1"></i> Start Import (SSE)
           </button>
         </form>
-        <div id="import-loading" class="mt-4 d-none text-center">
-          <div class="spinner spinner-md"></div>
-          <p class="text-muted small mt-2">Processing import and validating with systems...</p>
-        </div>
+        <div id="import-status-label" class="text-info small mt-2 fw-bold"></div>
       </div>
     </div>
+
+    <div id="import-log" class="mt-4 bg-dark text-success p-4 rounded shadow-sm overflow-auto d-none" style="max-height: 400px; font-family: 'SF Mono', monospace; font-size: 12px;"></div>
+
     <div id="import-results" class="mt-4"></div>
   </div>
 </div>
@@ -33,14 +39,18 @@
     try {
       payload = JSON.parse(payloadStr);
     } catch(e) {
-      alert("Invalid JSON payload.");
+      alert("Invalid JSON. Please ensure 'entries' array is present.");
       return;
     }
 
+    const log = document.getElementById('import-log');
     const results = document.getElementById('import-results');
-    const loading = document.getElementById('import-loading');
-    loading.classList.remove('d-none');
+    const status = document.getElementById('import-status-label');
+
+    log.classList.remove('d-none');
+    log.innerHTML = '>> Starting import session...<br>';
     results.innerHTML = '';
+    status.textContent = 'Status: Initializing...';
 
     fetch('/api/import/run', {
       method: 'POST',
@@ -50,13 +60,38 @@
       },
       body: JSON.stringify(payload)
     }).then(response => {
-       loading.classList.add('d-none');
-       return response.json();
-    }).then(data => {
-       results.innerHTML = '<div class="card shadow-sm"><div class="card-body"><pre class="text-navy">' + JSON.stringify(data, null, 2) + '</pre></div></div>';
-    }).catch(err => {
-       loading.classList.add('d-none');
-       results.innerHTML = '<div class="alert alert-danger">Import Failed: ' + err + '</div>';
+       const reader = response.body.getReader();
+       const decoder = new TextDecoder();
+
+       function process({ done, value }) {
+         if (done) return;
+         const chunk = decoder.decode(value);
+         const lines = chunk.split('\n');
+
+         lines.forEach(line => {
+           if (line.startsWith('data: ')) {
+             try {
+               const data = JSON.parse(line.substring(6));
+               if (data.type === 'log') {
+                 const color = data.level === 'error' ? 'text-danger' : (data.level === 'success' ? 'text-primary' : 'text-success');
+                 log.innerHTML += `<span class="${color}">[${data.level.toUpperCase()}] ${data.message}</span><br>`;
+                 log.scrollTop = log.scrollHeight;
+               } else if (data.type === 'progress') {
+                 status.textContent = `Status: Working (${data.done}/${data.total})`;
+               } else if (data.type === 'complete') {
+                  status.textContent = 'Status: Complete';
+                  results.innerHTML = '<div class="card shadow-sm border-start border-4 border-success animate-fade-in"><div class="card-body"><h6 class="fw-bold text-navy mb-3">Import Complete</h6><p class="small text-muted">Discovered: ' + data.discovered + ' | Skipped: ' + data.skipped + ' | Failed: ' + data.failed + '</p></div></div>';
+               } else if (data.type === 'error') {
+                  log.innerHTML += `<span class="text-danger">FATAL ERROR: ${data.message}</span><br>`;
+                  status.textContent = 'Status: Error';
+               }
+             } catch(e) {}
+           }
+         });
+
+         return reader.read().then(process);
+       }
+       return reader.read().then(process);
     });
   }
 </script>

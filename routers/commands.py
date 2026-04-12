@@ -1,7 +1,4 @@
-"""routers/commands.py — Ad-hoc SSH command runner with SSE streaming.
-
-SSH credentials come from the logged-in user's session.
-"""
+"""routers/commands.py — Ad-hoc SSH command runner with SSE streaming."""
 
 import asyncio
 import json
@@ -47,6 +44,15 @@ def _run_on_device(
     timeout: int,
 ) -> dict:
     """SSH to one device, run one command. Returns result dict."""
+    from dev import DEV_MODE
+    if DEV_MODE:
+        time.sleep(1) # simulate network latency
+        return {
+            "ip": ip, "status": "success",
+            "output": f"Mock output for '{command}' on {ip}\n(Simulated connection success)",
+            "elapsed": 1.0, "error": None,
+        }
+
     start = time.time()
     try:
         from netmiko import ConnectHandler
@@ -75,7 +81,7 @@ def _run_on_device(
 class CommandRequest(BaseModel):
     devices:              list[dict]   # [{ip, hostname, platform}]
     command:              str
-    device_type_override: Optional[str] = None   # None = auto-detect
+    device_type_override: Optional[str] = None
     max_workers:          int = 10
     timeout:              int = 30
 
@@ -87,7 +93,7 @@ async def run_command(req: CommandRequest, session: SessionEntry = Depends(requi
 
     async def generate():
         total = len(req.devices)
-        done  = [0]
+        done  = 0
 
         def make_result(device: dict) -> dict:
             dtype = (
@@ -113,8 +119,8 @@ async def run_command(req: CommandRequest, session: SessionEntry = Depends(requi
             for future in as_completed(futures):
                 result = future.result()
                 results.append(result)
-                done[0] += 1
-                yield f"data: {json.dumps({'type':'progress','done':done[0],'total':total,**result})}\n\n"
+                done += 1
+                yield f"data: {json.dumps({'type':'progress','done':done,'total':total,**result})}\n\n"
 
         succeeded = sum(1 for r in results if r["status"] == "success")
         yield f"data: {json.dumps({'type':'complete','total':total,'succeeded':succeeded,'failed':total-succeeded})}\n\n"

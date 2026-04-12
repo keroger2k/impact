@@ -162,6 +162,8 @@ def get_ise_for_session(session: SessionEntry):
 
 
 def get_panorama_key_for_session(session: SessionEntry) -> str:
+    from dev import DEV_MODE
+    if DEV_MODE: return "mock-pan-key"
     """Return (or lazily generate) a Panorama API key for this user."""
     with session._lock:
         if session.panorama_key is None:

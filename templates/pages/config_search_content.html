@@ -29,9 +29,25 @@
                     <label class="form-label small">Platform</label>
                     <input type="text" name="platform" class="form-control form-control-sm">
                   </div>
-                   <div class="mb-2">
+                  <div class="mb-2">
                     <label class="form-label small">Role</label>
                     <input type="text" name="role" class="form-control form-control-sm">
+                  </div>
+                  <div class="mb-2">
+                    <label class="form-label small">Device Family</label>
+                    <input type="text" name="device_family" class="form-control form-control-sm">
+                  </div>
+                   <div class="mb-2">
+                    <label class="form-label small">Reachability</label>
+                    <select name="reachability" class="form-select form-select-sm">
+                        <option value="Reachable">Reachable Only</option>
+                        <option value="">Any Status</option>
+                        <option value="Unreachable">Unreachable Only</option>
+                    </select>
+                  </div>
+                  <div class="mb-2">
+                    <label class="form-label small">Tag</label>
+                    <input type="text" name="tag" class="form-control form-control-sm">
                   </div>
                 </div>
               </div>
@@ -54,7 +70,7 @@
       <div class="empty-state bg-white border rounded shadow-sm">
         <div class="empty-state-icon text-muted">🔍</div>
         <div class="empty-state-title">Configuration Search</div>
-        <div class="empty-state-desc">Enter a string to search through all cached device configurations.</div>
+        <div class="empty-state-desc">Search through all device configurations across the entire program. We search in parallel and cache results for performance.</div>
       </div>
     </div>
   </div>
