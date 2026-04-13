@@ -314,13 +314,14 @@ def get_recent_issues(dnac) -> list:
         end_time = int(time.time() * 1000)
         start_time = end_time - (24 * 60 * 60 * 1000)
 
-        # Using custom caller for reliability across SDK versions
+        # Using custom caller for reliability across SDK versions.
+        # We omit the 'priority' filter from the query to avoid 400 errors on DNAC versions
+        # that have strict validation for that parameter, and filter manually instead.
         resp = dnac.custom_caller.call_api(
             "GET", "/dna/intent/api/v1/issues",
             params={
                 "startTime": start_time,
-                "endTime": end_time,
-                "priority": "P1,P2"
+                "endTime": end_time
             }
         )
         # custom_caller returns a response object with .response
@@ -334,6 +335,12 @@ def get_recent_issues(dnac) -> list:
         normalized = []
         for issue in raw_issues:
             d = _dictify(issue)
+
+            # Manual filter for P1/P2
+            priority = d.get("priority", "P3")
+            if priority not in ("P1", "P2"):
+                continue
+
             ts = d.get("lastOccurrenceTime") or d.get("timestamp") or ""
             if isinstance(ts, (int, float)):
                 from datetime import datetime
