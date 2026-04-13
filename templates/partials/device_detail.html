@@ -21,9 +21,9 @@
 
   <div class="detail-body">
     <div class="nav nav-tabs mb-4" id="device-tabs">
-      <button class="nav-link active" onclick="switchTab(this, 'overview')">Overview</button>
-      <button class="nav-link" onclick="switchTab(this, 'specs')">Specifications</button>
-      <button class="nav-link" onclick="switchTab(this, 'config')" hx-get="/api/dnac/devices/{{ d.id }}/config" hx-target="#tab-config-container" hx-indicator="#tab-config-loading">Config</button>
+      <button class="nav-link active" id="tab-btn-overview" onclick="switchTab(this, 'overview')">Overview</button>
+      <button class="nav-link" id="tab-btn-specs" onclick="switchTab(this, 'specs')">Specifications</button>
+      <button class="nav-link" id="tab-btn-config" onclick="switchTab(this, 'config')" hx-get="/api/dnac/devices/{{ d.id }}/config" hx-target="#tab-config-container" hx-indicator="#tab-config-loading">Config</button>
     </div>
 
     <div id="detail-tabs-content">

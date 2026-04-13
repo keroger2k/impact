@@ -288,7 +288,18 @@ def initiate_path_trace(dnac, source_ip, dest_ip, protocol="TCP", dest_port=80):
         return dnac.path_trace.initiate_new_path_trace(payload=payload)
 
 def get_path_trace_result(dnac, flow_id):
-    return dnac.path_trace.retrives_all_previous_pathtrace_results(flow_analysis_id=flow_id)
+    """Retrieve path trace result using custom caller for reliability."""
+    try:
+        resp = dnac.custom_caller.call_api(
+            "GET", f"/dna/intent/api/v1/flow-analysis/{flow_id}"
+        )
+        # custom_caller returns a response object with .response
+        if hasattr(resp, "response"):
+            return _dictify(resp.response)
+        return _dictify(resp)
+    except Exception as e:
+        logger.error(f"Path trace fetch failed for {flow_id}: {e}")
+        return {}
 
 def get_device_detail(dnac, device_id):
     resp = dnac.devices.get_network_device_by_id(id=device_id)
@@ -303,9 +314,22 @@ def get_recent_issues(dnac) -> list:
         end_time = int(time.time() * 1000)
         start_time = end_time - (24 * 60 * 60 * 1000)
 
-        # We target P1/P2 issues specifically for the dashboard
-        resp = dnac.issues.get_issues(start_time=start_time, end_time=end_time, priority="P1,P2")
-        raw_issues = getattr(resp, "response", None) or []
+        # Using custom caller for reliability across SDK versions
+        resp = dnac.custom_caller.call_api(
+            "GET", "/dna/intent/api/v1/issues",
+            params={
+                "startTime": start_time,
+                "endTime": end_time,
+                "priority": "P1,P2"
+            }
+        )
+        # custom_caller returns a response object with .response
+        raw_issues = getattr(resp, "response", resp)
+        if isinstance(raw_issues, dict) and "response" in raw_issues:
+            raw_issues = raw_issues["response"]
+
+        if not isinstance(raw_issues, list):
+            raw_issues = []
 
         normalized = []
         for issue in raw_issues:

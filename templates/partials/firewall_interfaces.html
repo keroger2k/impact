@@ -17,7 +17,7 @@
         {% for dev in items %}
           {% for iface in dev.interfaces %}
           <tr>
-            <td class="fw-bold text-navy">{{ dev.device.hostname }}</td>
+            <td class="fw-bold text-navy">{{ dev.hostname or dev.device.hostname }}</td>
             <td class="small">{{ iface.name }}</td>
             <td class="mono small">{{ iface.ipv4 }}</td>
             <td><span class="badge bg-light text-muted">Unknown</span></td>

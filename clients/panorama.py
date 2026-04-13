@@ -37,9 +37,11 @@ BASE_XPATH = "/config/devices/entry[@name='localhost.localdomain']"
 
 def _keygen(host: str, user: str, pwd: str) -> str | None:
     """Exchange credentials for a Panorama API key."""
+    if not host: return None
     try:
+        host_clean = host.strip().split('/')[0]
         resp = requests.get(
-            f"https://{host}/api/",
+            f"https://{host_clean}/api/",
             params={"type": "keygen", "user": user, "password": pwd},
             verify=False,
             timeout=15,
@@ -84,9 +86,12 @@ def get_user_api_key(username: str, password: str) -> str | None:
 def _config_get(xpath: str, api_key: str) -> ET.Element | None:
     """Panorama config GET — returns the <result> element or None."""
     host = os.getenv("PANORAMA_HOST")
+    if not host: return None
     try:
+        # Sanitize host to prevent Error #4 (idna codec empty label)
+        host_clean = host.strip().split('/')[0]
         resp = requests.get(
-            f"https://{host}/api/",
+            f"https://{host_clean}/api/",
             params={
                 "type":   "config",
                 "action": "get",
@@ -110,9 +115,11 @@ def _config_get(xpath: str, api_key: str) -> ET.Element | None:
 def _op(cmd: str, api_key: str) -> ET.Element | None:
     """Panorama op command — returns the <result> element or None."""
     host = os.getenv("PANORAMA_HOST")
+    if not host: return None
     try:
+        host_clean = host.strip().split('/')[0]
         resp = requests.get(
-            f"https://{host}/api/",
+            f"https://{host_clean}/api/",
             params={"type": "op", "cmd": cmd, "key": api_key},
             verify=False,
             timeout=30,
@@ -127,13 +134,17 @@ def _op(cmd: str, api_key: str) -> ET.Element | None:
 def _op_targeted(cmd: str, api_key: str, target: str) -> ET.Element | None:
     """Like _op but targets a specific managed firewall by serial number."""
     host = os.getenv("PANORAMA_HOST")
+    if not host: return None
     try:
+        host_clean = host.strip().split('/')[0]
         resp = requests.get(
-            f"https://{host}/api/",
+            f"https://{host_clean}/api/",
             params={"type": "op", "cmd": cmd, "key": api_key, "target": target},
             verify=False,
             timeout=20,
         )
+        if not resp.text or not resp.text.strip():
+            return None
         root = ET.fromstring(resp.text)
         if root.attrib.get("status") == "error":
             msg = root.findtext(".//msg/line") or root.findtext(".//msg") or "unknown error"
@@ -161,7 +172,12 @@ def fetch_firewall_interfaces(api_key: str) -> list[dict]:
     Skips disconnected/unreachable devices gracefully.
     Returns a list of device dicts ordered by hostname.
     """
-    result = _op("<show><devices><all/></devices></show>", api_key)
+    try:
+        result = _op("<show><devices><all/></devices></show>", api_key)
+    except Exception as e:
+        logger.error(f"Failed to fetch Panorama devices: {e}")
+        return []
+
     if result is None:
         logger.warning("fetch_firewall_interfaces: no result from Panorama device list")
         return []

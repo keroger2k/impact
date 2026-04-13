@@ -147,8 +147,7 @@ async def refresh_firewall_cache():
 async def list_firewall_interfaces(request: Request, session: SessionEntry = Depends(require_auth)):
     from dev import DEV_MODE
     if DEV_MODE:
-        from dev import MOCK_FIREWALL_RULES # Actually, let's use a dedicated mock
-        # Generate some mock interfaces for the 2 mock firewalls in MOCK_FIREWALL_RULES' logic
+        # Generate some mock interfaces
         devices = [
             {
                 "hostname": "FW-EAST-01",
@@ -174,12 +173,19 @@ async def list_firewall_interfaces(request: Request, session: SessionEntry = Dep
             return templates.TemplateResponse(request, "partials/firewall_interfaces.html", {"items": devices})
         return {"items": devices}
 
-    key  = _get_key(session)
-    loop = asyncio.get_event_loop()
-    devices = cache.get("pan_interfaces")
-    if devices is None:
-        devices = await loop.run_in_executor(None, pc.fetch_firewall_interfaces, key)
-        cache.set("pan_interfaces", devices, TTL_PAN_INTERFACES)
+    try:
+        key  = _get_key(session)
+        loop = asyncio.get_event_loop()
+        devices = cache.get("pan_interfaces")
+        if devices is None:
+            devices = await loop.run_in_executor(None, pc.fetch_firewall_interfaces, key)
+            if devices is not None:
+                cache.set("pan_interfaces", devices, TTL_PAN_INTERFACES)
+            else:
+                devices = []
+    except Exception as e:
+        logger.error(f"Failed to list firewall interfaces: {e}")
+        raise HTTPException(500, f"Panorama Error: {str(e)}")
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
