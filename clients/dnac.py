@@ -308,52 +308,66 @@ def get_device_detail(dnac, device_id):
 def get_recent_issues(dnac) -> list:
     """Fetch and normalize recent global issues/alerts from DNAC."""
     from dev import DEV_MODE, MOCK_ISSUES
-    if DEV_MODE: return MOCK_ISSUES
-    try:
-        import time
-        end_time = int(time.time() * 1000)
-        start_time = end_time - (24 * 60 * 60 * 1000)
 
-        # Using custom caller for reliability across SDK versions.
-        # We omit the 'priority' filter from the query to avoid 400 errors on DNAC versions
-        # that have strict validation for that parameter, and filter manually instead.
-        resp = dnac.custom_caller.call_api(
-            "GET", "/dna/intent/api/v1/issues",
-            params={
-                "startTime": start_time,
-                "endTime": end_time
-            }
-        )
-        # custom_caller returns a response object with .response
-        raw_issues = getattr(resp, "response", resp)
-        if isinstance(raw_issues, dict) and "response" in raw_issues:
-            raw_issues = raw_issues["response"]
+    raw_issues = []
+    if DEV_MODE:
+        raw_issues = MOCK_ISSUES
+    else:
+        try:
+            import time
+            end_time = int(time.time() * 1000)
+            start_time = end_time - (24 * 60 * 60 * 1000)
 
-        if not isinstance(raw_issues, list):
-            raw_issues = []
+            # Using custom caller for reliability across SDK versions.
+            # We omit the 'priority' filter from the query to avoid 400 errors on DNAC versions
+            # that have strict validation for that parameter, and filter manually instead.
+            resp = dnac.custom_caller.call_api(
+                "GET", "/dna/intent/api/v1/issues",
+                params={
+                    "startTime": start_time,
+                    "endTime": end_time
+                }
+            )
+            # custom_caller returns a response object with .response
+            raw_issues = getattr(resp, "response", resp)
+            if isinstance(raw_issues, dict) and "response" in raw_issues:
+                raw_issues = raw_issues["response"]
 
-        normalized = []
-        for issue in raw_issues:
+            if not isinstance(raw_issues, list):
+                raw_issues = []
+        except Exception as e:
+            logger.warning(f"Failed to fetch issues: {e}")
+            return []
+
+    normalized = []
+    for issue in raw_issues:
             d = _dictify(issue)
 
             # Manual filter for P1/P2
-            priority = d.get("priority", "P3")
+            priority = d.get("priority", d.get("severity", "P3"))
             if priority not in ("P1", "P2"):
                 continue
 
-            ts = d.get("lastOccurrenceTime") or d.get("timestamp") or ""
-            if isinstance(ts, (int, float)):
+            # Time can be in many places: lastOccurrenceTime, timestamp, occurredOn, etc.
+            ts_raw = d.get("lastOccurrenceTime") or d.get("timestamp") or d.get("occurredOn") or d.get("startTime") or ""
+            ts = ""
+            if isinstance(ts_raw, (int, float)):
                 from datetime import datetime
-                ts = datetime.fromtimestamp(ts/1000.0).strftime('%Y-%m-%d %H:%M')
+                ts = datetime.fromtimestamp(ts_raw/1000.0).strftime('%Y-%m-%d %H:%M')
+            elif isinstance(ts_raw, str) and ts_raw:
+                ts = ts_raw[:16].replace('T', ' ') # Simple ISO-ish slice
+
+            # Device Name normalization
+            dev = d.get("device_name") or d.get("deviceName") or d.get("host") or d.get("source") or "Multiple"
+
+            # Site Name normalization - try hierarchy first, then name
+            site = d.get("site_name") or d.get("siteName") or d.get("siteHierarchy") or d.get("siteNameHierarchy") or "—"
 
             normalized.append({
-                "priority": d.get("priority", "P2"),
-                "issue_title": d.get("name") or d.get("issueTitle") or "Unknown Issue",
-                "device_name": d.get("device_name") or d.get("deviceName") or "Multiple",
-                "site_name": d.get("site_name") or d.get("siteName") or "—",
+                "priority": priority,
+                "issue_title": d.get("name") or d.get("issueTitle") or d.get("title") or "Unknown Issue",
+                "device_name": dev,
+                "site_name": site,
                 "last_occurrence_time": ts
             })
-        return normalized
-    except Exception as e:
-        logger.warning(f"Failed to fetch issues: {e}")
-        return []
+    return normalized

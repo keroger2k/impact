@@ -83,33 +83,43 @@ MOCK_USERS = [
 MOCK_ISSUES = [
     {
         "priority": "P1",
-        "issue_title": "Network Device Unreachable",
-        "device_name": "SW-DCA-HQ-01",
-        "site_name": "TSA-DCA-HQ",
-        "last_occurrence_time": "2026-04-09 10:15",
+        "name": "Network Device Unreachable",
+        "deviceName": "SW-DCA-HQ-01",
+        "siteHierarchy": "TSA-DCA-HQ",
+        "lastOccurrenceTime": 1712657700000,
     },
     {
-        "priority": "P2",
-        "issue_title": "Interface GigabitEthernet1/0/1 flapping",
-        "device_name": "SW-LAX-T1-03",
-        "site_name": "TSA-LAX-T1",
-        "last_occurrence_time": "2026-04-09 11:30",
+        "severity": "P2",
+        "issueTitle": "Interface GigabitEthernet1/0/1 flapping",
+        "deviceName": "SW-LAX-T1-03",
+        "siteName": "TSA-LAX-T1",
+        "timestamp": 1712662200000,
     },
     {
         "priority": "P1",
-        "issue_title": "BGP Neighbor Adjacency Down",
-        "device_name": "CORE-ORD-T1-01",
-        "site_name": "TSA-ORD-T1",
-        "last_occurrence_time": "2026-04-09 09:45",
+        "title": "BGP Neighbor Adjacency Down",
+        "source": "CORE-ORD-T1-01",
+        "siteHierarchy": "Global/TSA/ORD/T1",
+        "occurredOn": "2026-04-09T09:45:00Z",
     },
     {
         "priority": "P3",
-        "issue_title": "Power Supply Failure (Redundant)",
-        "device_name": "SW-BOS-T1-02",
+        "name": "Power Supply Failure (Redundant)",
+        "host": "SW-BOS-T1-02",
         "site_name": "TSA-BOS-T1",
-        "last_occurrence_time": "2026-04-09 12:00",
+        "startTime": 1712664000000,
     }
 ]
+
+# Add many more to test scrolling
+for i in range(20):
+    MOCK_ISSUES.append({
+        "priority": "P2",
+        "name": f"OSPF Adjacency Change {i}",
+        "deviceName": f"SW-DCA-HQ-{i:02d}",
+        "siteHierarchy": "TSA-DCA-HQ",
+        "timestamp": 1712664000000 + (i * 60000),
+    })
 
 
 # ── Mock ISE data ─────────────────────────────────────────────────────────────
