@@ -23,7 +23,7 @@
     <div class="nav nav-tabs mb-4" id="device-tabs">
       <button class="nav-link active" onclick="switchTab(this, 'overview')">Overview</button>
       <button class="nav-link" onclick="switchTab(this, 'specs')">Specifications</button>
-      <button class="nav-link" hx-get="/api/dnac/devices/{{ d.id }}/config" hx-target="#detail-tabs-content">Config</button>
+      <button class="nav-link" onclick="switchTab(this, 'config')" hx-get="/api/dnac/devices/{{ d.id }}/config" hx-target="#tab-config-container" hx-indicator="#tab-config-loading">Config</button>
     </div>
 
     <div id="detail-tabs-content">
@@ -66,6 +66,16 @@
             <div class="kv-row"><span class="kv-label">OS Type</span><span class="kv-value">{{ d.softwareType }}</span></div>
             <div class="kv-row"><span class="kv-label">Uptime</span><span class="kv-value small">{{ d.upTime or 'Unknown' }}</span></div>
           </div>
+        </div>
+      </div>
+
+      <div id="tab-config" class="device-tab-pane d-none">
+        <div id="tab-config-loading" class="htmx-indicator p-4 text-center">
+           <div class="spinner spinner-sm mx-auto"></div>
+           <p class="text-muted small mt-2">Loading configuration...</p>
+        </div>
+        <div id="tab-config-container">
+          <!-- Populated via HTMX -->
         </div>
       </div>
     </div>

@@ -156,7 +156,11 @@ def get_ise_for_session(session: SessionEntry):
     """Return (or lazily create) an ISE client authenticated as this user."""
     from dev import DEV_MODE
     if DEV_MODE:
-        return "mock-ise-client"
+        class MockISE:
+            def __init__(self):
+                from dev import MOCK_USERS
+                self.custom_caller = type('CC', (), {'call_api': lambda *a, **k: None})
+        return MockISE()
     with session._lock:
         if session.ise_client is None:
             import clients.ise as ic

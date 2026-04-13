@@ -1392,3 +1392,75 @@ body:has(.dev-page-layout) {
 .no-transition {
   transition: none !important;
 }
+
+/* ── Debug Console ────────────────────────────────────────── */
+#debug-console-wrap {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  width: 400px;
+  background: #1e1e1e;
+  border: 1px solid #333;
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: all 0.3s ease;
+}
+
+#debug-console-wrap.minimized {
+  height: 40px;
+  width: 180px;
+}
+
+.debug-header {
+  background: #2d2d2d;
+  padding: 8px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  border-bottom: 1px solid #333;
+}
+
+.debug-title {
+  color: #aaa;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.debug-body {
+  height: 300px;
+  overflow-y: auto;
+  padding: 10px;
+  font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+  font-size: 11px;
+  background: #111;
+}
+
+.debug-entry {
+  margin-bottom: 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #222;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.debug-entry.log { color: #d4d4d4; }
+.debug-entry.error { color: #f44747; background: rgba(244, 71, 71, 0.1); }
+.debug-entry.warn { color: #dcdcaa; }
+.debug-entry.info { color: #4fc1ff; }
+
+.debug-controls button {
+  background: transparent;
+  border: none;
+  color: #888;
+  padding: 0 4px;
+  cursor: pointer;
+}
+
+.debug-controls button:hover { color: #fff; }

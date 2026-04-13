@@ -145,6 +145,25 @@ async def list_identity_groups(session: SessionEntry = Depends(require_auth)):
     return {"total": len(groups), "items": groups}
 
 
+@router.get("/users/{user_id}")
+async def get_user_detail(request: Request, user_id: str, session: SessionEntry = Depends(require_auth)):
+    from dev import DEV_MODE, MOCK_USERS
+    if DEV_MODE:
+        user = next((u for u in MOCK_USERS if u["id"] == user_id), None)
+        if not user: raise HTTPException(404, "User not found")
+    else:
+        ise  = _get_ise(session)
+        loop = asyncio.get_event_loop()
+        user = await loop.run_in_executor(None, ic.get_internal_user_detail, ise, user_id)
+        if not user:
+            raise HTTPException(404, "User not found")
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/ise_user_detail.html", {"u": user})
+    return user
+
+
 @router.get("/users")
 async def list_users(request: Request, search: Optional[str] = None, session: SessionEntry = Depends(require_auth)):
     ise  = _get_ise(session)

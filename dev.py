@@ -74,6 +74,12 @@ for _si, (_site, _subnet) in enumerate(_SITES):
 
 MOCK_SITES = [{"id": _uid(f"site-{s}"), "name": s} for s, _ in _SITES]
 
+MOCK_USERS = [
+    {"id": _uid("user-admin"), "name": "admin", "description": "Network Administrator", "enabled": True, "passwordPolicy": "Strong"},
+    {"id": _uid("user-ops"),   "name": "ops-user", "description": "NOC Operations", "enabled": True, "passwordPolicy": "Standard"},
+    {"id": _uid("user-audit"), "name": "audit-svc", "description": "Audit Service Account", "enabled": False, "passwordPolicy": "None"},
+]
+
 MOCK_ISSUES = [
     {
         "priority": "P1",
@@ -259,6 +265,7 @@ def seed_cache(cache) -> None:
 
     # ISE lists
     cache.set("ise_nads",            MOCK_NADS,             LONG)
+    cache.set("ise_users",           MOCK_USERS,            LONG)
     cache.set("ise_nad_groups",      MOCK_NAD_GROUPS,       LONG)
     cache.set("ise_endpoint_groups", MOCK_ENDPOINT_GROUPS,  LONG)
     cache.set("ise_identity_groups", MOCK_IDENTITY_GROUPS,  LONG)

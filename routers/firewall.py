@@ -145,6 +145,35 @@ async def refresh_firewall_cache():
 
 @router.get("/interfaces")
 async def list_firewall_interfaces(request: Request, session: SessionEntry = Depends(require_auth)):
+    from dev import DEV_MODE
+    if DEV_MODE:
+        from dev import MOCK_FIREWALL_RULES # Actually, let's use a dedicated mock
+        # Generate some mock interfaces for the 2 mock firewalls in MOCK_FIREWALL_RULES' logic
+        devices = [
+            {
+                "hostname": "FW-EAST-01",
+                "serial": "SN001",
+                "device": {"hostname": "FW-EAST-01"},
+                "interfaces": [
+                    {"name": "ethernet1/1", "ipv4": "10.100.1.1/24"},
+                    {"name": "ethernet1/2", "ipv4": "10.100.2.1/24"}
+                ]
+            },
+            {
+                "hostname": "FW-WEST-01",
+                "serial": "SN002",
+                "device": {"hostname": "FW-WEST-01"},
+                "interfaces": [
+                    {"name": "ethernet1/1", "ipv4": "10.200.1.1/24"},
+                    {"name": "ethernet1/2", "ipv4": "10.200.2.1/24"}
+                ]
+            }
+        ]
+        if request.headers.get("HX-Request"):
+            from templates_module import templates
+            return templates.TemplateResponse(request, "partials/firewall_interfaces.html", {"items": devices})
+        return {"items": devices}
+
     key  = _get_key(session)
     loop = asyncio.get_event_loop()
     devices = cache.get("pan_interfaces")

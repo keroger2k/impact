@@ -49,6 +49,10 @@
          hx-get="/config-search" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
         <span class="nav-icon">🔍</span> <span>Config Search</span>
       </a>
+      <a class="nav-item {% if active_page == 'ip-lookup' %}active{% endif %}"
+         hx-get="/ip-lookup" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+        <span class="nav-icon">📍</span> <span>IP Lookup</span>
+      </a>
       <a class="nav-item {% if active_page == 'ise' %}active{% endif %}"
          hx-get="/ise" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
         <span class="nav-icon">🔐</span> <span>ISE Control</span>
@@ -93,6 +97,18 @@
 <!-- Toast container -->
 <div id="toast-container"></div>
 
+<!-- Debug Console -->
+<div id="debug-console-wrap" class="minimized">
+  <div class="debug-header" onclick="toggleDebugConsole()">
+    <div class="debug-title"><i class="fas fa-terminal me-2"></i> Console</div>
+    <div class="debug-controls">
+      <button onclick="clearDebugConsole(event)"><i class="fas fa-ban"></i></button>
+      <button id="debug-toggle-icon"><i class="fas fa-chevron-up"></i></button>
+    </div>
+  </div>
+  <div class="debug-body" id="debug-console-body"></div>
+</div>
+
 <script src="/static/bootstrap/js/bootstrap.bundle.min.js"></script>
 <script>
   function toggleSidebar() {
@@ -120,6 +136,45 @@
         localStorage.removeItem('impact_user');
         window.location.href = '/login';
       });
+  }
+
+  // ── Debug Console logic ───────────────────────────────────────
+  const consoleBody = document.getElementById('debug-console-body');
+  const originalLog = console.log;
+  const originalError = console.error;
+  const originalWarn = console.warn;
+  const originalInfo = console.info;
+
+  function addDebugEntry(type, args) {
+    const entry = document.createElement('div');
+    entry.className = `debug-entry ${type}`;
+    const timestamp = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    const msg = Array.from(args).map(arg => {
+      if (typeof arg === 'object') return JSON.stringify(arg);
+      return arg;
+    }).join(' ');
+
+    entry.innerHTML = `<span style="opacity:0.4">[${timestamp}]</span> ${msg}`;
+    consoleBody.appendChild(entry);
+    consoleBody.scrollTop = consoleBody.scrollHeight;
+  }
+
+  console.log = function() { originalLog.apply(console, arguments); addDebugEntry('log', arguments); };
+  console.error = function() { originalError.apply(console, arguments); addDebugEntry('error', arguments); };
+  console.warn = function() { originalWarn.apply(console, arguments); addDebugEntry('warn', arguments); };
+  console.info = function() { originalInfo.apply(console, arguments); addDebugEntry('info', arguments); };
+
+  function toggleDebugConsole() {
+    const wrap = document.getElementById('debug-console-wrap');
+    const icon = document.querySelector('#debug-toggle-icon i');
+    const isMinimized = wrap.classList.toggle('minimized');
+    icon.className = isMinimized ? 'fas fa-chevron-up' : 'fas fa-chevron-down';
+  }
+
+  function clearDebugConsole(e) {
+    e.stopPropagation();
+    consoleBody.innerHTML = '';
   }
 
   // Handle HTMX navigation highlighting
