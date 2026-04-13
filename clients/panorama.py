@@ -230,7 +230,7 @@ def fetch_firewall_interfaces(api_key: str) -> list[dict]:
                 name = entry.findtext("name")
                 if not name:
                     continue
-                iface_map.setdefault(name, {"name": name, "ipv4": "", "ipv6": []})
+                iface_map.setdefault(name, {"name": name, "ipv4": "", "ipv6": [], "zone": ""})
 
                 # IPv4
                 v4 = (entry.findtext("ip") or "").strip()
@@ -253,6 +253,19 @@ def fetch_firewall_interfaces(api_key: str) -> list[dict]:
                         val = node.text.strip()
                         if val.lower() not in _SKIP_VALUES and val not in iface_map[name]["ipv6"]:
                             iface_map[name]["ipv6"].append(val)
+
+        # Fetch zone information to map interfaces to zones
+        zone_result = _op_targeted("<show><zone></show>", api_key, serial)
+        if zone_result is not None:
+            for entry in zone_result.findall(".//entry"):
+                zone_name = entry.findtext("name")
+                if not zone_name:
+                    continue
+                # Interfaces are often listed under <interface><member>...</member></interface>
+                for iface_node in entry.findall(".//interface/member"):
+                    iface_name = (iface_node.text or "").strip()
+                    if iface_name in iface_map:
+                        iface_map[iface_name]["zone"] = zone_name
 
         # Only include devices that have at least one IP
         interfaces = [v for v in iface_map.values() if v["ipv4"] or v["ipv6"]]

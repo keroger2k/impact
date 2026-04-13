@@ -154,8 +154,8 @@ async def list_firewall_interfaces(request: Request, session: SessionEntry = Dep
                 "serial": "SN001",
                 "device": {"hostname": "FW-EAST-01"},
                 "interfaces": [
-                    {"name": "ethernet1/1", "ipv4": "10.100.1.1/24"},
-                    {"name": "ethernet1/2", "ipv4": "10.100.2.1/24"}
+                    {"name": "ethernet1/1", "ipv4": "10.100.1.1/24", "zone": "untrust"},
+                    {"name": "ethernet1/2", "ipv4": "10.100.2.1/24", "zone": "trust"}
                 ]
             },
             {
@@ -163,8 +163,8 @@ async def list_firewall_interfaces(request: Request, session: SessionEntry = Dep
                 "serial": "SN002",
                 "device": {"hostname": "FW-WEST-01"},
                 "interfaces": [
-                    {"name": "ethernet1/1", "ipv4": "10.200.1.1/24"},
-                    {"name": "ethernet1/2", "ipv4": "10.200.2.1/24"}
+                    {"name": "ethernet1/1", "ipv4": "10.200.1.1/24", "zone": "untrust"},
+                    {"name": "ethernet1/2", "ipv4": "10.200.2.1/24", "zone": "trust"}
                 ]
             }
         ]

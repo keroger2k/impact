@@ -255,6 +255,5 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 @app.get("/partials/status", response_class=HTMLResponse)
 async def get_status_partial(request: Request, session: SessionEntry = Depends(require_auth)):
-    from main import status, templates
     current_status = await status(session)
     return templates.TemplateResponse(request, "partials/status.html", current_status)

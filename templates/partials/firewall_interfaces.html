@@ -10,7 +10,7 @@
           <th>Firewall Hostname</th>
           <th>Interface Name</th>
           <th>IPv4 Address</th>
-          <th>Zone (Mock)</th>
+          <th>Zone</th>
         </tr>
       </thead>
       <tbody>
@@ -20,7 +20,13 @@
             <td class="fw-bold text-navy">{{ dev.hostname or dev.device.hostname }}</td>
             <td class="small">{{ iface.name }}</td>
             <td class="mono small">{{ iface.ipv4 }}</td>
-            <td><span class="badge bg-light text-muted">Unknown</span></td>
+            <td>
+              {% if iface.zone %}
+                <span class="badge bg-info-subtle text-info">{{ iface.zone }}</span>
+              {% else %}
+                <span class="badge bg-light text-muted">Unknown</span>
+              {% endif %}
+            </td>
           </tr>
           {% endfor %}
         {% endfor %}
