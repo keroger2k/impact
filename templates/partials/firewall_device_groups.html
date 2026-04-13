@@ -17,7 +17,12 @@
           <td class="fw-bold text-navy">{{ dg }}</td>
           <td><span class="badge bg-info-subtle text-info">Panorama DG</span></td>
           <td>
-             <button class="btn btn-xs btn-outline-primary px-2 py-0">Explore</button>
+             <button class="btn btn-xs btn-outline-primary px-2 py-0"
+                     hx-get="/api/firewall/policies/{{ dg }}"
+                     hx-target="#pan-results"
+                     hx-indicator="#pan-loading">
+               Explore
+             </button>
           </td>
         </tr>
         {% endfor %}

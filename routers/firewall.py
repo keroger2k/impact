@@ -243,3 +243,23 @@ async def list_panorama_templates_ui(request: Request, session: SessionEntry = D
             </div>
         </div>
     """)
+
+@router.get("/policies/{device_group}")
+async def get_device_group_policies(request: Request, device_group: str, session: SessionEntry = Depends(require_auth)):
+    from dev import DEV_MODE, MOCK_FIREWALL_RULES
+
+    if DEV_MODE:
+        rules = [r for r in MOCK_FIREWALL_RULES if r.get("device_group") == device_group or r.get("device_group") == "shared"]
+    else:
+        key  = _get_key(session)
+        loop = asyncio.get_event_loop()
+        # Fetching pre-rules and post-rules for this DG
+        rules = await loop.run_in_executor(None, pc.get_all_security_rules, key, [device_group])
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/firewall_policies.html", {
+            "device_group": device_group,
+            "items": rules
+        })
+    return {"device_group": device_group, "items": rules}
