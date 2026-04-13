@@ -459,6 +459,13 @@ body {
   z-index: 11;
 }
 
+.table.sticky-header thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background-color: #f8f9fa; /* Match table-light */
+}
+
 .table-dark thead {
   background: var(--cisco-navy);
 }
