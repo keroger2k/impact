@@ -432,7 +432,7 @@ class ConfigSearchRequest(BaseModel):
     device_family: Optional[str] = None
     reachability:  str = "Reachable"
     tag:           Optional[str] = None
-    max_devices:   int = 0  # 0 = no limit
+    max_devices:   int = 500
 
 
 @router.post("/config-search")
@@ -477,13 +477,11 @@ async def config_search(req: ConfigSearchRequest, session: SessionEntry = Depend
     if not filtered:
         return {"total_matches": 0, "results": [], "search_string": req.search_string}
 
-    if req.max_devices > 0 and len(filtered) > req.max_devices:
+    if req.max_devices and len(filtered) > req.max_devices:
         filtered = filtered[:req.max_devices]
 
     dnac     = _get_dnac(session)
     search   = req.search_string.lower()
-
-    _NO_CONFIG = object()  # sentinel: config fetch returned empty
 
     def fetch_and_search(device: dict) -> dict | None:
         dev_id   = device.get("id", "")
@@ -492,8 +490,7 @@ async def config_search(req: ConfigSearchRequest, session: SessionEntry = Depend
         if config is None:
             config = dc.get_device_config(dnac, dev_id)
             if config: cache.set(cfg_key, config, 600)
-        if not config:
-            return _NO_CONFIG
+        if not config: return None
         matching_lines = [
             {"line_num": i + 1, "text": line}
             for i, line in enumerate(config.splitlines())
@@ -509,20 +506,13 @@ async def config_search(req: ConfigSearchRequest, session: SessionEntry = Depend
     with ThreadPoolExecutor(max_workers=20) as executor:
         futures_done = list(executor.map(fetch_and_search, filtered))
 
-    results      = [r for r in futures_done if r is not None and r is not _NO_CONFIG]
-    no_cfg_count = sum(1 for r in futures_done if r is _NO_CONFIG)
+    results = [r for r in futures_done if r is not None]
     results.sort(key=lambda r: (-r["match_count"], r["hostname"]))
 
-    truncated = req.max_devices > 0 and len(devices) > req.max_devices
-
     return {
-        "search_string":    req.search_string,
-        "total_matches":    len(results),
-        "results":          results,
-        "searched":         len(filtered),
-        "no_config_count":  no_cfg_count,
-        "truncated":        truncated,
-        "total_devices":    len(devices),
+        "search_string": req.search_string,
+        "total_matches": len(results),
+        "results": results,
     }
 
 @router.post("/config-search/ui", response_class=HTMLResponse)

@@ -147,15 +147,15 @@ async def refresh_firewall_cache():
 async def list_firewall_interfaces(request: Request, session: SessionEntry = Depends(require_auth)):
     from dev import DEV_MODE
     if DEV_MODE:
-        # Generate some mock interfaces
+        # Generate some mock interfaces with mixed cases to test the new robust parser
         devices = [
             {
                 "hostname": "FW-EAST-01",
                 "serial": "SN001",
                 "device": {"hostname": "FW-EAST-01"},
                 "interfaces": [
-                    {"name": "ethernet1/1", "ipv4": "10.100.1.1/24", "zone": "untrust"},
-                    {"name": "ethernet1/2", "ipv4": "10.100.2.1/24", "zone": "trust"}
+                    {"name": "Ethernet1/1", "ipv4": "10.100.1.1/24", "zone": "untrust"},
+                    {"name": "Ethernet1/2", "ipv4": "10.100.2.1/24", "zone": "trust"}
                 ]
             },
             {

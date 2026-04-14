@@ -254,20 +254,39 @@ def fetch_firewall_interfaces(api_key: str) -> list[dict]:
                         if val.lower() not in _SKIP_VALUES and val not in iface_map[name]["ipv6"]:
                             iface_map[name]["ipv6"].append(val)
 
-        # Fetch zone information to map interfaces to zones
+        # Fetch zone information to map interfaces to zones.
+        # Try <show><zone></show> first.
+        # For multi-vsys, this might need to be run per-vsys, but usually Panorama
+        # targeted op returns the aggregate or vsys1.
         zone_result = _op_targeted("<show><zone></show>", api_key, serial)
         if zone_result is not None:
+            # We use a case-insensitive map for interface lookups to be safe
+            iface_keys_lower = {k.lower(): k for k in iface_map.keys()}
+
             for entry in zone_result.findall(".//entry"):
                 zone_name = entry.get("name") or entry.findtext("name")
                 if not zone_name:
                     continue
 
-                # Interfaces are often listed under <interface><member>...</member></interface>
-                # or just <member>...</member> depending on the PAN-OS version and command variant
-                for iface_node in entry.findall(".//interface/member") + entry.findall("./member"):
-                    iface_name = (iface_node.text or "").strip()
-                    if iface_name in iface_map:
-                        iface_map[iface_name]["zone"] = zone_name
+                # Search for interface members using multiple common XPaths
+                # Some versions use <interface><member>..., others just <member>...
+                # We also look for <vsys><entry><interface><member>... for multi-vsys responses
+                iface_nodes = (
+                    entry.findall(".//interface/member") +
+                    entry.findall("./member") +
+                    entry.findall(".//vsys/entry/interface/member")
+                )
+
+                for iface_node in iface_nodes:
+                    iface_name_raw = (iface_node.text or "").strip()
+                    if not iface_name_raw:
+                        continue
+
+                    # Case-insensitive match against our collected interfaces
+                    if iface_name_raw.lower() in iface_keys_lower:
+                        actual_key = iface_keys_lower[iface_name_raw.lower()]
+                        iface_map[actual_key]["zone"] = zone_name
+                        logger.debug(f"Mapped {actual_key} to zone {zone_name} on {hostname}")
 
         # Only include devices that have at least one IP
         interfaces = [v for v in iface_map.values() if v["ipv4"] or v["ipv6"]]

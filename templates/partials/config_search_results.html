@@ -3,22 +3,6 @@
     <span class="fw-bold">Search Results for "{{ search_string }}"</span>
     <span class="badge bg-light text-navy">{{ results.total_matches }} Devices Matched</span>
   </div>
-  {% if results.no_config_count > 0 or results.truncated %}
-  <div class="px-3 pt-2 pb-1 d-flex flex-wrap gap-2 border-bottom bg-light-subtle small">
-    {% if results.truncated %}
-    <span class="text-warning">
-      <i class="fas fa-exclamation-triangle me-1"></i>
-      Searched first {{ results.searched }} of {{ results.total_devices }} devices — use filters to narrow scope
-    </span>
-    {% endif %}
-    {% if results.no_config_count > 0 %}
-    <span class="text-danger">
-      <i class="fas fa-times-circle me-1"></i>
-      {{ results.no_config_count }} device{{ 's' if results.no_config_count != 1 }} returned no config from DNAC (skipped)
-    </span>
-    {% endif %}
-  </div>
-  {% endif %}
   <div class="card-body p-0">
     {% if results.results %}
       <div class="accordion accordion-flush" id="configResults">
