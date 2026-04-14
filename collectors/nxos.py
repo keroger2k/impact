@@ -93,7 +93,7 @@ class NXOSCollector(BaseCollector):
     #  Public entry point                                                  #
     # ------------------------------------------------------------------ #
 
-    def collect(self) -> List[InterfaceResult]:
+    def collect(self, include_config: bool = False) -> Tuple[List[InterfaceResult], Optional[str]]:
         logger.debug("[%s] Connecting via SSH to %s", self.hostname, self.ip_address)
 
         try:
@@ -109,24 +109,36 @@ class NXOSCollector(BaseCollector):
             )
         except NetmikoAuthenticationException as exc:
             logger.error("[%s] Authentication failed: %s", self.hostname, exc)
-            return self._error_result(f"Authentication failed: {exc}")
+            return self._error_result(f"Authentication failed: {exc}"), None
         except NetmikoTimeoutException as exc:
             logger.error("[%s] Connection timed out: %s", self.hostname, exc)
-            return self._error_result(f"Connection timed out: {exc}")
+            return self._error_result(f"Connection timed out: {exc}"), None
         except Exception as exc:
             logger.error("[%s] SSH connection failed: %s", self.hostname, exc)
-            return self._error_result(f"SSH connection failed: {exc}")
+            return self._error_result(f"SSH connection failed: {exc}"), None
 
+        config = None
         try:
             results = self._collect_with_connection(conn)
+            if include_config:
+                config = self._collect_config(conn)
         finally:
             conn.disconnect()
 
-        return results
+        return results, config
 
     # ------------------------------------------------------------------ #
     #  Collection                                                          #
     # ------------------------------------------------------------------ #
+
+    def _collect_config(self, conn) -> str:
+        try:
+            config = conn.send_command("show running-config", read_timeout=120)
+            self._save_raw(config, "show_run")
+            return config
+        except Exception as exc:
+            logger.error("[%s] 'show running-config' failed: %s", self.hostname, exc)
+            return f"Error collecting config: {exc}"
 
     def _collect_with_connection(self, conn) -> List[InterfaceResult]:
 

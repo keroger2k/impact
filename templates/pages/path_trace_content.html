@@ -1,0 +1,51 @@
+<div class="row g-4">
+  <div class="col-md-4">
+    <div class="card shadow-sm">
+      <div class="card-header bg-navy text-white d-flex align-items-center gap-2">
+        <i class="fas fa-route"></i>
+        <span class="fw-bold">New Path Trace</span>
+      </div>
+      <div class="card-body">
+        <p class="text-muted small mb-4">Visualize the path between two endpoints using Cisco Catalyst Center.</p>
+        <form hx-post="/api/dnac/path-trace/ui" hx-target="#pt-results" hx-indicator="#pt-loading">
+          <div class="mb-3">
+            <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Source IP</label>
+            <input type="text" name="source_ip" class="form-control" placeholder="e.g. 10.1.1.50" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Destination IP</label>
+            <input type="text" name="dest_ip" class="form-control" placeholder="e.g. 10.2.1.100" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Protocol</label>
+            <select name="protocol" class="form-select">
+              <option value="TCP">TCP</option>
+              <option value="UDP">UDP</option>
+              <option value="ICMP">ICMP</option>
+            </select>
+          </div>
+          <div class="mb-4">
+            <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Destination Port</label>
+            <input type="number" name="dest_port" class="form-control" value="80">
+          </div>
+          <button type="submit" class="btn btn-primary w-100 py-2 fw-bold">
+            <i class="fas fa-play-circle me-1"></i> Initiate Trace
+          </button>
+        </form>
+        <div id="pt-loading" class="htmx-indicator mt-4 text-center">
+          <div class="spinner spinner-md"></div>
+          <p class="text-muted small mt-2">Requesting trace from Catalyst Center...</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-8">
+    <div id="pt-results">
+      <div class="empty-state bg-white border rounded shadow-sm">
+        <div class="empty-state-icon text-muted">🗺️</div>
+        <div class="empty-state-title">No Active Path Trace</div>
+        <div class="empty-state-desc">Enter source and destination IPs to visualize the network path.</div>
+      </div>
+    </div>
+  </div>
+</div>

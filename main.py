@@ -1,6 +1,8 @@
+from fastapi import Request
+from fastapi.responses import HTMLResponse
 """
 main.py — IMPACT II Network Operations Platform
-FastAPI backend + static file serving for the SPA frontend.
+FastAPI backend + Jinja2/HTMX rendering.
 
 Run:  uvicorn main:app --reload --host 0.0.0.0 --port 8000
 """
@@ -11,13 +13,12 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from templates_module import templates
 
 import auth as auth_module
 from auth import require_auth, SessionEntry
-from cache import AppCache
-from routers import dnac, ise, firewall, commands, import_, auth as auth_router
+from routers import dnac, ise, firewall, commands, import_, auth as auth_router, pages, routing, nexus
 
 logging.basicConfig(
     level=logging.INFO,
@@ -56,14 +57,19 @@ app.add_middleware(
 )
 
 # ── API routers ────────────────────────────────────────────────────────────────
-_auth_dep = {"dependencies": [__import__("fastapi").Depends(require_auth)]}
+_auth_dep = {"dependencies": [Depends(require_auth)]}
 
 app.include_router(auth_router.router, prefix="/api/auth",     tags=["Auth"])
 app.include_router(dnac.router,      prefix="/api/dnac",     tags=["DNAC"],     **_auth_dep)
 app.include_router(ise.router,       prefix="/api/ise",      tags=["ISE"],      **_auth_dep)
 app.include_router(firewall.router,  prefix="/api/firewall", tags=["Firewall"], **_auth_dep)
+app.include_router(nexus.router,     prefix="/api/nexus",    tags=["Nexus"],    **_auth_dep)
 app.include_router(commands.router,  prefix="/api/commands", tags=["Commands"], **_auth_dep)
 app.include_router(import_.router,   prefix="/api/import",   tags=["Import"],   **_auth_dep)
+app.include_router(routing.router,   prefix="/api/routing",  tags=["Routing"],  **_auth_dep)
+
+# ── Page router ────────────────────────────────────────────────────────────────
+app.include_router(pages.router)
 
 # ── Dev mode info ─────────────────────────────────────────────────────────────
 @app.get("/api/dev-mode")
@@ -244,15 +250,11 @@ async def status(session: SessionEntry = Depends(require_auth)):
     dnac_r, ise_r, pan_r = await asyncio.gather(check_dnac(), check_ise(), check_panorama())
     return {"dnac": dnac_r, "ise": ise_r, "panorama": pan_r}
 
-# ── Static frontend ────────────────────────────────────────────────────────────
+# ── Static assets ──────────────────────────────────────────────────────────────
 static_dir = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
-@app.get("/")
-@app.get("/{full_path:path}")
-async def serve_spa(full_path: str = ""):
-    """Serve the SPA for all non-API routes (client-side routing)."""
-    if full_path.startswith("api/"):
-        from fastapi import HTTPException
-        raise HTTPException(status_code=404)
-    return FileResponse(static_dir / "index.html")
+@app.get("/partials/status", response_class=HTMLResponse)
+async def get_status_partial(request: Request, session: SessionEntry = Depends(require_auth)):
+    current_status = await status(session)
+    return templates.TemplateResponse(request, "partials/status.html", current_status)

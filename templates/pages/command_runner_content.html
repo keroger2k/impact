@@ -1,0 +1,150 @@
+<div class="row g-4 h-100">
+  <div class="col-md-3">
+    <div class="card shadow-sm border-0 animate-fade-in h-100">
+      <div class="card-header bg-navy text-white d-flex align-items-center gap-2">
+        <i class="fas fa-terminal"></i>
+        <span class="fw-bold">Command Runner</span>
+      </div>
+      <div class="card-body">
+        <form id="cmd-form">
+          <div class="mb-3">
+            <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">DNAC Devices</label>
+            <div id="device-selector-wrap" hx-get="/api/dnac/devices-select" hx-trigger="load" hx-target="#device-select-container">
+               <div id="device-select-container">
+                  <div class="spinner spinner-sm"></div>
+               </div>
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Manual IP List</label>
+            <textarea id="manual-ips" class="form-control form-control-sm" rows="3" placeholder="Paste IP addresses here (one per line)..."></textarea>
+          </div>
+
+          <div class="mb-3 border-top pt-3">
+            <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Diagnostic Template</label>
+            <select name="command_preset" class="form-select" onchange="document.getElementById('custom-cmd').value = this.value">
+              <option value="">-- Custom --</option>
+              <option value="show ip route">Show IP Route</option>
+              <option value="show ip bgp summary">Show BGP Summary</option>
+              <option value="show ip eigrp topology">Show EIGRP Topology</option>
+              <option value="show version">Show Version</option>
+              <option value="show inventory">Show Inventory</option>
+              <option value="show running-config">Show Config</option>
+            </select>
+          </div>
+          <div class="mb-4">
+            <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Command</label>
+            <textarea id="custom-cmd" name="command" class="form-control" rows="4" placeholder="Enter command to run..." required></textarea>
+          </div>
+          <button type="button" onclick="executeCommands()" class="btn btn-primary w-100 py-2 fw-bold shadow-sm">
+            <i class="fas fa-play me-1"></i> Run on Targets
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-9 d-flex flex-column">
+    <div class="card shadow-sm border-0 animate-fade-in flex-grow-1 overflow-hidden">
+      <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+        <span class="fw-bold small text-uppercase letter-spacing-1">Live Console Output</span>
+        <div class="d-flex gap-2">
+           <div id="cmd-progress-label" class="text-info small me-3"></div>
+          <button class="btn btn-sm btn-outline-light px-2" onclick="document.getElementById('cmd-output').innerHTML = ''">
+            <i class="fas fa-trash-alt"></i>
+          </button>
+        </div>
+      </div>
+      <div class="card-body p-0 bg-dark overflow-auto" style="min-height: 500px;">
+        <div id="cmd-output" class="p-4 text-success mb-0" style="font-family: 'SF Mono', monospace; font-size: 13px; line-height: 1.6;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  function executeCommands() {
+    const form = document.getElementById('cmd-form');
+    const command = form.command.value;
+    const output = document.getElementById('cmd-output');
+    const progress = document.getElementById('cmd-progress-label');
+
+    if (!command) {
+        alert("Please enter a command.");
+        return;
+    }
+
+    // 1. Gather devices from dropdown
+    let devices = [];
+    const select = document.getElementById('device-multi-select');
+    if (select) {
+        Array.from(select.selectedOptions).forEach(opt => {
+           const data = JSON.parse(opt.getAttribute('data-device'));
+           devices.push({ ip: data.ip, hostname: data.hostname, platform: data.platform });
+        });
+    }
+
+    // 2. Gather devices from textarea
+    const manualIps = document.getElementById('manual-ips').value;
+    if (manualIps) {
+        manualIps.split('\n').map(ip => ip.trim()).filter(ip => ip.length > 0).forEach(ip => {
+            // Avoid duplicates
+            if (!devices.some(d => d.ip === ip)) {
+                devices.push({ ip: ip, hostname: ip, platform: 'unknown' });
+            }
+        });
+    }
+
+    if (devices.length === 0) {
+      alert("Please select a device or enter an IP address.");
+      return;
+    }
+
+    output.innerHTML = '<div class="text-info">>> Initializing session for ' + devices.length + ' targets...</div>';
+
+    const payload = {
+      devices: devices,
+      command: command,
+      timeout: 60
+    };
+
+    fetch('/api/commands/run', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer {{ token }}'
+      },
+      body: JSON.stringify(payload)
+    }).then(response => {
+       const reader = response.body.getReader();
+       const decoder = new TextDecoder();
+
+       function process({ done, value }) {
+         if (done) return;
+         const chunk = decoder.decode(value);
+         const lines = chunk.split('\n');
+
+         lines.forEach(line => {
+           if (line.startsWith('data: ')) {
+             try {
+               const data = JSON.parse(line.substring(6));
+               if (data.type === 'progress') {
+                 progress.textContent = `Progress: ${data.done} / ${data.total}`;
+                 output.innerHTML += `<div class="mt-3 border-top border-secondary pt-2">
+                    <span class="fw-bold text-info">[${data.hostname} (${data.ip})]</span><br>
+                    ${data.status === 'success' ? '<pre class="text-success">' + data.output + '</pre>' : '<span class="text-danger">' + data.error + '</span>'}
+                 </div>`;
+                 output.scrollTop = output.scrollHeight;
+               } else if (data.type === 'complete') {
+                  output.innerHTML += `<div class="mt-4 text-info fw-bold">>> Command execution complete. Succeeded: ${data.succeeded}, Failed: ${data.failed}</div>`;
+               }
+             } catch(e) {}
+           }
+         });
+
+         return reader.read().then(process);
+       }
+       return reader.read().then(process);
+    });
+  }
+</script>

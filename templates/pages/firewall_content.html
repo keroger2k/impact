@@ -1,0 +1,30 @@
+<div class="row g-4 h-100">
+  <div class="col-md-3">
+    <div class="card shadow-sm border-0 animate-fade-in h-100">
+      <div class="card-header bg-navy text-white d-flex align-items-center gap-2">
+        <i class="fas fa-fire"></i>
+        <span class="fw-bold">Panorama Firewall Ops</span>
+      </div>
+      <div class="card-body p-0">
+        <div class="list-group list-group-flush">
+          <button class="list-group-item list-group-item-action active" hx-get="/api/firewall/devices" hx-target="#pan-results" hx-indicator="#pan-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            🔥 Managed Devices
+          </button>
+          <button class="list-group-item list-group-item-action" hx-get="/api/firewall/device-groups" hx-target="#pan-results" hx-indicator="#pan-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            🏢 Device Groups
+          </button>
+          <button class="list-group-item list-group-item-action" hx-get="/api/firewall/interfaces" hx-target="#pan-results" hx-indicator="#pan-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            🔌 Interface Inventory
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-9 d-flex flex-column">
+    <div id="pan-loading" class="htmx-indicator text-center p-5 animate-fade-in">
+      <div class="spinner spinner-lg"></div>
+      <p class="text-muted small mt-2">Connecting to Panorama and fetching data...</p>
+    </div>
+    <div id="pan-results" hx-get="/api/firewall/devices" hx-trigger="load"></div>
+  </div>
+</div>

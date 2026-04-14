@@ -1,0 +1,97 @@
+<div class="detail-panel shadow-sm animate-fade-in">
+  <div class="detail-header">
+    <div class="d-flex align-items-center gap-3">
+      <div class="bg-white text-navy rounded-circle d-flex align-items-center justify-content-center" style="width: 40px; height: 40px; font-weight: 800;">
+        {{ d.hostname[0] | upper if d.hostname else 'D' }}
+      </div>
+      <div>
+        <div class="detail-hostname">{{ d.hostname or 'Unknown Device' }}</div>
+        <div class="small opacity-75">{{ d.managementIpAddress }} • {{ site_name }}</div>
+      </div>
+    </div>
+    <div class="d-flex gap-2">
+       <button class="btn btn-sm btn-outline-light" hx-get="/api/dnac/devices/{{ d.id }}/config" hx-target="#detail-tabs-content">
+         <i class="fas fa-file-code me-1"></i> Config
+       </button>
+       <button class="btn btn-sm btn-outline-light" onclick="this.closest('.detail-panel').remove()">
+         <i class="fas fa-times"></i>
+       </button>
+    </div>
+  </div>
+
+  <div class="detail-body">
+    <div class="nav nav-tabs mb-4" id="device-tabs">
+      <button class="nav-link active" id="tab-btn-overview" onclick="switchTab(this, 'overview')">Overview</button>
+      <button class="nav-link" id="tab-btn-specs" onclick="switchTab(this, 'specs')">Specifications</button>
+      <button class="nav-link" id="tab-btn-config" onclick="switchTab(this, 'config')" hx-get="/api/dnac/devices/{{ d.id }}/config" hx-target="#tab-config-container" hx-indicator="#tab-config-loading">Config</button>
+    </div>
+
+    <div id="detail-tabs-content">
+      <div id="tab-overview" class="device-tab-pane">
+        <div class="detail-grid">
+          <div class="detail-section">
+            <div class="detail-section-title">Connectivity</div>
+            <div class="kv-row"><span class="kv-label">Status</span><span class="kv-value">
+              <span class="badge {% if d.reachabilityStatus == 'Reachable' %}bg-success{% else %}bg-danger{% endif %} text-white">
+                {{ d.reachabilityStatus }}
+              </span>
+            </span></div>
+            <div class="kv-row"><span class="kv-label">Management IP</span><span class="kv-value mono">{{ d.managementIpAddress }}</span></div>
+            <div class="kv-row"><span class="kv-label">MAC Address</span><span class="kv-value mono">{{ d.macAddress }}</span></div>
+            <div class="kv-row"><span class="kv-label">Last Updated</span><span class="kv-value small">{{ d.lastContactFormatted }}</span></div>
+          </div>
+
+          <div class="detail-section">
+            <div class="detail-section-title">Inventory & Site</div>
+            <div class="kv-row"><span class="kv-label">Site</span><span class="kv-value text-primary fw-bold">{{ site_name }}</span></div>
+            <div class="kv-row"><span class="kv-label">Role</span><span class="kv-value uppercase">{{ d.role }}</span></div>
+            <div class="kv-row"><span class="kv-label">Serial Number</span><span class="kv-value mono">{{ d.serialNumber }}</span></div>
+            <div class="kv-row"><span class="kv-label">Tag</span><span class="kv-value"><span class="badge bg-info text-white">{{ d.tagName or 'Untagged' }}</span></span></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="tab-specs" class="device-tab-pane d-none">
+         <div class="detail-grid">
+          <div class="detail-section">
+            <div class="detail-section-title">Hardware</div>
+            <div class="kv-row"><span class="kv-label">Platform</span><span class="kv-value">{{ d.platformId }}</span></div>
+            <div class="kv-row"><span class="kv-label">Family</span><span class="kv-value">{{ d.family }}</span></div>
+            <div class="kv-row"><span class="kv-label">Type</span><span class="kv-value small">{{ d.type }}</span></div>
+          </div>
+
+          <div class="detail-section">
+            <div class="detail-section-title">Software</div>
+            <div class="kv-row"><span class="kv-label">Version</span><span class="kv-value fw-bold text-navy">{{ d.softwareVersion }}</span></div>
+            <div class="kv-row"><span class="kv-label">OS Type</span><span class="kv-value">{{ d.softwareType }}</span></div>
+            <div class="kv-row"><span class="kv-label">Uptime</span><span class="kv-value small">{{ d.upTime or 'Unknown' }}</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="tab-config" class="device-tab-pane d-none">
+        <div id="tab-config-loading" class="htmx-indicator p-4 text-center">
+           <div class="spinner spinner-sm mx-auto"></div>
+           <p class="text-muted small mt-2">Loading configuration...</p>
+        </div>
+        <div id="tab-config-container">
+          <!-- Populated via HTMX -->
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  function switchTab(btn, tabId) {
+    // Buttons
+    btn.closest('.nav-tabs').querySelectorAll('.nav-link').forEach(el => el.classList.remove('active'));
+    btn.classList.add('active');
+
+    // Panes
+    const content = document.getElementById('detail-tabs-content');
+    content.querySelectorAll('.device-tab-pane').forEach(el => el.classList.add('d-none'));
+    const target = document.getElementById('tab-' + tabId);
+    if (target) target.classList.remove('d-none');
+  }
+</script>

@@ -1,0 +1,58 @@
+<div class="card shadow-sm border-0 animate-fade-in">
+  <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center">
+    <div class="d-flex align-items-center gap-2">
+      <button class="btn btn-sm btn-outline-light px-2 py-0" hx-get="/api/firewall/device-groups" hx-target="#pan-results" hx-indicator="#pan-loading">
+        <i class="fas fa-arrow-left"></i>
+      </button>
+      <span class="fw-bold">Security Policies: {{ device_group }}</span>
+    </div>
+    <span class="badge bg-primary">{{ items|length }} Rules</span>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive" style="max-height: 700px;">
+      <table class="table table-hover table-striped mb-0 sticky-header">
+        <thead class="bg-light">
+          <tr>
+            <th>Name</th>
+            <th>Rulebase</th>
+            <th>Source</th>
+            <th>Destination</th>
+            <th>Service</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for rule in items %}
+          <tr class="{{ 'opacity-50' if rule.disabled }}">
+            <td class="small fw-bold">{{ rule.name }}</td>
+            <td><span class="badge {{ 'bg-info' if rule.rulebase == 'pre' else 'bg-secondary' }}">{{ rule.rulebase }}</span></td>
+            <td class="small">
+              {% for s in rule.source %}
+                <span class="d-block">{{ s }}</span>
+              {% endfor %}
+            </td>
+            <td class="small">
+              {% for d in rule.destination %}
+                <span class="d-block">{{ d }}</span>
+              {% endfor %}
+            </td>
+            <td class="small">
+              {% for svc in rule.application %}
+                <span class="badge bg-light text-dark border me-1">{{ svc }}</span>
+              {% endfor %}
+              {% for s in rule.service %}
+                <span class="badge bg-light text-dark border">{{ s }}</span>
+              {% endfor %}
+            </td>
+            <td>
+              <span class="badge {{ 'bg-success' if rule.action == 'allow' else 'bg-danger' }}">
+                {{ rule.action }}
+              </span>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>

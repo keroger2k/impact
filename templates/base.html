@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}IMPACT II — Network Operations{% endblock %}</title>
+  <link rel="stylesheet" href="/static/bootstrap/css/bootstrap.min.css">
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+  <script src="/static/js/htmx.min.js"></script>
+</head>
+<body hx-headers='{"Authorization": "Bearer {{ token }}"}'>
+<div id="app">
+
+  <!-- ── Sidebar ─────────────────────────────────────────── -->
+  <nav id="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-logo">II</div>
+      <div class="sidebar-branding">
+        <div class="sidebar-title">IMPACT II</div>
+        <div class="sidebar-subtitle">TSA Network Operations</div>
+      </div>
+      <button id="sidebar-toggle" class="sidebar-toggle" onclick="toggleSidebar()">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-section-label">Navigation</div>
+      <a class="nav-item {% if active_page == 'dashboard' %}active{% endif %}"
+         hx-get="/dashboard" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+        <span class="nav-icon">📊</span> <span>Dashboard</span>
+      </a>
+      <a class="nav-item {% if active_page == 'devices' %}active{% endif %}"
+         hx-get="/devices" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+        <span class="nav-icon">🖥️</span> <span>Devices</span>
+      </a>
+      <a class="nav-item {% if active_page == 'path-trace' %}active{% endif %}"
+         hx-get="/path-trace" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+        <span class="nav-icon">🛤️</span> <span>Path Trace</span>
+      </a>
+      <a class="nav-item {% if active_page == 'routing' %}active{% endif %}"
+         hx-get="/routing/bgp" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+        <span class="nav-icon">🌐</span> <span>Routing Ops</span>
+      </a>
+      <a class="nav-item {% if active_page == 'config-search' %}active{% endif %}"
+         hx-get="/config-search" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+        <span class="nav-icon">🔍</span> <span>Config Search</span>
+      </a>
+      <a class="nav-item {% if active_page == 'ip-lookup' %}active{% endif %}"
+         hx-get="/ip-lookup" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+        <span class="nav-icon">📍</span> <span>IP Lookup</span>
+      </a>
+      <a class="nav-item {% if active_page == 'ise' %}active{% endif %}"
+         hx-get="/ise" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+        <span class="nav-icon">🔐</span> <span>ISE Control</span>
+      </a>
+      <a class="nav-item {% if active_page == 'firewall' %}active{% endif %}"
+         hx-get="/firewall" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+        <span class="nav-icon">🔥</span> <span>Firewall Ops</span>
+      </a>
+      <a class="nav-item {% if active_page == 'command-runner' %}active{% endif %}"
+         hx-get="/command-runner" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+        <span class="nav-icon">⌨️</span> <span>Command Runner</span>
+      </a>
+      <a class="nav-item {% if active_page == 'import' %}active{% endif %}"
+         hx-get="/import" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+        <span class="nav-icon">🛠️</span> <span>Device Management</span>
+      </a>
+    </div>
+
+    <div class="sidebar-status" id="sys-status" hx-get="/partials/status" hx-trigger="load, every 60s" hx-swap="innerHTML">
+       {% include 'partials/status.html' %}
+    </div>
+  </nav>
+
+  <!-- ── Main ────────────────────────────────────────────── -->
+  <div id="main">
+    <header id="topbar">
+      <span id="page-title">{% block page_title %}Dashboard{% endblock %}</span>
+      <div id="topbar-actions">
+        <span style="font-size:13px;color:var(--text-light);margin-right:12px">👤 {{ username }}</span>
+        <button class="btn btn-outline-secondary btn-sm" hx-post="/api/dnac/cache/refresh" hx-swap="none">🔄 Refresh Cache</button>
+        <button class="btn btn-outline-secondary btn-sm" onclick="logout()">Sign Out</button>
+      </div>
+    </header>
+    <div id="content">
+      <div id="main-content">
+        {% block content %}{% endblock %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<!-- Debug Console -->
+<div id="debug-console-wrap" class="minimized">
+  <div class="debug-header" onclick="toggleDebugConsole()">
+    <div class="debug-title"><i class="fas fa-terminal me-2"></i> Console</div>
+    <div class="debug-controls">
+      <button onclick="clearDebugConsole(event)"><i class="fas fa-ban"></i></button>
+      <button id="debug-toggle-icon"><i class="fas fa-chevron-up"></i></button>
+    </div>
+  </div>
+  <div class="debug-body" id="debug-console-body"></div>
+</div>
+
+<script src="/static/bootstrap/js/bootstrap.bundle.min.js"></script>
+<script>
+  function toggleSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    const main = document.getElementById('main');
+    const collapsed = sidebar.classList.toggle('collapsed');
+    localStorage.setItem('sidebarCollapsed', collapsed ? '1' : '0');
+  }
+
+  // Handle sidebar transitions without flash
+  if (localStorage.getItem("sidebarCollapsed") === "1") {
+    document.getElementById("sidebar").classList.add("no-transition");
+    document.getElementById("main").classList.add("no-transition");
+    document.getElementById("sidebar").classList.add("collapsed");
+    setTimeout(() => {
+      document.getElementById("sidebar").classList.remove("no-transition");
+      document.getElementById("main").classList.remove("no-transition");
+    }, 100);
+  }
+
+  function logout() {
+    fetch('/api/auth/logout', { method: 'POST', headers: {'Authorization': 'Bearer {{ token }}'} })
+      .then(() => {
+        localStorage.removeItem('impact_token');
+        localStorage.removeItem('impact_user');
+        window.location.href = '/login';
+      });
+  }
+
+  // ── Debug Console logic ───────────────────────────────────────
+  const consoleBody = document.getElementById('debug-console-body');
+  const originalLog = console.log;
+  const originalError = console.error;
+  const originalWarn = console.warn;
+  const originalInfo = console.info;
+
+  function addDebugEntry(type, args) {
+    const entry = document.createElement('div');
+    entry.className = `debug-entry ${type}`;
+    const timestamp = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    const msg = Array.from(args).map(arg => {
+      if (typeof arg === 'object') return JSON.stringify(arg);
+      return arg;
+    }).join(' ');
+
+    entry.innerHTML = `<span style="opacity:0.4">[${timestamp}]</span> ${msg}`;
+    consoleBody.appendChild(entry);
+    consoleBody.scrollTop = consoleBody.scrollHeight;
+  }
+
+  console.log = function() { originalLog.apply(console, arguments); addDebugEntry('log', arguments); };
+  console.error = function() { originalError.apply(console, arguments); addDebugEntry('error', arguments); };
+  console.warn = function() { originalWarn.apply(console, arguments); addDebugEntry('warn', arguments); };
+  console.info = function() { originalInfo.apply(console, arguments); addDebugEntry('info', arguments); };
+
+  function toggleDebugConsole() {
+    const wrap = document.getElementById('debug-console-wrap');
+    const icon = document.querySelector('#debug-toggle-icon i');
+    const isMinimized = wrap.classList.toggle('minimized');
+    icon.className = isMinimized ? 'fas fa-chevron-up' : 'fas fa-chevron-down';
+  }
+
+  function clearDebugConsole(e) {
+    e.stopPropagation();
+    consoleBody.innerHTML = '';
+  }
+
+  // Handle HTMX navigation highlighting
+  document.body.addEventListener('htmx:afterOnLoad', function(evt) {
+    if (evt.detail.target.id === 'main-content') {
+      const path = window.location.pathname;
+      document.querySelectorAll('.nav-item').forEach(el => {
+        const hxGet = el.getAttribute('hx-get');
+        if (hxGet === path) {
+          el.classList.add('active');
+          const titleSpan = el.querySelector('span:last-child');
+          if (titleSpan) document.getElementById('page-title').textContent = titleSpan.textContent;
+        } else {
+          el.classList.remove('active');
+        }
+      });
+    }
+  });
+</script>
+{% block extra_js %}{% endblock %}
+</body>
+</html>

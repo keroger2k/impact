@@ -47,18 +47,19 @@ MOCK_DEVICES: list[dict] = []
 MOCK_DEVICE_SITE_MAP: dict[str, str] = {}
 
 for _si, (_site, _subnet) in enumerate(_SITES):
-    for _di in range(5):
-        _idx   = _si * 5 + _di
+    for _di in range(20):
+        _idx   = _si * 20 + _di
         _reach = "Unreachable" if _idx % 7 == 0 else "Reachable"
         _id    = _uid(f"device-{_idx}")
-        _host  = f"SW-{_site.split('-')[1]}-{_di+1:02d}" if _ROLES[_di] == "ACCESS" else f"CORE-{_site.split('-')[1]}-{_di+1:02d}"
+        _role  = _ROLES[_di % len(_ROLES)]
+        _host  = f"SW-{_site.split('-')[1]}-{_di+1:02d}" if _role == "ACCESS" else f"CORE-{_site.split('-')[1]}-{_di+1:02d}"
         _dev   = {
             "id":                    _id,
             "hostname":              _host,
             "managementIpAddress":   f"{_subnet}.{_di+1}.1",
-            "platformId":            _PLATFORM[_di],
-            "softwareVersion":       _VERSION[_di],
-            "role":                  _ROLES[_di],
+            "platformId":            _PLATFORM[_di % len(_PLATFORM)],
+            "softwareVersion":       _VERSION[_di % len(_VERSION)],
+            "role":                  _role,
             "serialNumber":          f"FCW{2300+_idx:04d}A{_si:02d}",
             "vendor":                "Cisco",
             "reachabilityStatus":    _reach,
@@ -72,6 +73,53 @@ for _si, (_site, _subnet) in enumerate(_SITES):
         MOCK_DEVICE_SITE_MAP[_id] = _site
 
 MOCK_SITES = [{"id": _uid(f"site-{s}"), "name": s} for s, _ in _SITES]
+
+MOCK_USERS = [
+    {"id": _uid("user-admin"), "name": "admin", "description": "Network Administrator", "enabled": True, "passwordPolicy": "Strong"},
+    {"id": _uid("user-ops"),   "name": "ops-user", "description": "NOC Operations", "enabled": True, "passwordPolicy": "Standard"},
+    {"id": _uid("user-audit"), "name": "audit-svc", "description": "Audit Service Account", "enabled": False, "passwordPolicy": "None"},
+]
+
+MOCK_ISSUES = [
+    {
+        "priority": "P1",
+        "name": "Network Device Unreachable",
+        "deviceName": "SW-DCA-HQ-01",
+        "siteHierarchy": "TSA-DCA-HQ",
+        "lastOccurrenceTime": 1712657700000,
+    },
+    {
+        "severity": "P2",
+        "issueTitle": "Interface GigabitEthernet1/0/1 flapping",
+        "deviceName": "SW-LAX-T1-03",
+        "siteName": "TSA-LAX-T1",
+        "timestamp": 1712662200000,
+    },
+    {
+        "priority": "P1",
+        "title": "BGP Neighbor Adjacency Down",
+        "source": "CORE-ORD-T1-01",
+        "siteHierarchy": "Global/TSA/ORD/T1",
+        "occurredOn": "2026-04-09T09:45:00Z",
+    },
+    {
+        "priority": "P3",
+        "name": "Power Supply Failure (Redundant)",
+        "host": "SW-BOS-T1-02",
+        "site_name": "TSA-BOS-T1",
+        "startTime": 1712664000000,
+    }
+]
+
+# Add many more to test scrolling
+for i in range(20):
+    MOCK_ISSUES.append({
+        "priority": "P2",
+        "name": f"OSPF Adjacency Change {i}",
+        "deviceName": f"SW-DCA-HQ-{i:02d}",
+        "siteHierarchy": "TSA-DCA-HQ",
+        "timestamp": 1712664000000 + (i * 60000),
+    })
 
 
 # ── Mock ISE data ─────────────────────────────────────────────────────────────
@@ -210,6 +258,51 @@ MOCK_SERVICES: list[dict] = [
 ]
 
 
+# ── Mock Nexus data ───────────────────────────────────────────────────────────
+
+MOCK_NEXUS_INVENTORY = [
+    {
+        "id": "nexus_10.100.1.1",
+        "hostname": "NEXUS-7K-01",
+        "managementIpAddress": "10.100.1.1",
+        "platformId": "Nexus 7000",
+        "role": "SWITCH",
+        "reachabilityStatus": "Reachable",
+        "reachabilityFailureReason": "",
+        "source": "nexus",
+        "lastUpdateTime": _now_ms,
+    },
+    {
+        "id": "nexus_10.100.1.2",
+        "hostname": "NEXUS-9K-01",
+        "managementIpAddress": "10.100.1.2",
+        "platformId": "Nexus 9000",
+        "role": "SWITCH",
+        "reachabilityStatus": "Unreachable",
+        "reachabilityFailureReason": "Connection timeout",
+        "source": "nexus",
+        "lastUpdateTime": _now_ms,
+    }
+]
+
+MOCK_NEXUS_INTERFACES = {
+    "10.100.1.1": [
+        {
+            "hostname": "NEXUS-7K-01",
+            "device_ip": "10.100.1.1",
+            "platform": "nxos",
+            "interface_name": "Ethernet1/1",
+            "ipv4_address": "10.200.1.1/24",
+            "ipv6_addresses": ["2001:db8:1::1/64"],
+            "mac_address": "00:11:22:33:44:55"
+        }
+    ]
+}
+
+MOCK_NEXUS_CONFIGS = {
+    "10.100.1.1": "hostname NEXUS-7K-01\ninterface Ethernet1/1\n  ip address 10.200.1.1/24\n!"
+}
+
 # ── Cache seeding ─────────────────────────────────────────────────────────────
 
 def seed_cache(cache) -> None:
@@ -227,6 +320,7 @@ def seed_cache(cache) -> None:
 
     # ISE lists
     cache.set("ise_nads",            MOCK_NADS,             LONG)
+    cache.set("ise_users",           MOCK_USERS,            LONG)
     cache.set("ise_nad_groups",      MOCK_NAD_GROUPS,       LONG)
     cache.set("ise_endpoint_groups", MOCK_ENDPOINT_GROUPS,  LONG)
     cache.set("ise_identity_groups", MOCK_IDENTITY_GROUPS,  LONG)
@@ -255,6 +349,12 @@ def seed_cache(cache) -> None:
     # Panorama status
     cache.set("status_panorama", {"ok": True, "detail": "Connected (mock)"}, LONG)
 
+    # Nexus
+    cache.set("nexus_inventory", MOCK_NEXUS_INVENTORY, LONG)
+    cache.set("nexus_interfaces", MOCK_NEXUS_INTERFACES, LONG)
+    for ip, cfg in MOCK_NEXUS_CONFIGS.items():
+        cache.set(f"nexus_config_{ip}", cfg, LONG)
+
 
 def create_dev_session() -> None:
     """Create the fixed dev session so the frontend can auto-login."""
@@ -268,3 +368,27 @@ def create_dev_session() -> None:
     )
     with auth_module._store_lock:
         auth_module._sessions[DEV_TOKEN] = entry
+
+MOCK_CONFIGS = {
+    dev["id"]: f"""!
+hostname {dev['hostname']}
+!
+interface GigabitEthernet0/1
+ description Primary Uplink
+ ip address {dev['managementIpAddress']} 255.255.255.0
+ speed 1000
+ duplex full
+!
+snmp-server community TSA-RO RO
+snmp-server community TSA-RW RW
+!
+router eigrp 1
+ network {dev['managementIpAddress'].rsplit('.', 1)[0]}.0 0.0.0.255
+!
+end
+"""
+    for dev in MOCK_DEVICES
+}
+
+def get_mock_config(device_id):
+    return MOCK_CONFIGS.get(device_id, "! No config found")

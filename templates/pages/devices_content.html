@@ -1,0 +1,269 @@
+<div class="dev-page-layout">
+
+  <!-- ── Top: Device Details Section (Fixed Height) ────────────────────────── -->
+  <div id="dev-detail" class="mb-3 border rounded bg-white shadow-sm overflow-hidden" style="height: 320px; flex-shrink: 0;">
+    <div id="dev-detail-panel" class="h-100 overflow-auto">
+      <div class="empty-state p-5 text-center h-100 d-flex flex-column justify-content-center">
+        <div class="empty-state-icon text-muted" style="font-size: 3rem;">🖥️</div>
+        <div class="empty-state-title h5 fw-bold mt-2">Select a device to view details</div>
+        <div class="empty-state-desc text-muted">Scroll through the inventory below and click on any row.</div>
+      </div>
+    </div>
+    <div id="dev-detail-loading" class="htmx-indicator p-5 text-center h-100 d-flex flex-column justify-content-center bg-white">
+      <div class="spinner spinner-md mx-auto"></div>
+      <p class="text-muted small mt-2">Fetching device configuration and health metrics...</p>
+    </div>
+  </div>
+
+  <!-- ── Bottom: Inventory Table Section (Flex Grow + Inner Scroll) ────────── -->
+  <div class="card shadow-sm border-0 flex-grow-1 d-flex flex-column min-h-0 overflow-hidden">
+    <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center flex-shrink-0">
+      <div class="d-flex align-items-center gap-2">
+        <i class="fas fa-list"></i>
+        <span class="fw-bold">Program Inventory</span>
+        <span id="dev-count-badge" class="badge bg-light text-navy ms-2">Loading...</span>
+      </div>
+      <div class="d-flex gap-3 align-items-center">
+        <div id="nexus-cache-status" class="small me-2 d-none d-lg-block">
+            <span id="nexus-cache-ts" class="text-white-50">Nexus: Checking...</span>
+            <button class="btn btn-link btn-sm text-white p-0 ms-1" onclick="refreshNexusInventory()" title="Refresh Nexus Cache">
+                <i class="fas fa-sync-alt fa-xs"></i>
+            </button>
+        </div>
+        <div class="input-group input-group-sm">
+          <span class="input-group-text bg-white border-0"><i class="fas fa-search text-muted"></i></span>
+          <input type="text" id="dev-table-filter" class="form-control border-0" placeholder="Filter inventory..." onkeyup="filterDevices()">
+        </div>
+        <button class="btn btn-sm btn-outline-light px-2" onclick="refreshLocalInventory()">
+          <i class="fas fa-sync"></i>
+        </button>
+      </div>
+    </div>
+
+    <div class="dev-table-wrap flex-grow-1 bg-white min-h-0" style="position: relative; overflow-y: scroll !important;">
+      <table class="table table-hover table-sm mb-0 sticky-header" id="devices-master-table">
+        <thead class="table-light">
+          <tr>
+            <th onclick="sortDevices('hostname')">Hostname <i class="fas fa-sort small opacity-50"></i></th>
+            <th onclick="sortDevices('managementIpAddress')">IP Address <i class="fas fa-sort small opacity-50"></i></th>
+            <th onclick="sortDevices('platformId')">Platform <i class="fas fa-sort small opacity-50"></i></th>
+            <th onclick="sortDevices('role')">Role <i class="fas fa-sort small opacity-50"></i></th>
+            <th onclick="sortDevices('siteName')">Site <i class="fas fa-sort small opacity-50"></i></th>
+            <th onclick="sortDevices('reachabilityStatus')">Status <i class="fas fa-sort small opacity-50"></i></th>
+          </tr>
+        </thead>
+        <tbody id="dev-table-body">
+          <!-- Populated via JS -->
+        </tbody>
+      </table>
+      <div id="dev-master-loading" class="position-absolute top-50 start-50 translate-middle text-center">
+         <div class="spinner spinner-lg"></div>
+         <p class="text-muted mt-2 fw-bold">Loading full inventory...</p>
+      </div>
+    </div>
+
+    <!-- Paging Footer -->
+    <div class="card-footer bg-light border-top d-flex justify-content-between align-items-center py-2 flex-shrink-0">
+      <div class="small text-muted" id="paging-info">Showing 0-0 of 0</div>
+      <div class="pagination-controls d-flex gap-1">
+        <button class="btn btn-xs btn-outline-secondary px-2" onclick="prevPage()"><i class="fas fa-chevron-left"></i></button>
+        <div id="page-numbers" class="d-flex gap-1"></div>
+        <button class="btn btn-xs btn-outline-secondary px-2" onclick="nextPage()"><i class="fas fa-chevron-right"></i></button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // Use var or direct window assignment to avoid "Identifier already declared" errors on HTMX re-nav
+  if (typeof ALL_DEVICES === 'undefined') {
+    var ALL_DEVICES = [];
+    var FILTERED_DEVICES = [];
+    var CURRENT_PAGE = 1;
+    var PAGE_SIZE = 50;
+    var SORT_COL = 'hostname';
+    var SORT_DIR = 1;
+  } else {
+    // Reset state for new load
+    CURRENT_PAGE = 1;
+    SORT_COL = 'hostname';
+    SORT_DIR = 1;
+  }
+
+  async function loadInitialDevices() {
+    const loader = document.getElementById('dev-master-loading');
+    loader.classList.remove('d-none');
+
+    try {
+      const res = await fetch('/api/dnac/devices?limit=5000', {
+        headers: { 'Authorization': 'Bearer {{ token }}' }
+      });
+      const data = await res.json();
+      ALL_DEVICES = data.items || [];
+      FILTERED_DEVICES = [...ALL_DEVICES];
+
+      document.getElementById('dev-count-badge').textContent = ALL_DEVICES.length;
+      renderTable();
+      updateNexusCacheInfo();
+    } catch (e) {
+      console.error("Failed to load inventory:", e);
+    } finally {
+      loader.classList.add('d-none');
+    }
+  }
+
+  async function updateNexusCacheInfo() {
+    try {
+        const res = await fetch('/api/nexus/cache/info', {
+            headers: { 'Authorization': 'Bearer {{ token }}' }
+        });
+        const info = await res.json();
+        const ts = info.inventory?.set_at;
+        const el = document.getElementById('nexus-cache-ts');
+        if (ts) {
+            const age = Math.floor(Date.now() / 1000 - ts);
+            let ageStr = age < 60 ? age + 's ago' : (age < 3600 ? Math.floor(age/60) + 'm ago' : Math.floor(age/3600) + 'h ago');
+            el.textContent = 'Nexus: ' + ageStr;
+        } else {
+            el.textContent = 'Nexus: Not cached';
+        }
+    } catch (e) {}
+  }
+
+  async function refreshNexusInventory() {
+    const el = document.getElementById('nexus-cache-ts');
+    el.textContent = 'Nexus: Refreshing...';
+
+    try {
+        const response = await fetch('/api/nexus/cache/refresh', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer {{ token }}' }
+        });
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            const chunk = decoder.decode(value);
+            const lines = chunk.split('\n');
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    const data = JSON.parse(line.substring(6));
+                    if (data.type === 'log') {
+                        el.textContent = 'Nexus: ' + data.message.substring(0, 15) + '...';
+                    } else if (data.type === 'complete') {
+                        loadInitialDevices();
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        console.error("Nexus refresh failed:", e);
+        updateNexusCacheInfo();
+    }
+  }
+
+  function filterDevices() {
+    const term = document.getElementById('dev-table-filter').value.toLowerCase();
+    FILTERED_DEVICES = ALL_DEVICES.filter(d => {
+        return (d.hostname || '').toLowerCase().includes(term) ||
+               (d.managementIpAddress || '').toLowerCase().includes(term) ||
+               (d.platformId || '').toLowerCase().includes(term) ||
+               (d.siteName || '').toLowerCase().includes(term);
+    });
+    CURRENT_PAGE = 1;
+    renderTable();
+  }
+
+  function sortDevices(col) {
+    if (SORT_COL === col) SORT_DIR *= -1;
+    else { SORT_COL = col; SORT_DIR = 1; }
+
+    FILTERED_DEVICES.sort((a, b) => {
+        const valA = (a[col] || '').toString().toLowerCase();
+        const valB = (b[col] || '').toString().toLowerCase();
+        return valA < valB ? -1 * SORT_DIR : (valA > valB ? 1 * SORT_DIR : 0);
+    });
+    renderTable();
+  }
+
+  function renderTable() {
+    const tbody = document.getElementById('dev-table-body');
+    const start = (CURRENT_PAGE - 1) * PAGE_SIZE;
+    const end = start + PAGE_SIZE;
+    const pageData = FILTERED_DEVICES.slice(start, end);
+
+    tbody.innerHTML = pageData.map(d => `
+      <tr class="clickable-row" onclick="selectDevice('${d.id}', this)">
+        <td class="fw-bold text-navy">${d.hostname}</td>
+        <td class="mono small">${d.managementIpAddress}</td>
+        <td class="small">${d.platformId}</td>
+        <td class="small uppercase">${d.role}</td>
+        <td class="small text-truncate" style="max-width: 150px;">${d.siteName || '—'}</td>
+        <td>
+           <span class="badge ${d.reachabilityStatus === 'Reachable' ? 'bg-success-subtle text-success' : 'bg-danger-subtle text-danger'} px-2">
+             ${d.reachabilityStatus}
+           </span>
+        </td>
+      </tr>
+    `).join('');
+
+    updatePaging(start, end);
+  }
+
+  function updatePaging(start, end) {
+    const total = FILTERED_DEVICES.length;
+    const actualEnd = Math.min(end, total);
+    document.getElementById('paging-info').textContent = `Showing ${total > 0 ? start + 1 : 0}-${actualEnd} of ${total}`;
+
+    const pageCount = Math.ceil(total / PAGE_SIZE);
+    const container = document.getElementById('page-numbers');
+    container.innerHTML = '';
+
+    for (let i = Math.max(1, CURRENT_PAGE - 2); i <= Math.min(pageCount, CURRENT_PAGE + 2); i++) {
+        const btn = document.createElement('button');
+        btn.className = `btn btn-xs ${i === CURRENT_PAGE ? 'btn-primary' : 'btn-outline-secondary'} px-2`;
+        btn.textContent = i;
+        btn.onclick = () => { CURRENT_PAGE = i; renderTable(); };
+        container.appendChild(btn);
+    }
+  }
+
+  function prevPage() { if (CURRENT_PAGE > 1) { CURRENT_PAGE--; renderTable(); } }
+  function nextPage() { if (CURRENT_PAGE * PAGE_SIZE < FILTERED_DEVICES.length) { CURRENT_PAGE++; renderTable(); } }
+
+  function selectDevice(id, rowEl) {
+    document.querySelectorAll('.clickable-row').forEach(el => el.classList.remove('table-active'));
+    rowEl.classList.add('table-active');
+
+    htmx.ajax('GET', '/api/dnac/devices/' + id + '/detail', {
+        target: '#dev-detail-panel',
+        indicator: '#dev-detail-loading'
+    });
+  }
+
+  function refreshLocalInventory() {
+     loadInitialDevices();
+  }
+
+  loadInitialDevices();
+</script>
+
+<style>
+  .clickable-row { cursor: pointer; }
+  .clickable-row:hover { background-color: rgba(0, 112, 210, 0.05); }
+  .table-active { background-color: rgba(0, 112, 210, 0.1) !important; }
+  .btn-xs { padding: 1px 5px; font-size: 0.75rem; }
+  .min-h-0 { min-height: 0; }
+  .sticky-header thead th {
+    position: sticky;
+    top: 0;
+    background: #f8f9fa;
+    z-index: 5;
+    border-bottom: 2px solid var(--border);
+    white-space: nowrap;
+  }
+</style>

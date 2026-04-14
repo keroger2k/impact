@@ -1,0 +1,73 @@
+{% if r.found %}
+  <div class="animate-fade-in">
+    {% for iface in r.interfaces %}
+      <div class="card shadow-sm border-0 mb-3 overflow-hidden">
+        <div class="card-header bg-navy text-white small fw-bold">CATALYST CENTER MATCH</div>
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-start mb-3">
+            <div>
+              <h5 class="fw-bold text-navy mb-0">{{ iface.device.hostname }}</h5>
+              <span class="text-muted small">{{ iface.device.managementIpAddress }} • {{ iface.siteName }}</span>
+            </div>
+            <span class="badge bg-success">Active</span>
+          </div>
+          <div class="bg-light p-3 rounded">
+            <div class="row">
+              <div class="col-6 small"><strong>Interface:</strong> {{ iface.interface.portName }}</div>
+              <div class="col-6 small text-end"><strong>VLAN:</strong> {{ iface.interface.vlanId }}</div>
+            </div>
+            <div class="mt-1 small"><strong>Description:</strong> {{ iface.interface.description or 'None' }}</div>
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+
+    {% for nx in r.nexus_interfaces %}
+      <div class="card shadow-sm border-0 mb-3 overflow-hidden">
+        <div class="card-header bg-warning text-dark small fw-bold">NEXUS MATCH</div>
+        <div class="card-body">
+           <div class="d-flex justify-content-between align-items-start mb-3">
+            <div>
+              <h5 class="fw-bold text-navy mb-0">{{ nx.hostname }}</h5>
+              <span class="text-muted small">{{ nx.management_ip }} • Nexus (SSH)</span>
+            </div>
+            <span class="badge bg-info">Nexus</span>
+          </div>
+          <div class="bg-light p-3 rounded">
+             <div class="row">
+              <div class="col-6 small"><strong>Interface:</strong> {{ nx.interface }}</div>
+              <div class="col-6 small text-end"><strong>IPv4:</strong> {{ nx.ipv4 }}</div>
+            </div>
+            <div class="mt-1 small"><strong>MAC Address:</strong> {{ nx.mac }}</div>
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+
+    {% for fw in r.firewall_interfaces %}
+      <div class="card shadow-sm border-0 mb-3 overflow-hidden">
+        <div class="card-header bg-danger text-white small fw-bold">PANORAMA MATCH</div>
+        <div class="card-body">
+           <div class="d-flex justify-content-between align-items-start mb-3">
+            <div>
+              <h5 class="fw-bold text-danger mb-0">{{ fw.hostname }}</h5>
+              <span class="text-muted small">{{ fw.management_ip }} • {{ fw.device_group }}</span>
+            </div>
+            <span class="badge bg-danger">{{ fw.ha_state }}</span>
+          </div>
+          <div class="bg-light p-3 rounded">
+             <div class="row">
+              <div class="col-6 small"><strong>Interface:</strong> {{ fw.interface }}</div>
+              <div class="col-6 small text-end"><strong>IPv4:</strong> {{ fw.ipv4 }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="alert alert-warning text-center animate-fade-in">
+    <i class="fas fa-exclamation-triangle mb-2"></i><br>
+    No device in inventory matched the IP <strong>{{ r.ip }}</strong>
+  </div>
+{% endif %}
