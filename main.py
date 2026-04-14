@@ -8,6 +8,7 @@ Run:  uvicorn main:app --reload --host 0.0.0.0 --port 8000
 """
 
 import logging
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -18,7 +19,7 @@ from templates_module import templates
 
 import auth as auth_module
 from auth import require_auth, SessionEntry
-from routers import dnac, ise, firewall, commands, import_, auth as auth_router, pages, routing
+from routers import dnac, ise, firewall, commands, import_, auth as auth_router, pages, routing, nexus
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,6 +37,8 @@ async def lifespan(app: FastAPI):
         create_dev_session()
         logger.info("DEV_MODE enabled — mock data loaded, LDAP bypassed.")
     logger.info("IMPACT II starting up.")
+    from routers.nexus import init_nexus_collection
+    asyncio.create_task(init_nexus_collection())
     yield
     logger.info("IMPACT II shutting down.")
 
@@ -66,6 +69,7 @@ app.include_router(firewall.router,  prefix="/api/firewall", tags=["Firewall"], 
 app.include_router(commands.router,  prefix="/api/commands", tags=["Commands"], **_auth_dep)
 app.include_router(import_.router,   prefix="/api/import",   tags=["Import"],   **_auth_dep)
 app.include_router(routing.router,   prefix="/api/routing",  tags=["Routing"],  **_auth_dep)
+app.include_router(nexus.router,     prefix="/api/nexus",    tags=["Nexus"],    **_auth_dep)
 
 # ── Page router ────────────────────────────────────────────────────────────────
 app.include_router(pages.router)
