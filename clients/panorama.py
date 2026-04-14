@@ -258,11 +258,13 @@ def fetch_firewall_interfaces(api_key: str) -> list[dict]:
         zone_result = _op_targeted("<show><zone></show>", api_key, serial)
         if zone_result is not None:
             for entry in zone_result.findall(".//entry"):
-                zone_name = entry.findtext("name")
+                zone_name = entry.get("name") or entry.findtext("name")
                 if not zone_name:
                     continue
+
                 # Interfaces are often listed under <interface><member>...</member></interface>
-                for iface_node in entry.findall(".//interface/member"):
+                # or just <member>...</member> depending on the PAN-OS version and command variant
+                for iface_node in entry.findall(".//interface/member") + entry.findall("./member"):
                     iface_name = (iface_node.text or "").strip()
                     if iface_name in iface_map:
                         iface_map[iface_name]["zone"] = zone_name
