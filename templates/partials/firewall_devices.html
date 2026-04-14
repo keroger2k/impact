@@ -1,0 +1,36 @@
+<div class="card shadow-sm border-0 animate-fade-in">
+  <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center">
+    <span class="fw-bold">Managed Firewalls ({{ items|length }})</span>
+    <button class="btn btn-sm btn-outline-light px-2" hx-get="/api/firewall/devices" hx-target="#pan-results" hx-indicator="#pan-loading"><i class="fas fa-sync"></i></button>
+  </div>
+  <div class="card-body p-0 overflow-auto" style="max-height: calc(100vh - 200px);">
+    <table class="table table-hover table-striped mb-0">
+      <thead class="bg-light sticky-top">
+        <tr>
+          <th>Hostname</th>
+          <th>Management IP</th>
+          <th>Model</th>
+          <th>OS Version</th>
+          <th>HA State</th>
+          <th>Device Group</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in items %}
+        <tr>
+          <td class="fw-bold text-navy">{{ item.hostname }}</td>
+          <td class="mono">{{ item.management_ip }}</td>
+          <td>{{ item.model }}</td>
+          <td class="small">{{ item.os_version }}</td>
+          <td>
+            <span class="badge {% if item.ha_state == 'active' %}bg-success-subtle text-success{% else %}bg-warning-subtle text-warning{% endif %}">
+              {{ item.ha_state }}
+            </span>
+          </td>
+          <td><span class="badge bg-light text-muted">{{ item.device_group }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>

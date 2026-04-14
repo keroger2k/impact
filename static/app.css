@@ -459,6 +459,13 @@ body {
   z-index: 11;
 }
 
+.table.sticky-header thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background-color: #f8f9fa; /* Match table-light */
+}
+
 .table-dark thead {
   background: var(--cisco-navy);
 }
@@ -1055,7 +1062,15 @@ body:has(.dev-page-layout) {
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
-  padding-bottom: 0;
+  padding: 0; /* Remove padding for full-bleed layout */
+}
+
+#main-content:has(.dev-page-layout) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 24px;
 }
 
 /* Step 4: inner wrapper fills #content, detail is fixed, table scrolls */
@@ -1065,6 +1080,7 @@ body:has(.dev-page-layout) {
   flex-direction: column;
   min-height: 0;
   gap: 16px;
+  overflow: hidden;
 }
 
 #dev-detail {
@@ -1333,3 +1349,125 @@ body:has(.dev-page-layout) {
   .table thead th { padding: 6px 8px; font-size: 9px; }
   .table tbody td { padding: 6px 8px; }
 }
+
+/* HTMX Transitions */
+.animate-fade-in {
+  animation: fadeIn 0.4s ease-out forwards;
+}
+
+.htmx-indicator {
+  display: none;
+}
+.htmx-request .htmx-indicator {
+  display: block;
+}
+.htmx-request.htmx-indicator {
+  display: block;
+}
+
+/* Scrollbar styling - High Contrast for Network Ops */
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+::-webkit-scrollbar-track {
+  background: #e0e0e0;
+  border-radius: 0;
+  box-shadow: inset 0 0 5px rgba(0,0,0,0.1);
+}
+::-webkit-scrollbar-thumb {
+  background: #5a7a96;
+  border-radius: 0;
+  border: 2px solid #e0e0e0;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--cisco-navy);
+}
+/* Ensure scrollbars are always visible in scroll containers */
+.overflow-auto, .overflow-y-scroll, .dev-table-wrap {
+  scrollbar-width: auto;
+  scrollbar-color: #5a7a96 #e0e0e0;
+}
+
+/* Sidebar active states fix */
+.nav-item[hx-get].active {
+  background: rgba(0,112,210,.35);
+  color: #fff;
+  border-left-color: var(--cisco-blue);
+}
+
+.no-transition {
+  transition: none !important;
+}
+
+/* ── Debug Console ────────────────────────────────────────── */
+#debug-console-wrap {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  width: 400px;
+  background: #1e1e1e;
+  border: 1px solid #333;
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: all 0.3s ease;
+}
+
+#debug-console-wrap.minimized {
+  height: 40px;
+  width: 180px;
+}
+
+.debug-header {
+  background: #2d2d2d;
+  padding: 8px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  border-bottom: 1px solid #333;
+}
+
+.debug-title {
+  color: #aaa;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.debug-body {
+  height: 300px;
+  overflow-y: auto;
+  padding: 10px;
+  font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+  font-size: 11px;
+  background: #111;
+}
+
+.debug-entry {
+  margin-bottom: 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #222;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.debug-entry.log { color: #d4d4d4; }
+.debug-entry.error { color: #f44747; background: rgba(244, 71, 71, 0.1); }
+.debug-entry.warn { color: #dcdcaa; }
+.debug-entry.info { color: #4fc1ff; }
+
+.debug-controls button {
+  background: transparent;
+  border: none;
+  color: #888;
+  padding: 0 4px;
+  cursor: pointer;
+}
+
+.debug-controls button:hover { color: #fff; }

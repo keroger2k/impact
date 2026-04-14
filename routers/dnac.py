@@ -1,12 +1,12 @@
-"""routers/dnac.py — Catalyst Center API endpoints."""
-
+import json
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request, Depends, Form
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 import clients.dnac as dc
@@ -14,7 +14,6 @@ import clients.panorama as pc
 import auth as auth_module
 from auth import SessionEntry, require_auth
 from cache import cache, TTL_DEVICES, TTL_SITES
-from fastapi import Depends
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -47,30 +46,25 @@ def _enrich(d: dict) -> dict:
 
 @router.get("/devices")
 async def list_devices(
+    request:      Request,
     hostname:     Optional[str] = None,
     ip:           Optional[str] = None,
     platform:     Optional[str] = None,
     role:         Optional[str] = None,
     reachability: Optional[str] = None,
     site:         Optional[str] = None,
-    limit:        int = Query(500, le=2000),
+    limit:        int = Query(500, le=5000),
     offset:       int = Query(0, ge=0),
     session:      SessionEntry = Depends(require_auth),
 ):
     """Return filtered device list from cache."""
-    import time
-    start_time = time.time()
-    logger.info(f"[DEVICES_REQUEST] Received limit={limit}, offset={offset}")
-    
     loop = asyncio.get_event_loop()
     dnac = _get_dnac(session)
 
     devices = cache.get("devices")
     if devices is None:
-        logger.info("Loading devices from DNAC (not in cache)")
         devices = await loop.run_in_executor(None, dc.get_all_devices, dnac)
         cache.set("devices", devices, TTL_DEVICES)
-        logger.info(f"Loaded {len(devices)} devices in {time.time() - start_time:.1f}s")
 
     filtered = devices
     if hostname:
@@ -106,7 +100,10 @@ async def list_devices(
         enriched["siteName"] = dev_site_map.get(d.get("id"))
         paged.append(enriched)
     
-    logger.info(f"Device list response: {len(paged)} items out of {total} total, took {time.time() - start_time:.1f}s")
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/devices_list.html", {"total": total, "items": paged})
+
     return {"total": total, "offset": offset, "limit": limit, "items": paged}
 
 
@@ -148,12 +145,54 @@ async def get_device(device_id: str):
     return _enrich(device)
 
 
+@router.get("/devices/{device_id}/detail")
+async def get_device_detail_partial(
+    request:     Request,
+    device_id:   str,
+    session:     SessionEntry = Depends(require_auth)
+):
+    """Return a detailed HTML partial for a device."""
+    devices = cache.get("devices") or []
+    device  = next((d for d in devices if d.get("id") == device_id), None)
+    if not device:
+        loop = asyncio.get_event_loop()
+        dnac = _get_dnac(session)
+        try:
+            device = await loop.run_in_executor(None, dc.get_device_detail, dnac, device_id)
+        except:
+            raise HTTPException(404, "Device not found")
+
+    if not device:
+        raise HTTPException(404, "Device not found")
+
+    enriched = _enrich(device)
+    dev_site_map = cache.get("device_site_map") or {}
+    site_name = dev_site_map.get(device_id, "Unknown Site")
+
+    from templates_module import templates
+    return templates.TemplateResponse(request, "partials/device_detail.html", {
+        "d": enriched,
+        "site_name": site_name
+    })
+
+
 @router.get("/devices/{device_id}/config")
-async def get_device_config(device_id: str, session: SessionEntry = Depends(require_auth)):
+async def get_device_config(
+    request:     Request,
+    device_id: str,
+    session: SessionEntry = Depends(require_auth)
+):
     """Running configuration for a device."""
     cache_key = f"config_{device_id}"
     cached    = cache.get(cache_key)
+
     if cached is not None:
+        if request.headers.get("HX-Request"):
+            from templates_module import templates
+            return templates.TemplateResponse(request, "partials/device_config.html", {
+                "config": cached,
+                "cached": True
+            })
         return {"config": cached, "cached": True}
 
     loop   = asyncio.get_event_loop()
@@ -162,14 +201,21 @@ async def get_device_config(device_id: str, session: SessionEntry = Depends(requ
     if not config:
         raise HTTPException(404, "Config not available for this device")
 
-    cache.set(cache_key, config, 600)   # cache configs for 10 min
+    cache.set(cache_key, config, 600)
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/device_config.html", {
+            "config": config,
+            "cached": False
+        })
     return {"config": config, "cached": False}
 
 
 # ── IP Lookup ─────────────────────────────────────────────────────────────────
 
-@router.get("/ip-lookup/{ip}")
-async def ip_lookup(ip: str, session: SessionEntry = Depends(require_auth)):
+@router.get("/ip-lookup")
+async def ip_lookup_handler(ip: str, session: SessionEntry = Depends(require_auth)):
     """
     Find what interface and device owns an IP address.
     Searches both Catalyst Center (DNAC) and the Palo Alto interface inventory.
@@ -191,14 +237,7 @@ async def ip_lookup(ip: str, session: SessionEntry = Depends(require_auth)):
         devices   = cache.get("devices") or []
         id_to_dev = {d.get("id"): d for d in devices if d.get("id")}
 
-        dev_site_map = cache.get("device_site_map")
-        if dev_site_map is None:
-            sites = cache.get("sites")
-            if sites is None:
-                sites = await loop.run_in_executor(None, dc.get_site_cache, dnac)
-                cache.set("sites", sites, TTL_SITES)
-            dev_site_map = await loop.run_in_executor(None, dc.build_device_site_map, dnac, sites)
-            cache.set("device_site_map", dev_site_map, TTL_SITES)
+        dev_site_map = cache.get("device_site_map") or {}
 
         for iface in ifaces:
             dev_id = iface.get("deviceId")
@@ -231,7 +270,7 @@ async def ip_lookup(ip: str, session: SessionEntry = Depends(require_auth)):
                 "siteName": dev_site_map.get(dev_id) if dev_id else None,
             })
 
-    # ── Palo Alto interface lookup (cache-only — no live fetch at query time) ─
+    # ── Palo Alto interface lookup ──
     pan_devices    = cache.get("pan_interfaces") or []
     pan_matches    = pc.search_firewall_interfaces(ip, pan_devices)
     firewall_hits  = []
@@ -248,7 +287,6 @@ async def ip_lookup(ip: str, session: SessionEntry = Depends(require_auth)):
             "ha_state":     dev.get("ha_state"),
             "interface":    iface.get("name"),
             "ipv4":         iface.get("ipv4"),
-            "ipv6":         iface.get("ipv6", []),
         })
 
     found = bool(enriched or firewall_hits)
@@ -258,6 +296,12 @@ async def ip_lookup(ip: str, session: SessionEntry = Depends(require_auth)):
         "interfaces":        enriched,
         "firewall_interfaces": firewall_hits,
     }
+
+@router.get("/ip-lookup/ui", response_class=HTMLResponse)
+async def ip_lookup_ui(request: Request, ip: str, session: SessionEntry = Depends(require_auth)):
+    results = await ip_lookup_handler(ip, session)
+    from templates_module import templates
+    return templates.TemplateResponse(request, "partials/ip_lookup_results.html", {"r": results})
 
 
 # ── Sites ─────────────────────────────────────────────────────────────────────
@@ -289,9 +333,7 @@ async def dnac_cache_info():
 
 @router.post("/cache/refresh")
 async def refresh_cache():
-    """Force full cache refresh."""
     cache.clear()
-    await cache.warm()
     return {"status": "refreshed"}
 
 
@@ -305,14 +347,21 @@ class TagDevicesRequest(BaseModel):
 @router.post("/tag-devices")
 async def tag_devices(req: TagDevicesRequest, session: SessionEntry = Depends(require_auth)):
     """Look up or create a tag and apply it to devices by management IP. Streams SSE progress."""
-    from fastapi.responses import StreamingResponse
-    import json
+    from dev import DEV_MODE
 
     async def generate():
         def emit(data: dict) -> str:
             return f"data: {json.dumps(data)}\n\n"
 
         loop = asyncio.get_event_loop()
+
+        if DEV_MODE:
+            yield emit({"type": "log", "level": "info", "message": f"[MOCK] Resolved tag '{req.tag_name}' (id: mock-tag-id)"})
+            for ip in req.ips:
+                yield emit({"type": "log", "level": "success", "message": f"{ip}: tagged ✓"})
+            yield emit({"type": "complete", "tagged": len(req.ips), "skipped": 0, "tag_name": req.tag_name})
+            return
+
         dnac = _get_dnac(session)
 
         # Resolve IPs → device IDs using the device cache
@@ -381,24 +430,16 @@ class ConfigSearchRequest(BaseModel):
     platform:      Optional[str] = None
     role:          Optional[str] = None
     device_family: Optional[str] = None
-    reachability:  str = "Reachable"   # only Reachable by default; "" = all
+    reachability:  str = "Reachable"
     tag:           Optional[str] = None
-    max_devices:   int = 500           # safety cap; 0 = no limit
+    max_devices:   int = 500
 
 
 @router.post("/config-search")
 async def config_search(req: ConfigSearchRequest, session: SessionEntry = Depends(require_auth)):
-    """
-    Pull device configs from DNAC (cached per device, 10 min TTL) and
-    search for a string. Returns matching devices with the lines that matched.
-
-    Supports partial matching on all filter fields.
-    Configs are fetched in parallel across matching devices.
-    """
     if not req.search_string or len(req.search_string.strip()) < 2:
         raise HTTPException(400, "search_string must be at least 2 characters")
 
-    # ── 1. Get device list from cache ──────────────────────────────────────────
     devices = cache.get("devices")
     if devices is None:
         loop    = asyncio.get_event_loop()
@@ -406,7 +447,6 @@ async def config_search(req: ConfigSearchRequest, session: SessionEntry = Depend
         devices = await loop.run_in_executor(None, dc.get_all_devices, dnac)
         cache.set("devices", devices, TTL_DEVICES)
 
-    # ── 2. Apply device filters (all partial-match) ────────────────────────────
     filtered = devices
     q = lambda field, val: val and val.lower() in ((field or "").lower())
 
@@ -427,84 +467,143 @@ async def config_search(req: ConfigSearchRequest, session: SessionEntry = Depend
         elif req.reachability.lower() == "unreachable":
             filtered = [d for d in filtered if d.get("reachabilityStatus") != "Reachable"]
 
-    # Tag filtering — DNAC tags live on a separate endpoint; check tagName if present
     if req.tag:
-        # Some responses include a 'tags' list or 'tagName' field
         filtered = [
             d for d in filtered
-            if req.tag.lower() in " ".join(
-                str(t) for t in (d.get("tags") or d.get("tag") or [])
-            ).lower()
+            if req.tag.lower() in " ".join(str(t) for t in (d.get("tags") or d.get("tag") or [])).lower()
             or req.tag.lower() in (d.get("tagName") or "").lower()
         ]
 
     if not filtered:
-        return {"devices_matched_filter": 0, "devices_searched": 0,
-                "total_matches": 0, "results": [],
-                "search_string": req.search_string}
+        return {"total_matches": 0, "results": [], "search_string": req.search_string}
 
-    # Apply safety cap
     if req.max_devices and len(filtered) > req.max_devices:
         filtered = filtered[:req.max_devices]
 
-    # ── 3. Fetch configs in parallel from DNAC cache ───────────────────────────
     dnac     = _get_dnac(session)
-    loop     = asyncio.get_event_loop()
     search   = req.search_string.lower()
-    results  = []
 
     def fetch_and_search(device: dict) -> dict | None:
         dev_id   = device.get("id", "")
-        hostname = device.get("hostname", dev_id)
-
-        # Per-device config cache (10 min TTL)
         cfg_key = f"config_{dev_id}"
         config  = cache.get(cfg_key)
-
         if config is None:
             config = dc.get_device_config(dnac, dev_id)
-            if config:
-                cache.set(cfg_key, config, 600)
-
-        if not config:
-            return None
-
-        # Search — case-insensitive, partial match
+            if config: cache.set(cfg_key, config, 600)
+        if not config: return None
         matching_lines = [
             {"line_num": i + 1, "text": line}
             for i, line in enumerate(config.splitlines())
             if search in line.lower()
         ]
-
-        if not matching_lines:
-            return None
-
+        if not matching_lines: return None
         return {
-            "hostname":      hostname,
-            "ip":            device.get("managementIpAddress"),
-            "platform":      device.get("platformId"),
-            "role":          device.get("role"),
-            "reachability":  device.get("reachabilityStatus"),
-            "device_id":     dev_id,
-            "match_count":   len(matching_lines),
-            "lines":         matching_lines[:200],   # cap per-device line output
+            "hostname": device.get("hostname"), "ip": device.get("managementIpAddress"),
+            "platform": device.get("platformId"), "device_id": dev_id,
+            "match_count": len(matching_lines), "lines": matching_lines[:200],
         }
 
-    # Run parallel config fetches
-    futures_done = []
     with ThreadPoolExecutor(max_workers=20) as executor:
-        futs = [executor.submit(fetch_and_search, d) for d in filtered]
-        futures_done = [f.result() for f in futs]
+        futures_done = list(executor.map(fetch_and_search, filtered))
 
     results = [r for r in futures_done if r is not None]
     results.sort(key=lambda r: (-r["match_count"], r["hostname"]))
 
     return {
-        "search_string":         req.search_string,
-        "devices_matched_filter": len(filtered),
-        "devices_searched":       sum(1 for r in futures_done if r is not None or True),
-        "devices_with_config":    sum(1 for r in futures_done if r is not None or True),
-        "total_matches":          len(results),
-        "total_matching_lines":   sum(r["match_count"] for r in results),
-        "results":                results,
+        "search_string": req.search_string,
+        "total_matches": len(results),
+        "results": results,
     }
+
+@router.post("/config-search/ui", response_class=HTMLResponse)
+async def config_search_ui(
+    request: Request,
+    search_string: str = Form(...),
+    hostname: Optional[str] = Form(None),
+    platform: Optional[str] = Form(None),
+    role: Optional[str] = Form(None),
+    device_family: Optional[str] = Form(None),
+    reachability: str = Form("Reachable"),
+    tag: Optional[str] = Form(None),
+    session: SessionEntry = Depends(require_auth)
+):
+    req = ConfigSearchRequest(
+        search_string=search_string,
+        hostname=hostname,
+        platform=platform,
+        role=role,
+        device_family=device_family,
+        reachability=reachability,
+        tag=tag
+    )
+    results = await config_search(req, session)
+    from templates_module import templates
+    return templates.TemplateResponse(request, "partials/config_search_results.html", {
+        "results": results, "search_string": search_string
+    })
+
+
+# ── Path Trace ──
+
+@router.post("/path-trace/ui", response_class=HTMLResponse)
+async def path_trace_ui(
+    request: Request,
+    source_ip: str = Form(...),
+    dest_ip: str = Form(...),
+    protocol: str = Form("TCP"),
+    dest_port: int = Form(80),
+    session: SessionEntry = Depends(require_auth)
+):
+    loop = asyncio.get_event_loop()
+    dnac = _get_dnac(session)
+    try:
+        task = await loop.run_in_executor(None, dc.initiate_path_trace, dnac, source_ip, dest_ip, protocol, dest_port)
+        flow_id = task.get("response", {}).get("flowAnalysisId")
+        return HTMLResponse(f"""
+            <div class="card shadow-sm animate-fade-in" hx-get="/api/dnac/path-trace/result/{flow_id}" hx-trigger="load delay:3s" hx-swap="outerHTML">
+                <div class="card-body p-5 text-center">
+                    <div class="spinner spinner-lg mb-3"></div>
+                    <h5 class="fw-bold">Path Trace Initiated</h5>
+                    <p class="text-muted">Analysis ID: {flow_id}</p>
+                </div>
+            </div>
+        """)
+    except Exception as e:
+        return HTMLResponse(f"<div class='alert alert-danger'>Path Trace Failed: {str(e)}</div>")
+
+@router.get("/path-trace/result/{flow_id}", response_class=HTMLResponse)
+async def path_trace_result_ui(request: Request, flow_id: str, session: SessionEntry = Depends(require_auth)):
+    loop = asyncio.get_event_loop()
+    dnac = _get_dnac(session)
+    result = await loop.run_in_executor(None, dc.get_path_trace_result, dnac, flow_id)
+    status = result.get("response", {}).get("request", {}).get("status", "")
+    if status in ("INPROGRESS", "PENDING"):
+         return HTMLResponse(f"""
+            <div class="card shadow-sm animate-fade-in" hx-get="/api/dnac/path-trace/result/{flow_id}" hx-trigger="load delay:3s" hx-swap="outerHTML">
+                <div class="card-body p-5 text-center">
+                    <div class="spinner spinner-lg mb-3"></div>
+                    <h5 class="fw-bold">Analysis in Progress... ({status})</h5>
+                </div>
+            </div>
+        """)
+    hops = result.get("response", {}).get("networkElementsInfo", [])
+    from templates_module import templates
+    return templates.TemplateResponse(request, "partials/path_trace_result.html", {
+        "hops": hops,
+        "source": result.get("response", {}).get("request", {}).get("sourceIP"),
+        "dest": result.get("response", {}).get("request", {}).get("destIP")
+    })
+
+@router.get("/devices-select", response_class=HTMLResponse)
+async def device_select_partial(request: Request, session: SessionEntry = Depends(require_auth)):
+    devices = cache.get("devices") or []
+    if not devices:
+        dnac = _get_dnac(session)
+        devices = await asyncio.get_event_loop().run_in_executor(None, dc.get_all_devices, dnac)
+        cache.set("devices", devices, TTL_DEVICES)
+    html = '<select id="device-multi-select" class="form-select" multiple style="height: 150px;">'
+    for d in sorted(devices, key=lambda x: x.get("hostname", "") or ""):
+        data_json = json.dumps({"ip": d.get("managementIpAddress"), "hostname": d.get("hostname"), "platform": d.get("platformId")})
+        html += f'<option value="{d.get("id")}" data-device=\'{data_json}\'>{d.get("hostname")} ({d.get("managementIpAddress")})</option>'
+    html += '</select>'
+    return HTMLResponse(html)

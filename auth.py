@@ -154,6 +154,13 @@ def get_dnac_for_session(session: SessionEntry):
 
 def get_ise_for_session(session: SessionEntry):
     """Return (or lazily create) an ISE client authenticated as this user."""
+    from dev import DEV_MODE
+    if DEV_MODE:
+        class MockISE:
+            def __init__(self):
+                from dev import MOCK_USERS
+                self.custom_caller = type('CC', (), {'call_api': lambda *a, **k: None})
+        return MockISE()
     with session._lock:
         if session.ise_client is None:
             import clients.ise as ic
@@ -162,6 +169,8 @@ def get_ise_for_session(session: SessionEntry):
 
 
 def get_panorama_key_for_session(session: SessionEntry) -> str:
+    from dev import DEV_MODE
+    if DEV_MODE: return "mock-pan-key"
     """Return (or lazily generate) a Panorama API key for this user."""
     with session._lock:
         if session.panorama_key is None:
@@ -188,3 +197,17 @@ def require_auth(
     # Sliding expiration — every request resets the TTL
     session.expires_at = time.monotonic() + SESSION_TTL
     return session
+
+
+def verify_ldap_or_mock(username: str, password: str) -> tuple[str, str] | None:
+    """
+    Unified entry point for login. Returns (username, password) if successful.
+    """
+    from dev import DEV_MODE
+    if DEV_MODE:
+        return username, password
+
+    if validate_ldap(username, password):
+        return username, password
+
+    return None

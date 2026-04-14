@@ -1,0 +1,101 @@
+<div class="row g-4">
+  <div class="col-md-3">
+    <div class="card shadow-sm border-0">
+      <div class="card-header bg-navy text-white"><span class="fw-bold">Routing Ops</span></div>
+      <div class="card-body p-0">
+        <div class="list-group list-group-flush">
+          <button class="list-group-item list-group-item-action active" onclick="showRoutingTab(this, 'bgp')">
+            🌐 BGP Summary
+          </button>
+          <button class="list-group-item list-group-item-action" onclick="showRoutingTab(this, 'eigrp')">
+            🌿 EIGRP Topology
+          </button>
+          <button class="list-group-item list-group-item-action" onclick="showRoutingTab(this, 'ospf')">
+            👁️ OSPF Neighbors
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-9">
+    <div id="routing-bgp" class="routing-tab">
+      <div class="card mb-4 shadow-sm border-0 animate-fade-in">
+        <div class="card-header bg-light"><span class="fw-bold text-navy">BGP Troubleshooting</span></div>
+        <div class="card-body">
+          <form hx-post="/api/routing/bgp/summary" hx-target="#bgp-results" hx-indicator="#bgp-loading">
+            <div class="row g-3">
+              <div class="col-md-8">
+                <label class="form-label text-navy fw-bold small uppercase">Device IP</label>
+                <input type="text" name="ip" class="form-control" placeholder="Enter router IP address" required>
+              </div>
+              <div class="col-md-4 d-flex align-items-end">
+                <button type="submit" class="btn btn-primary w-100 py-2">Analyze BGP Health</button>
+              </div>
+            </div>
+          </form>
+          <div id="bgp-loading" class="htmx-indicator mt-3 text-center">
+            <div class="spinner spinner-md"></div> <span class="ms-2 text-muted small">Connecting and fetching BGP data...</span>
+          </div>
+        </div>
+      </div>
+      <div id="bgp-results"></div>
+    </div>
+
+    <div id="routing-eigrp" class="routing-tab d-none">
+      <div class="card mb-4 shadow-sm border-0 animate-fade-in">
+        <div class="card-header bg-light"><span class="fw-bold text-navy">EIGRP Troubleshooting</span></div>
+        <div class="card-body">
+          <form hx-post="/api/routing/eigrp/topology" hx-target="#eigrp-results" hx-indicator="#eigrp-loading">
+            <div class="row g-3">
+              <div class="col-md-8">
+                <label class="form-label text-navy fw-bold small uppercase">Device IP</label>
+                <input type="text" name="ip" class="form-control" placeholder="Enter router IP address" required>
+              </div>
+              <div class="col-md-4 d-flex align-items-end">
+                <button type="submit" class="btn btn-primary w-100 py-2">Map EIGRP Topology</button>
+              </div>
+            </div>
+          </form>
+          <div id="eigrp-loading" class="htmx-indicator mt-3 text-center">
+            <div class="spinner spinner-md"></div> <span class="ms-2 text-muted small">Connecting and fetching EIGRP data...</span>
+          </div>
+        </div>
+      </div>
+      <div id="eigrp-results"></div>
+    </div>
+
+    <div id="routing-ospf" class="routing-tab d-none">
+       <div class="card mb-4 shadow-sm border-0 animate-fade-in">
+        <div class="card-header bg-light"><span class="fw-bold text-navy">OSPF Troubleshooting</span></div>
+        <div class="card-body">
+          <form hx-post="/api/routing/ospf/neighbors" hx-target="#ospf-results" hx-indicator="#ospf-loading">
+            <div class="row g-3">
+              <div class="col-md-8">
+                <label class="form-label text-navy fw-bold small uppercase">Device IP</label>
+                <input type="text" name="ip" class="form-control" placeholder="Enter router IP address" required>
+              </div>
+              <div class="col-md-4 d-flex align-items-end">
+                <button type="submit" class="btn btn-primary w-100 py-2">Analyze OSPF Neighbors</button>
+              </div>
+            </div>
+          </form>
+          <div id="ospf-loading" class="htmx-indicator mt-3 text-center">
+            <div class="spinner spinner-md"></div> <span class="ms-2 text-muted small">Connecting and fetching OSPF data...</span>
+          </div>
+        </div>
+      </div>
+      <div id="ospf-results"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  function showRoutingTab(btn, tab) {
+    document.querySelectorAll('.routing-tab').forEach(el => el.classList.add('d-none'));
+    document.getElementById('routing-' + tab).classList.remove('d-none');
+
+    // Update active state in list
+    btn.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active'));
+    btn.classList.add('active');
+  }
+</script>

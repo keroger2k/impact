@@ -5,7 +5,7 @@ import json
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 import auth as auth_module
 import clients.ise as ic
@@ -59,7 +59,7 @@ async def refresh_ise_cache():
 # ── Network Access Devices ────────────────────────────────────────────────────
 
 @router.get("/nads")
-async def list_nads(search: Optional[str] = None, session: SessionEntry = Depends(require_auth)):
+async def list_nads(request: Request, search: Optional[str] = None, session: SessionEntry = Depends(require_auth)):
     ise  = _get_ise(session)
     loop = asyncio.get_event_loop()
     nads = await loop.run_in_executor(None, _cached, "ise_nads",
@@ -67,6 +67,10 @@ async def list_nads(search: Optional[str] = None, session: SessionEntry = Depend
     if search:
         s = search.lower()
         nads = [n for n in nads if s in json.dumps(n).lower()]
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/ise_nads.html", {"total": len(nads), "items": nads})
     return {"total": len(nads), "items": nads}
 
 
@@ -141,8 +145,27 @@ async def list_identity_groups(session: SessionEntry = Depends(require_auth)):
     return {"total": len(groups), "items": groups}
 
 
+@router.get("/users/{user_id}")
+async def get_user_detail(request: Request, user_id: str, session: SessionEntry = Depends(require_auth)):
+    from dev import DEV_MODE, MOCK_USERS
+    if DEV_MODE:
+        user = next((u for u in MOCK_USERS if u["id"] == user_id), None)
+        if not user: raise HTTPException(404, "User not found")
+    else:
+        ise  = _get_ise(session)
+        loop = asyncio.get_event_loop()
+        user = await loop.run_in_executor(None, ic.get_internal_user_detail, ise, user_id)
+        if not user:
+            raise HTTPException(404, "User not found")
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/ise_user_detail.html", {"u": user})
+    return user
+
+
 @router.get("/users")
-async def list_users(search: Optional[str] = None, session: SessionEntry = Depends(require_auth)):
+async def list_users(request: Request, search: Optional[str] = None, session: SessionEntry = Depends(require_auth)):
     ise  = _get_ise(session)
     loop = asyncio.get_event_loop()
     users = await loop.run_in_executor(None, _cached, "ise_users",
@@ -150,13 +173,17 @@ async def list_users(search: Optional[str] = None, session: SessionEntry = Depen
     if search:
         s = search.lower()
         users = [u for u in users if s in json.dumps(u).lower()]
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/ise_users.html", {"total": len(users), "items": users})
     return {"total": len(users), "items": users}
 
 
 # ── TrustSec ──────────────────────────────────────────────────────────────────
 
 @router.get("/sgts")
-async def list_sgts(session: SessionEntry = Depends(require_auth)):
+async def list_sgts(request: Request, session: SessionEntry = Depends(require_auth)):
     ise  = _get_ise(session)
     loop = asyncio.get_event_loop()
     raw  = await loop.run_in_executor(None, _cached, "ise_sgts",
@@ -169,6 +196,10 @@ async def list_sgts(session: SessionEntry = Depends(require_auth)):
         prop  = s.get("propogateToApic", False) if isinstance(s, dict) else getattr(s, "propogateToApic", False)
         rows.append({"name": name, "value": value, "description": desc, "propagateToApic": prop})
     rows.sort(key=lambda r: int(str(r["value"])) if str(r["value"]).isdigit() else 9999)
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/ise_sgts.html", {"total": len(rows), "items": rows})
     return {"total": len(rows), "items": rows}
 
 
@@ -193,20 +224,28 @@ async def egress_matrix(session: SessionEntry = Depends(require_auth)):
 # ── Policy ────────────────────────────────────────────────────────────────────
 
 @router.get("/policy-sets")
-async def list_policy_sets(session: SessionEntry = Depends(require_auth)):
+async def list_policy_sets(request: Request, session: SessionEntry = Depends(require_auth)):
     ise  = _get_ise(session)
     loop = asyncio.get_event_loop()
     sets = await loop.run_in_executor(None, _cached, "ise_policy_sets",
                lambda: ic.get_policy_sets(ise))
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/ise_policy_sets.html", {"total": len(sets), "items": sets})
     return {"total": len(sets), "items": sets}
 
 
 @router.get("/policy-sets/{policy_id}/auth-rules")
-async def get_auth_rules(policy_id: str, session: SessionEntry = Depends(require_auth)):
+async def get_auth_rules(request: Request, policy_id: str, session: SessionEntry = Depends(require_auth)):
     ise  = _get_ise(session)
     loop = asyncio.get_event_loop()
     rules = await loop.run_in_executor(None, _cached, f"ise_auth_rules_{policy_id}",
                 lambda: ic.get_auth_rules(ise, policy_id))
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/ise_auth_rules.html", {"total": len(rules), "items": rules})
     return {"total": len(rules), "items": rules}
 
 

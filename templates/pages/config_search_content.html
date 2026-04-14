@@ -1,0 +1,77 @@
+<div class="row g-4 h-100">
+  <div class="col-md-3">
+    <div class="card shadow-sm border-0 animate-fade-in h-100">
+      <div class="card-header bg-navy text-white d-flex align-items-center gap-2">
+        <i class="fas fa-search"></i>
+        <span class="fw-bold">Global Config Search</span>
+      </div>
+      <div class="card-body">
+        <form hx-post="/api/dnac/config-search/ui" hx-target="#search-results" hx-indicator="#search-loading">
+          <div class="mb-3">
+            <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Search String</label>
+            <input type="text" name="search_string" class="form-control" placeholder="e.g. snmp-server" required minlength="2">
+          </div>
+
+          <div class="accordion accordion-flush mb-4" id="searchFilters">
+            <div class="accordion-item">
+              <h2 class="accordion-header">
+                <button class="accordion-button collapsed px-0 small fw-bold text-navy uppercase" type="button" data-bs-toggle="collapse" data-bs-target="#filterCollapse">
+                  Advanced Filters
+                </button>
+              </h2>
+              <div id="filterCollapse" class="accordion-collapse collapse" data-bs-parent="#searchFilters">
+                <div class="accordion-body px-0 pt-3">
+                  <div class="mb-2">
+                    <label class="form-label small">Hostname</label>
+                    <input type="text" name="hostname" class="form-control form-control-sm">
+                  </div>
+                  <div class="mb-2">
+                    <label class="form-label small">Platform</label>
+                    <input type="text" name="platform" class="form-control form-control-sm">
+                  </div>
+                  <div class="mb-2">
+                    <label class="form-label small">Role</label>
+                    <input type="text" name="role" class="form-control form-control-sm">
+                  </div>
+                  <div class="mb-2">
+                    <label class="form-label small">Device Family</label>
+                    <input type="text" name="device_family" class="form-control form-control-sm">
+                  </div>
+                   <div class="mb-2">
+                    <label class="form-label small">Reachability</label>
+                    <select name="reachability" class="form-select form-select-sm">
+                        <option value="Reachable">Reachable Only</option>
+                        <option value="">Any Status</option>
+                        <option value="Unreachable">Unreachable Only</option>
+                    </select>
+                  </div>
+                  <div class="mb-2">
+                    <label class="form-label small">Tag</label>
+                    <input type="text" name="tag" class="form-control form-control-sm">
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <button type="submit" class="btn btn-primary w-100 py-2 fw-bold shadow-sm">
+            <i class="fas fa-search me-1"></i> Search Configs
+          </button>
+        </form>
+        <div id="search-loading" class="htmx-indicator mt-4 text-center">
+          <div class="spinner spinner-md"></div>
+          <p class="text-muted small mt-2">Searching device configurations...</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-9 d-flex flex-column">
+    <div id="search-results" class="flex-grow-1 overflow-auto">
+      <div class="empty-state bg-white border rounded shadow-sm">
+        <div class="empty-state-icon text-muted">🔍</div>
+        <div class="empty-state-title">Configuration Search</div>
+        <div class="empty-state-desc">Search through all device configurations across the entire program. We search in parallel and cache results for performance.</div>
+      </div>
+    </div>
+  </div>
+</div>

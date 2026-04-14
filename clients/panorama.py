@@ -37,9 +37,11 @@ BASE_XPATH = "/config/devices/entry[@name='localhost.localdomain']"
 
 def _keygen(host: str, user: str, pwd: str) -> str | None:
     """Exchange credentials for a Panorama API key."""
+    if not host: return None
     try:
+        host_clean = host.strip().split('/')[0]
         resp = requests.get(
-            f"https://{host}/api/",
+            f"https://{host_clean}/api/",
             params={"type": "keygen", "user": user, "password": pwd},
             verify=False,
             timeout=15,
@@ -84,9 +86,12 @@ def get_user_api_key(username: str, password: str) -> str | None:
 def _config_get(xpath: str, api_key: str) -> ET.Element | None:
     """Panorama config GET — returns the <result> element or None."""
     host = os.getenv("PANORAMA_HOST")
+    if not host: return None
     try:
+        # Sanitize host to prevent Error #4 (idna codec empty label)
+        host_clean = host.strip().split('/')[0]
         resp = requests.get(
-            f"https://{host}/api/",
+            f"https://{host_clean}/api/",
             params={
                 "type":   "config",
                 "action": "get",
@@ -110,9 +115,11 @@ def _config_get(xpath: str, api_key: str) -> ET.Element | None:
 def _op(cmd: str, api_key: str) -> ET.Element | None:
     """Panorama op command — returns the <result> element or None."""
     host = os.getenv("PANORAMA_HOST")
+    if not host: return None
     try:
+        host_clean = host.strip().split('/')[0]
         resp = requests.get(
-            f"https://{host}/api/",
+            f"https://{host_clean}/api/",
             params={"type": "op", "cmd": cmd, "key": api_key},
             verify=False,
             timeout=30,
@@ -127,13 +134,17 @@ def _op(cmd: str, api_key: str) -> ET.Element | None:
 def _op_targeted(cmd: str, api_key: str, target: str) -> ET.Element | None:
     """Like _op but targets a specific managed firewall by serial number."""
     host = os.getenv("PANORAMA_HOST")
+    if not host: return None
     try:
+        host_clean = host.strip().split('/')[0]
         resp = requests.get(
-            f"https://{host}/api/",
+            f"https://{host_clean}/api/",
             params={"type": "op", "cmd": cmd, "key": api_key, "target": target},
             verify=False,
             timeout=20,
         )
+        if not resp.text or not resp.text.strip():
+            return None
         root = ET.fromstring(resp.text)
         if root.attrib.get("status") == "error":
             msg = root.findtext(".//msg/line") or root.findtext(".//msg") or "unknown error"
@@ -161,7 +172,12 @@ def fetch_firewall_interfaces(api_key: str) -> list[dict]:
     Skips disconnected/unreachable devices gracefully.
     Returns a list of device dicts ordered by hostname.
     """
-    result = _op("<show><devices><all/></devices></show>", api_key)
+    try:
+        result = _op("<show><devices><all/></devices></show>", api_key)
+    except Exception as e:
+        logger.error(f"Failed to fetch Panorama devices: {e}")
+        return []
+
     if result is None:
         logger.warning("fetch_firewall_interfaces: no result from Panorama device list")
         return []
@@ -214,7 +230,7 @@ def fetch_firewall_interfaces(api_key: str) -> list[dict]:
                 name = entry.findtext("name")
                 if not name:
                     continue
-                iface_map.setdefault(name, {"name": name, "ipv4": "", "ipv6": []})
+                iface_map.setdefault(name, {"name": name, "ipv4": "", "ipv6": [], "zone": ""})
 
                 # IPv4
                 v4 = (entry.findtext("ip") or "").strip()
@@ -237,6 +253,40 @@ def fetch_firewall_interfaces(api_key: str) -> list[dict]:
                         val = node.text.strip()
                         if val.lower() not in _SKIP_VALUES and val not in iface_map[name]["ipv6"]:
                             iface_map[name]["ipv6"].append(val)
+
+        # Fetch zone information to map interfaces to zones.
+        # Try <show><zone></show> first.
+        # For multi-vsys, this might need to be run per-vsys, but usually Panorama
+        # targeted op returns the aggregate or vsys1.
+        zone_result = _op_targeted("<show><zone></show>", api_key, serial)
+        if zone_result is not None:
+            # We use a case-insensitive map for interface lookups to be safe
+            iface_keys_lower = {k.lower(): k for k in iface_map.keys()}
+
+            for entry in zone_result.findall(".//entry"):
+                zone_name = entry.get("name") or entry.findtext("name")
+                if not zone_name:
+                    continue
+
+                # Search for interface members using multiple common XPaths
+                # Some versions use <interface><member>..., others just <member>...
+                # We also look for <vsys><entry><interface><member>... for multi-vsys responses
+                iface_nodes = (
+                    entry.findall(".//interface/member") +
+                    entry.findall("./member") +
+                    entry.findall(".//vsys/entry/interface/member")
+                )
+
+                for iface_node in iface_nodes:
+                    iface_name_raw = (iface_node.text or "").strip()
+                    if not iface_name_raw:
+                        continue
+
+                    # Case-insensitive match against our collected interfaces
+                    if iface_name_raw.lower() in iface_keys_lower:
+                        actual_key = iface_keys_lower[iface_name_raw.lower()]
+                        iface_map[actual_key]["zone"] = zone_name
+                        logger.debug(f"Mapped {actual_key} to zone {zone_name} on {hostname}")
 
         # Only include devices that have at least one IP
         interfaces = [v for v in iface_map.values() if v["ipv4"] or v["ipv6"]]

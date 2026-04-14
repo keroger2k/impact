@@ -132,6 +132,8 @@ def find_best_site_match(site_cache: list, term: str) -> tuple[str | None, str |
 
 
 def get_device_config(dnac, device_id: str) -> str:
+    from dev import DEV_MODE, get_mock_config
+    if DEV_MODE: return get_mock_config(device_id)
     try:
         resp = dnac.custom_caller.call_api(
             "GET", f"/dna/intent/api/v1/network-device/{device_id}/config"
@@ -229,6 +231,25 @@ def tag_network_devices(dnac, tag_id: str, device_ids: list[str]) -> None:
 
 
 def get_interface_by_ip(dnac, ip: str) -> list[dict]:
+    from dev import DEV_MODE, MOCK_DEVICES
+    if DEV_MODE:
+        # Find if this IP belongs to a mock device
+        match = next((d for d in MOCK_DEVICES if d.get("managementIpAddress") == ip), None)
+        if match:
+            return [{
+                "deviceId": match["id"],
+                "portName": "GigabitEthernet0/1",
+                "ipv4Address": ip,
+                "ipv4Mask": "255.255.255.0",
+                "macAddress": "00:11:22:33:44:55",
+                "vlanId": "10",
+                "description": "Mock Management Interface",
+                "adminStatus": "UP",
+                "status": "up",
+                "speed": "1000000"
+            }]
+        return []
+
     try:
         result = dnac.custom_caller.call_api(
             "GET", f"/dna/intent/api/v1/interface/ip-address/{ip}"
@@ -252,3 +273,101 @@ def get_global_credentials(dnac, sub_type: str) -> list:
     except Exception as e:
         logger.warning(f"Credential fetch failed: {e}")
         return []
+
+def initiate_path_trace(dnac, source_ip, dest_ip, protocol="TCP", dest_port=80):
+    payload = {
+        "sourceIP": source_ip,
+        "destIP": dest_ip,
+        "protocol": protocol,
+        "destPort": str(dest_port)
+    }
+    # SDK method name can vary, try initiate_a_new_pathtrace or initiate_new_path_trace
+    try:
+        return dnac.path_trace.initiate_a_new_pathtrace(payload=payload)
+    except AttributeError:
+        return dnac.path_trace.initiate_new_path_trace(payload=payload)
+
+def get_path_trace_result(dnac, flow_id):
+    """Retrieve path trace result using custom caller for reliability."""
+    try:
+        resp = dnac.custom_caller.call_api(
+            "GET", f"/dna/intent/api/v1/flow-analysis/{flow_id}"
+        )
+        # custom_caller returns a response object with .response
+        if hasattr(resp, "response"):
+            return _dictify(resp.response)
+        return _dictify(resp)
+    except Exception as e:
+        logger.error(f"Path trace fetch failed for {flow_id}: {e}")
+        return {}
+
+def get_device_detail(dnac, device_id):
+    resp = dnac.devices.get_network_device_by_id(id=device_id)
+    return _dictify(resp.response) if hasattr(resp, "response") else _dictify(resp)
+
+def get_recent_issues(dnac) -> list:
+    """Fetch and normalize recent global issues/alerts from DNAC."""
+    from dev import DEV_MODE, MOCK_ISSUES
+
+    raw_issues = []
+    if DEV_MODE:
+        raw_issues = MOCK_ISSUES
+    else:
+        try:
+            import time
+            end_time = int(time.time() * 1000)
+            start_time = end_time - (24 * 60 * 60 * 1000)
+
+            # Using custom caller for reliability across SDK versions.
+            # We omit the 'priority' filter from the query to avoid 400 errors on DNAC versions
+            # that have strict validation for that parameter, and filter manually instead.
+            resp = dnac.custom_caller.call_api(
+                "GET", "/dna/intent/api/v1/issues",
+                params={
+                    "startTime": start_time,
+                    "endTime": end_time
+                }
+            )
+            # custom_caller returns a response object with .response
+            raw_issues = getattr(resp, "response", resp)
+            if isinstance(raw_issues, dict) and "response" in raw_issues:
+                raw_issues = raw_issues["response"]
+
+            if not isinstance(raw_issues, list):
+                raw_issues = []
+        except Exception as e:
+            logger.warning(f"Failed to fetch issues: {e}")
+            return []
+
+    normalized = []
+    for issue in raw_issues:
+            d = _dictify(issue)
+
+            # Manual filter for P1/P2
+            priority = d.get("priority", d.get("severity", "P3"))
+            if priority not in ("P1", "P2"):
+                continue
+
+            # Time can be in many places: lastOccurrenceTime, timestamp, occurredOn, etc.
+            ts_raw = d.get("lastOccurrenceTime") or d.get("timestamp") or d.get("occurredOn") or d.get("startTime") or ""
+            ts = ""
+            if isinstance(ts_raw, (int, float)):
+                from datetime import datetime
+                ts = datetime.fromtimestamp(ts_raw/1000.0).strftime('%Y-%m-%d %H:%M')
+            elif isinstance(ts_raw, str) and ts_raw:
+                ts = ts_raw[:16].replace('T', ' ') # Simple ISO-ish slice
+
+            # Device Name normalization
+            dev = d.get("device_name") or d.get("deviceName") or d.get("host") or d.get("source") or "Multiple"
+
+            # Site Name normalization - try hierarchy first, then name
+            site = d.get("site_name") or d.get("siteName") or d.get("siteHierarchy") or d.get("siteNameHierarchy") or "—"
+
+            normalized.append({
+                "priority": priority,
+                "issue_title": d.get("name") or d.get("issueTitle") or d.get("title") or "Unknown Issue",
+                "device_name": dev,
+                "site_name": site,
+                "last_occurrence_time": ts
+            })
+    return normalized
