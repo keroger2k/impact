@@ -115,6 +115,14 @@ async def firewall_page_render(request: Request, user: SessionEntry = Depends(ge
         return templates.TemplateResponse(request, "pages/firewall_content.html", context)
     return templates.TemplateResponse(request, "firewall.html", context)
 
+@router.get("/aci", response_class=HTMLResponse)
+async def aci_page_render(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
+    if not user: return RedirectResponse(url="/login")
+    context = {"active_page": "aci", "username": user.username, "token": request.cookies.get("impact_token")}
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse(request, "pages/aci_content.html", context)
+    return templates.TemplateResponse(request, "aci.html", context)
+
 @router.get("/command-runner", response_class=HTMLResponse)
 async def command_runner_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
     if not user: return RedirectResponse(url="/login")

@@ -11,3 +11,7 @@
   <span class="status-dot {% if panorama and panorama.ok %}ok{% else %}err{% endif %}"></span>
   <span>Panorama: {{ panorama.detail if panorama else 'Loading...' }}</span>
 </div>
+<div class="status-item">
+  <span class="status-dot {% if aci and aci.ok %}ok{% else %}err{% endif %}"></span>
+  <span>ACI: {{ aci.detail if aci else 'Loading...' }}</span>
+</div>

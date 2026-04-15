@@ -61,6 +61,10 @@
          hx-get="/firewall" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
         <span class="nav-icon">🔥</span> <span>Firewall Ops</span>
       </a>
+      <a class="nav-item {% if active_page == 'aci' %}active{% endif %}"
+         hx-get="/aci" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+        <span class="nav-icon">🏢</span> <span>ACI Operations</span>
+      </a>
       <a class="nav-item {% if active_page == 'command-runner' %}active{% endif %}"
          hx-get="/command-runner" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
         <span class="nav-icon">⌨️</span> <span>Command Runner</span>

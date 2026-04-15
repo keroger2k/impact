@@ -1,0 +1,34 @@
+<div class="card shadow-sm border-0 animate-fade-in">
+    <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <span class="fw-bold text-navy">📊 Endpoint Groups (EPGs)</span>
+        <span class="badge bg-secondary">{{ epgs|length }} EPGs</span>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive sticky-header" style="max-height: calc(100vh - 250px);">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Tenant</th>
+                        <th>App Profile</th>
+                        <th>EPG Name</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for e in epgs %}
+                    <tr>
+                        <td class="fw-bold text-navy">{{ e.tenant }}</td>
+                        <td>{{ e.app_prof }}</td>
+                        <td>{{ e.name }}</td>
+                        <td>
+                            <button class="btn btn-outline-primary btn-sm" hx-get="/api/aci/traffic/epg-health?dn={{ e.dn }}" hx-target="#aci-results">
+                                Health & Stats
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>

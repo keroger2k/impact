@@ -1,0 +1,34 @@
+<div class="card shadow-sm border-0 animate-fade-in">
+    <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <span class="fw-bold text-navy">⚠️ Operational Faults</span>
+        <span class="badge bg-secondary">{{ faults|length }} Faults</span>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive sticky-header" style="max-height: calc(100vh - 250px);">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Code</th>
+                        <th>Severity</th>
+                        <th>Description</th>
+                        <th>Created</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for f in faults %}
+                    <tr>
+                        <td class="fw-bold text-navy">{{ f.code }}</td>
+                        <td>
+                            <span class="badge {% if f.severity == 'critical' %}bg-danger{% elif f.severity == 'major' %}bg-warning text-dark{% else %}bg-info{% endif %}">
+                                {{ f.severity|upper }}
+                            </span>
+                        </td>
+                        <td class="small">{{ f.descr }}</td>
+                        <td class="small text-muted">{{ f.created }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>

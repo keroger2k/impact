@@ -287,6 +287,38 @@ MOCK_SERVICES: list[dict] = [
     {"name": "SVC-DNS",    "protocol": "udp", "port": "53",   "device_group": "shared"},
 ]
 
+# ── Mock ACI data ─────────────────────────────────────────────────────────────
+
+MOCK_ACI_NODES = [
+    {"fabricNode": {"attributes": {"id": "1001", "name": "SPINE-01", "model": "N9K-C9332C", "role": "spine", "fabricSt": "active", "dn": "topology/pod-1/node-1001"}}},
+    {"fabricNode": {"attributes": {"id": "1002", "name": "SPINE-02", "model": "N9K-C9332C", "role": "spine", "fabricSt": "active", "dn": "topology/pod-1/node-1002"}}},
+    {"fabricNode": {"attributes": {"id": "101", "name": "LEAF-01", "model": "N9K-C93180YC-EX", "role": "leaf", "fabricSt": "active", "dn": "topology/pod-1/node-101"}}},
+    {"fabricNode": {"attributes": {"id": "102", "name": "LEAF-02", "model": "N9K-C93180YC-EX", "role": "leaf", "fabricSt": "active", "dn": "topology/pod-1/node-102"}}},
+]
+
+MOCK_ACI_L3OUTS = [
+    {"l3extOut": {"attributes": {"name": "L3OUT-CORE", "dn": "uni/tn-COMMON/out-L3OUT-CORE", "descr": "Connection to Enterprise Core"}}},
+    {"l3extOut": {"attributes": {"name": "L3OUT-FIREWALL", "dn": "uni/tn-PROD/out-L3OUT-FIREWALL", "descr": "Connection to DMZ Firewalls"}}},
+]
+
+MOCK_ACI_BGP_PEERS = [
+    {"bgpPeerEntry": {"attributes": {"addr": "10.255.0.1", "operSt": "established", "dn": "topology/pod-1/node-101/sys/bgp/inst/dom-default/peer-[10.255.0.1]"}}},
+    {"bgpPeerEntry": {"attributes": {"addr": "10.255.0.2", "operSt": "established", "dn": "topology/pod-1/node-102/sys/bgp/inst/dom-default/peer-[10.255.0.2]"}}},
+]
+
+MOCK_ACI_SUBNETS = [
+    {"l3extSubnet": {"attributes": {"ip": "10.0.0.0/8", "scope": "export-rtctrl", "dn": "uni/tn-COMMON/out-L3OUT-CORE/lnodep-CORE/lifp-CORE/subnet-[10.0.0.0/8]"}}},
+    {"l3extSubnet": {"attributes": {"ip": "172.16.0.0/12", "scope": "export-rtctrl", "dn": "uni/tn-PROD/out-L3OUT-FIREWALL/lnodep-FW/lifp-FW/subnet-[172.16.0.0/12]"}}},
+]
+
+MOCK_ACI_EPGS = [
+    {"fvAEPg": {"attributes": {"name": "EPG-WEB", "dn": "uni/tn-PROD/ap-APP-01/epg-EPG-WEB"}}},
+    {"fvAEPg": {"attributes": {"name": "EPG-DB", "dn": "uni/tn-PROD/ap-APP-01/epg-EPG-DB"}}},
+]
+
+MOCK_ACI_FAULT_INST = [
+    {"faultInst": {"attributes": {"code": "F1234", "severity": "major", "descr": "BGP Peer Down", "dn": "topology/pod-1/node-101/sys/bgp/inst/dom-default/peer-[10.255.0.1]/fault-F1234", "created": "2024-05-20T10:00:00Z"}}},
+]
 
 # ── Cache seeding ─────────────────────────────────────────────────────────────
 
@@ -333,6 +365,17 @@ def seed_cache(cache) -> None:
 
     # Panorama status
     cache.set("status_panorama", {"ok": True, "detail": "Connected (mock)"}, LONG)
+
+    # ACI
+    cache.set("aci_nodes",     MOCK_ACI_NODES,      LONG)
+    cache.set("aci_l3outs",    MOCK_ACI_L3OUTS,     LONG)
+    cache.set("aci_bgp_peers", MOCK_ACI_BGP_PEERS,  LONG)
+    cache.set("aci_subnets",   MOCK_ACI_SUBNETS,    LONG)
+    cache.set("aci_epgs",      MOCK_ACI_EPGS,       LONG)
+    cache.set("aci_faults",    MOCK_ACI_FAULT_INST, LONG)
+
+    # ACI status
+    cache.set("status_aci", {"ok": True, "detail": "Connected (mock)"}, LONG)
 
     # Nexus
     cache.set("nexus_inventory", MOCK_NEXUS_DEVICES, LONG)

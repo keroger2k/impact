@@ -30,6 +30,7 @@ class SessionEntry:
     expires_at:   float
     dnac_client:  Any = field(default=None, repr=False)
     ise_client:   Any = field(default=None, repr=False)
+    aci_client:   Any = field(default=None, repr=False)
     panorama_key: str | None = field(default=None, repr=False)
     _lock:        Any = field(default_factory=threading.Lock, repr=False)
 
@@ -167,6 +168,22 @@ def get_panorama_key_for_session(session: SessionEntry) -> str:
     if not session.panorama_key:
         raise HTTPException(503, "Panorama authentication failed — check your credentials")
     return session.panorama_key
+
+
+def get_aci_for_session(session: SessionEntry):
+    """Return a Cisco ACI client for this session, creating it if needed."""
+    from dev import DEV_MODE
+    if DEV_MODE:
+        import clients.aci as ac
+        return ac.ACIClient("https://mock-apic", session.username, session.password)
+    with session._lock:
+        if session.aci_client is None:
+            import clients.aci as ac
+            url = os.getenv("ACI_URL")
+            domain = os.getenv("ACI_DOMAIN")
+            session.aci_client = ac.ACIClient(url, session.username, session.password, domain)
+            session.aci_client.login()
+    return session.aci_client
 
 
 # ── FastAPI dependency ─────────────────────────────────────────────────────────
