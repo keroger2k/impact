@@ -318,6 +318,20 @@ MOCK_ACI_EPGS = [
 
 MOCK_ACI_FAULT_INST = [
     {"faultInst": {"attributes": {"code": "F1234", "severity": "major", "descr": "BGP Peer Down", "dn": "topology/pod-1/node-101/sys/bgp/inst/dom-default/peer-[10.255.0.1]/fault-F1234", "created": "2024-05-20T10:00:00Z"}}},
+    {"faultInst": {"attributes": {"code": "F0546", "severity": "critical", "descr": "Fabric Node Unreachable", "dn": "topology/pod-1/node-102/fault-F0546", "created": "2024-05-20T11:00:00Z"}}},
+]
+
+MOCK_ACI_HEALTH_OVERALL = [
+    {"fabricHealthTotal": {"attributes": {"dn": "topology/health"}, "children": [{"healthInst": {"attributes": {"cur": "95"}}}]}}
+]
+
+MOCK_ACI_HEALTH_TENANTS = [
+    {"fvTenant": {"attributes": {"name": "COMMON"}, "children": [{"healthInst": {"attributes": {"cur": "100"}}}]}},
+    {"fvTenant": {"attributes": {"name": "PROD"}, "children": [{"healthInst": {"attributes": {"cur": "85"}}}]}},
+]
+
+MOCK_ACI_HEALTH_PODS = [
+    {"fabricPod": {"attributes": {"id": "1"}, "children": [{"healthInst": {"attributes": {"cur": "92"}}}]}}
 ]
 
 # ── Cache seeding ─────────────────────────────────────────────────────────────
@@ -375,6 +389,9 @@ def seed_cache(cache) -> None:
     cache.set("aci_faults",    MOCK_ACI_FAULT_INST, LONG)
 
     # ACI status
+    cache.set("aci_health_overall", MOCK_ACI_HEALTH_OVERALL, LONG)
+    cache.set("aci_health_tenants", MOCK_ACI_HEALTH_TENANTS, LONG)
+    cache.set("aci_health_pods",    MOCK_ACI_HEALTH_PODS,    LONG)
     cache.set("status_aci", {"ok": True, "detail": "Connected (mock)"}, LONG)
 
     # Nexus

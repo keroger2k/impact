@@ -153,6 +153,28 @@ class ACIClient:
         data = self.get(path)
         return data.get('imdata', []) if data else []
 
+    def get_health_score(self, dn="topology/health"):
+        """Fetch health score for a specific DN."""
+        path = f"api/node/mo/{dn}.json?rsp-subtree-include=health"
+        data = self.get(path)
+        return data.get('imdata', []) if data else []
+
+    def get_overall_health(self):
+        """Fetch overall system health score."""
+        return self.get_health_score("topology/health")
+
+    def get_tenant_health(self):
+        """Fetch health scores for all tenants."""
+        path = "api/node/class/fvTenant.json?rsp-subtree-include=health"
+        data = self.get(path)
+        return data.get('imdata', []) if data else []
+
+    def get_pod_health(self):
+        """Fetch health scores for pods."""
+        path = "api/node/class/fabricPod.json?rsp-subtree-include=health"
+        data = self.get(path)
+        return data.get('imdata', []) if data else []
+
 def connectivity_check(client: ACIClient) -> bool:
     """Lightweight call to verify APIC is reachable."""
     try:

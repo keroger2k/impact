@@ -18,7 +18,8 @@ ACI_TTL = 1800   # 30 min
 
 ACI_CACHE_KEYS = [
     "aci_nodes", "aci_l3outs", "aci_bgp_peers", "aci_ospf_peers",
-    "aci_epgs", "aci_faults", "aci_subnets"
+    "aci_epgs", "aci_faults", "aci_subnets", "aci_health_overall",
+    "aci_health_tenants", "aci_health_pods"
 ]
 
 def _get_aci(session: SessionEntry):
@@ -50,32 +51,34 @@ async def refresh_aci_cache():
 
 # ── Fabric Nodes ──────────────────────────────────────────────────────────────
 
-@router.get("/fabric/nodes")
-async def list_fabric_nodes(request: Request, session: SessionEntry = Depends(require_auth)):
-    aci = _get_aci(session)
-    loop = asyncio.get_event_loop()
+async def _get_processed_nodes(aci, loop):
     nodes = await loop.run_in_executor(None, _cached, "aci_nodes", aci.get_fabric_nodes)
-
-    # Process nodes to identify roles
     processed = []
     for n in nodes:
         attr = n.get('fabricNode', {}).get('attributes', {})
         role = attr.get('role', 'unknown')
-        node_id = int(attr.get('id', '0'))
+        node_id_str = attr.get('id', '0')
+        node_id = int(node_id_str) if node_id_str.isdigit() else 0
 
-        # Heuristic if role is generic 'node'
         if role == 'node' or not role:
             if node_id >= 1000: role = 'spine'
             elif node_id >= 100: role = 'leaf'
 
         processed.append({
-            "id": attr.get('id'),
+            "id": node_id_str,
             "name": attr.get('name'),
             "model": attr.get('model'),
             "role": role,
             "status": attr.get('fabricSt', 'unknown'),
             "dn": attr.get('dn')
         })
+    return processed
+
+@router.get("/fabric/nodes")
+async def list_fabric_nodes(request: Request, session: SessionEntry = Depends(require_auth)):
+    aci = _get_aci(session)
+    loop = asyncio.get_event_loop()
+    processed = await _get_processed_nodes(aci, loop)
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
@@ -113,12 +116,27 @@ async def list_l3outs(request: Request, session: SessionEntry = Depends(require_
 async def get_l3out_detail(request: Request, dn: str, session: SessionEntry = Depends(require_auth)):
     aci = _get_aci(session)
     loop = asyncio.get_event_loop()
-    detail = await loop.run_in_executor(None, aci.get_l3out_details, dn)
+    detail_raw = await loop.run_in_executor(None, aci.get_l3out_details, dn)
+
+    # Flatten detail for template
+    processed = {"name": dn.split('/')[-1].replace('out-', ''), "dn": dn, "nodes": [], "interfaces": []}
+    if detail_raw:
+        root = detail_raw[0].get('l3extOut', {})
+        children = root.get('children', [])
+        for child in children:
+            if 'l3extLNodeP' in child:
+                node_p = child['l3extLNodeP']['attributes']
+                processed['nodes'].append({"name": node_p.get('name'), "dn": node_p.get('dn')})
+                # Check for interfaces inside node profile
+                for sub in child['l3extLNodeP'].get('children', []):
+                    if 'l3extLIfP' in sub:
+                        if_p = sub['l3extLIfP']['attributes']
+                        processed['interfaces'].append({"name": if_p.get('name'), "node_profile": node_p.get('name')})
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
-        return templates.TemplateResponse(request, "partials/aci_l3out_detail.html", {"detail": detail})
-    return detail
+        return templates.TemplateResponse(request, "partials/aci_l3out_detail.html", {"l": processed})
+    return processed
 
 # ── BGP Troubleshooting ────────────────────────────────────────────────────────
 
@@ -168,12 +186,28 @@ async def list_bgp_peers(request: Request, session: SessionEntry = Depends(requi
 async def get_bgp_routes(request: Request, node_id: str, session: SessionEntry = Depends(require_auth)):
     aci = _get_aci(session)
     loop = asyncio.get_event_loop()
-    routes = await loop.run_in_executor(None, aci.get_bgp_routes, node_id)
+    routes_raw = await loop.run_in_executor(None, aci.get_bgp_routes, node_id)
+
+    processed = []
+    if routes_raw:
+        # ACI structure for routes is nested
+        for item in routes_raw:
+            if 'bgpDom' in item:
+                dom_attr = item['bgpDom']['attributes']
+                for child in item['bgpDom'].get('children', []):
+                    if 'bgpRoute' in child:
+                        r_attr = child['bgpRoute']['attributes']
+                        processed.append({
+                            "prefix": r_attr.get('prefix'),
+                            "nextHop": r_attr.get('nextHop'),
+                            "origin": r_attr.get('origin'),
+                            "asPath": r_attr.get('asPath')
+                        })
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
-        return templates.TemplateResponse(request, "partials/aci_bgp_routes.html", {"node_id": node_id, "routes": routes})
-    return {"node_id": node_id, "items": routes}
+        return templates.TemplateResponse(request, "partials/aci_bgp_routes.html", {"node_id": node_id, "routes": processed})
+    return {"node_id": node_id, "items": processed}
 
 # ── Traffic & EPGs ───────────────────────────────────────────────────────────
 
@@ -206,13 +240,45 @@ async def list_epgs(request: Request, session: SessionEntry = Depends(require_au
 async def get_epg_health(request: Request, dn: str, session: SessionEntry = Depends(require_auth)):
     aci = _get_aci(session)
     loop = asyncio.get_event_loop()
-    # This might fetch healthInst and dbgrStats via the rsp-subtree-include
-    data = await loop.run_in_executor(None, aci.get_epg_stats, dn)
+    data_raw = await loop.run_in_executor(None, aci.get_epg_stats, dn)
+
+    processed = {"dn": dn, "health": "0", "stats": {}}
+    if data_raw:
+        epg = data_raw[0].get('fvAEPg', {})
+        for child in epg.get('children', []):
+            if 'healthInst' in child:
+                processed['health'] = child['healthInst']['attributes'].get('cur')
+            # Add stats parsing here if needed
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
-        return templates.TemplateResponse(request, "partials/aci_epg_health.html", {"data": data})
-    return data
+        return templates.TemplateResponse(request, "partials/aci_epg_health.html", {"e": processed})
+    return processed
+
+@router.get("/health/summary")
+async def get_health_summary(session: SessionEntry = Depends(require_auth)):
+    aci = _get_aci(session)
+    loop = asyncio.get_event_loop()
+
+    overall = await loop.run_in_executor(None, _cached, "aci_health_overall", aci.get_overall_health)
+    tenants = await loop.run_in_executor(None, _cached, "aci_health_tenants", aci.get_tenant_health)
+    pods    = await loop.run_in_executor(None, _cached, "aci_health_pods",    aci.get_pod_health)
+
+    def _extract_health(item, key):
+        obj = item.get(key, {})
+        for child in obj.get('children', []):
+            if 'healthInst' in child:
+                return child['healthInst']['attributes'].get('cur', '0')
+        return '0'
+
+    res = {
+        "overall": _extract_health(overall[0], 'fabricHealthTotal') if overall else '0',
+        "tenants": [{"name": t.get('fvTenant', {}).get('attributes', {}).get('name'),
+                     "health": _extract_health(t, 'fvTenant')} for t in tenants],
+        "pods": [{"id": p.get('fabricPod', {}).get('attributes', {}).get('id'),
+                  "health": _extract_health(p, 'fabricPod')} for p in pods]
+    }
+    return res
 
 @router.get("/traffic/faults")
 async def list_faults(request: Request, severity: Optional[str] = None, session: SessionEntry = Depends(require_auth)):

@@ -50,12 +50,27 @@ async def dashboard(request: Request, user: SessionEntry = Depends(get_current_u
     # Status check is live
     from main import status
     current_status = await status(user)
+
+    # Fetch ACI health and faults for dashboard if ACI is online
+    aci_health = None
+    aci_faults = []
+    if current_status.get("aci", {}).get("ok"):
+        from routers.aci import get_health_summary, list_faults
+        try:
+            aci_health = await get_health_summary(user)
+            faults_resp = await list_faults(request, severity=None, session=user)
+            aci_faults = faults_resp.get("items", []) if isinstance(faults_resp, dict) else []
+        except Exception as e:
+            logger.warning(f"Failed to fetch ACI dashboard data: {e}")
+
     context = {
         "active_page": "dashboard",
         "username": user.username,
         "token": request.cookies.get("impact_token"),
         "stats": stats,
         "issues": issues,
+        "aci_health": aci_health,
+        "aci_faults": aci_faults,
         "systems_online": len([s for s in current_status.values() if s.get("ok")]),
         **current_status
     }

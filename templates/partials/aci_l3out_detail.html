@@ -4,12 +4,42 @@
             <button class="btn btn-sm btn-outline-secondary me-2" hx-get="/api/aci/l3outs" hx-target="#aci-results">
                 <i class="fas fa-arrow-left"></i>
             </button>
-            <span class="fw-bold text-navy">L3Out Detail</span>
+            <span class="fw-bold text-navy">L3Out: {{ l.name }}</span>
         </div>
+        <span class="small text-muted mono">{{ l.dn }}</span>
     </div>
     <div class="card-body">
-        <pre class="bg-dark text-light p-3 rounded shadow-inner" style="max-height: 500px; overflow-y: auto;">
-{{ detail | tojson(indent=2) }}
-        </pre>
+        <div class="row g-4">
+            <div class="col-md-6">
+                <h6 class="text-navy fw-bold border-bottom pb-2">Node Profiles</h6>
+                {% if l.nodes %}
+                <ul class="list-group list-group-flush">
+                    {% for n in l.nodes %}
+                    <li class="list-group-item d-flex justify-content-between align-items-center px-0">
+                        <span>{{ n.name }}</span>
+                        <span class="small text-muted">{{ n.dn.split('/')[-1] }}</span>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="text-muted small">No node profiles found.</p>
+                {% endif %}
+            </div>
+            <div class="col-md-6">
+                <h6 class="text-navy fw-bold border-bottom pb-2">Interface Profiles</h6>
+                {% if l.interfaces %}
+                <ul class="list-group list-group-flush">
+                    {% for i in l.interfaces %}
+                    <li class="list-group-item d-flex flex-column px-0">
+                        <span class="fw-bold">{{ i.name }}</span>
+                        <span class="small text-muted">Profile: {{ i.node_profile }}</span>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="text-muted small">No interface profiles found.</p>
+                {% endif %}
+            </div>
+        </div>
     </div>
 </div>
