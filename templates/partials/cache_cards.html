@@ -23,8 +23,6 @@
 
                     <button class="btn btn-sm btn-outline-{{ card.color }} w-100"
                             {% if card.sse %}
-                            hx-post="{{ card.refresh_url }}"
-                            hx-swap="none"
                             onclick="initCacheBar('{{ card.title }}');"
                             {% else %}
                             hx-post="/api/cache/refresh/{{ card.key }}"

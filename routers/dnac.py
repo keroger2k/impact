@@ -237,12 +237,20 @@ async def get_device_config(
 ):
     """Running configuration for a device."""
     if device_id.startswith("nexus_"):
-        hostname = device_id.replace("nexus_", "")
-        safe_host = hostname.replace("/", "_")
-        from routers.nexus import CONFIG_CACHE_DIR
-        config_path = CONFIG_CACHE_DIR / f"nexus_{safe_host}.txt"
-        if config_path.exists():
-            config = config_path.read_text(encoding="utf-8")
+        from dev import DEV_MODE
+        config = None
+        if DEV_MODE:
+            from dev import get_mock_config
+            config = get_mock_config(device_id)
+        else:
+            hostname = device_id.replace("nexus_", "")
+            safe_host = hostname.replace("/", "_")
+            from routers.nexus import CONFIG_CACHE_DIR
+            config_path = CONFIG_CACHE_DIR / f"nexus_{safe_host}.txt"
+            if config_path.exists():
+                config = config_path.read_text(encoding="utf-8")
+
+        if config:
             if request.headers.get("HX-Request"):
                 from templates_module import templates
                 return templates.TemplateResponse(request, "partials/device_config.html", {
