@@ -368,8 +368,8 @@ async def ip_lookup_handler(ip: str, session: SessionEntry = Depends(require_aut
         iface_ip_raw = iface.get("ipv4_address")
         if iface_ip_raw and iface_ip_raw != "N/A":
             try:
-                iface_net = _ip.ip_network(iface_ip_raw, strict=False)
-                if _ip.ip_address(ip) == iface_net.network_address or _ip.ip_address(ip) in iface_net:
+                iface_ip = iface_ip_raw.split('/')[0]
+                if ip == iface_ip:
                      nexus_hits.append({
                          "hostname": iface.get("hostname"),
                          "device_ip": iface.get("device_ip"),
@@ -378,7 +378,7 @@ async def ip_lookup_handler(ip: str, session: SessionEntry = Depends(require_aut
                          "mac": iface.get("mac_address"),
                          "platform": "Nexus"
                      })
-            except ValueError:
+            except Exception:
                 continue
 
     found = bool(enriched or firewall_hits or nexus_hits)

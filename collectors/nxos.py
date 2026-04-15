@@ -93,7 +93,8 @@ class NXOSCollector(BaseCollector):
     #  Public entry point                                                  #
     # ------------------------------------------------------------------ #
 
-    def collect(self) -> List[InterfaceResult]:
+    def collect(self, collect_config: bool = False) -> Tuple[List[InterfaceResult], Optional[str]]:
+        print(f"DEBUG: [{self.hostname}] Starting collection (IP: {self.ip_address}, config: {collect_config})")
         logger.debug("[%s] Connecting via SSH to %s", self.hostname, self.ip_address)
 
         try:
@@ -109,26 +110,27 @@ class NXOSCollector(BaseCollector):
             )
         except NetmikoAuthenticationException as exc:
             logger.error("[%s] Authentication failed: %s", self.hostname, exc)
-            return self._error_result(f"Authentication failed: {exc}")
+            return self._error_result(f"Authentication failed: {exc}"), None
         except NetmikoTimeoutException as exc:
             logger.error("[%s] Connection timed out: %s", self.hostname, exc)
-            return self._error_result(f"Connection timed out: {exc}")
+            return self._error_result(f"Connection timed out: {exc}"), None
         except Exception as exc:
             logger.error("[%s] SSH connection failed: %s", self.hostname, exc)
-            return self._error_result(f"SSH connection failed: {exc}")
+            return self._error_result(f"SSH connection failed: {exc}"), None
 
         try:
-            results = self._collect_with_connection(conn)
+            results, config = self._collect_with_connection(conn, collect_config)
         finally:
             conn.disconnect()
 
-        return results
+        print(f"DEBUG: [{self.hostname}] Collection complete. Found {len(results)} interfaces.")
+        return results, config
 
     # ------------------------------------------------------------------ #
     #  Collection                                                          #
     # ------------------------------------------------------------------ #
 
-    def _collect_with_connection(self, conn) -> List[InterfaceResult]:
+    def _collect_with_connection(self, conn, collect_config: bool = False) -> Tuple[List[InterfaceResult], Optional[str]]:
 
         # Step 1: interface names, MACs, IPv4
         try:
@@ -137,13 +139,13 @@ class NXOSCollector(BaseCollector):
             iface_map = self._parse_show_interface(iface_raw)
         except Exception as exc:
             logger.error("[%s] 'show interface' failed: %s", self.hostname, exc)
-            return self._error_result(f"'show interface' failed: {exc}")
+            return self._error_result(f"'show interface' failed: {exc}"), None
 
         if not iface_map:
             return self._error_result(
                 "No interfaces found in 'show interface' output. "
                 "Use --save-raw to inspect raw output."
-            )
+            ), None
 
         logger.debug("[%s] Found %d interface(s)", self.hostname, len(iface_map))
 
@@ -165,7 +167,17 @@ class NXOSCollector(BaseCollector):
         except Exception as exc:
             logger.warning("[%s] 'show ipv6 interface' failed: %s", self.hostname, exc)
 
-        # Step 3: merge
+        # Step 3: configuration (optional)
+        config = None
+        if collect_config:
+            try:
+                print(f"DEBUG: [{self.hostname}] Fetching running configuration...")
+                config = conn.send_command("show running-config", read_timeout=120)
+                self._save_raw(config, "show_running_config")
+            except Exception as exc:
+                logger.error("[%s] 'show running-config' failed: %s", self.hostname, exc)
+
+        # Step 4: merge
         results: List[InterfaceResult] = []
         for iface_name, (ipv4_addr, mac_addr) in sorted(iface_map.items()):
             results.append(InterfaceResult(
@@ -178,7 +190,7 @@ class NXOSCollector(BaseCollector):
                 mac_address=mac_addr,
             ))
 
-        return results
+        return results, config
 
     # ------------------------------------------------------------------ #
     #  "show interface" parser                                             #
