@@ -17,8 +17,9 @@
                         <th>L3Out</th>
                         <th>Neighbor IP</th>
                         <th>State</th>
-                        <th>Advertised Networks</th>
-                        <th>Actions</th>
+                        <th>Advertised (Policy)</th>
+                        <th class="text-center">Peer Routes</th>
+                        <th>Node Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -26,7 +27,7 @@
                     <tr>
                         <td>{{ p.node }}</td>
                         <td class="small">{{ p.l3out }}</td>
-                        <td class="fw-bold">{{ p.addr }}</td>
+                        <td class="fw-bold text-navy mono">{{ p.addr }}</td>
                         <td>
                             <span class="badge {% if p.state == 'ESTABLISHED' %}bg-success{% else %}bg-danger{% endif %}">
                                 {{ p.state }}
@@ -34,12 +35,22 @@
                         </td>
                         <td class="small">
                             {% for net in p.nets %}
-                                <div class="text-nowrap">{{ net }}</div>
+                                <div class="text-nowrap">• {{ net }}</div>
                             {% endfor %}
                         </td>
+                        <td class="text-center">
+                            <div class="btn-group">
+                                <button class="btn btn-outline-primary btn-sm" hx-get="/api/aci/bgp/peer-routes?dn={{ p.dn }}&direction=in" hx-target="#aci-results">
+                                    RX
+                                </button>
+                                <button class="btn btn-outline-info btn-sm" hx-get="/api/aci/bgp/peer-routes?dn={{ p.dn }}&direction=out" hx-target="#aci-results">
+                                    TX
+                                </button>
+                            </div>
+                        </td>
                         <td>
-                            <button class="btn btn-outline-primary btn-sm" hx-get="/api/aci/bgp/routes/{{ p.node }}" hx-target="#aci-results">
-                                View Node Routes
+                            <button class="btn btn-link btn-sm p-0 text-decoration-none" hx-get="/api/aci/bgp/routes/{{ p.node }}" hx-target="#aci-results">
+                                <i class="fas fa-list"></i> Node Routes
                             </button>
                         </td>
                     </tr>

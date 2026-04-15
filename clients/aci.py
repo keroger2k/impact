@@ -62,13 +62,20 @@ class ACIClient:
         """Generic GET request to the APIC."""
         from dev import DEV_MODE
         if DEV_MODE:
-            from dev import MOCK_ACI_NODES, MOCK_ACI_L3OUTS, MOCK_ACI_BGP_PEERS, MOCK_ACI_SUBNETS, MOCK_ACI_EPGS, MOCK_ACI_FAULT_INST
+            from dev import (
+                MOCK_ACI_NODES, MOCK_ACI_L3OUTS, MOCK_ACI_BGP_PEERS,
+                MOCK_ACI_SUBNETS, MOCK_ACI_EPGS, MOCK_ACI_FAULT_INST,
+                MOCK_ACI_BGP_DOMS, MOCK_ACI_BGP_RIB_IN, MOCK_ACI_BGP_RIB_OUT
+            )
             if "fabricNode" in path: return {"imdata": MOCK_ACI_NODES}
             if "l3extOut" in path: return {"imdata": MOCK_ACI_L3OUTS}
             if "bgpPeerEntry" in path: return {"imdata": MOCK_ACI_BGP_PEERS}
             if "l3extSubnet" in path: return {"imdata": MOCK_ACI_SUBNETS}
             if "fvAEPg" in path: return {"imdata": MOCK_ACI_EPGS}
             if "faultInst" in path: return {"imdata": MOCK_ACI_FAULT_INST}
+            if "bgpDom" in path: return {"imdata": MOCK_ACI_BGP_DOMS}
+            if "bgpAdjRibIn" in path: return {"imdata": MOCK_ACI_BGP_RIB_IN}
+            if "bgpAdjRibOut" in path: return {"imdata": MOCK_ACI_BGP_RIB_OUT}
             return {"imdata": []}
 
         if not self.token:
@@ -129,11 +136,19 @@ class ACIClient:
         return data.get('imdata', []) if data else []
 
     def get_epgs(self, tenant=None):
-        """Fetch Endpoint Groups (fvAEPg)."""
+        """Fetch Endpoint Groups (fvAEPg) with health score."""
         if tenant:
-            path = f"api/node/mo/uni/tn-{tenant}.json?query-target=subtree&target-subtree-class=fvAEPg"
+            path = f"api/node/mo/uni/tn-{tenant}.json?query-target=subtree&target-subtree-class=fvAEPg&rsp-subtree-include=health"
         else:
-            path = "api/node/class/fvAEPg.json"
+            path = "api/node/class/fvAEPg.json?rsp-subtree-include=health"
+        data = self.get(path)
+        return data.get('imdata', []) if data else []
+
+    def get_bgp_adj_rib(self, peer_dn, direction="in"):
+        """Fetch BGP Received or Advertised routes for a specific peer."""
+        # direction can be "in" (bgpAdjRibIn) or "out" (bgpAdjRibOut)
+        cls = "bgpAdjRibIn" if direction == "in" else "bgpAdjRibOut"
+        path = f"api/node/mo/{peer_dn}.json?query-target=subtree&target-subtree-class={cls}"
         data = self.get(path)
         return data.get('imdata', []) if data else []
 

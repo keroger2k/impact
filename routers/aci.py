@@ -224,11 +224,17 @@ async def list_epgs(request: Request, session: SessionEntry = Depends(require_au
         tenant = dn.split('/')[1].replace('tn-', '') if '/' in dn else 'unknown'
         app_prof = dn.split('/')[2].replace('ap-', '') if len(dn.split('/')) > 2 else 'unknown'
 
+        health = "0"
+        for child in item.get('fvAEPg', {}).get('children', []):
+            if 'healthInst' in child:
+                health = child['healthInst']['attributes'].get('cur', '0')
+
         processed.append({
             "name": attr.get('name'),
             "tenant": tenant,
             "app_prof": app_prof,
-            "dn": dn
+            "dn": dn,
+            "health": health
         })
 
     if request.headers.get("HX-Request"):
@@ -301,3 +307,33 @@ async def list_faults(request: Request, severity: Optional[str] = None, session:
         from templates_module import templates
         return templates.TemplateResponse(request, "partials/aci_faults.html", {"faults": processed})
     return {"items": processed}
+
+@router.get("/bgp/peer-routes")
+async def get_bgp_peer_routes(request: Request, dn: str, direction: str = "in", session: SessionEntry = Depends(require_auth)):
+    aci = _get_aci(session)
+    loop = asyncio.get_event_loop()
+    routes_raw = await loop.run_in_executor(None, aci.get_bgp_adj_rib, dn, direction)
+
+    processed = []
+    cls = "bgpAdjRibIn" if direction == "in" else "bgpAdjRibOut"
+    for item in routes_raw:
+        attr = item.get(cls, {}).get('attributes', {})
+        processed.append({
+            "prefix": attr.get('prefix'),
+            "nextHop": attr.get('nextHop'),
+            "asPath": attr.get('asPath'),
+            "origin": attr.get('origin'),
+            "status": attr.get('status')
+        })
+
+    # Get neighbor IP from DN
+    peer_ip = dn.split('peer-[')[-1].rstrip(']') if 'peer-[' in dn else "Unknown"
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/aci_bgp_peer_routes.html", {
+            "peer_ip": peer_ip,
+            "direction": "Received" if direction == "in" else "Advertised",
+            "routes": processed
+        })
+    return {"peer": peer_ip, "direction": direction, "items": processed}
