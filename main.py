@@ -19,7 +19,7 @@ from templates_module import templates
 
 import auth as auth_module
 from auth import require_auth, SessionEntry
-from routers import dnac, ise, firewall, commands, import_, auth as auth_router, pages, routing, nexus
+from routers import dnac, ise, firewall, commands, import_, auth as auth_router, pages, routing, nexus, cache_mgmt
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,11 +31,15 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from dev import DEV_MODE, seed_cache, create_dev_session
+    from cache import cache
     if DEV_MODE:
-        from cache import cache
         seed_cache(cache)
         create_dev_session()
         logger.info("DEV_MODE enabled — mock data loaded, LDAP bypassed.")
+    else:
+        # Initial warm-up for production using service credentials
+        asyncio.create_task(cache.warm())
+
     logger.info("IMPACT II starting up.")
     yield
     logger.info("IMPACT II shutting down.")
@@ -68,6 +72,7 @@ app.include_router(commands.router,  prefix="/api/commands", tags=["Commands"], 
 app.include_router(import_.router,   prefix="/api/import",   tags=["Import"],   **_auth_dep)
 app.include_router(routing.router,   prefix="/api/routing",  tags=["Routing"],  **_auth_dep)
 app.include_router(nexus.router,     prefix="/api/nexus",    tags=["Nexus"],    **_auth_dep)
+app.include_router(cache_mgmt.router, prefix="/api/cache",    tags=["Cache"],    **_auth_dep)
 
 # ── Page router ────────────────────────────────────────────────────────────────
 app.include_router(pages.router)

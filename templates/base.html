@@ -69,6 +69,10 @@
          hx-get="/import" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
         <span class="nav-icon">🛠️</span> <span>Device Management</span>
       </a>
+      <a class="nav-item {% if active_page == 'cache-mgmt' %}active{% endif %}"
+         hx-get="/cache-mgmt" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+        <span class="nav-icon">💾</span> <span>Cache Management</span>
+      </a>
     </div>
 
     <div class="sidebar-status" id="sys-status" hx-get="/partials/status" hx-trigger="load, every 60s" hx-swap="innerHTML">

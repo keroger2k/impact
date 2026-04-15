@@ -602,14 +602,19 @@ async def config_search(req: ConfigSearchRequest, session: SessionEntry = Depend
         dev_id   = device.get("id", "")
 
         if device.get("source") == "Nexus":
-            hostname = dev_id.replace("nexus_", "")
-            safe_host = hostname.replace("/", "_")
-            from routers.nexus import CONFIG_CACHE_DIR
-            config_path = CONFIG_CACHE_DIR / f"nexus_{safe_host}.txt"
-            if config_path.exists():
-                config = config_path.read_text(encoding="utf-8")
+            from dev import DEV_MODE
+            if DEV_MODE:
+                from dev import get_mock_config
+                config = get_mock_config(dev_id)
             else:
-                config = None
+                hostname = dev_id.replace("nexus_", "")
+                safe_host = hostname.replace("/", "_")
+                from routers.nexus import CONFIG_CACHE_DIR
+                config_path = CONFIG_CACHE_DIR / f"nexus_{safe_host}.txt"
+                if config_path.exists():
+                    config = config_path.read_text(encoding="utf-8")
+                else:
+                    config = None
         else:
             cfg_key = f"config_{dev_id}"
             config  = cache.get(cfg_key)

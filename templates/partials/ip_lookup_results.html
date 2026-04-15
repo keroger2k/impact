@@ -42,6 +42,28 @@
         </div>
       </div>
     {% endfor %}
+
+    {% for nx in r.nexus_interfaces %}
+      <div class="card shadow-sm border-0 mb-3 overflow-hidden">
+        <div class="card-header bg-info text-white small fw-bold">NEXUS SWITCH MATCH</div>
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-start mb-3">
+            <div>
+              <h5 class="fw-bold text-navy mb-0">{{ nx.hostname }}</h5>
+              <span class="text-muted small">{{ nx.device_ip }} • {{ nx.platform }}</span>
+            </div>
+            <span class="badge bg-info">Active</span>
+          </div>
+          <div class="bg-light p-3 rounded">
+            <div class="row">
+              <div class="col-6 small"><strong>Interface:</strong> {{ nx.interface }}</div>
+              <div class="col-6 small text-end"><strong>IPv4:</strong> {{ nx.ipv4 }}</div>
+            </div>
+            <div class="mt-1 small"><strong>MAC Address:</strong> {{ nx.mac or 'Unknown' }}</div>
+          </div>
+        </div>
+      </div>
+    {% endfor %}
   </div>
 {% else %}
   <div class="alert alert-warning text-center animate-fade-in">

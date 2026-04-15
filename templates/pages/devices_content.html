@@ -204,7 +204,8 @@
     const loader = document.getElementById('dev-master-loading');
     loader.classList.remove('d-none');
 
-    const eventSource = new EventSource('/api/nexus/refresh');
+    const token = '{{ token }}';
+    const eventSource = new EventSource('/api/nexus/refresh?token=' + token);
 
     eventSource.onmessage = function(event) {
         const data = JSON.parse(event.data);

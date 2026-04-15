@@ -46,7 +46,7 @@ def get_cached_nexus_inventory() -> List[Dict]:
 def get_cached_nexus_interfaces() -> List[Dict]:
     return cache.get("nexus_interfaces") or []
 
-@router.post("/refresh")
+@router.get("/refresh")
 async def refresh_nexus_data(session: SessionEntry = Depends(require_auth)):
     async def generate():
         def emit(data: dict) -> str:

@@ -74,6 +74,36 @@ for _si, (_site, _subnet) in enumerate(_SITES):
 
 MOCK_SITES = [{"id": _uid(f"site-{s}"), "name": s} for s, _ in _SITES]
 
+MOCK_NEXUS_DEVICES = [
+    {
+        "id": f"nexus_N9K-DCA-{i+1:02d}",
+        "hostname": f"N9K-DCA-{i+1:02d}",
+        "managementIpAddress": f"10.10.200.{i+1}",
+        "platformId": "Nexus 9396PX",
+        "role": "SWITCH",
+        "siteName": "Nexus Inventory",
+        "reachabilityStatus": "Reachable",
+        "source": "Nexus",
+        "softwareVersion": "9.3(10)",
+        "lastUpdateTime": _now_ms
+    }
+    for i in range(10)
+]
+
+MOCK_NEXUS_INTERFACES = []
+for dev in MOCK_NEXUS_DEVICES:
+    MOCK_NEXUS_INTERFACES.append({
+        "hostname": dev["hostname"],
+        "device_ip": dev["managementIpAddress"],
+        "platform": "nxos",
+        "interface_name": "Ethernet1/1",
+        "ipv4_address": f"192.168.{MOCK_NEXUS_DEVICES.index(dev)+1}.1/24",
+        "vlans": [10, 20],
+        "zone": "trust",
+        "mac_address": f"00:50:56:00:00:{MOCK_NEXUS_DEVICES.index(dev)+1:02x}",
+        "error": None
+    })
+
 MOCK_USERS = [
     {"id": _uid("user-admin"), "name": "admin", "description": "Network Administrator", "enabled": True, "passwordPolicy": "Strong"},
     {"id": _uid("user-ops"),   "name": "ops-user", "description": "NOC Operations", "enabled": True, "passwordPolicy": "Standard"},
@@ -304,6 +334,10 @@ def seed_cache(cache) -> None:
     # Panorama status
     cache.set("status_panorama", {"ok": True, "detail": "Connected (mock)"}, LONG)
 
+    # Nexus
+    cache.set("nexus_inventory", MOCK_NEXUS_DEVICES, LONG)
+    cache.set("nexus_interfaces", MOCK_NEXUS_INTERFACES, LONG)
+
 
 def create_dev_session() -> None:
     """Create the fixed dev session so the frontend can auto-login."""
@@ -319,7 +353,25 @@ def create_dev_session() -> None:
         auth_module._sessions[DEV_TOKEN] = entry
 
 MOCK_CONFIGS = {
-    dev["id"]: f"""!
+    **{
+        dev["id"]: f"""!
+hostname {dev['hostname']}
+!
+interface Ethernet1/1
+ description Primary Uplink
+ ip address {dev['managementIpAddress']} 255.255.255.0
+ speed 1000
+ duplex full
+!
+snmp-server community TSA-RO RO
+snmp-server community TSA-RW RW
+!
+end
+"""
+        for dev in MOCK_NEXUS_DEVICES
+    },
+    **{
+        dev["id"]: f"""!
 hostname {dev['hostname']}
 !
 interface GigabitEthernet0/1
@@ -336,7 +388,8 @@ router eigrp 1
 !
 end
 """
-    for dev in MOCK_DEVICES
+        for dev in MOCK_DEVICES
+    }
 }
 
 def get_mock_config(device_id):

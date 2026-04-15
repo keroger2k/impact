@@ -153,6 +153,11 @@ class AppCache:
             if self.get("device_site_map") is None:
                 await asyncio.get_event_loop().run_in_executor(None, self._load_device_site_map)
 
+            # Nexus warm-up
+            if self.get("nexus_inventory") is None:
+                from routers.nexus import init_nexus_collection
+                await init_nexus_collection()
+
     def _load_devices(self):
         try:
             import clients.dnac as dc

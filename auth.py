@@ -61,6 +61,7 @@ def create_session(username: str, password: str) -> str:
 
 
 def get_session(token: str) -> SessionEntry | None:
+    """Retrieve an active session by token, purging expired sessions first."""
     _purge_expired()
     with _store_lock:
         entry = _sessions.get(token)
@@ -73,6 +74,7 @@ def get_session(token: str) -> SessionEntry | None:
 
 
 def destroy_session(token: str):
+    """Remove a session from the store."""
     with _store_lock:
         entry = _sessions.pop(token, None)
     if entry:
@@ -131,6 +133,7 @@ def _extract_domain(ldap_url: str) -> str:
 # ── Vendor client helpers ──────────────────────────────────────────────────────
 
 def get_dnac_for_session(session: SessionEntry):
+    """Return a Catalyst Center client for this session, creating it if needed."""
     with session._lock:
         if session.dnac_client is None:
             import clients.dnac as dc
@@ -139,6 +142,7 @@ def get_dnac_for_session(session: SessionEntry):
 
 
 def get_ise_for_session(session: SessionEntry):
+    """Return a Cisco ISE client for this session, creating it if needed."""
     from dev import DEV_MODE
     if DEV_MODE:
         class MockISE:
@@ -153,6 +157,7 @@ def get_ise_for_session(session: SessionEntry):
 
 
 def get_panorama_key_for_session(session: SessionEntry) -> str:
+    """Return a Panorama API key for this session, creating it if needed."""
     from dev import DEV_MODE
     if DEV_MODE: return "mock-pan-key"
     with session._lock:
@@ -173,6 +178,13 @@ def require_auth(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> SessionEntry:
+    """
+    FastAPI dependency that requires a valid session token.
+    Checks:
+      1. Authorization: Bearer <token> header
+      2. 'impact_token' Cookie
+      3. 'token' Query Parameter (used for EventSource/SSE)
+    """
     token = None
     if credentials:
         token = credentials.credentials
@@ -188,6 +200,7 @@ def require_auth(
     if not session:
         raise HTTPException(401, "Session expired or invalid — please log in again")
 
+    # Sliding window expiration: extend session on every authenticated request
     session.expires_at = time.monotonic() + SESSION_TTL
     return session
 

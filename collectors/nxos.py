@@ -93,8 +93,13 @@ class NXOSCollector(BaseCollector):
     #  Public entry point                                                  #
     # ------------------------------------------------------------------ #
 
-    def collect(self, collect_config: bool = False) -> Tuple[List[InterfaceResult], Optional[str]]:
-        print(f"DEBUG: [{self.hostname}] Starting collection (IP: {self.ip_address}, config: {collect_config})")
+    def collect(self, collect_config: bool = False) -> List[InterfaceResult] | Tuple[List[InterfaceResult], Optional[str]]:
+        """
+        Public entry point to collect interface and optionally configuration data.
+
+        If collect_config is False (default), returns List[InterfaceResult] for backward compatibility.
+        If collect_config is True, returns Tuple[List[InterfaceResult], Optional[str]].
+        """
         logger.debug("[%s] Connecting via SSH to %s", self.hostname, self.ip_address)
 
         try:
@@ -110,21 +115,23 @@ class NXOSCollector(BaseCollector):
             )
         except NetmikoAuthenticationException as exc:
             logger.error("[%s] Authentication failed: %s", self.hostname, exc)
-            return self._error_result(f"Authentication failed: {exc}"), None
+            res = self._error_result(f"Authentication failed: {exc}")
+            return (res, None) if collect_config else res
         except NetmikoTimeoutException as exc:
             logger.error("[%s] Connection timed out: %s", self.hostname, exc)
-            return self._error_result(f"Connection timed out: {exc}"), None
+            res = self._error_result(f"Connection timed out: {exc}")
+            return (res, None) if collect_config else res
         except Exception as exc:
             logger.error("[%s] SSH connection failed: %s", self.hostname, exc)
-            return self._error_result(f"SSH connection failed: {exc}"), None
+            res = self._error_result(f"SSH connection failed: {exc}")
+            return (res, None) if collect_config else res
 
         try:
             results, config = self._collect_with_connection(conn, collect_config)
         finally:
             conn.disconnect()
 
-        print(f"DEBUG: [{self.hostname}] Collection complete. Found {len(results)} interfaces.")
-        return results, config
+        return (results, config) if collect_config else results
 
     # ------------------------------------------------------------------ #
     #  Collection                                                          #
@@ -171,7 +178,6 @@ class NXOSCollector(BaseCollector):
         config = None
         if collect_config:
             try:
-                print(f"DEBUG: [{self.hostname}] Fetching running configuration...")
                 config = conn.send_command("show running-config", read_timeout=120)
                 self._save_raw(config, "show_running_config")
             except Exception as exc:
