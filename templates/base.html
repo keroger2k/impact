@@ -69,6 +69,10 @@
          hx-get="/import" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
         <span class="nav-icon">🛠️</span> <span>Device Management</span>
       </a>
+      <a class="nav-item {% if active_page == 'cache-mgmt' %}active{% endif %}"
+         hx-get="/cache-mgmt" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+        <span class="nav-icon">💾</span> <span>Cache Management</span>
+      </a>
     </div>
 
     <div class="sidebar-status" id="sys-status" hx-get="/partials/status" hx-trigger="load, every 60s" hx-swap="innerHTML">
@@ -82,7 +86,12 @@
       <span id="page-title">{% block page_title %}Dashboard{% endblock %}</span>
       <div id="topbar-actions">
         <span style="font-size:13px;color:var(--text-light);margin-right:12px">👤 {{ username }}</span>
-        <button class="btn btn-outline-secondary btn-sm" hx-post="/api/dnac/cache/refresh" hx-swap="none">🔄 Refresh Cache</button>
+        <button class="btn btn-outline-secondary btn-sm"
+                hx-post="/api/dnac/cache/refresh"
+                hx-swap="none"
+                hx-on::after-request="if(event.detail.successful) { alert('Full application cache (memory + disk) has been cleared.'); window.location.reload(); }">
+          🔄 Refresh Cache
+        </button>
         <button class="btn btn-outline-secondary btn-sm" onclick="logout()">Sign Out</button>
       </div>
     </header>

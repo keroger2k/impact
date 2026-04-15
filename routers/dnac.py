@@ -93,12 +93,42 @@ async def list_devices(
     if site:
         filtered = [d for d in filtered if site.lower() in (dev_site_map.get(d.get("id")) or "").lower()]
 
+    # Merge Nexus devices
+    from routers.nexus import get_cached_nexus_inventory
+    nexus_devices = get_cached_nexus_inventory()
+
+    # Apply filters to Nexus devices too if relevant
+    if hostname:
+        nexus_devices = [d for d in nexus_devices if hostname.lower() in (d.get("hostname") or "").lower()]
+    if ip:
+        nexus_devices = [d for d in nexus_devices if ip in (d.get("managementIpAddress") or "")]
+    if platform:
+        nexus_devices = [d for d in nexus_devices if platform.lower() in (d.get("platformId") or "").lower()]
+    if reachability:
+        if reachability.lower() == "reachable":
+            nexus_devices = [d for d in nexus_devices if d.get("reachabilityStatus") == "Reachable"]
+        elif reachability.lower() == "unreachable":
+            nexus_devices = [d for d in nexus_devices if d.get("reachabilityStatus") != "Reachable"]
+
+    # Combine
+    combined = []
+    for d in filtered:
+        d_copy = dict(d)
+        d_copy["source"] = "DNAC"
+        combined.append(d_copy)
+
+    combined.extend(nexus_devices)
+
+    filtered = combined
     total = len(filtered)
     paged = []
     for d in filtered[offset: offset + limit]:
-        enriched = _enrich(d)
-        enriched["siteName"] = dev_site_map.get(d.get("id"))
-        paged.append(enriched)
+        if d.get("source") == "Nexus":
+            paged.append(d)
+        else:
+            enriched = _enrich(d)
+            enriched["siteName"] = dev_site_map.get(d.get("id"))
+            paged.append(enriched)
     
     if request.headers.get("HX-Request"):
         from templates_module import templates
@@ -117,18 +147,23 @@ async def device_stats(session: SessionEntry = Depends(require_auth)):
         devices = await loop.run_in_executor(None, dc.get_all_devices, dnac)
         cache.set("devices", devices, TTL_DEVICES)
 
+    from routers.nexus import get_cached_nexus_inventory
+    nexus_devices = get_cached_nexus_inventory()
+
+    all_devices = list(devices) + nexus_devices
+
     from collections import Counter
-    reachable   = sum(1 for d in devices if d.get("reachabilityStatus") == "Reachable")
-    unreachable = len(devices) - reachable
-    platforms   = Counter(d.get("platformId", "Unknown") or "Unknown" for d in devices)
-    versions    = Counter(d.get("softwareVersion", "Unknown") or "Unknown" for d in devices)
-    roles       = Counter(d.get("role", "UNKNOWN") or "UNKNOWN" for d in devices)
+    reachable   = sum(1 for d in all_devices if isinstance(d, dict) and d.get("reachabilityStatus") == "Reachable")
+    unreachable = len(all_devices) - reachable
+    platforms   = Counter(d.get("platformId", "Unknown") or "Unknown" for d in all_devices if isinstance(d, dict))
+    versions    = Counter(d.get("softwareVersion", "Unknown") or "Unknown" for d in all_devices if isinstance(d, dict))
+    roles       = Counter(d.get("role", "UNKNOWN") or "UNKNOWN" for d in all_devices if isinstance(d, dict))
 
     return {
-        "total":        len(devices),
+        "total":        len(all_devices),
         "reachable":    reachable,
         "unreachable":  unreachable,
-        "pct_reachable": round(reachable / len(devices) * 100, 1) if devices else 0,
+        "pct_reachable": round(reachable / len(all_devices) * 100, 1) if all_devices else 0,
         "platforms":    platforms.most_common(15),
         "versions":     versions.most_common(12),
         "roles":        roles.most_common(),
@@ -138,11 +173,16 @@ async def device_stats(session: SessionEntry = Depends(require_auth)):
 @router.get("/devices/{device_id}")
 async def get_device(device_id: str):
     """Device detail by ID."""
-    devices = cache.get("devices") or []
+    if device_id.startswith("nexus_"):
+        from routers.nexus import get_cached_nexus_inventory
+        devices = get_cached_nexus_inventory()
+    else:
+        devices = cache.get("devices") or []
+
     device  = next((d for d in devices if d.get("id") == device_id), None)
     if not device:
         raise HTTPException(404, "Device not found")
-    return _enrich(device)
+    return _enrich(device) if device.get("source") != "Nexus" else device
 
 
 @router.get("/devices/{device_id}/detail")
@@ -152,6 +192,19 @@ async def get_device_detail_partial(
     session:     SessionEntry = Depends(require_auth)
 ):
     """Return a detailed HTML partial for a device."""
+    if device_id.startswith("nexus_"):
+        from routers.nexus import get_cached_nexus_inventory
+        devices = get_cached_nexus_inventory()
+        device  = next((d for d in devices if d.get("id") == device_id), None)
+        if not device:
+             raise HTTPException(404, "Device not found")
+
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/device_detail.html", {
+            "d": device,
+            "site_name": device.get("siteName")
+        })
+
     devices = cache.get("devices") or []
     device  = next((d for d in devices if d.get("id") == device_id), None)
     if not device:
@@ -183,6 +236,31 @@ async def get_device_config(
     session: SessionEntry = Depends(require_auth)
 ):
     """Running configuration for a device."""
+    if device_id.startswith("nexus_"):
+        from dev import DEV_MODE
+        config = None
+        if DEV_MODE:
+            from dev import get_mock_config
+            config = get_mock_config(device_id)
+        else:
+            hostname = device_id.replace("nexus_", "")
+            safe_host = hostname.replace("/", "_")
+            from routers.nexus import CONFIG_CACHE_DIR
+            config_path = CONFIG_CACHE_DIR / f"nexus_{safe_host}.txt"
+            if config_path.exists():
+                config = config_path.read_text(encoding="utf-8")
+
+        if config:
+            if request.headers.get("HX-Request"):
+                from templates_module import templates
+                return templates.TemplateResponse(request, "partials/device_config.html", {
+                    "config": config,
+                    "cached": True
+                })
+            return {"config": config, "cached": True}
+        else:
+             raise HTTPException(404, "Nexus config not found in cache. Please refresh Nexus data.")
+
     cache_key = f"config_{device_id}"
     cached    = cache.get(cache_key)
 
@@ -289,12 +367,35 @@ async def ip_lookup_handler(ip: str, session: SessionEntry = Depends(require_aut
             "ipv4":         iface.get("ipv4"),
         })
 
-    found = bool(enriched or firewall_hits)
+    # ── Nexus interface lookup ──
+    from routers.nexus import get_cached_nexus_interfaces
+    nexus_ifaces = get_cached_nexus_interfaces()
+    nexus_hits = []
+    import ipaddress as _ip
+    for iface in nexus_ifaces:
+        iface_ip_raw = iface.get("ipv4_address")
+        if iface_ip_raw and iface_ip_raw != "N/A":
+            try:
+                iface_ip = iface_ip_raw.split('/')[0]
+                if ip == iface_ip:
+                     nexus_hits.append({
+                         "hostname": iface.get("hostname"),
+                         "device_ip": iface.get("device_ip"),
+                         "interface": iface.get("interface_name"),
+                         "ipv4": iface.get("ipv4_address"),
+                         "mac": iface.get("mac_address"),
+                         "platform": "Nexus"
+                     })
+            except Exception:
+                continue
+
+    found = bool(enriched or firewall_hits or nexus_hits)
     return {
         "ip":                ip,
         "found":             found,
         "interfaces":        enriched,
         "firewall_interfaces": firewall_hits,
+        "nexus_interfaces": nexus_hits,
     }
 
 @router.get("/ip-lookup/ui", response_class=HTMLResponse)
@@ -432,7 +533,7 @@ class ConfigSearchRequest(BaseModel):
     device_family: Optional[str] = None
     reachability:  str = "Reachable"
     tag:           Optional[str] = None
-    max_devices:   int = 500
+    max_devices:   Optional[int] = None
 
 
 @router.post("/config-search")
@@ -474,22 +575,60 @@ async def config_search(req: ConfigSearchRequest, session: SessionEntry = Depend
             or req.tag.lower() in (d.get("tagName") or "").lower()
         ]
 
-    if not filtered:
+    # Include Nexus devices in search
+    from routers.nexus import get_cached_nexus_inventory
+    nexus_devices = get_cached_nexus_inventory()
+
+    # Filter Nexus devices
+    if req.hostname:
+        nexus_devices = [d for d in nexus_devices if q(d.get("hostname"), req.hostname)]
+    if req.ip:
+        nexus_devices = [d for d in nexus_devices if req.ip in (d.get("managementIpAddress") or "")]
+    if req.platform:
+        nexus_devices = [d for d in nexus_devices if q(d.get("platformId"), req.platform)]
+    if req.role:
+        nexus_devices = [d for d in nexus_devices if q(d.get("role"), req.role)]
+    if req.reachability:
+        if req.reachability.lower() == "reachable":
+            nexus_devices = [d for d in nexus_devices if d.get("reachabilityStatus") == "Reachable"]
+        elif req.reachability.lower() == "unreachable":
+            nexus_devices = [d for d in nexus_devices if d.get("reachabilityStatus") != "Reachable"]
+
+    # Combine
+    all_filtered = list(filtered) + nexus_devices
+
+    if not all_filtered:
         return {"total_matches": 0, "results": [], "search_string": req.search_string}
 
-    if req.max_devices and len(filtered) > req.max_devices:
-        filtered = filtered[:req.max_devices]
+    if req.max_devices and len(all_filtered) > req.max_devices:
+        all_filtered = all_filtered[:req.max_devices]
 
     dnac     = _get_dnac(session)
     search   = req.search_string.lower()
 
     def fetch_and_search(device: dict) -> dict | None:
         dev_id   = device.get("id", "")
-        cfg_key = f"config_{dev_id}"
-        config  = cache.get(cfg_key)
-        if config is None:
-            config = dc.get_device_config(dnac, dev_id)
-            if config: cache.set(cfg_key, config, 600)
+
+        if device.get("source") == "Nexus":
+            from dev import DEV_MODE
+            if DEV_MODE:
+                from dev import get_mock_config
+                config = get_mock_config(dev_id)
+            else:
+                hostname = dev_id.replace("nexus_", "")
+                safe_host = hostname.replace("/", "_")
+                from routers.nexus import CONFIG_CACHE_DIR
+                config_path = CONFIG_CACHE_DIR / f"nexus_{safe_host}.txt"
+                if config_path.exists():
+                    config = config_path.read_text(encoding="utf-8")
+                else:
+                    config = None
+        else:
+            cfg_key = f"config_{dev_id}"
+            config  = cache.get(cfg_key)
+            if config is None:
+                config = dc.get_device_config(dnac, dev_id)
+                if config: cache.set(cfg_key, config, 600)
         if not config: return None
         matching_lines = [
             {"line_num": i + 1, "text": line}
@@ -504,7 +643,7 @@ async def config_search(req: ConfigSearchRequest, session: SessionEntry = Depend
         }
 
     with ThreadPoolExecutor(max_workers=20) as executor:
-        futures_done = list(executor.map(fetch_and_search, filtered))
+        futures_done = list(executor.map(fetch_and_search, all_filtered))
 
     results = [r for r in futures_done if r is not None]
     results.sort(key=lambda r: (-r["match_count"], r["hostname"]))

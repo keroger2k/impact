@@ -8,6 +8,7 @@ Run:  uvicorn main:app --reload --host 0.0.0.0 --port 8000
 """
 
 import logging
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -18,7 +19,7 @@ from templates_module import templates
 
 import auth as auth_module
 from auth import require_auth, SessionEntry
-from routers import dnac, ise, firewall, commands, import_, auth as auth_router, pages, routing
+from routers import dnac, ise, firewall, commands, import_, auth as auth_router, pages, routing, nexus, cache_mgmt
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,11 +31,15 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from dev import DEV_MODE, seed_cache, create_dev_session
+    from cache import cache
     if DEV_MODE:
-        from cache import cache
         seed_cache(cache)
         create_dev_session()
         logger.info("DEV_MODE enabled — mock data loaded, LDAP bypassed.")
+    else:
+        # Initial warm-up for production using service credentials
+        asyncio.create_task(cache.warm())
+
     logger.info("IMPACT II starting up.")
     yield
     logger.info("IMPACT II shutting down.")
@@ -66,6 +71,8 @@ app.include_router(firewall.router,  prefix="/api/firewall", tags=["Firewall"], 
 app.include_router(commands.router,  prefix="/api/commands", tags=["Commands"], **_auth_dep)
 app.include_router(import_.router,   prefix="/api/import",   tags=["Import"],   **_auth_dep)
 app.include_router(routing.router,   prefix="/api/routing",  tags=["Routing"],  **_auth_dep)
+app.include_router(nexus.router,     prefix="/api/nexus",    tags=["Nexus"],    **_auth_dep)
+app.include_router(cache_mgmt.router, prefix="/api/cache",    tags=["Cache"],    **_auth_dep)
 
 # ── Page router ────────────────────────────────────────────────────────────────
 app.include_router(pages.router)
@@ -106,6 +113,12 @@ async def warm_cache(session: SessionEntry = Depends(require_auth)):
             yield emit({"step": "sitemap",  "status": "cached", "message": f"{n} devices mapped (mock)"})
             yield emit({"step": "ise",      "status": "done",   "message": "ISE connected (mock)"})
             yield emit({"step": "panorama", "status": "done",   "message": "Panorama connected (mock)"})
+
+            from routers.nexus import get_cached_nexus_inventory, init_nexus_collection
+            await init_nexus_collection(username=session.username, password=session.password)
+            nexus_data = get_cached_nexus_inventory()
+            yield emit({"step": "nexus", "status": "done", "message": f"{len(nexus_data)} Nexus devices (mock)"})
+
             yield emit({"step": "done"})
             return
 
@@ -191,6 +204,21 @@ async def warm_cache(session: SessionEntry = Depends(require_auth)):
         except Exception as e:
             yield emit({"step": "panorama", "status": "error",
                         "message": f"Panorama: {str(e)[:80]}"})
+
+        # ── Nexus ───────────────────────────────────────────────────────────────
+        from routers.nexus import get_cached_nexus_inventory, init_nexus_collection
+        nexus_data = get_cached_nexus_inventory()
+        if nexus_data:
+            yield emit({"step": "nexus", "status": "cached", "message": f"{len(nexus_data)} Nexus devices (from cache)"})
+        else:
+            yield emit({"step": "nexus", "status": "loading", "message": "Collecting Nexus switch data (SSH)…"})
+            try:
+                # Pass user credentials for initial collection during warm-up
+                await init_nexus_collection(username=session.username, password=session.password)
+                nexus_data = get_cached_nexus_inventory()
+                yield emit({"step": "nexus", "status": "done", "message": f"{len(nexus_data)} Nexus devices collected"})
+            except Exception as e:
+                yield emit({"step": "nexus", "status": "error", "message": f"Nexus failed: {str(e)[:80]}"})
 
         yield emit({"step": "done"})
 

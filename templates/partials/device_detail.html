@@ -37,6 +37,7 @@
               </span>
             </span></div>
             <div class="kv-row"><span class="kv-label">Management IP</span><span class="kv-value mono">{{ d.managementIpAddress }}</span></div>
+            <div class="kv-row"><span class="kv-label">Source</span><span class="kv-value"><span class="badge bg-secondary text-white">{{ d.source or 'DNAC' }}</span></span></div>
             <div class="kv-row"><span class="kv-label">MAC Address</span><span class="kv-value mono">{{ d.macAddress }}</span></div>
             <div class="kv-row"><span class="kv-label">Last Updated</span><span class="kv-value small">{{ d.lastContactFormatted }}</span></div>
           </div>

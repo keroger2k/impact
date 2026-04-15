@@ -26,8 +26,8 @@ TTL_PAN_INTERFACES = 604800  # 7 days
 
 # Absolute path so disk cache works regardless of where uvicorn is invoked from
 CACHE_DIR    = Path(__file__).parent / "data" / "cache"
-DISK_KEYS    = {"devices", "sites", "device_site_map"}
-DISK_PREFIXES = ("pan_", "ise_")
+DISK_KEYS    = {"devices", "sites", "device_site_map", "nexus_inventory", "nexus_interfaces"}
+DISK_PREFIXES = ("pan_", "ise_", "nexus_")
 
 
 def _should_persist(key: str) -> bool:
@@ -119,6 +119,13 @@ class AppCache:
 
     def clear(self):
         self._store.clear()
+        if CACHE_DIR.exists():
+            import shutil
+            for item in CACHE_DIR.iterdir():
+                if item.is_file():
+                    item.unlink()
+                elif item.is_dir():
+                    shutil.rmtree(item)
 
     def cache_info(self, key: str) -> dict | None:
         """Return {set_at, ttl} for a key, checking disk if not in memory."""
@@ -145,6 +152,11 @@ class AppCache:
                 await asyncio.get_event_loop().run_in_executor(None, self._load_sites)
             if self.get("device_site_map") is None:
                 await asyncio.get_event_loop().run_in_executor(None, self._load_device_site_map)
+
+            # Nexus warm-up
+            if self.get("nexus_inventory") is None:
+                from routers.nexus import init_nexus_collection
+                await init_nexus_collection()
 
     def _load_devices(self):
         try:

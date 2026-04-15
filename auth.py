@@ -12,9 +12,9 @@ import secrets
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Optional
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 logger = logging.getLogger(__name__)
@@ -61,6 +61,7 @@ def create_session(username: str, password: str) -> str:
 
 
 def get_session(token: str) -> SessionEntry | None:
+    """Retrieve an active session by token, purging expired sessions first."""
     _purge_expired()
     with _store_lock:
         entry = _sessions.get(token)
@@ -73,6 +74,7 @@ def get_session(token: str) -> SessionEntry | None:
 
 
 def destroy_session(token: str):
+    """Remove a session from the store."""
     with _store_lock:
         entry = _sessions.pop(token, None)
     if entry:
@@ -82,12 +84,7 @@ def destroy_session(token: str):
 # ── LDAP authentication ────────────────────────────────────────────────────────
 
 def validate_ldap(username: str, password: str) -> bool:
-    """Attempt an LDAP simple bind to verify AD credentials.
-
-    Requires AD_LDAP_URL env var, e.g.:
-        ldaps://network.ad.tsa.gov:636
-        ldap://dc01.network.ad.tsa.gov:389
-    """
+    """Attempt an LDAP simple bind to verify AD credentials."""
     from dev import DEV_MODE
     if DEV_MODE:
         logger.info(f"DEV_MODE: bypassing LDAP for {username}")
@@ -98,7 +95,6 @@ def validate_ldap(username: str, password: str) -> bool:
         logger.warning("AD_LDAP_URL not set — auth will always fail")
         return False
 
-    # Accept bare username or user@domain; build UPN if needed
     if "@" not in username:
         domain = _extract_domain(ldap_url)
         bind_user = f"{username}@{domain}" if domain else username
@@ -128,23 +124,16 @@ def validate_ldap(username: str, password: str) -> bool:
 
 
 def _extract_domain(ldap_url: str) -> str:
-    """Return the AD domain to use for UPN construction.
-
-    Checks AD_DOMAIN env var first (explicit override).
-    Falls back to the full hostname from the LDAP URL — e.g.
-    ldaps://network.ad.tsa.gov:636 → network.ad.tsa.gov.
-    """
     explicit = os.getenv("AD_DOMAIN", "").strip()
     if explicit:
         return explicit
-    # Use the full hostname — the URL host IS the domain in most AD configs
     return ldap_url.split("://")[-1].split(":")[0]
 
 
 # ── Vendor client helpers ──────────────────────────────────────────────────────
 
 def get_dnac_for_session(session: SessionEntry):
-    """Return (or lazily create) a DNAC client authenticated as this user."""
+    """Return a Catalyst Center client for this session, creating it if needed."""
     with session._lock:
         if session.dnac_client is None:
             import clients.dnac as dc
@@ -153,12 +142,11 @@ def get_dnac_for_session(session: SessionEntry):
 
 
 def get_ise_for_session(session: SessionEntry):
-    """Return (or lazily create) an ISE client authenticated as this user."""
+    """Return a Cisco ISE client for this session, creating it if needed."""
     from dev import DEV_MODE
     if DEV_MODE:
         class MockISE:
             def __init__(self):
-                from dev import MOCK_USERS
                 self.custom_caller = type('CC', (), {'call_api': lambda *a, **k: None})
         return MockISE()
     with session._lock:
@@ -169,9 +157,9 @@ def get_ise_for_session(session: SessionEntry):
 
 
 def get_panorama_key_for_session(session: SessionEntry) -> str:
+    """Return a Panorama API key for this session, creating it if needed."""
     from dev import DEV_MODE
     if DEV_MODE: return "mock-pan-key"
-    """Return (or lazily generate) a Panorama API key for this user."""
     with session._lock:
         if session.panorama_key is None:
             import clients.panorama as pc
@@ -187,27 +175,40 @@ _bearer = HTTPBearer(auto_error=False)
 
 
 def require_auth(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> SessionEntry:
-    if not credentials:
+    """
+    FastAPI dependency that requires a valid session token.
+    Checks:
+      1. Authorization: Bearer <token> header
+      2. 'impact_token' Cookie
+      3. 'token' Query Parameter (used for EventSource/SSE)
+    """
+    token = None
+    if credentials:
+        token = credentials.credentials
+    if not token:
+        token = request.cookies.get("impact_token")
+    if not token:
+        token = request.query_params.get("token")
+
+    if not token:
         raise HTTPException(401, "Not authenticated")
-    session = get_session(credentials.credentials)
+
+    session = get_session(token)
     if not session:
         raise HTTPException(401, "Session expired or invalid — please log in again")
-    # Sliding expiration — every request resets the TTL
+
+    # Sliding window expiration: extend session on every authenticated request
     session.expires_at = time.monotonic() + SESSION_TTL
     return session
 
 
 def verify_ldap_or_mock(username: str, password: str) -> tuple[str, str] | None:
-    """
-    Unified entry point for login. Returns (username, password) if successful.
-    """
     from dev import DEV_MODE
     if DEV_MODE:
         return username, password
-
     if validate_ldap(username, password):
         return username, password
-
     return None
