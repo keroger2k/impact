@@ -28,9 +28,17 @@
           <span class="input-group-text bg-white border-0"><i class="fas fa-search text-muted"></i></span>
           <input type="text" id="dev-table-filter" class="form-control border-0" placeholder="Filter inventory..." onkeyup="filterDevices()">
         </div>
-        <button class="btn btn-sm btn-outline-light px-2" onclick="refreshLocalInventory()">
-          <i class="fas fa-sync"></i>
-        </button>
+
+        <div class="dropdown">
+          <button class="btn btn-sm btn-outline-light dropdown-toggle px-2" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+            <i class="fas fa-sync"></i> Refresh
+          </button>
+          <ul class="dropdown-menu dropdown-menu-end shadow">
+            <li><a class="dropdown-item" href="#" onclick="refreshLocalInventory()"><i class="fas fa-cloud-download-alt me-2 text-primary"></i>DNAC Inventory</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="#" onclick="triggerNexusRefresh()"><i class="fas fa-network-wired me-2 text-success"></i>Nexus Devices (SSH)</a></li>
+          </ul>
+        </div>
       </div>
     </div>
 
@@ -40,6 +48,7 @@
           <tr>
             <th onclick="sortDevices('hostname')">Hostname <i class="fas fa-sort small opacity-50"></i></th>
             <th onclick="sortDevices('managementIpAddress')">IP Address <i class="fas fa-sort small opacity-50"></i></th>
+            <th onclick="sortDevices('source')">Source <i class="fas fa-sort small opacity-50"></i></th>
             <th onclick="sortDevices('platformId')">Platform <i class="fas fa-sort small opacity-50"></i></th>
             <th onclick="sortDevices('role')">Role <i class="fas fa-sort small opacity-50"></i></th>
             <th onclick="sortDevices('siteName')">Site <i class="fas fa-sort small opacity-50"></i></th>
@@ -112,6 +121,7 @@
         return (d.hostname || '').toLowerCase().includes(term) ||
                (d.managementIpAddress || '').toLowerCase().includes(term) ||
                (d.platformId || '').toLowerCase().includes(term) ||
+               (d.source || 'DNAC').toLowerCase().includes(term) ||
                (d.siteName || '').toLowerCase().includes(term);
     });
     CURRENT_PAGE = 1;
@@ -140,6 +150,7 @@
       <tr class="clickable-row" onclick="selectDevice('${d.id}', this)">
         <td class="fw-bold text-navy">${d.hostname}</td>
         <td class="mono small">${d.managementIpAddress}</td>
+        <td><span class="badge ${d.source === 'Nexus' ? 'bg-info-subtle text-info' : 'bg-primary-subtle text-primary'}">${d.source || 'DNAC'}</span></td>
         <td class="small">${d.platformId}</td>
         <td class="small uppercase">${d.role}</td>
         <td class="small text-truncate" style="max-width: 150px;">${d.siteName || '—'}</td>
@@ -187,6 +198,31 @@
 
   function refreshLocalInventory() {
      loadInitialDevices();
+  }
+
+  function triggerNexusRefresh() {
+    const loader = document.getElementById('dev-master-loading');
+    loader.classList.remove('d-none');
+
+    const eventSource = new EventSource('/api/nexus/refresh');
+
+    eventSource.onmessage = function(event) {
+        const data = JSON.parse(event.data);
+        if (data.type === 'log') {
+            console.log("Nexus Refresh: " + data.message);
+        } else if (data.type === 'complete') {
+            eventSource.close();
+            loader.classList.add('d-none');
+            alert('Nexus data collection complete: ' + data.count + ' devices.');
+            refreshLocalInventory();
+        }
+    };
+
+    eventSource.onerror = function() {
+        eventSource.close();
+        loader.classList.add('d-none');
+        alert("Nexus refresh failed. Check your connection or credentials.");
+    };
   }
 
   loadInitialDevices();

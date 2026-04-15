@@ -119,6 +119,13 @@ class AppCache:
 
     def clear(self):
         self._store.clear()
+        if CACHE_DIR.exists():
+            import shutil
+            for item in CACHE_DIR.iterdir():
+                if item.is_file():
+                    item.unlink()
+                elif item.is_dir():
+                    shutil.rmtree(item)
 
     def cache_info(self, key: str) -> dict | None:
         """Return {set_at, ttl} for a key, checking disk if not in memory."""

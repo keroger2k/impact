@@ -153,11 +153,11 @@ async def device_stats(session: SessionEntry = Depends(require_auth)):
     all_devices = list(devices) + nexus_devices
 
     from collections import Counter
-    reachable   = sum(1 for d in all_devices if d.get("reachabilityStatus") == "Reachable")
+    reachable   = sum(1 for d in all_devices if isinstance(d, dict) and d.get("reachabilityStatus") == "Reachable")
     unreachable = len(all_devices) - reachable
-    platforms   = Counter(d.get("platformId", "Unknown") or "Unknown" for d in all_devices)
-    versions    = Counter(d.get("softwareVersion", "Unknown") or "Unknown" for d in all_devices)
-    roles       = Counter(d.get("role", "UNKNOWN") or "UNKNOWN" for d in all_devices)
+    platforms   = Counter(d.get("platformId", "Unknown") or "Unknown" for d in all_devices if isinstance(d, dict))
+    versions    = Counter(d.get("softwareVersion", "Unknown") or "Unknown" for d in all_devices if isinstance(d, dict))
+    roles       = Counter(d.get("role", "UNKNOWN") or "UNKNOWN" for d in all_devices if isinstance(d, dict))
 
     return {
         "total":        len(all_devices),

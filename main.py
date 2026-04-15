@@ -207,10 +207,13 @@ async def warm_cache(session: SessionEntry = Depends(require_auth)):
             yield emit({"step": "nexus", "status": "cached", "message": f"{len(nexus_data)} Nexus devices (from cache)"})
         else:
             yield emit({"step": "nexus", "status": "loading", "message": "Collecting Nexus switch data (SSH)…"})
-            # Pass user credentials for initial collection during warm-up
-            await init_nexus_collection(username=session.username, password=session.password)
-            nexus_data = get_cached_nexus_inventory()
-            yield emit({"step": "nexus", "status": "done", "message": f"{len(nexus_data)} Nexus devices collected"})
+            try:
+                # Pass user credentials for initial collection during warm-up
+                await init_nexus_collection(username=session.username, password=session.password)
+                nexus_data = get_cached_nexus_inventory()
+                yield emit({"step": "nexus", "status": "done", "message": f"{len(nexus_data)} Nexus devices collected"})
+            except Exception as e:
+                yield emit({"step": "nexus", "status": "error", "message": f"Nexus failed: {str(e)[:80]}"})
 
         yield emit({"step": "done"})
 

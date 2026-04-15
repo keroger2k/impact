@@ -15,6 +15,7 @@
         <tr>
           <th>Hostname</th>
           <th>IP Address</th>
+          <th>Source</th>
           <th>Platform</th>
           <th>Role</th>
           <th>Site</th>
@@ -27,6 +28,7 @@
         <tr>
           <td class="fw-bold text-navy">{{ d.hostname }}</td>
           <td class="mono">{{ d.managementIpAddress }}</td>
+          <td><span class="badge {% if d.source == 'Nexus' %}bg-info-subtle text-info{% else %}bg-primary-subtle text-primary{% endif %}">{{ d.source or 'DNAC' }}</span></td>
           <td class="small">{{ d.platformId }}</td>
           <td class="small uppercase">{{ d.role }}</td>
           <td class="small">{{ d.siteName }}</td>
