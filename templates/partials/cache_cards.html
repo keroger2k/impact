@@ -23,11 +23,12 @@
 
                     <button class="btn btn-sm btn-outline-{{ card.color }} w-100"
                             {% if card.sse %}
-                            onclick="initCacheBar('{{ card.title }}');"
+                            onclick="triggerNexusCacheRefresh()"
                             {% else %}
                             hx-post="/api/cache/refresh/{{ card.key }}"
                             hx-target="#cache-results"
                             hx-indicator="#cache-spinner"
+                            hx-on::after-request="if(event.detail.successful) htmx.ajax('GET', '/api/cache/status', {target: '#cache-cards-container', swap: 'innerHTML'})"
                             {% endif %}>
                         <i class="fas fa-sync-alt me-1"></i> Refresh {{ card.title }}
                     </button>

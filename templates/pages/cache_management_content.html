@@ -34,3 +34,68 @@
     </div>
   </div>
 </div>
+
+<script>
+function triggerNexusCacheRefresh() {
+  const resultsEl = document.getElementById('cache-results');
+
+  // Extract token from the hx-headers attribute set on <body> by base.html
+  let token = '';
+  try {
+    const hxHeaders = JSON.parse(document.body.getAttribute('hx-headers') || '{}');
+    token = (hxHeaders['Authorization'] || '').replace('Bearer ', '');
+  } catch (e) {}
+
+  if (resultsEl) {
+    resultsEl.innerHTML = `
+      <div class="alert alert-info d-flex align-items-center gap-2 mb-0">
+        <div class="spinner spinner-sm flex-shrink-0" style="width:1.1rem;height:1.1rem;border-width:2px"></div>
+        <span>Connecting to Nexus devices via SSH — this may take several minutes...</span>
+      </div>`;
+  }
+
+  const logs = [];
+  const es = new EventSource('/api/nexus/refresh?token=' + encodeURIComponent(token));
+
+  es.onmessage = function(ev) {
+    let data;
+    try { data = JSON.parse(ev.data); } catch { return; }
+
+    if (data.type === 'log') {
+      logs.push(data);
+      if (resultsEl) {
+        const logLines = logs.map(l => {
+          const cls = l.level === 'error' ? 'text-danger' : l.level === 'success' ? 'text-success' : 'text-muted';
+          return `<div class="small ${cls}">${l.message}</div>`;
+        }).join('');
+        resultsEl.innerHTML = `
+          <div class="card p-3">
+            <div class="fw-bold small mb-2">Nexus Collection Progress</div>
+            <div style="max-height:200px;overflow-y:auto">${logLines}</div>
+          </div>`;
+      }
+    } else if (data.type === 'complete') {
+      es.close();
+      if (resultsEl) {
+        resultsEl.innerHTML = `
+          <div class="alert alert-success alert-dismissible fade show mb-0" role="alert">
+            <strong>Done!</strong> Nexus SSH collection complete — ${data.count} device(s) collected.
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+          </div>`;
+      }
+      htmx.ajax('GET', '/api/cache/status', {target: '#cache-cards-container', swap: 'innerHTML'});
+    }
+  };
+
+  es.onerror = function() {
+    es.close();
+    if (resultsEl) {
+      resultsEl.innerHTML = `
+        <div class="alert alert-danger alert-dismissible fade show mb-0" role="alert">
+          <strong>Error:</strong> Nexus refresh failed or the connection was closed. Check server logs.
+          <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>`;
+    }
+  };
+}
+</script>
