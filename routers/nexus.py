@@ -62,8 +62,9 @@ async def refresh_nexus_data(session: SessionEntry = Depends(require_auth)):
 
         yield emit({"type": "log", "level": "info", "message": f"Starting collection for {len(devices)} Nexus devices..."})
 
-        username = os.getenv("DOMAIN_USERNAME")
-        password = os.getenv("DOMAIN_PASSWORD")
+        # Use the current user's credentials for manual refresh
+        username = session.username
+        password = session.password
 
         all_interfaces = []
         all_inventory_items = []
@@ -144,14 +145,14 @@ async def refresh_nexus_data(session: SessionEntry = Depends(require_auth)):
 async def list_nexus_inventory():
     return get_cached_nexus_inventory()
 
-async def init_nexus_collection():
+async def init_nexus_collection(username: Optional[str] = None, password: Optional[str] = None):
     devices = get_nexus_devices_from_csv()
     if not devices: return
-    if cache.get("nexus_inventory"): return
 
     loop = asyncio.get_event_loop()
-    username = os.getenv("DOMAIN_USERNAME")
-    password = os.getenv("DOMAIN_PASSWORD")
+    # Use provided creds (user's) or service account from env
+    username = username or os.getenv("DOMAIN_USERNAME")
+    password = password or os.getenv("DOMAIN_PASSWORD")
 
     def collect_device(dev):
         from dev import DEV_MODE

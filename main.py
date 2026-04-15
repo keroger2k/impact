@@ -37,8 +37,6 @@ async def lifespan(app: FastAPI):
         create_dev_session()
         logger.info("DEV_MODE enabled — mock data loaded, LDAP bypassed.")
     logger.info("IMPACT II starting up.")
-    from routers.nexus import init_nexus_collection
-    asyncio.create_task(init_nexus_collection())
     yield
     logger.info("IMPACT II shutting down.")
 
@@ -110,6 +108,12 @@ async def warm_cache(session: SessionEntry = Depends(require_auth)):
             yield emit({"step": "sitemap",  "status": "cached", "message": f"{n} devices mapped (mock)"})
             yield emit({"step": "ise",      "status": "done",   "message": "ISE connected (mock)"})
             yield emit({"step": "panorama", "status": "done",   "message": "Panorama connected (mock)"})
+
+            from routers.nexus import get_cached_nexus_inventory, init_nexus_collection
+            await init_nexus_collection(username=session.username, password=session.password)
+            nexus_data = get_cached_nexus_inventory()
+            yield emit({"step": "nexus", "status": "done", "message": f"{len(nexus_data)} Nexus devices (mock)"})
+
             yield emit({"step": "done"})
             return
 
@@ -195,6 +199,18 @@ async def warm_cache(session: SessionEntry = Depends(require_auth)):
         except Exception as e:
             yield emit({"step": "panorama", "status": "error",
                         "message": f"Panorama: {str(e)[:80]}"})
+
+        # ── Nexus ───────────────────────────────────────────────────────────────
+        from routers.nexus import get_cached_nexus_inventory, init_nexus_collection
+        nexus_data = get_cached_nexus_inventory()
+        if nexus_data:
+            yield emit({"step": "nexus", "status": "cached", "message": f"{len(nexus_data)} Nexus devices (from cache)"})
+        else:
+            yield emit({"step": "nexus", "status": "loading", "message": "Collecting Nexus switch data (SSH)…"})
+            # Pass user credentials for initial collection during warm-up
+            await init_nexus_collection(username=session.username, password=session.password)
+            nexus_data = get_cached_nexus_inventory()
+            yield emit({"step": "nexus", "status": "done", "message": f"{len(nexus_data)} Nexus devices collected"})
 
         yield emit({"step": "done"})
 
