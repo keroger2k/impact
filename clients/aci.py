@@ -132,7 +132,9 @@ class ACIClient:
 
     def get_bgp_routes(self, node_id):
         """Query bgpDom for routing tables on a specific node."""
-        path = f"api/node/mo/topology/pod-1/node-{node_id}/sys/bgp/inst.json?query-target=subtree&target-subtree-class=bgpDom&rsp-subtree=full&rsp-subtree-class=bgpRoute"
+        # Include multiple route classes to ensure we catch different address families/best paths
+        classes = "bgpRoute,bgpBdpRoute,bgpEvpnRoute"
+        path = f"api/node/mo/topology/pod-1/node-{node_id}/sys/bgp/inst.json?query-target=subtree&target-subtree-class=bgpDom&rsp-subtree=full&rsp-subtree-class={classes}"
         data = self.get(path)
         return data.get('imdata', []) if data else []
 

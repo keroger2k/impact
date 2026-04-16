@@ -13,6 +13,7 @@
             <table class="table table-hover align-middle mb-0">
                 <thead class="table-light">
                     <tr>
+                        <th>VRF</th>
                         <th>Prefix</th>
                         <th>Next Hop</th>
                         <th>Origin</th>
@@ -22,6 +23,7 @@
                 <tbody>
                     {% for r in routes %}
                     <tr>
+                        <td><span class="badge bg-secondary">{{ r.vrf }}</span></td>
                         <td class="fw-bold text-navy">{{ r.prefix }}</td>
                         <td class="mono small">{{ r.nextHop }}</td>
                         <td><span class="badge bg-light text-navy">{{ r.origin }}</span></td>

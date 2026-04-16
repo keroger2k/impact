@@ -326,6 +326,23 @@ MOCK_ACI_BGP_DOMS = [
                 {"bgpRoute": {"attributes": {"prefix": "0.0.0.0/0", "nextHop": "192.168.1.1", "origin": "igp", "asPath": "65001"}}}
             ]
         }
+    },
+    {
+        "bgpDom": {
+            "attributes": {"name": "VRF-PRODUCTION"},
+            "children": [
+                {"bgpBdpRoute": {"attributes": {"pfx": "10.200.10.0/24", "nh": "10.200.10.1", "origin": "igp", "asPath": ""}}},
+                {"bgpBdpRoute": {"attributes": {"pfx": "192.168.50.0/24", "nh": "10.200.10.1", "origin": "igp", "asPath": "65123"}}}
+            ]
+        }
+    },
+    {
+        "bgpDom": {
+            "attributes": {"name": "overlay-trust"},
+            "children": [
+                {"bgpEvpnRoute": {"attributes": {"pfx": "300:1:10.254.0.1", "nh": "192.168.255.10", "origin": "igp", "asPath": ""}}}
+            ]
+        }
     }
 ]
 

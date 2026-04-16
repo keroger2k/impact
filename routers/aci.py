@@ -192,20 +192,35 @@ async def get_bgp_routes(request: Request, node_id: str, session: SessionEntry =
     routes_raw = await loop.run_in_executor(None, aci.get_bgp_routes, node_id)
 
     processed = []
+    route_classes = {'bgpRoute', 'bgpBdpRoute', 'bgpEvpnRoute'}
+
+    def find_routes(obj, vrf_name):
+        """Recursively search for route objects in the ACI response."""
+        if isinstance(obj, list):
+            for item in obj:
+                find_routes(item, vrf_name)
+        elif isinstance(obj, dict):
+            for k, v in obj.items():
+                if k in route_classes:
+                    attr = v.get('attributes', {})
+                    processed.append({
+                        "vrf": vrf_name,
+                        "prefix": attr.get('prefix') or attr.get('pfx'),
+                        "nextHop": attr.get('nextHop') or attr.get('nh'),
+                        "origin": attr.get('origin'),
+                        "asPath": attr.get('asPath')
+                    })
+                elif k == 'children':
+                    find_routes(v, vrf_name)
+                elif isinstance(v, dict):
+                    find_routes(v, vrf_name)
+
     if routes_raw:
-        # ACI structure for routes is nested
         for item in routes_raw:
             if 'bgpDom' in item:
                 dom_attr = item['bgpDom']['attributes']
-                for child in item['bgpDom'].get('children', []):
-                    if 'bgpRoute' in child:
-                        r_attr = child['bgpRoute']['attributes']
-                        processed.append({
-                            "prefix": r_attr.get('prefix'),
-                            "nextHop": r_attr.get('nextHop'),
-                            "origin": r_attr.get('origin'),
-                            "asPath": r_attr.get('asPath')
-                        })
+                vrf_name = dom_attr.get('name', 'unknown')
+                find_routes(item['bgpDom'].get('children', []), vrf_name)
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
