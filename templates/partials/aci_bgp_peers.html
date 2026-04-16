@@ -15,8 +15,10 @@
                 <thead class="table-light">
                     <tr>
                         <th>Node</th>
+                        <th>VRF</th>
                         <th>L3Out</th>
                         <th>Neighbor IP</th>
+                        <th>Type</th>
                         <th>State</th>
                         <th>Advertised (Policy)</th>
                         <th class="text-center">Peer Routes</th>
@@ -27,8 +29,10 @@
                     {% for p in peers %}
                     <tr>
                         <td>{{ p.node }}</td>
+                        <td class="small">{{ p.vrf }}</td>
                         <td class="small">{{ p.l3out }}</td>
                         <td class="fw-bold text-navy mono">{{ p.addr }}</td>
+                        <td class="small">{{ p.type }}</td>
                         <td>
                             <span class="badge {% if p.state == 'ESTABLISHED' %}bg-success{% else %}bg-danger{% endif %}">
                                 {{ p.state }}

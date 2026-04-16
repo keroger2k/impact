@@ -234,6 +234,9 @@ async def list_bgp_peers(request: Request, session: SessionEntry = Depends(requi
         # Get node ID from DN: topology/pod-1/node-101/...
         node_id = next((p.replace('node-', '') for p in dn_parts if p.startswith('node-')), "N/A")
 
+        # Get VRF from DN: .../dom-NAME/...
+        vrf = next((p.replace('dom-', '') for p in dn_parts if p.startswith('dom-')), "N/A")
+
         # More flexible DN mapping for routes - find the base sys DN
         # topology/pod-1/node-101/sys/bgp/inst/dom-default/peer-[10.255.0.1] -> topology/pod-1/node-101
         base_dn = "/".join(dn_parts[:3]) if len(dn_parts) >= 3 else ""
@@ -242,6 +245,8 @@ async def list_bgp_peers(request: Request, session: SessionEntry = Depends(requi
             "base_dn": base_dn,
             "node": node_id,
             "l3out": l3out,
+            "vrf": vrf,
+            "type": attr.get('type', 'unknown').upper(),
             "addr": attr.get('addr'),
             "state": attr.get('operSt', 'unknown').upper(),
             "nets": ads_map.get(l3out, ["No Export Subnets"]),
