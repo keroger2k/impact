@@ -17,15 +17,16 @@ logger = logging.getLogger(__name__)
 def _quote_dn(dn: str) -> str:
     """
     Escapes special characters in an ACI Distinguished Name (DN) while preserving
-    the hierarchy separators (slashes). Slashes within brackets (e.g., BGP prefixes)
-    are correctly escaped to prevent 400 Bad Request errors.
+    the hierarchy separators (slashes) and bracketed structure. Internal slashes
+    within brackets (e.g., BGP prefixes) are correctly escaped to prevent 400
+    Bad Request errors.
     """
     if not dn:
         return ""
     # Matches sequences of (non-slash non-bracket) OR (bracketed content which may contain slashes)
     segments = re.findall(r'(?:[^/\[]+|\[[^\]]*\])+', dn)
-    # Re-assemble with / separator, quoting each segment except colons
-    return "/".join(urllib.parse.quote(s, safe=':') for s in segments)
+    # Re-assemble with / separator, quoting each segment but keeping brackets and colons safe
+    return "/".join(urllib.parse.quote(s, safe=':[]') for s in segments)
 
 class ACIClient:
     def __init__(self, url, username, password, domain=None):
@@ -153,9 +154,9 @@ class ACIClient:
 
     def get_all_bgp_doms(self):
         """Query all bgpDom objects across the fabric to get route counts."""
-        # We use count to get the number of routes without fetching them all
-        # Simplified query: removing explicit rsp-subtree-class to avoid 400 Bad Request
-        path = "api/node/class/bgpDom.json?rsp-subtree=children&rsp-subtree-include=count"
+        # We use count to get the number of routes without fetching them all.
+        # Use page-size=500 to ensure we catch all DOMs in larger fabrics.
+        path = "api/node/class/bgpDom.json?rsp-subtree=children&rsp-subtree-include=count&page-size=500"
         return self.get(path)
 
     def get_epgs(self, tenant=None):

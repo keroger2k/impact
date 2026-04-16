@@ -75,7 +75,8 @@ async def _get_processed_nodes(aci, loop):
 
         for dom in doms:
             # ACI JSON can wrap the class name: {"bgpDom": {"attributes": {...}}}
-            dom_obj = dom.get('bgpDom')
+            dom_name = next(iter(dom)) if dom else None
+            dom_obj = dom.get(dom_name)
             if not dom_obj:
                 continue
 
@@ -88,12 +89,12 @@ async def _get_processed_nodes(aci, loop):
                 count = 0
                 children = dom_obj.get('children', [])
                 for child in children:
-                    for k, v in child.items():
-                        if k in ['bgpRoute', 'bgpBdpRoute', 'bgpEvpnRoute']:
-                            c_attr = v.get('attributes', {})
-                            # Try multiple possible count fields
-                            c_val = c_attr.get('count') or c_attr.get('cnt') or c_attr.get('totalCount') or 0
-                            count += int(c_val)
+                    # Recursive search for prefix counts in children
+                    child_name = next(iter(child)) if child else None
+                    if child_name in ['bgpRoute', 'bgpBdpRoute', 'bgpEvpnRoute']:
+                        c_attr = child[child_name].get('attributes', {})
+                        c_val = c_attr.get('count') or c_attr.get('cnt') or c_attr.get('totalCount') or 0
+                        count += int(c_val)
 
                 route_counts[node_id] = route_counts.get(node_id, 0) + count
         logger.info(f"ACI route counts calculated: {route_counts}")
@@ -463,7 +464,7 @@ async def get_bgp_peer_routes(request: Request, dn: str, direction: str = "in", 
         })
 
     # Get neighbor IP from DN
-    peer_ip = dn.split('peer-[')[-1].rstrip(']') if 'peer-[' in dn else "Unknown"
+    peer_ip = dn.split('peer-[')[-1].split(']')[0] if 'peer-[' in dn else "Unknown"
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
