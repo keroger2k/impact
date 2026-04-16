@@ -53,6 +53,8 @@ async def refresh_aci_cache():
 
 async def _get_processed_nodes(aci, loop):
     nodes = await loop.run_in_executor(None, _cached, "aci_nodes", aci.get_fabric_nodes)
+    logger.info(f"ACI fabric nodes raw count: {len(nodes)}")
+    logger.info(f"ACI fabric nodes raw data: {nodes}")
     processed = []
     for n in nodes:
         attr = n.get('fabricNode', {}).get('attributes', {})
@@ -72,6 +74,7 @@ async def _get_processed_nodes(aci, loop):
             "status": attr.get('fabricSt', 'unknown'),
             "dn": attr.get('dn')
         })
+    logger.info(f"ACI fabric nodes processed: {processed}")
     return processed
 
 @router.get("/fabric/nodes")

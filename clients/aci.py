@@ -85,8 +85,11 @@ class ACIClient:
         url = f"{self.url}/{path.lstrip('/')}"
         try:
             response = self.session.get(url, verify=False, timeout=15)
+            logger.info(f"ACI GET {url} → HTTP {response.status_code}")
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+            logger.info(f"ACI response body: {data}")
+            return data
         except Exception as e:
             logger.error(f"ACI GET {url} failed: {e}")
             return None
