@@ -50,12 +50,27 @@ async def dashboard(request: Request, user: SessionEntry = Depends(get_current_u
     # Status check is live
     from main import status
     current_status = await status(user)
+
+    # Fetch ACI health and faults for dashboard if ACI is online
+    aci_health = None
+    aci_faults = []
+    if current_status.get("aci", {}).get("ok"):
+        from routers.aci import get_health_summary, list_faults
+        try:
+            aci_health = await get_health_summary(user)
+            faults_resp = await list_faults(request, severity=None, session=user)
+            aci_faults = faults_resp.get("items", []) if isinstance(faults_resp, dict) else []
+        except Exception as e:
+            logger.warning(f"Failed to fetch ACI dashboard data: {e}")
+
     context = {
         "active_page": "dashboard",
         "username": user.username,
         "token": request.cookies.get("impact_token"),
         "stats": stats,
         "issues": issues,
+        "aci_health": aci_health,
+        "aci_faults": aci_faults,
         "systems_online": len([s for s in current_status.values() if s.get("ok")]),
         **current_status
     }
@@ -114,6 +129,14 @@ async def firewall_page_render(request: Request, user: SessionEntry = Depends(ge
     if request.headers.get("HX-Request"):
         return templates.TemplateResponse(request, "pages/firewall_content.html", context)
     return templates.TemplateResponse(request, "firewall.html", context)
+
+@router.get("/aci", response_class=HTMLResponse)
+async def aci_page_render(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
+    if not user: return RedirectResponse(url="/login")
+    context = {"active_page": "aci", "username": user.username, "token": request.cookies.get("impact_token")}
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse(request, "pages/aci_content.html", context)
+    return templates.TemplateResponse(request, "aci.html", context)
 
 @router.get("/command-runner", response_class=HTMLResponse)
 async def command_runner_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):

@@ -1,0 +1,34 @@
+<div class="card shadow-sm border-0 animate-fade-in">
+    <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <span class="fw-bold text-navy">🌐 L3Out Visibility</span>
+        <span class="badge bg-secondary">{{ l3outs|length }} L3Outs</span>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive sticky-header" style="max-height: calc(100vh - 250px);">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Tenant</th>
+                        <th>Name</th>
+                        <th>Description</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for l in l3outs %}
+                    <tr>
+                        <td class="fw-bold text-navy">{{ l.tenant }}</td>
+                        <td>{{ l.name }}</td>
+                        <td class="small text-muted">{{ l.descr }}</td>
+                        <td>
+                            <button class="btn btn-outline-primary btn-sm" hx-get="/api/aci/l3outs/detail?dn={{ l.dn | urlencode }}" hx-target="#aci-results" hx-indicator="#aci-loading">
+                                Explore
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>

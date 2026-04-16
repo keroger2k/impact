@@ -19,7 +19,7 @@ from templates_module import templates
 
 import auth as auth_module
 from auth import require_auth, SessionEntry
-from routers import dnac, ise, firewall, commands, import_, auth as auth_router, pages, routing, nexus, cache_mgmt
+from routers import dnac, ise, firewall, aci, commands, import_, auth as auth_router, pages, routing, nexus, cache_mgmt
 
 logging.basicConfig(
     level=logging.INFO,
@@ -68,6 +68,7 @@ app.include_router(auth_router.router, prefix="/api/auth",     tags=["Auth"])
 app.include_router(dnac.router,      prefix="/api/dnac",     tags=["DNAC"],     **_auth_dep)
 app.include_router(ise.router,       prefix="/api/ise",      tags=["ISE"],      **_auth_dep)
 app.include_router(firewall.router,  prefix="/api/firewall", tags=["Firewall"], **_auth_dep)
+app.include_router(aci.router,       prefix="/api/aci",      tags=["ACI"],      **_auth_dep)
 app.include_router(commands.router,  prefix="/api/commands", tags=["Commands"], **_auth_dep)
 app.include_router(import_.router,   prefix="/api/import",   tags=["Import"],   **_auth_dep)
 app.include_router(routing.router,   prefix="/api/routing",  tags=["Routing"],  **_auth_dep)
@@ -113,6 +114,7 @@ async def warm_cache(session: SessionEntry = Depends(require_auth)):
             yield emit({"step": "sitemap",  "status": "cached", "message": f"{n} devices mapped (mock)"})
             yield emit({"step": "ise",      "status": "done",   "message": "ISE connected (mock)"})
             yield emit({"step": "panorama", "status": "done",   "message": "Panorama connected (mock)"})
+            yield emit({"step": "aci",      "status": "done",   "message": "ACI connected (mock)"})
 
             from routers.nexus import get_cached_nexus_inventory, init_nexus_collection
             await init_nexus_collection(username=session.username, password=session.password)
@@ -205,6 +207,17 @@ async def warm_cache(session: SessionEntry = Depends(require_auth)):
             yield emit({"step": "panorama", "status": "error",
                         "message": f"Panorama: {str(e)[:80]}"})
 
+        # ── ACI ────────────────────────────────────────────────────────────────
+        yield emit({"step": "aci", "status": "loading", "message": "Connecting to Cisco ACI…"})
+        try:
+            aci_client = auth_module.get_aci_for_session(session)
+            import clients.aci as ac
+            ok = await loop.run_in_executor(None, ac.connectivity_check, aci_client)
+            yield emit({"step": "aci", "status": "done" if ok else "error",
+                        "message": "ACI connected" if ok else "ACI login failed"})
+        except Exception as e:
+            yield emit({"step": "aci", "status": "error", "message": f"ACI: {str(e)[:80]}"})
+
         # ── Nexus ───────────────────────────────────────────────────────────────
         from routers.nexus import get_cached_nexus_inventory, init_nexus_collection
         nexus_data = get_cached_nexus_inventory()
@@ -239,6 +252,7 @@ async def status(session: SessionEntry = Depends(require_auth)):
             "dnac":     {"ok": True, "detail": "25 devices (mock)"},
             "ise":      {"ok": True, "detail": "Connected (mock)"},
             "panorama": {"ok": True, "detail": "Connected (mock)"},
+            "aci":      {"ok": True, "detail": "Connected (mock)"},
         }
 
     import asyncio
@@ -274,8 +288,22 @@ async def status(session: SessionEntry = Depends(require_auth)):
         except Exception as e:
             return {"ok": False, "detail": str(e)[:80]}
 
-    dnac_r, ise_r, pan_r = await asyncio.gather(check_dnac(), check_ise(), check_panorama())
-    return {"dnac": dnac_r, "ise": ise_r, "panorama": pan_r}
+    async def check_aci():
+        try:
+            import clients.aci as ac
+            from routers.aci import _get_processed_nodes
+            aci_client = auth_module.get_aci_for_session(session)
+            ok = await loop.run_in_executor(None, ac.connectivity_check, aci_client)
+            if ok:
+                nodes = await _get_processed_nodes(aci_client, loop)
+                up = len([n for n in nodes if n['status'] == 'active'])
+                return {"ok": True, "detail": f"{up}/{len(nodes)} Nodes"}
+            return {"ok": False, "detail": "Login failed"}
+        except Exception as e:
+            return {"ok": False, "detail": str(e)[:80]}
+
+    dnac_r, ise_r, pan_r, aci_r = await asyncio.gather(check_dnac(), check_ise(), check_panorama(), check_aci())
+    return {"dnac": dnac_r, "ise": ise_r, "panorama": pan_r, "aci": aci_r}
 
 # ── Static assets ──────────────────────────────────────────────────────────────
 static_dir = Path(__file__).parent / "static"

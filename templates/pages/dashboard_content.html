@@ -1,11 +1,12 @@
 <div class="kpi-row cols-4 animate-fade-in">
   <div class="kpi-card teal shadow-sm">
     <div class="kpi-label">Systems Status</div>
-    <div class="kpi-value">{{ systems_online }}/3</div>
+    <div class="kpi-value">{{ systems_online }}/4</div>
     <div class="kpi-sub d-flex align-items-center gap-2">
       <span class="status-dot {% if dnac.ok %}ok{% else %}err{% endif %}"></span> DNAC
       <span class="status-dot {% if ise.ok %}ok{% else %}err{% endif %}"></span> ISE
       <span class="status-dot {% if panorama.ok %}ok{% else %}err{% endif %}"></span> Pan
+      <span class="status-dot {% if aci.ok %}ok{% else %}err{% endif %}"></span> ACI
     </div>
   </div>
   <div class="kpi-card shadow-sm">
@@ -64,9 +65,67 @@
   </div>
 </div>
 
+{% if aci_health %}
+<div class="kpi-row cols-4 animate-fade-in mt-4" style="animation-delay: 150ms;">
+  <div class="kpi-card shadow-sm {% if aci_health.overall|int >= 90 %}success{% elif aci_health.overall|int >= 70 %}warning{% else %}danger{% endif %}">
+    <div class="kpi-label">ACI Overall Health</div>
+    <div class="kpi-value">{{ aci_health.overall }}%</div>
+    <div class="kpi-sub">Fabric Health Score</div>
+  </div>
+  {% for pod in aci_health.pods %}
+  <div class="kpi-card shadow-sm {% if pod.health|int >= 90 %}success{% elif pod.health|int >= 70 %}warning{% else %}danger{% endif %}">
+    <div class="kpi-label">Pod {{ pod.id }} Health</div>
+    <div class="kpi-value">{{ pod.health }}%</div>
+    <div class="kpi-sub">Operational Integrity</div>
+  </div>
+  {% endfor %}
+  {% for tenant in aci_health.tenants %}
+  {% if loop.index <= 2 %}
+  <div class="kpi-card shadow-sm {% if tenant.health|int >= 90 %}success{% elif tenant.health|int >= 70 %}warning{% else %}danger{% endif %}">
+    <div class="kpi-label">{{ tenant.name }} Health</div>
+    <div class="kpi-value">{{ tenant.health }}%</div>
+    <div class="kpi-sub">Tenant Resource Health</div>
+  </div>
+  {% endif %}
+  {% endfor %}
+</div>
+
 <div class="row g-4 mt-1 animate-fade-in" style="animation-delay: 200ms;">
+  <div class="col-md-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-header bg-navy text-white d-flex align-items-center gap-2">
+        <i class="fas fa-exclamation-triangle"></i>
+        <span class="fw-bold">ACI Fault Summary</span>
+      </div>
+      <div class="card-body p-0">
+        {% if aci_faults %}
+        <div class="list-group list-group-flush">
+          {% for fault in aci_faults %}
+          {% if fault.severity in ['critical', 'major'] %}
+          <div class="list-group-item d-flex flex-column border-0 py-2">
+            <div class="d-flex justify-content-between align-items-center">
+              <span class="badge {% if fault.severity == 'critical' %}bg-danger{% else %}bg-warning text-dark{% endif %} mb-1">{{ fault.severity|upper }}</span>
+              <span class="small text-muted">{{ fault.code }}</span>
+            </div>
+            <span class="small text-navy fw-bold">{{ fault.descr }}</span>
+          </div>
+          {% endif %}
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="p-4 text-center">
+          <p class="text-muted small">No critical/major ACI faults.</p>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-md-8">
+    <div class="card shadow-sm h-100">
+{% else %}
   <div class="col-md-12">
-    <div class="card shadow-sm">
+    <div class="card shadow-sm h-100">
+{% endif %}
        <div class="card-header bg-navy text-white d-flex align-items-center gap-2">
         <i class="fas fa-info-circle"></i>
         <span class="fw-bold">Recent Network Events (Last 24 Hours)</span>
