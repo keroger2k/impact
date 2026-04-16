@@ -143,19 +143,19 @@ class ACIClient:
 
     def get_bgp_routes(self, dn):
         """Query bgpDom for routing tables on a specific node using its DN."""
-        # Include multiple route classes to ensure we catch different address families/best paths
-        classes = "bgpRoute,bgpBdpRoute,bgpEvpnRoute"
         # If passed a simple ID, reconstruct a default pod-1 DN
         if "topology/" not in dn:
             dn = f"topology/pod-1/node-{dn}"
-        path = f"api/node/mo/{_quote_dn(dn)}/sys/bgp/inst.json?query-target=subtree&target-subtree-class=bgpDom&rsp-subtree=full&rsp-subtree-class={classes}"
+        # Simplified query to avoid 400 Bad Request on some firmware versions with complex rsp-subtree-class
+        # Using rsp-subtree=full to allow recursive searching for routes in grandchildren
+        path = f"api/node/mo/{_quote_dn(dn)}/sys/bgp/inst.json?query-target=subtree&target-subtree-class=bgpDom&rsp-subtree=full"
         return self.get(path)
 
     def get_all_bgp_doms(self):
         """Query all bgpDom objects across the fabric to get route counts."""
-        classes = "bgpRoute,bgpBdpRoute,bgpEvpnRoute"
         # We use count to get the number of routes without fetching them all
-        path = f"api/node/class/bgpDom.json?rsp-subtree=children&rsp-subtree-class={classes}&rsp-subtree-include=count"
+        # Simplified query: removing explicit rsp-subtree-class to avoid 400 Bad Request
+        path = "api/node/class/bgpDom.json?rsp-subtree=children&rsp-subtree-include=count"
         return self.get(path)
 
     def get_epgs(self, tenant=None):
