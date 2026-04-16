@@ -66,37 +66,39 @@ async def _get_processed_nodes(aci, loop):
     nodes = nodes_raw.get('imdata', [])
     logger.info(f"ACI fabric nodes raw count: {len(nodes)}")
 
-    # Fetch BGP route counts for all nodes
-    doms_raw = await loop.run_in_executor(None, _cached, "aci_bgp_doms_all", aci.get_all_bgp_doms)
-    doms = doms_raw.get('imdata', [])
     route_counts = {}
-    logger.info(f"ACI BGP DOMs raw count: {len(doms)}")
+    try:
+        # Fetch BGP route counts for all nodes
+        doms_raw = await loop.run_in_executor(None, _cached, "aci_bgp_doms_all", aci.get_all_bgp_doms)
+        doms = doms_raw.get('imdata', [])
+        logger.info(f"ACI BGP DOMs raw count: {len(doms)}")
 
-    for dom in doms:
-        # ACI JSON can wrap the class name: {"bgpDom": {"attributes": {...}}}
-        dom_obj = dom.get('bgpDom')
-        if not dom_obj:
-            # Or it might be a direct object if queried specifically, but for class query it's usually wrapped
-            continue
+        for dom in doms:
+            # ACI JSON can wrap the class name: {"bgpDom": {"attributes": {...}}}
+            dom_obj = dom.get('bgpDom')
+            if not dom_obj:
+                continue
 
-        attr = dom_obj.get('attributes', {})
-        dn = attr.get('dn', '')
-        # Extract node ID from DN: topology/pod-1/node-101/...
-        node_id = next((p.replace('node-', '') for p in dn.split('/') if p.startswith('node-')), None)
+            attr = dom_obj.get('attributes', {})
+            dn = attr.get('dn', '')
+            # Extract node ID from DN: topology/pod-1/node-101/...
+            node_id = next((p.replace('node-', '') for p in dn.split('/') if p.startswith('node-')), None)
 
-        if node_id:
-            count = 0
-            # Look for children containing counts
-            children = dom_obj.get('children', [])
-            for child in children:
-                for k, v in child.items():
-                    if k in ['bgpRoute', 'bgpBdpRoute', 'bgpEvpnRoute']:
-                        c_attr = v.get('attributes', {})
-                        count += int(c_attr.get('count') or 0)
+            if node_id:
+                count = 0
+                children = dom_obj.get('children', [])
+                for child in children:
+                    for k, v in child.items():
+                        if k in ['bgpRoute', 'bgpBdpRoute', 'bgpEvpnRoute']:
+                            c_attr = v.get('attributes', {})
+                            # Try multiple possible count fields
+                            c_val = c_attr.get('count') or c_attr.get('cnt') or c_attr.get('totalCount') or 0
+                            count += int(c_val)
 
-            route_counts[node_id] = route_counts.get(node_id, 0) + count
-
-    logger.info(f"ACI route counts calculated: {route_counts}")
+                route_counts[node_id] = route_counts.get(node_id, 0) + count
+        logger.info(f"ACI route counts calculated: {route_counts}")
+    except Exception as e:
+        logger.warning(f"Failed to calculate ACI route counts: {e}")
 
     processed = []
     for n in nodes:
@@ -232,7 +234,12 @@ async def list_bgp_peers(request: Request, session: SessionEntry = Depends(requi
         # Get node ID from DN: topology/pod-1/node-101/...
         node_id = next((p.replace('node-', '') for p in dn_parts if p.startswith('node-')), "N/A")
 
+        # More flexible DN mapping for routes - find the base sys DN
+        # topology/pod-1/node-101/sys/bgp/inst/dom-default/peer-[10.255.0.1] -> topology/pod-1/node-101
+        base_dn = "/".join(dn_parts[:3]) if len(dn_parts) >= 3 else ""
+
         processed.append({
+            "base_dn": base_dn,
             "node": node_id,
             "l3out": l3out,
             "addr": attr.get('addr'),
@@ -249,11 +256,12 @@ async def list_bgp_peers(request: Request, session: SessionEntry = Depends(requi
         })
     return {"items": processed, "raw": peers_raw}
 
-@router.get("/bgp/routes/{node_id}")
-async def get_bgp_routes(request: Request, node_id: str, session: SessionEntry = Depends(require_auth)):
+@router.get("/bgp/routes")
+async def get_bgp_routes(request: Request, node_id: str = None, dn: str = None, session: SessionEntry = Depends(require_auth)):
     aci = _get_aci(session)
     loop = asyncio.get_event_loop()
-    routes_raw_orig = await loop.run_in_executor(None, aci.get_bgp_routes, node_id)
+    target = dn or node_id
+    routes_raw_orig = await loop.run_in_executor(None, aci.get_bgp_routes, target)
 
     # Normalize routes_raw to ensure it's a dict with imdata
     if isinstance(routes_raw_orig, list):
@@ -298,11 +306,11 @@ async def get_bgp_routes(request: Request, node_id: str, session: SessionEntry =
     if request.headers.get("HX-Request"):
         from templates_module import templates
         return templates.TemplateResponse(request, "partials/aci_bgp_routes.html", {
-            "node_id": node_id,
+            "node_id": node_id or target.split('/')[-1],
             "routes": processed,
             "raw_json": routes_raw
         })
-    return {"node_id": node_id, "items": processed, "raw": routes_raw}
+    return {"node_id": node_id or target.split('/')[-1], "items": processed, "raw": routes_raw}
 
 # ── Traffic & EPGs ───────────────────────────────────────────────────────────
 
@@ -428,7 +436,14 @@ async def list_faults(request: Request, severity: Optional[str] = None, session:
 async def get_bgp_peer_routes(request: Request, dn: str, direction: str = "in", session: SessionEntry = Depends(require_auth)):
     aci = _get_aci(session)
     loop = asyncio.get_event_loop()
-    routes_raw = await loop.run_in_executor(None, aci.get_bgp_adj_rib, dn, direction)
+    routes_raw_orig = await loop.run_in_executor(None, aci.get_bgp_adj_rib, dn, direction)
+
+    if isinstance(routes_raw_orig, list):
+        routes_raw = {"imdata": routes_raw_orig}
+    elif routes_raw_orig is None:
+        routes_raw = {"imdata": []}
+    else:
+        routes_raw = routes_raw_orig
 
     processed = []
     cls = "bgpAdjRibIn" if direction == "in" else "bgpAdjRibOut"

@@ -27,11 +27,13 @@
     </div>
   </div>
   <div class="col-md-9 d-flex flex-column position-relative">
-    <!-- Spinner overlay to prevent screen shifting -->
-    <div id="aci-loading" class="htmx-indicator position-absolute top-0 start-0 w-100 h-100 bg-white bg-opacity-75 d-flex flex-column align-items-center justify-content-center animate-fade-in" style="z-index: 100;">
-      <div class="spinner spinner-lg"></div>
-      <p class="text-navy fw-bold small mt-2">Syncing with APIC...</p>
+    <!-- Spinner overlay to prevent screen shifting. Removed d-flex from the root indicator to honor HTMX display:none. -->
+    <div id="aci-loading" class="htmx-indicator position-absolute top-0 start-0 w-100 h-100 bg-white bg-opacity-75 animate-fade-in" style="z-index: 100;">
+      <div class="d-flex flex-column align-items-center justify-content-center h-100">
+        <div class="spinner spinner-lg"></div>
+        <p class="text-navy fw-bold small mt-2">Syncing with APIC...</p>
+      </div>
     </div>
-    <div id="aci-results" hx-get="/api/aci/fabric/nodes" hx-trigger="load once" style="min-height: 400px;"></div>
+    <div id="aci-results" hx-get="/api/aci/fabric/nodes" hx-trigger="load once" hx-indicator="#aci-loading" style="min-height: 600px;"></div>
   </div>
 </div>

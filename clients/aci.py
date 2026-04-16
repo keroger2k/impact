@@ -126,11 +126,14 @@ class ACIClient:
         """Query l3extSubnet for external subnet policies."""
         return self.get("api/node/class/l3extSubnet.json")
 
-    def get_bgp_routes(self, node_id):
-        """Query bgpDom for routing tables on a specific node."""
+    def get_bgp_routes(self, dn):
+        """Query bgpDom for routing tables on a specific node using its DN."""
         # Include multiple route classes to ensure we catch different address families/best paths
         classes = "bgpRoute,bgpBdpRoute,bgpEvpnRoute"
-        path = f"api/node/mo/topology/pod-1/node-{node_id}/sys/bgp/inst.json?query-target=subtree&target-subtree-class=bgpDom&rsp-subtree=full&rsp-subtree-class={classes}"
+        # If passed a simple ID, reconstruct a default pod-1 DN
+        if "topology/" not in dn:
+            dn = f"topology/pod-1/node-{dn}"
+        path = f"api/node/mo/{dn}/sys/bgp/inst.json?query-target=subtree&target-subtree-class=bgpDom&rsp-subtree=full&rsp-subtree-class={classes}"
         return self.get(path)
 
     def get_all_bgp_doms(self):

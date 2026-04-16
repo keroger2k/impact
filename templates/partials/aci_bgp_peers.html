@@ -50,7 +50,7 @@
                             </div>
                         </td>
                         <td>
-                            <button class="btn btn-link btn-sm p-0 text-decoration-none" hx-get="/api/aci/bgp/routes/{{ p.node }}" hx-target="#aci-results" hx-indicator="#aci-loading">
+                            <button class="btn btn-link btn-sm p-0 text-decoration-none" hx-get="/api/aci/bgp/routes?dn={{ p.base_dn|urlencode }}" hx-target="#aci-results" hx-indicator="#aci-loading">
                                 <i class="fas fa-list"></i> Node Routes
                             </button>
                         </td>

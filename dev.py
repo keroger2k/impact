@@ -290,10 +290,8 @@ MOCK_SERVICES: list[dict] = [
 # ── Mock ACI data ─────────────────────────────────────────────────────────────
 
 MOCK_ACI_NODES = [
-    {"fabricNode": {"attributes": {"id": "1001", "name": "SPINE-01", "model": "N9K-C9332C", "role": "spine", "fabricSt": "active", "dn": "topology/pod-1/node-1001"}}},
-    {"fabricNode": {"attributes": {"id": "1002", "name": "SPINE-02", "model": "N9K-C9332C", "role": "spine", "fabricSt": "active", "dn": "topology/pod-1/node-1002"}}},
-    {"fabricNode": {"attributes": {"id": "101", "name": "LEAF-01", "model": "N9K-C93180YC-EX", "role": "leaf", "fabricSt": "active", "dn": "topology/pod-1/node-101"}}},
-    {"fabricNode": {"attributes": {"id": "102", "name": "LEAF-02", "model": "N9K-C93180YC-EX", "role": "leaf", "fabricSt": "active", "dn": "topology/pod-1/node-102"}}},
+    {"fabricNode": {"attributes": {"id": "149", "name": "LEAF-149", "model": "N9K-C9348GC-FXP", "role": "leaf", "fabricSt": "active", "dn": "topology/pod-1/node-149"}}},
+    {"fabricNode": {"attributes": {"id": "150", "name": "LEAF-150", "model": "N9K-C9348GC-FXP", "role": "leaf", "fabricSt": "active", "dn": "topology/pod-2/node-150"}}},
 ]
 
 MOCK_ACI_L3OUTS = [
@@ -359,20 +357,20 @@ MOCK_ACI_BGP_RIB_OUT = [
 MOCK_ACI_BGP_DOMS_ALL = [
     {
         "bgpDom": {
-            "attributes": {"dn": "topology/pod-1/node-101/sys/bgp/inst/dom-default"},
+            "attributes": {"dn": "topology/pod-1/node-149/sys/bgp/inst/dom-default"},
             "children": [{"bgpRoute": {"attributes": {"count": "150"}}}]
         }
     },
     {
         "bgpDom": {
-            "attributes": {"dn": "topology/pod-1/node-101/sys/bgp/inst/dom-VRF-PRODUCTION"},
-            "children": [{"bgpBdpRoute": {"attributes": {"count": "45"}}}]
+            "attributes": {"dn": "topology/pod-2/node-150/sys/bgp/inst/dom-VRF-PRODUCTION"},
+            "children": [{"bgpBdpRoute": {"attributes": {"cnt": "45"}}}]
         }
     },
     {
         "bgpDom": {
-            "attributes": {"dn": "topology/pod-1/node-102/sys/bgp/inst/dom-default"},
-            "children": [{"bgpRoute": {"attributes": {"count": "148"}}}]
+            "attributes": {"dn": "topology/pod-1/node-149/sys/bgp/inst/dom-VRF-EXT"},
+            "children": [{"bgpRoute": {"attributes": {"totalCount": "10"}}}]
         }
     }
 ]
