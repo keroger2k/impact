@@ -326,6 +326,23 @@ MOCK_ACI_BGP_DOMS = [
                 {"bgpRoute": {"attributes": {"prefix": "0.0.0.0/0", "nextHop": "192.168.1.1", "origin": "igp", "asPath": "65001"}}}
             ]
         }
+    },
+    {
+        "bgpDom": {
+            "attributes": {"name": "TSA-HQ:TSA-HQ-VRF"},
+            "children": [
+                {"bgpBdpRoute": {"attributes": {"pfx": "10.91.6.0/24", "nh": "10.91.6.1", "origin": "igp", "asPath": ""}}},
+                {"bgpBdpRoute": {"attributes": {"pfx": "192.168.100.0/24", "nh": "10.91.6.1", "origin": "igp", "asPath": "65500"}}}
+            ]
+        }
+    },
+    {
+        "bgpDom": {
+            "attributes": {"name": "overlay-1"},
+            "children": [
+                {"bgpEvpnRoute": {"attributes": {"pfx": "200:1:10.91.0.1", "nh": "172.19.56.67", "origin": "igp", "asPath": ""}}}
+            ]
+        }
     }
 ]
 
