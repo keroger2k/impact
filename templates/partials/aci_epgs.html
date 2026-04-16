@@ -34,7 +34,7 @@
                             </div>
                         </td>
                         <td>
-                            <button class="btn btn-outline-primary btn-sm" hx-get="/api/aci/traffic/epg-health?dn={{ e.dn }}" hx-target="#aci-results">
+                            <button class="btn btn-outline-primary btn-sm" hx-get="/api/aci/traffic/epg-health?dn={{ e.dn | urlencode }}" hx-target="#aci-results" hx-indicator="#aci-loading">
                                 <i class="fas fa-chart-line"></i> Stats
                             </button>
                         </td>

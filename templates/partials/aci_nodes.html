@@ -33,7 +33,7 @@
                             </span>
                         </td>
                         <td>
-                            <button class="btn btn-outline-primary btn-sm" hx-get="/api/aci/bgp/routes/{{ n.id }}" hx-target="#aci-results">
+                            <button class="btn btn-outline-primary btn-sm" hx-get="/api/aci/bgp/routes/{{ n.id }}" hx-target="#aci-results" hx-indicator="#aci-loading">
                                 View Routes
                             </button>
                         </td>

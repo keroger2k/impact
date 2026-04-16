@@ -21,7 +21,7 @@
                         <td>{{ l.name }}</td>
                         <td class="small text-muted">{{ l.descr }}</td>
                         <td>
-                            <button class="btn btn-outline-primary btn-sm" hx-get="/api/aci/l3outs/detail?dn={{ l.dn }}" hx-target="#aci-results">
+                            <button class="btn btn-outline-primary btn-sm" hx-get="/api/aci/l3outs/detail?dn={{ l.dn | urlencode }}" hx-target="#aci-results" hx-indicator="#aci-loading">
                                 Explore
                             </button>
                         </td>
