@@ -297,6 +297,7 @@ MOCK_ACI_NODES = [
 MOCK_ACI_L3OUTS = [
     {"l3extOut": {"attributes": {"name": "L3OUT-CORE", "dn": "uni/tn-COMMON/out-L3OUT-CORE", "descr": "Connection to Enterprise Core"}}},
     {"l3extOut": {"attributes": {"name": "L3OUT-FIREWALL", "dn": "uni/tn-PROD/out-L3OUT-FIREWALL", "descr": "Connection to DMZ Firewalls"}}},
+    {"l3extOut": {"attributes": {"name": "HQL3Out", "dn": "uni/tn-TSA-HQ/out-HQL3Out", "descr": "Broken L3Out for testing"}}},
 ]
 
 MOCK_ACI_BGP_PEERS = [

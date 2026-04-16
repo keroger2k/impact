@@ -23,7 +23,7 @@
                     {% for n in l.nodes %}
                     <li class="list-group-item d-flex justify-content-between align-items-center px-0">
                         <span>{{ n.name }}</span>
-                        <span class="small text-muted">{{ n.dn.split('/')[-1] }}</span>
+                        <span class="small text-muted">{{ n.dn.split('/')[-1] if n.dn else 'N/A' }}</span>
                     </li>
                     {% endfor %}
                 </ul>

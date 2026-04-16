@@ -181,7 +181,7 @@ async def get_l3out_detail(request: Request, dn: str, session: SessionEntry = De
         detail_raw = detail_raw_orig
 
     # Flatten detail for template
-    processed = {"name": dn.split('/')[-1].replace('out-', ''), "dn": dn, "nodes": [], "interfaces": []}
+    processed = {"name": dn.split('/')[-1].replace('out-', '') if '/' in dn else dn, "dn": dn, "nodes": [], "interfaces": []}
     imdata = detail_raw.get('imdata', [])
     if imdata:
         root = imdata[0].get('l3extOut', {})
@@ -311,11 +311,11 @@ async def get_bgp_routes(request: Request, node_id: str = None, dn: str = None, 
     if request.headers.get("HX-Request"):
         from templates_module import templates
         return templates.TemplateResponse(request, "partials/aci_bgp_routes.html", {
-            "node_id": node_id or target.split('/')[-1],
+            "node_id": node_id or (target.split('/')[-1] if target and '/' in target else target) or "Unknown",
             "routes": processed,
             "raw_json": routes_raw
         })
-    return {"node_id": node_id or target.split('/')[-1], "items": processed, "raw": routes_raw}
+    return {"node_id": node_id or (target.split('/')[-1] if target and '/' in target else target) or "Unknown", "items": processed, "raw": routes_raw}
 
 # ── Traffic & EPGs ───────────────────────────────────────────────────────────
 
