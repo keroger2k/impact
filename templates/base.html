@@ -162,10 +162,26 @@
       });
   }
 
-  function showRawData(data) {
+  function showRawData(element) {
+    var rawData;
+    if (typeof element === 'string') {
+        // Try to find script tag by ID
+        const scriptTag = document.getElementById(element);
+        if (scriptTag) {
+            rawData = JSON.parse(scriptTag.textContent);
+        }
+    } else {
+        rawData = element;
+    }
+
+    if (!rawData) {
+        console.error("No raw data found for element:", element);
+        return;
+    }
+
     const modal = new bootstrap.Modal(document.getElementById('rawDataModal'));
     const content = document.getElementById('rawDataContent');
-    content.textContent = JSON.stringify(data, null, 2);
+    content.textContent = JSON.stringify(rawData, null, 2);
     modal.show();
   }
 

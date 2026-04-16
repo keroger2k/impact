@@ -26,11 +26,12 @@
       </div>
     </div>
   </div>
-  <div class="col-md-9 d-flex flex-column">
-    <div id="aci-loading" class="htmx-indicator text-center p-5 animate-fade-in">
+  <div class="col-md-9 d-flex flex-column position-relative">
+    <!-- Spinner overlay to prevent screen shifting -->
+    <div id="aci-loading" class="htmx-indicator position-absolute top-0 start-0 w-100 h-100 bg-white bg-opacity-75 d-flex flex-column align-items-center justify-content-center animate-fade-in" style="z-index: 100;">
       <div class="spinner spinner-lg"></div>
-      <p class="text-muted small mt-2">Connecting to Cisco APIC and fetching data...</p>
+      <p class="text-navy fw-bold small mt-2">Syncing with APIC...</p>
     </div>
-    <div id="aci-results" hx-get="/api/aci/fabric/nodes" hx-trigger="load once"></div>
+    <div id="aci-results" hx-get="/api/aci/fabric/nodes" hx-trigger="load once" style="min-height: 400px;"></div>
   </div>
 </div>

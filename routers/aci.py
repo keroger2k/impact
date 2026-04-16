@@ -70,18 +70,33 @@ async def _get_processed_nodes(aci, loop):
     doms_raw = await loop.run_in_executor(None, _cached, "aci_bgp_doms_all", aci.get_all_bgp_doms)
     doms = doms_raw.get('imdata', [])
     route_counts = {}
+    logger.info(f"ACI BGP DOMs raw count: {len(doms)}")
+
     for dom in doms:
-        attr = dom.get('bgpDom', {}).get('attributes', {})
+        # ACI JSON can wrap the class name: {"bgpDom": {"attributes": {...}}}
+        dom_obj = dom.get('bgpDom')
+        if not dom_obj:
+            # Or it might be a direct object if queried specifically, but for class query it's usually wrapped
+            continue
+
+        attr = dom_obj.get('attributes', {})
         dn = attr.get('dn', '')
         # Extract node ID from DN: topology/pod-1/node-101/...
         node_id = next((p.replace('node-', '') for p in dn.split('/') if p.startswith('node-')), None)
+
         if node_id:
             count = 0
-            for child in dom.get('bgpDom', {}).get('children', []):
+            # Look for children containing counts
+            children = dom_obj.get('children', [])
+            for child in children:
                 for k, v in child.items():
                     if k in ['bgpRoute', 'bgpBdpRoute', 'bgpEvpnRoute']:
-                        count += int(v.get('attributes', {}).get('count', 0))
+                        c_attr = v.get('attributes', {})
+                        count += int(c_attr.get('count') or 0)
+
             route_counts[node_id] = route_counts.get(node_id, 0) + count
+
+    logger.info(f"ACI route counts calculated: {route_counts}")
 
     processed = []
     for n in nodes:
@@ -154,7 +169,14 @@ async def list_l3outs(request: Request, session: SessionEntry = Depends(require_
 async def get_l3out_detail(request: Request, dn: str, session: SessionEntry = Depends(require_auth)):
     aci = _get_aci(session)
     loop = asyncio.get_event_loop()
-    detail_raw = await loop.run_in_executor(None, aci.get_l3out_details, dn)
+    detail_raw_orig = await loop.run_in_executor(None, aci.get_l3out_details, dn)
+
+    if isinstance(detail_raw_orig, list):
+        detail_raw = {"imdata": detail_raw_orig}
+    elif detail_raw_orig is None:
+        detail_raw = {"imdata": []}
+    else:
+        detail_raw = detail_raw_orig
 
     # Flatten detail for template
     processed = {"name": dn.split('/')[-1].replace('out-', ''), "dn": dn, "nodes": [], "interfaces": []}
@@ -231,7 +253,15 @@ async def list_bgp_peers(request: Request, session: SessionEntry = Depends(requi
 async def get_bgp_routes(request: Request, node_id: str, session: SessionEntry = Depends(require_auth)):
     aci = _get_aci(session)
     loop = asyncio.get_event_loop()
-    routes_raw = await loop.run_in_executor(None, aci.get_bgp_routes, node_id)
+    routes_raw_orig = await loop.run_in_executor(None, aci.get_bgp_routes, node_id)
+
+    # Normalize routes_raw to ensure it's a dict with imdata
+    if isinstance(routes_raw_orig, list):
+        routes_raw = {"imdata": routes_raw_orig}
+    elif routes_raw_orig is None:
+        routes_raw = {"imdata": []}
+    else:
+        routes_raw = routes_raw_orig
 
     processed = []
     imdata = routes_raw.get('imdata', [])
@@ -314,7 +344,14 @@ async def list_epgs(request: Request, session: SessionEntry = Depends(require_au
 async def get_epg_health(request: Request, dn: str, session: SessionEntry = Depends(require_auth)):
     aci = _get_aci(session)
     loop = asyncio.get_event_loop()
-    data_raw = await loop.run_in_executor(None, aci.get_epg_stats, dn)
+    data_raw_orig = await loop.run_in_executor(None, aci.get_epg_stats, dn)
+
+    if isinstance(data_raw_orig, list):
+        data_raw = {"imdata": data_raw_orig}
+    elif data_raw_orig is None:
+        data_raw = {"imdata": []}
+    else:
+        data_raw = data_raw_orig
 
     processed = {"dn": dn, "health": "0", "stats": {}}
     imdata = data_raw.get('imdata', [])
