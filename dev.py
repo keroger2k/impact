@@ -329,18 +329,18 @@ MOCK_ACI_BGP_DOMS = [
     },
     {
         "bgpDom": {
-            "attributes": {"name": "TSA-HQ:TSA-HQ-VRF"},
+            "attributes": {"name": "VRF-PRODUCTION"},
             "children": [
-                {"bgpBdpRoute": {"attributes": {"pfx": "10.91.6.0/24", "nh": "10.91.6.1", "origin": "igp", "asPath": ""}}},
-                {"bgpBdpRoute": {"attributes": {"pfx": "192.168.100.0/24", "nh": "10.91.6.1", "origin": "igp", "asPath": "65500"}}}
+                {"bgpBdpRoute": {"attributes": {"pfx": "10.200.10.0/24", "nh": "10.200.10.1", "origin": "igp", "asPath": ""}}},
+                {"bgpBdpRoute": {"attributes": {"pfx": "192.168.50.0/24", "nh": "10.200.10.1", "origin": "igp", "asPath": "65123"}}}
             ]
         }
     },
     {
         "bgpDom": {
-            "attributes": {"name": "overlay-1"},
+            "attributes": {"name": "overlay-trust"},
             "children": [
-                {"bgpEvpnRoute": {"attributes": {"pfx": "200:1:10.91.0.1", "nh": "172.19.56.67", "origin": "igp", "asPath": ""}}}
+                {"bgpEvpnRoute": {"attributes": {"pfx": "300:1:10.254.0.1", "nh": "192.168.255.10", "origin": "igp", "asPath": ""}}}
             ]
         }
     }
