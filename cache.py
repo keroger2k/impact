@@ -27,7 +27,7 @@ TTL_PAN_INTERFACES = 604800  # 7 days
 # Absolute path so disk cache works regardless of where uvicorn is invoked from
 CACHE_DIR    = Path(__file__).parent / "data" / "cache"
 DISK_KEYS    = {"devices", "sites", "device_site_map", "nexus_inventory", "nexus_interfaces"}
-DISK_PREFIXES = ("pan_", "ise_", "nexus_")
+DISK_PREFIXES = ("pan_", "ise_", "nexus_", "aci_")
 
 
 def _should_persist(key: str) -> bool:

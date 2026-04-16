@@ -356,6 +356,27 @@ MOCK_ACI_BGP_RIB_OUT = [
     {"bgpAdjRibOut": {"attributes": {"prefix": "172.16.0.0/12", "nextHop": "0.0.0.0", "asPath": "", "origin": "igp", "status": "advertised"}}},
 ]
 
+MOCK_ACI_BGP_DOMS_ALL = [
+    {
+        "bgpDom": {
+            "attributes": {"dn": "topology/pod-1/node-101/sys/bgp/inst/dom-default"},
+            "children": [{"bgpRoute": {"attributes": {"count": "150"}}}]
+        }
+    },
+    {
+        "bgpDom": {
+            "attributes": {"dn": "topology/pod-1/node-101/sys/bgp/inst/dom-VRF-PRODUCTION"},
+            "children": [{"bgpBdpRoute": {"attributes": {"count": "45"}}}]
+        }
+    },
+    {
+        "bgpDom": {
+            "attributes": {"dn": "topology/pod-1/node-102/sys/bgp/inst/dom-default"},
+            "children": [{"bgpRoute": {"attributes": {"count": "148"}}}]
+        }
+    }
+]
+
 MOCK_ACI_FAULT_INST = [
     {"faultInst": {"attributes": {"code": "F1234", "severity": "major", "descr": "BGP Peer Down", "dn": "topology/pod-1/node-101/sys/bgp/inst/dom-default/peer-[10.255.0.1]/fault-F1234", "created": "2024-05-20T10:00:00Z"}}},
     {"faultInst": {"attributes": {"code": "F0546", "severity": "critical", "descr": "Fabric Node Unreachable", "dn": "topology/pod-1/node-102/fault-F0546", "created": "2024-05-20T11:00:00Z"}}},
@@ -421,17 +442,18 @@ def seed_cache(cache) -> None:
     cache.set("status_panorama", {"ok": True, "detail": "Connected (mock)"}, LONG)
 
     # ACI
-    cache.set("aci_nodes",     MOCK_ACI_NODES,      LONG)
-    cache.set("aci_l3outs",    MOCK_ACI_L3OUTS,     LONG)
-    cache.set("aci_bgp_peers", MOCK_ACI_BGP_PEERS,  LONG)
-    cache.set("aci_subnets",   MOCK_ACI_SUBNETS,    LONG)
-    cache.set("aci_epgs",      MOCK_ACI_EPGS,       LONG)
-    cache.set("aci_faults",    MOCK_ACI_FAULT_INST, LONG)
+    cache.set("aci_nodes",     {"imdata": MOCK_ACI_NODES},      LONG)
+    cache.set("aci_l3outs",    {"imdata": MOCK_ACI_L3OUTS},     LONG)
+    cache.set("aci_bgp_peers", {"imdata": MOCK_ACI_BGP_PEERS},  LONG)
+    cache.set("aci_subnets",   {"imdata": MOCK_ACI_SUBNETS},    LONG)
+    cache.set("aci_epgs",      {"imdata": MOCK_ACI_EPGS},       LONG)
+    cache.set("aci_faults",    {"imdata": MOCK_ACI_FAULT_INST}, LONG)
+    cache.set("aci_bgp_doms_all", {"imdata": MOCK_ACI_BGP_DOMS_ALL}, LONG)
 
     # ACI status
-    cache.set("aci_health_overall", MOCK_ACI_HEALTH_OVERALL, LONG)
-    cache.set("aci_health_tenants", MOCK_ACI_HEALTH_TENANTS, LONG)
-    cache.set("aci_health_pods",    MOCK_ACI_HEALTH_PODS,    LONG)
+    cache.set("aci_health_overall", {"imdata": MOCK_ACI_HEALTH_OVERALL}, LONG)
+    cache.set("aci_health_tenants", {"imdata": MOCK_ACI_HEALTH_TENANTS}, LONG)
+    cache.set("aci_health_pods",    {"imdata": MOCK_ACI_HEALTH_PODS},    LONG)
     cache.set("status_aci", {"ok": True, "detail": "Connected (mock)"}, LONG)
 
     # Nexus

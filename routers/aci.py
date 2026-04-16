@@ -19,7 +19,7 @@ ACI_TTL = 1800   # 30 min
 ACI_CACHE_KEYS = [
     "aci_nodes", "aci_l3outs", "aci_bgp_peers", "aci_ospf_peers",
     "aci_epgs", "aci_faults", "aci_subnets", "aci_health_overall",
-    "aci_health_tenants", "aci_health_pods"
+    "aci_health_tenants", "aci_health_pods", "aci_bgp_doms_all"
 ]
 
 def _get_aci(session: SessionEntry):
@@ -33,8 +33,18 @@ def _cached(key: str, loader, ttl: int = ACI_TTL):
     data = cache.get(key)
     if data is None:
         data = loader()
-        cache.set(key, data, ttl)
-    return data
+        # Ensure we always cache a dict with 'imdata' even if loader returns a list (old style)
+        if isinstance(data, list):
+            data = {"imdata": data}
+        if data is not None:
+            cache.set(key, data, ttl)
+
+    # Final normalization: if data is still a list (from disk cache), convert to dict
+    if isinstance(data, list):
+        data = {"imdata": data}
+
+    # Ensure it's a dict for .get() calls in routes, even if None was returned
+    return data or {"imdata": []}
 
 # ── Cache management ──────────────────────────────────────────────────────────
 
@@ -52,9 +62,27 @@ async def refresh_aci_cache():
 # ── Fabric Nodes ──────────────────────────────────────────────────────────────
 
 async def _get_processed_nodes(aci, loop):
-    nodes = await loop.run_in_executor(None, _cached, "aci_nodes", aci.get_fabric_nodes)
+    nodes_raw = await loop.run_in_executor(None, _cached, "aci_nodes", aci.get_fabric_nodes)
+    nodes = nodes_raw.get('imdata', [])
     logger.info(f"ACI fabric nodes raw count: {len(nodes)}")
-    logger.info(f"ACI fabric nodes raw data: {nodes}")
+
+    # Fetch BGP route counts for all nodes
+    doms_raw = await loop.run_in_executor(None, _cached, "aci_bgp_doms_all", aci.get_all_bgp_doms)
+    doms = doms_raw.get('imdata', [])
+    route_counts = {}
+    for dom in doms:
+        attr = dom.get('bgpDom', {}).get('attributes', {})
+        dn = attr.get('dn', '')
+        # Extract node ID from DN: topology/pod-1/node-101/...
+        node_id = next((p.replace('node-', '') for p in dn.split('/') if p.startswith('node-')), None)
+        if node_id:
+            count = 0
+            for child in dom.get('bgpDom', {}).get('children', []):
+                for k, v in child.items():
+                    if k in ['bgpRoute', 'bgpBdpRoute', 'bgpEvpnRoute']:
+                        count += int(v.get('attributes', {}).get('count', 0))
+            route_counts[node_id] = route_counts.get(node_id, 0) + count
+
     processed = []
     for n in nodes:
         attr = n.get('fabricNode', {}).get('attributes', {})
@@ -72,21 +100,25 @@ async def _get_processed_nodes(aci, loop):
             "model": attr.get('model'),
             "role": role,
             "status": attr.get('fabricSt', 'unknown'),
-            "dn": attr.get('dn')
+            "dn": attr.get('dn'),
+            "route_count": route_counts.get(node_id_str, 0)
         })
     logger.info(f"ACI fabric nodes processed: {processed}")
-    return processed
+    return processed, nodes_raw
 
 @router.get("/fabric/nodes")
 async def list_fabric_nodes(request: Request, session: SessionEntry = Depends(require_auth)):
     aci = _get_aci(session)
     loop = asyncio.get_event_loop()
-    processed = await _get_processed_nodes(aci, loop)
+    processed, nodes_raw = await _get_processed_nodes(aci, loop)
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
-        return templates.TemplateResponse(request, "partials/aci_nodes.html", {"nodes": processed})
-    return {"items": processed}
+        return templates.TemplateResponse(request, "partials/aci_nodes.html", {
+            "nodes": processed,
+            "raw_json": nodes_raw
+        })
+    return {"items": processed, "raw": nodes_raw}
 
 # ── L3Outs ────────────────────────────────────────────────────────────────────
 
@@ -97,7 +129,7 @@ async def list_l3outs(request: Request, session: SessionEntry = Depends(require_
     l3outs_raw = await loop.run_in_executor(None, _cached, "aci_l3outs", aci.get_l3outs)
 
     processed = []
-    for item in l3outs_raw:
+    for item in l3outs_raw.get('imdata', []):
         attr = item.get('l3extOut', {}).get('attributes', {})
         dn = attr.get('dn', '')
         # Extract tenant from DN: uni/tn-COMMON/out-L3OUT
@@ -112,8 +144,11 @@ async def list_l3outs(request: Request, session: SessionEntry = Depends(require_
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
-        return templates.TemplateResponse(request, "partials/aci_l3outs.html", {"l3outs": processed})
-    return {"items": processed}
+        return templates.TemplateResponse(request, "partials/aci_l3outs.html", {
+            "l3outs": processed,
+            "raw_json": l3outs_raw
+        })
+    return {"items": processed, "raw": l3outs_raw}
 
 @router.get("/l3outs/detail")
 async def get_l3out_detail(request: Request, dn: str, session: SessionEntry = Depends(require_auth)):
@@ -123,8 +158,9 @@ async def get_l3out_detail(request: Request, dn: str, session: SessionEntry = De
 
     # Flatten detail for template
     processed = {"name": dn.split('/')[-1].replace('out-', ''), "dn": dn, "nodes": [], "interfaces": []}
-    if detail_raw:
-        root = detail_raw[0].get('l3extOut', {})
+    imdata = detail_raw.get('imdata', [])
+    if imdata:
+        root = imdata[0].get('l3extOut', {})
         children = root.get('children', [])
         for child in children:
             if 'l3extLNodeP' in child:
@@ -138,8 +174,11 @@ async def get_l3out_detail(request: Request, dn: str, session: SessionEntry = De
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
-        return templates.TemplateResponse(request, "partials/aci_l3out_detail.html", {"l": processed})
-    return processed
+        return templates.TemplateResponse(request, "partials/aci_l3out_detail.html", {
+            "l": processed,
+            "raw_json": detail_raw
+        })
+    return {"item": processed, "raw": detail_raw}
 
 # ── BGP Troubleshooting ────────────────────────────────────────────────────────
 
@@ -154,7 +193,7 @@ async def list_bgp_peers(request: Request, session: SessionEntry = Depends(requi
 
     # Map subnets to L3Outs
     ads_map = {}
-    for entry in subnets_raw:
+    for entry in subnets_raw.get('imdata', []):
         attr = entry.get('l3extSubnet', {}).get('attributes', {})
         if 'export-rtctrl' in attr.get('scope', ''):
             dn_parts = attr.get('dn', '').split('/')
@@ -162,7 +201,7 @@ async def list_bgp_peers(request: Request, session: SessionEntry = Depends(requi
             ads_map.setdefault(l3out, []).append(attr.get('ip'))
 
     processed = []
-    for entry in peers_raw:
+    for entry in peers_raw.get('imdata', []):
         attr = entry.get('bgpPeerEntry', {}).get('attributes', {})
         dn = attr.get('dn', '')
         dn_parts = dn.split('/')
@@ -182,8 +221,11 @@ async def list_bgp_peers(request: Request, session: SessionEntry = Depends(requi
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
-        return templates.TemplateResponse(request, "partials/aci_bgp_peers.html", {"peers": processed})
-    return {"items": processed}
+        return templates.TemplateResponse(request, "partials/aci_bgp_peers.html", {
+            "peers": processed,
+            "raw_json": peers_raw
+        })
+    return {"items": processed, "raw": peers_raw}
 
 @router.get("/bgp/routes/{node_id}")
 async def get_bgp_routes(request: Request, node_id: str, session: SessionEntry = Depends(require_auth)):
@@ -192,6 +234,7 @@ async def get_bgp_routes(request: Request, node_id: str, session: SessionEntry =
     routes_raw = await loop.run_in_executor(None, aci.get_bgp_routes, node_id)
 
     processed = []
+    imdata = routes_raw.get('imdata', [])
     route_classes = {'bgpRoute', 'bgpBdpRoute', 'bgpEvpnRoute'}
 
     def find_routes(obj, vrf_name):
@@ -215,8 +258,8 @@ async def get_bgp_routes(request: Request, node_id: str, session: SessionEntry =
                 elif isinstance(v, dict):
                     find_routes(v, vrf_name)
 
-    if routes_raw:
-        for item in routes_raw:
+    if imdata:
+        for item in imdata:
             if 'bgpDom' in item:
                 dom_attr = item['bgpDom']['attributes']
                 vrf_name = dom_attr.get('name', 'unknown')
@@ -224,8 +267,12 @@ async def get_bgp_routes(request: Request, node_id: str, session: SessionEntry =
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
-        return templates.TemplateResponse(request, "partials/aci_bgp_routes.html", {"node_id": node_id, "routes": processed})
-    return {"node_id": node_id, "items": processed}
+        return templates.TemplateResponse(request, "partials/aci_bgp_routes.html", {
+            "node_id": node_id,
+            "routes": processed,
+            "raw_json": routes_raw
+        })
+    return {"node_id": node_id, "items": processed, "raw": routes_raw}
 
 # ── Traffic & EPGs ───────────────────────────────────────────────────────────
 
@@ -236,7 +283,7 @@ async def list_epgs(request: Request, session: SessionEntry = Depends(require_au
     epgs_raw = await loop.run_in_executor(None, _cached, "aci_epgs", aci.get_epgs)
 
     processed = []
-    for item in epgs_raw:
+    for item in epgs_raw.get('imdata', []):
         attr = item.get('fvAEPg', {}).get('attributes', {})
         dn = attr.get('dn', '')
         tenant = dn.split('/')[1].replace('tn-', '') if '/' in dn else 'unknown'
@@ -257,8 +304,11 @@ async def list_epgs(request: Request, session: SessionEntry = Depends(require_au
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
-        return templates.TemplateResponse(request, "partials/aci_epgs.html", {"epgs": processed})
-    return {"items": processed}
+        return templates.TemplateResponse(request, "partials/aci_epgs.html", {
+            "epgs": processed,
+            "raw_json": epgs_raw
+        })
+    return {"items": processed, "raw": epgs_raw}
 
 @router.get("/traffic/epg-health")
 async def get_epg_health(request: Request, dn: str, session: SessionEntry = Depends(require_auth)):
@@ -267,8 +317,9 @@ async def get_epg_health(request: Request, dn: str, session: SessionEntry = Depe
     data_raw = await loop.run_in_executor(None, aci.get_epg_stats, dn)
 
     processed = {"dn": dn, "health": "0", "stats": {}}
-    if data_raw:
-        epg = data_raw[0].get('fvAEPg', {})
+    imdata = data_raw.get('imdata', [])
+    if imdata:
+        epg = imdata[0].get('fvAEPg', {})
         for child in epg.get('children', []):
             if 'healthInst' in child:
                 processed['health'] = child['healthInst']['attributes'].get('cur')
@@ -276,8 +327,11 @@ async def get_epg_health(request: Request, dn: str, session: SessionEntry = Depe
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
-        return templates.TemplateResponse(request, "partials/aci_epg_health.html", {"e": processed})
-    return processed
+        return templates.TemplateResponse(request, "partials/aci_epg_health.html", {
+            "e": processed,
+            "raw_json": data_raw
+        })
+    return {"item": processed, "raw": data_raw}
 
 @router.get("/health/summary")
 async def get_health_summary(session: SessionEntry = Depends(require_auth)):
@@ -295,12 +349,16 @@ async def get_health_summary(session: SessionEntry = Depends(require_auth)):
                 return child['healthInst']['attributes'].get('cur', '0')
         return '0'
 
+    overall_imdata = overall.get('imdata', []) if overall else []
+    tenants_imdata = tenants.get('imdata', []) if tenants else []
+    pods_imdata    = pods.get('imdata', [])    if pods else []
+
     res = {
-        "overall": _extract_health(overall[0], 'fabricHealthTotal') if overall else '0',
+        "overall": _extract_health(overall_imdata[0], 'fabricHealthTotal') if overall_imdata else '0',
         "tenants": [{"name": t.get('fvTenant', {}).get('attributes', {}).get('name'),
-                     "health": _extract_health(t, 'fvTenant')} for t in tenants],
+                     "health": _extract_health(t, 'fvTenant')} for t in tenants_imdata],
         "pods": [{"id": p.get('fabricPod', {}).get('attributes', {}).get('id'),
-                  "health": _extract_health(p, 'fabricPod')} for p in pods]
+                  "health": _extract_health(p, 'fabricPod')} for p in pods_imdata]
     }
     return res
 
@@ -308,10 +366,10 @@ async def get_health_summary(session: SessionEntry = Depends(require_auth)):
 async def list_faults(request: Request, severity: Optional[str] = None, session: SessionEntry = Depends(require_auth)):
     aci = _get_aci(session)
     loop = asyncio.get_event_loop()
-    faults = await loop.run_in_executor(None, aci.get_faults, severity)
+    faults_raw = await loop.run_in_executor(None, aci.get_faults, severity)
 
     processed = []
-    for f in faults:
+    for f in faults_raw.get('imdata', []):
         attr = f.get('faultInst', {}).get('attributes', {})
         processed.append({
             "code": attr.get('code'),
@@ -323,8 +381,11 @@ async def list_faults(request: Request, severity: Optional[str] = None, session:
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
-        return templates.TemplateResponse(request, "partials/aci_faults.html", {"faults": processed})
-    return {"items": processed}
+        return templates.TemplateResponse(request, "partials/aci_faults.html", {
+            "faults": processed,
+            "raw_json": faults_raw
+        })
+    return {"items": processed, "raw": faults_raw}
 
 @router.get("/bgp/peer-routes")
 async def get_bgp_peer_routes(request: Request, dn: str, direction: str = "in", session: SessionEntry = Depends(require_auth)):
@@ -334,7 +395,7 @@ async def get_bgp_peer_routes(request: Request, dn: str, direction: str = "in", 
 
     processed = []
     cls = "bgpAdjRibIn" if direction == "in" else "bgpAdjRibOut"
-    for item in routes_raw:
+    for item in routes_raw.get('imdata', []):
         attr = item.get(cls, {}).get('attributes', {})
         processed.append({
             "prefix": attr.get('prefix'),
@@ -352,6 +413,7 @@ async def get_bgp_peer_routes(request: Request, dn: str, direction: str = "in", 
         return templates.TemplateResponse(request, "partials/aci_bgp_peer_routes.html", {
             "peer_ip": peer_ip,
             "direction": "Received" if direction == "in" else "Advertised",
-            "routes": processed
+            "routes": processed,
+            "raw_json": routes_raw
         })
-    return {"peer": peer_ip, "direction": direction, "items": processed}
+    return {"peer": peer_ip, "direction": direction, "items": processed, "raw": routes_raw}

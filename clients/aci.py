@@ -65,7 +65,8 @@ class ACIClient:
             from dev import (
                 MOCK_ACI_NODES, MOCK_ACI_L3OUTS, MOCK_ACI_BGP_PEERS,
                 MOCK_ACI_SUBNETS, MOCK_ACI_EPGS, MOCK_ACI_FAULT_INST,
-                MOCK_ACI_BGP_DOMS, MOCK_ACI_BGP_RIB_IN, MOCK_ACI_BGP_RIB_OUT
+                MOCK_ACI_BGP_DOMS, MOCK_ACI_BGP_RIB_IN, MOCK_ACI_BGP_RIB_OUT,
+                MOCK_ACI_BGP_DOMS_ALL
             )
             if "fabricNode" in path: return {"imdata": MOCK_ACI_NODES}
             if "l3extOut" in path: return {"imdata": MOCK_ACI_L3OUTS}
@@ -73,6 +74,7 @@ class ACIClient:
             if "l3extSubnet" in path: return {"imdata": MOCK_ACI_SUBNETS}
             if "fvAEPg" in path: return {"imdata": MOCK_ACI_EPGS}
             if "faultInst" in path: return {"imdata": MOCK_ACI_FAULT_INST}
+            if "bgpDom.json" in path: return {"imdata": MOCK_ACI_BGP_DOMS_ALL}
             if "bgpDom" in path: return {"imdata": MOCK_ACI_BGP_DOMS}
             if "bgpAdjRibIn" in path: return {"imdata": MOCK_ACI_BGP_RIB_IN}
             if "bgpAdjRibOut" in path: return {"imdata": MOCK_ACI_BGP_RIB_OUT}
@@ -96,8 +98,7 @@ class ACIClient:
 
     def get_fabric_nodes(self):
         """List all fabricNode objects."""
-        data = self.get("api/node/class/fabricNode.json")
-        return data.get('imdata', []) if data else []
+        return self.get("api/node/class/fabricNode.json")
 
     def get_l3outs(self, tenant=None):
         """Fetch L3Out configurations."""
@@ -105,38 +106,39 @@ class ACIClient:
             path = f"api/node/mo/uni/tn-{tenant}.json?query-target=subtree&target-subtree-class=l3extOut"
         else:
             path = "api/node/class/l3extOut.json"
-        data = self.get(path)
-        return data.get('imdata', []) if data else []
+        return self.get(path)
 
     def get_l3out_details(self, dn):
         """Fetch details for a specific L3Out including children like node profiles and interface profiles."""
         # Query with rsp-subtree=full to get children
         path = f"api/node/mo/{dn}.json?rsp-subtree=full"
-        data = self.get(path)
-        return data.get('imdata', []) if data else []
+        return self.get(path)
 
     def get_bgp_peers(self):
         """Query bgpPeerEntry for BGP neighbor states."""
-        data = self.get("api/node/class/bgpPeerEntry.json")
-        return data.get('imdata', []) if data else []
+        return self.get("api/node/class/bgpPeerEntry.json")
 
     def get_ospf_peers(self):
         """Query ospfAdjEp for OSPF neighbor states."""
-        data = self.get("api/node/class/ospfAdjEp.json")
-        return data.get('imdata', []) if data else []
+        return self.get("api/node/class/ospfAdjEp.json")
 
     def get_l3_subnets(self):
         """Query l3extSubnet for external subnet policies."""
-        data = self.get("api/node/class/l3extSubnet.json")
-        return data.get('imdata', []) if data else []
+        return self.get("api/node/class/l3extSubnet.json")
 
     def get_bgp_routes(self, node_id):
         """Query bgpDom for routing tables on a specific node."""
         # Include multiple route classes to ensure we catch different address families/best paths
         classes = "bgpRoute,bgpBdpRoute,bgpEvpnRoute"
         path = f"api/node/mo/topology/pod-1/node-{node_id}/sys/bgp/inst.json?query-target=subtree&target-subtree-class=bgpDom&rsp-subtree=full&rsp-subtree-class={classes}"
-        data = self.get(path)
-        return data.get('imdata', []) if data else []
+        return self.get(path)
+
+    def get_all_bgp_doms(self):
+        """Query all bgpDom objects across the fabric to get route counts."""
+        classes = "bgpRoute,bgpBdpRoute,bgpEvpnRoute"
+        # We use count to get the number of routes without fetching them all
+        path = f"api/node/class/bgpDom.json?rsp-subtree=children&rsp-subtree-class={classes}&rsp-subtree-include=count"
+        return self.get(path)
 
     def get_epgs(self, tenant=None):
         """Fetch Endpoint Groups (fvAEPg) with health score."""
@@ -144,23 +146,20 @@ class ACIClient:
             path = f"api/node/mo/uni/tn-{tenant}.json?query-target=subtree&target-subtree-class=fvAEPg&rsp-subtree-include=health"
         else:
             path = "api/node/class/fvAEPg.json?rsp-subtree-include=health"
-        data = self.get(path)
-        return data.get('imdata', []) if data else []
+        return self.get(path)
 
     def get_bgp_adj_rib(self, peer_dn, direction="in"):
         """Fetch BGP Received or Advertised routes for a specific peer."""
         # direction can be "in" (bgpAdjRibIn) or "out" (bgpAdjRibOut)
         cls = "bgpAdjRibIn" if direction == "in" else "bgpAdjRibOut"
         path = f"api/node/mo/{peer_dn}.json?query-target=subtree&target-subtree-class={cls}"
-        data = self.get(path)
-        return data.get('imdata', []) if data else []
+        return self.get(path)
 
     def get_epg_stats(self, dn):
         """Fetch health and stats for a specific EPG."""
         # healthInst and dbgrStats
         path = f"api/node/mo/{dn}.json?rsp-subtree-include=health,stats"
-        data = self.get(path)
-        return data.get('imdata', []) if data else []
+        return self.get(path)
 
     def get_faults(self, severity=None):
         """Fetch faults."""
@@ -168,14 +167,12 @@ class ACIClient:
             path = f"api/node/class/faultInst.json?query-target-filter=eq(faultInst.severity,\"{severity}\")"
         else:
             path = "api/node/class/faultInst.json"
-        data = self.get(path)
-        return data.get('imdata', []) if data else []
+        return self.get(path)
 
     def get_health_score(self, dn="topology/health"):
         """Fetch health score for a specific DN."""
         path = f"api/node/mo/{dn}.json?rsp-subtree-include=health"
-        data = self.get(path)
-        return data.get('imdata', []) if data else []
+        return self.get(path)
 
     def get_overall_health(self):
         """Fetch overall system health score."""
@@ -184,14 +181,12 @@ class ACIClient:
     def get_tenant_health(self):
         """Fetch health scores for all tenants."""
         path = "api/node/class/fvTenant.json?rsp-subtree-include=health"
-        data = self.get(path)
-        return data.get('imdata', []) if data else []
+        return self.get(path)
 
     def get_pod_health(self):
         """Fetch health scores for pods."""
         path = "api/node/class/fabricPod.json?rsp-subtree-include=health"
-        data = self.get(path)
-        return data.get('imdata', []) if data else []
+        return self.get(path)
 
 def connectivity_check(client: ACIClient) -> bool:
     """Lightweight call to verify APIC is reachable."""
