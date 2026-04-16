@@ -4,6 +4,8 @@ clients/aci.py — Cisco ACI REST API client.
 
 import logging
 import os
+import re
+import urllib.parse
 import requests
 import urllib3
 from dotenv import load_dotenv
@@ -11,6 +13,19 @@ from dotenv import load_dotenv
 load_dotenv()
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logger = logging.getLogger(__name__)
+
+def _quote_dn(dn: str) -> str:
+    """
+    Escapes special characters in an ACI Distinguished Name (DN) while preserving
+    the hierarchy separators (slashes). Slashes within brackets (e.g., BGP prefixes)
+    are correctly escaped to prevent 400 Bad Request errors.
+    """
+    if not dn:
+        return ""
+    # Matches sequences of (non-slash non-bracket) OR (bracketed content which may contain slashes)
+    segments = re.findall(r'(?:[^/\[]+|\[[^\]]*\])+', dn)
+    # Re-assemble with / separator, quoting each segment except colons
+    return "/".join(urllib.parse.quote(s, safe=':') for s in segments)
 
 class ACIClient:
     def __init__(self, url, username, password, domain=None):
@@ -111,7 +126,7 @@ class ACIClient:
     def get_l3out_details(self, dn):
         """Fetch details for a specific L3Out including children like node profiles and interface profiles."""
         # Query with rsp-subtree=full to get children
-        path = f"api/node/mo/{dn}.json?rsp-subtree=full"
+        path = f"api/node/mo/{_quote_dn(dn)}.json?rsp-subtree=full"
         return self.get(path)
 
     def get_bgp_peers(self):
@@ -133,7 +148,7 @@ class ACIClient:
         # If passed a simple ID, reconstruct a default pod-1 DN
         if "topology/" not in dn:
             dn = f"topology/pod-1/node-{dn}"
-        path = f"api/node/mo/{dn}/sys/bgp/inst.json?query-target=subtree&target-subtree-class=bgpDom&rsp-subtree=full&rsp-subtree-class={classes}"
+        path = f"api/node/mo/{_quote_dn(dn)}/sys/bgp/inst.json?query-target=subtree&target-subtree-class=bgpDom&rsp-subtree=full&rsp-subtree-class={classes}"
         return self.get(path)
 
     def get_all_bgp_doms(self):
@@ -146,7 +161,7 @@ class ACIClient:
     def get_epgs(self, tenant=None):
         """Fetch Endpoint Groups (fvAEPg) with health score."""
         if tenant:
-            path = f"api/node/mo/uni/tn-{tenant}.json?query-target=subtree&target-subtree-class=fvAEPg&rsp-subtree-include=health"
+            path = f"api/node/mo/uni/tn-{_quote_dn(tenant)}.json?query-target=subtree&target-subtree-class=fvAEPg&rsp-subtree-include=health"
         else:
             path = "api/node/class/fvAEPg.json?rsp-subtree-include=health"
         return self.get(path)
@@ -155,13 +170,13 @@ class ACIClient:
         """Fetch BGP Received or Advertised routes for a specific peer."""
         # direction can be "in" (bgpAdjRibIn) or "out" (bgpAdjRibOut)
         cls = "bgpAdjRibIn" if direction == "in" else "bgpAdjRibOut"
-        path = f"api/node/mo/{peer_dn}.json?query-target=subtree&target-subtree-class={cls}"
+        path = f"api/node/mo/{_quote_dn(peer_dn)}.json?query-target=subtree&target-subtree-class={cls}"
         return self.get(path)
 
     def get_epg_stats(self, dn):
         """Fetch health and stats for a specific EPG."""
         # healthInst and dbgrStats
-        path = f"api/node/mo/{dn}.json?rsp-subtree-include=health,stats"
+        path = f"api/node/mo/{_quote_dn(dn)}.json?rsp-subtree-include=health,stats"
         return self.get(path)
 
     def get_faults(self, severity=None):
@@ -174,7 +189,7 @@ class ACIClient:
 
     def get_health_score(self, dn="topology/health"):
         """Fetch health score for a specific DN."""
-        path = f"api/node/mo/{dn}.json?rsp-subtree-include=health"
+        path = f"api/node/mo/{_quote_dn(dn)}.json?rsp-subtree-include=health"
         return self.get(path)
 
     def get_overall_health(self):

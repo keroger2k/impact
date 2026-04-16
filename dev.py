@@ -303,6 +303,7 @@ MOCK_ACI_L3OUTS = [
 MOCK_ACI_BGP_PEERS = [
     {"bgpPeerEntry": {"attributes": {"addr": "10.255.0.1", "operSt": "established", "dn": "topology/pod-1/node-101/sys/bgp/inst/dom-default/peer-[10.255.0.1]"}}},
     {"bgpPeerEntry": {"attributes": {"addr": "10.255.0.2", "operSt": "established", "dn": "topology/pod-1/node-102/sys/bgp/inst/dom-default/peer-[10.255.0.2]"}}},
+    {"bgpPeerEntry": {"attributes": {"addr": "10.238.94.139", "operSt": "established", "dn": "topology/pod-1/node-134/sys/bgp/inst/dom-TSA-HQ:TSA-HQ-VRF/peer-[10.238.94.139/32]/ent-[10.238.94.139]"}}},
 ]
 
 MOCK_ACI_SUBNETS = [
