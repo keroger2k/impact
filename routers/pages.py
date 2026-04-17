@@ -3,6 +3,9 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from templates_module import templates
 import auth as auth_module
 from auth import SessionEntry, verify_ldap_or_mock
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(include_in_schema=False)
 

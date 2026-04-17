@@ -290,20 +290,20 @@ MOCK_SERVICES: list[dict] = [
 # ── Mock ACI data ─────────────────────────────────────────────────────────────
 
 MOCK_ACI_NODES = [
-    {"fabricNode": {"attributes": {"id": "1001", "name": "SPINE-01", "model": "N9K-C9332C", "role": "spine", "fabricSt": "active", "dn": "topology/pod-1/node-1001"}}},
-    {"fabricNode": {"attributes": {"id": "1002", "name": "SPINE-02", "model": "N9K-C9332C", "role": "spine", "fabricSt": "active", "dn": "topology/pod-1/node-1002"}}},
-    {"fabricNode": {"attributes": {"id": "101", "name": "LEAF-01", "model": "N9K-C93180YC-EX", "role": "leaf", "fabricSt": "active", "dn": "topology/pod-1/node-101"}}},
-    {"fabricNode": {"attributes": {"id": "102", "name": "LEAF-02", "model": "N9K-C93180YC-EX", "role": "leaf", "fabricSt": "active", "dn": "topology/pod-1/node-102"}}},
+    {"fabricNode": {"attributes": {"id": "149", "name": "LEAF-149", "model": "N9K-C9348GC-FXP", "role": "leaf", "fabricSt": "active", "dn": "topology/pod-1/node-149"}}},
+    {"fabricNode": {"attributes": {"id": "150", "name": "LEAF-150", "model": "N9K-C9348GC-FXP", "role": "leaf", "fabricSt": "active", "dn": "topology/pod-2/node-150"}}},
 ]
 
 MOCK_ACI_L3OUTS = [
     {"l3extOut": {"attributes": {"name": "L3OUT-CORE", "dn": "uni/tn-COMMON/out-L3OUT-CORE", "descr": "Connection to Enterprise Core"}}},
     {"l3extOut": {"attributes": {"name": "L3OUT-FIREWALL", "dn": "uni/tn-PROD/out-L3OUT-FIREWALL", "descr": "Connection to DMZ Firewalls"}}},
+    {"l3extOut": {"attributes": {"name": "HQL3Out", "dn": "uni/tn-TSA-HQ/out-HQL3Out", "descr": "Broken L3Out for testing"}}},
 ]
 
 MOCK_ACI_BGP_PEERS = [
     {"bgpPeerEntry": {"attributes": {"addr": "10.255.0.1", "operSt": "established", "dn": "topology/pod-1/node-101/sys/bgp/inst/dom-default/peer-[10.255.0.1]"}}},
     {"bgpPeerEntry": {"attributes": {"addr": "10.255.0.2", "operSt": "established", "dn": "topology/pod-1/node-102/sys/bgp/inst/dom-default/peer-[10.255.0.2]"}}},
+    {"bgpPeerEntry": {"attributes": {"addr": "10.238.94.139", "operSt": "established", "dn": "topology/pod-1/node-134/sys/bgp/inst/dom-TSA-HQ:TSA-HQ-VRF/peer-[10.238.94.139/32]/ent-[10.238.94.139]"}}},
 ]
 
 MOCK_ACI_SUBNETS = [
@@ -317,33 +317,10 @@ MOCK_ACI_EPGS = [
 ]
 
 MOCK_ACI_BGP_DOMS = [
-    {
-        "bgpDom": {
-            "attributes": {"name": "default"},
-            "children": [
-                {"bgpRoute": {"attributes": {"prefix": "10.1.1.0/24", "nextHop": "192.168.1.1", "origin": "igp", "asPath": "65001"}}},
-                {"bgpRoute": {"attributes": {"prefix": "172.16.10.0/24", "nextHop": "192.168.1.2", "origin": "ebgp", "asPath": "65002 65100"}}},
-                {"bgpRoute": {"attributes": {"prefix": "0.0.0.0/0", "nextHop": "192.168.1.1", "origin": "igp", "asPath": "65001"}}}
-            ]
-        }
-    },
-    {
-        "bgpDom": {
-            "attributes": {"name": "VRF-PRODUCTION"},
-            "children": [
-                {"bgpBdpRoute": {"attributes": {"pfx": "10.200.10.0/24", "nh": "10.200.10.1", "origin": "igp", "asPath": ""}}},
-                {"bgpBdpRoute": {"attributes": {"pfx": "192.168.50.0/24", "nh": "10.200.10.1", "origin": "igp", "asPath": "65123"}}}
-            ]
-        }
-    },
-    {
-        "bgpDom": {
-            "attributes": {"name": "overlay-trust"},
-            "children": [
-                {"bgpEvpnRoute": {"attributes": {"pfx": "300:1:10.254.0.1", "nh": "192.168.255.10", "origin": "igp", "asPath": ""}}}
-            ]
-        }
-    }
+    {"bgpRoute": {"attributes": {"dn": "topology/pod-1/node-149/sys/bgp/inst/dom-default/af-ipv4-ucast/rt-[10.1.1.0/24]", "prefix": "10.1.1.0/24", "nextHop": "192.168.1.1", "origin": "igp", "asPath": "65001"}}},
+    {"bgpRoute": {"attributes": {"dn": "topology/pod-1/node-149/sys/bgp/inst/dom-default/af-ipv4-ucast/rt-[172.16.10.0/24]", "prefix": "172.16.10.0/24", "nextHop": "192.168.1.2", "origin": "ebgp", "asPath": "65002 65100"}}},
+    {"bgpBdpRoute": {"attributes": {"dn": "topology/pod-1/node-149/sys/bgp/inst/dom-PRODUCTION:PROD_VRF/af-ipv4-ucast/rt-[10.200.10.0/24]", "pfx": "10.200.10.0/24", "nh": "10.200.10.1", "origin": "igp", "asPath": ""}}},
+    {"bgpEvpnRoute": {"attributes": {"dn": "topology/pod-1/node-149/sys/bgp/inst/dom-overlay-1/af-evpn/rt-[[2]:[0]:[0]:[48]:[00:50:56:00:00:01]:[32]:[10.1.1.1]]", "prefix": "10.1.1.1/32", "nextHop": "192.168.255.10", "origin": "igp", "asPath": ""}}}
 ]
 
 MOCK_ACI_BGP_RIB_IN = [
@@ -354,6 +331,13 @@ MOCK_ACI_BGP_RIB_IN = [
 MOCK_ACI_BGP_RIB_OUT = [
     {"bgpAdjRibOut": {"attributes": {"prefix": "10.10.0.0/16", "nextHop": "0.0.0.0", "asPath": "", "origin": "igp", "status": "advertised"}}},
     {"bgpAdjRibOut": {"attributes": {"prefix": "172.16.0.0/12", "nextHop": "0.0.0.0", "asPath": "", "origin": "igp", "status": "advertised"}}},
+]
+
+MOCK_ACI_BGP_DOMS_ALL = [
+    {"bgpDomAf": {"attributes": {"dn": "topology/pod-1/node-149/sys/bgp/inst/dom-default/af-ipv4-ucast", "count": "2"}}},
+    {"bgpDomAf": {"attributes": {"dn": "topology/pod-1/node-149/sys/bgp/inst/dom-PRODUCTION:PROD_VRF/af-ipv4-ucast", "count": "1"}}},
+    {"bgpDomAf": {"attributes": {"dn": "topology/pod-1/node-149/sys/bgp/inst/dom-overlay-1/af-evpn", "count": "1"}}},
+    {"bgpDomAf": {"attributes": {"dn": "topology/pod-2/node-150/sys/bgp/inst/dom-default/af-ipv4-ucast", "count": "100"}}}
 ]
 
 MOCK_ACI_FAULT_INST = [
@@ -421,17 +405,18 @@ def seed_cache(cache) -> None:
     cache.set("status_panorama", {"ok": True, "detail": "Connected (mock)"}, LONG)
 
     # ACI
-    cache.set("aci_nodes",     MOCK_ACI_NODES,      LONG)
-    cache.set("aci_l3outs",    MOCK_ACI_L3OUTS,     LONG)
-    cache.set("aci_bgp_peers", MOCK_ACI_BGP_PEERS,  LONG)
-    cache.set("aci_subnets",   MOCK_ACI_SUBNETS,    LONG)
-    cache.set("aci_epgs",      MOCK_ACI_EPGS,       LONG)
-    cache.set("aci_faults",    MOCK_ACI_FAULT_INST, LONG)
+    cache.set("aci_nodes",     {"imdata": MOCK_ACI_NODES},      LONG)
+    cache.set("aci_l3outs",    {"imdata": MOCK_ACI_L3OUTS},     LONG)
+    cache.set("aci_bgp_peers", {"imdata": MOCK_ACI_BGP_PEERS},  LONG)
+    cache.set("aci_subnets",   {"imdata": MOCK_ACI_SUBNETS},    LONG)
+    cache.set("aci_epgs",      {"imdata": MOCK_ACI_EPGS},       LONG)
+    cache.set("aci_faults",    {"imdata": MOCK_ACI_FAULT_INST}, LONG)
+    cache.set("aci_bgp_doms_all", {"imdata": MOCK_ACI_BGP_DOMS_ALL}, LONG)
 
     # ACI status
-    cache.set("aci_health_overall", MOCK_ACI_HEALTH_OVERALL, LONG)
-    cache.set("aci_health_tenants", MOCK_ACI_HEALTH_TENANTS, LONG)
-    cache.set("aci_health_pods",    MOCK_ACI_HEALTH_PODS,    LONG)
+    cache.set("aci_health_overall", {"imdata": MOCK_ACI_HEALTH_OVERALL}, LONG)
+    cache.set("aci_health_tenants", {"imdata": MOCK_ACI_HEALTH_TENANTS}, LONG)
+    cache.set("aci_health_pods",    {"imdata": MOCK_ACI_HEALTH_PODS},    LONG)
     cache.set("status_aci", {"ok": True, "detail": "Connected (mock)"}, LONG)
 
     # Nexus

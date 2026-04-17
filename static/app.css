@@ -377,6 +377,20 @@ body {
   color: #fff;
 }
 
+.btn-outline-navy {
+  color: var(--cisco-navy);
+  border-color: var(--cisco-navy);
+}
+.btn-outline-navy:hover {
+  background-color: var(--cisco-navy);
+  color: #fff;
+}
+.btn-xs {
+  padding: 1px 5px;
+  font-size: 10px;
+  border-radius: 3px;
+}
+
 .table-dark th {
   background: var(--cisco-navy);
   color: #fff;

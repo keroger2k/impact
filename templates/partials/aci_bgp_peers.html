@@ -1,7 +1,11 @@
 <div class="card shadow-sm border-0 animate-fade-in">
+    <script id="aci-bgp-peers-raw" type="application/json">{{ raw_json|tojson }}</script>
     <div class="card-header bg-light d-flex justify-content-between align-items-center">
-        <div>
+        <div class="d-flex align-items-center gap-3">
             <span class="fw-bold text-navy">🔌 BGP Peers</span>
+            <button class="btn btn-xs btn-outline-navy" onclick="showRawData('aci-bgp-peers-raw')">
+                <i class="fas fa-code me-1"></i>Raw
+            </button>
         </div>
         <span class="badge bg-secondary">{{ peers|length }} Peers</span>
     </div>
@@ -11,8 +15,10 @@
                 <thead class="table-light">
                     <tr>
                         <th>Node</th>
+                        <th>VRF</th>
                         <th>L3Out</th>
                         <th>Neighbor IP</th>
+                        <th>Type</th>
                         <th>State</th>
                         <th>Advertised (Policy)</th>
                         <th class="text-center">Peer Routes</th>
@@ -23,8 +29,10 @@
                     {% for p in peers %}
                     <tr>
                         <td>{{ p.node }}</td>
+                        <td class="small">{{ p.vrf }}</td>
                         <td class="small">{{ p.l3out }}</td>
                         <td class="fw-bold text-navy mono">{{ p.addr }}</td>
+                        <td class="small">{{ p.type }}</td>
                         <td>
                             <span class="badge {% if p.state == 'ESTABLISHED' %}bg-success{% else %}bg-danger{% endif %}">
                                 {{ p.state }}
@@ -46,7 +54,7 @@
                             </div>
                         </td>
                         <td>
-                            <button class="btn btn-link btn-sm p-0 text-decoration-none" hx-get="/api/aci/bgp/routes/{{ p.node }}" hx-target="#aci-results" hx-indicator="#aci-loading">
+                            <button class="btn btn-link btn-sm p-0 text-decoration-none" hx-get="/api/aci/bgp/routes?dn={{ p.base_dn|urlencode }}" hx-target="#aci-results" hx-indicator="#aci-loading">
                                 <i class="fas fa-list"></i> Node Routes
                             </button>
                         </td>

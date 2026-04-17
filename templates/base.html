@@ -110,6 +110,29 @@
 <!-- Toast container -->
 <div id="toast-container"></div>
 
+<!-- Raw Data Modal -->
+<div class="modal fade" id="rawDataModal" tabindex="-1" aria-labelledby="rawDataModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content border-0 shadow-lg">
+      <div class="modal-header bg-navy text-white">
+        <h5 class="modal-title" id="rawDataModalLabel">
+          <i class="fas fa-code me-2"></i>Raw API Response
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body p-0 bg-dark">
+        <pre class="m-0 p-3 text-success small"><code id="rawDataContent"></code></pre>
+      </div>
+      <div class="modal-footer bg-light">
+        <button type="button" class="btn btn-outline-secondary" onclick="copyRawData()">
+          <i class="fas fa-copy me-1"></i>Copy to Clipboard
+        </button>
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="/static/bootstrap/js/bootstrap.bundle.min.js"></script>
 <script>
   function toggleSidebar() {
@@ -137,6 +160,36 @@
         localStorage.removeItem('impact_user');
         window.location.href = '/login';
       });
+  }
+
+  function showRawData(element) {
+    var rawData;
+    if (typeof element === 'string') {
+        // Try to find script tag by ID
+        const scriptTag = document.getElementById(element);
+        if (scriptTag) {
+            rawData = JSON.parse(scriptTag.textContent);
+        }
+    } else {
+        rawData = element;
+    }
+
+    if (!rawData) {
+        console.error("No raw data found for element:", element);
+        return;
+    }
+
+    const modal = new bootstrap.Modal(document.getElementById('rawDataModal'));
+    const content = document.getElementById('rawDataContent');
+    content.textContent = JSON.stringify(rawData, null, 2);
+    modal.show();
+  }
+
+  function copyRawData() {
+    const content = document.getElementById('rawDataContent').textContent;
+    navigator.clipboard.writeText(content).then(() => {
+        alert('Copied to clipboard!');
+    });
   }
 
   // Handle HTMX navigation highlighting
