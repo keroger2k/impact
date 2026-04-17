@@ -90,8 +90,8 @@ class ACIClient:
             if "l3extSubnet" in path: return {"imdata": MOCK_ACI_SUBNETS}
             if "fvAEPg" in path: return {"imdata": MOCK_ACI_EPGS}
             if "faultInst" in path: return {"imdata": MOCK_ACI_FAULT_INST}
-            if "bgpDom.json" in path: return {"imdata": MOCK_ACI_BGP_DOMS_ALL}
-            if "bgpDom" in path: return {"imdata": MOCK_ACI_BGP_DOMS}
+            if "bgpDomAf.json" in path: return {"imdata": MOCK_ACI_BGP_DOMS_ALL}
+            if "target-subtree-class=bgpRoute" in path: return {"imdata": MOCK_ACI_BGP_DOMS}
             if "bgpAdjRibIn" in path: return {"imdata": MOCK_ACI_BGP_RIB_IN}
             if "bgpAdjRibOut" in path: return {"imdata": MOCK_ACI_BGP_RIB_OUT}
             return {"imdata": []}
@@ -143,20 +143,18 @@ class ACIClient:
         return self.get("api/node/class/l3extSubnet.json")
 
     def get_bgp_routes(self, dn):
-        """Query bgpDom for routing tables on a specific node using its DN."""
-        # If passed a simple ID, reconstruct a default pod-1 DN
+        """Query all BGP route types on a specific node."""
         if "topology/" not in dn:
             dn = f"topology/pod-1/node-{dn}"
-        # Simplified query to avoid 400 Bad Request on some firmware versions with complex rsp-subtree-class
-        # Using rsp-subtree=full to allow recursive searching for routes in grandchildren
-        path = f"api/node/mo/{_quote_dn(dn)}/sys/bgp/inst.json?query-target=subtree&target-subtree-class=bgpDom&rsp-subtree=full"
+        # Query route classes directly to get a clean list
+        path = f"api/node/mo/{_quote_dn(dn)}.json?query-target=subtree&target-subtree-class=bgpRoute,bgpBdpRoute,bgpEvpnRoute"
         return self.get(path)
 
     def get_all_bgp_doms(self):
-        """Query all bgpDom objects across the fabric to get route counts."""
-        # We use count to get the number of routes without fetching them all.
-        # Use page-size=500 to ensure we catch all DOMs in larger fabrics.
-        path = "api/node/class/bgpDom.json?rsp-subtree=children&rsp-subtree-include=count&page-size=500"
+        """Query all bgpDomAf objects across the fabric to get route counts."""
+        # We query bgpDomAf and count its route children.
+        # This is more accurate than counting all children of bgpDom.
+        path = "api/node/class/bgpDomAf.json?rsp-subtree-class=bgpRoute,bgpBdpRoute,bgpEvpnRoute&rsp-subtree-include=count&page-size=1000"
         return self.get(path)
 
     def get_epgs(self, tenant=None):

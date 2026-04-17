@@ -73,29 +73,21 @@ async def _get_processed_nodes(aci, loop):
         doms = doms_raw.get('imdata', [])
         logger.info(f"ACI BGP DOMs raw count: {len(doms)}")
 
-        for dom in doms:
-            # ACI JSON can wrap the class name: {"bgpDom": {"attributes": {...}}}
-            dom_name = next(iter(dom)) if dom else None
-            dom_obj = dom.get(dom_name)
-            if not dom_obj:
+        for item in doms:
+            # item is {"bgpDomAf": {"attributes": {...}}}
+            obj_name = next(iter(item)) if item else None
+            obj = item.get(obj_name)
+            if not obj:
                 continue
 
-            attr = dom_obj.get('attributes', {})
+            attr = obj.get('attributes', {})
             dn = attr.get('dn', '')
             # Extract node ID from DN: topology/pod-1/node-101/...
             node_id = next((p.replace('node-', '') for p in dn.split('/') if p.startswith('node-')), None)
 
             if node_id:
-                count = 0
-                children = dom_obj.get('children', [])
-                for child in children:
-                    # Recursive search for prefix counts in children
-                    child_name = next(iter(child)) if child else None
-                    if child_name in ['bgpRoute', 'bgpBdpRoute', 'bgpEvpnRoute']:
-                        c_attr = child[child_name].get('attributes', {})
-                        c_val = c_attr.get('count') or c_attr.get('cnt') or c_attr.get('totalCount') or 0
-                        count += int(c_val)
-
+                # Sum up count from attributes
+                count = int(attr.get('count') or 0)
                 route_counts[node_id] = route_counts.get(node_id, 0) + count
         logger.info(f"ACI route counts calculated: {route_counts}")
     except Exception as e:
@@ -281,33 +273,23 @@ async def get_bgp_routes(request: Request, node_id: str = None, dn: str = None, 
     imdata = routes_raw.get('imdata', [])
     route_classes = {'bgpRoute', 'bgpBdpRoute', 'bgpEvpnRoute'}
 
-    def find_routes(obj, vrf_name):
-        """Recursively search for route objects in the ACI response."""
-        if isinstance(obj, list):
-            for item in obj:
-                find_routes(item, vrf_name)
-        elif isinstance(obj, dict):
-            for k, v in obj.items():
-                if k in route_classes:
-                    attr = v.get('attributes', {})
-                    processed.append({
-                        "vrf": vrf_name,
-                        "prefix": attr.get('prefix') or attr.get('pfx'),
-                        "nextHop": attr.get('nextHop') or attr.get('nh'),
-                        "origin": attr.get('origin'),
-                        "asPath": attr.get('asPath')
-                    })
-                elif k == 'children':
-                    find_routes(v, vrf_name)
-                elif isinstance(v, dict):
-                    find_routes(v, vrf_name)
+    for item in imdata:
+        cls_name = next(iter(item)) if item else None
+        if cls_name in route_classes:
+            attr = item[cls_name].get('attributes', {})
+            dn = attr.get('dn', '')
+            # Extract VRF from DN: .../dom-NAME/af-...
+            vrf = "unknown"
+            if 'dom-' in dn:
+                vrf = dn.split('dom-')[-1].split('/')[0]
 
-    if imdata:
-        for item in imdata:
-            if 'bgpDom' in item:
-                dom_attr = item['bgpDom']['attributes']
-                vrf_name = dom_attr.get('name', 'unknown')
-                find_routes(item['bgpDom'].get('children', []), vrf_name)
+            processed.append({
+                "vrf": vrf,
+                "prefix": attr.get('prefix') or attr.get('pfx'),
+                "nextHop": attr.get('nextHop') or attr.get('nh'),
+                "origin": attr.get('origin'),
+                "asPath": attr.get('asPath')
+            })
 
     if request.headers.get("HX-Request"):
         from templates_module import templates

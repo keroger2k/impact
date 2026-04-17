@@ -317,33 +317,10 @@ MOCK_ACI_EPGS = [
 ]
 
 MOCK_ACI_BGP_DOMS = [
-    {
-        "bgpDom": {
-            "attributes": {"name": "default"},
-            "children": [
-                {"bgpRoute": {"attributes": {"prefix": "10.1.1.0/24", "nextHop": "192.168.1.1", "origin": "igp", "asPath": "65001"}}},
-                {"bgpRoute": {"attributes": {"prefix": "172.16.10.0/24", "nextHop": "192.168.1.2", "origin": "ebgp", "asPath": "65002 65100"}}},
-                {"bgpRoute": {"attributes": {"prefix": "0.0.0.0/0", "nextHop": "192.168.1.1", "origin": "igp", "asPath": "65001"}}}
-            ]
-        }
-    },
-    {
-        "bgpDom": {
-            "attributes": {"name": "VRF-PRODUCTION"},
-            "children": [
-                {"bgpBdpRoute": {"attributes": {"pfx": "10.200.10.0/24", "nh": "10.200.10.1", "origin": "igp", "asPath": ""}}},
-                {"bgpBdpRoute": {"attributes": {"pfx": "192.168.50.0/24", "nh": "10.200.10.1", "origin": "igp", "asPath": "65123"}}}
-            ]
-        }
-    },
-    {
-        "bgpDom": {
-            "attributes": {"name": "overlay-trust"},
-            "children": [
-                {"bgpEvpnRoute": {"attributes": {"pfx": "300:1:10.254.0.1", "nh": "192.168.255.10", "origin": "igp", "asPath": ""}}}
-            ]
-        }
-    }
+    {"bgpRoute": {"attributes": {"dn": "topology/pod-1/node-149/sys/bgp/inst/dom-default/af-ipv4-ucast/rt-[10.1.1.0/24]", "prefix": "10.1.1.0/24", "nextHop": "192.168.1.1", "origin": "igp", "asPath": "65001"}}},
+    {"bgpRoute": {"attributes": {"dn": "topology/pod-1/node-149/sys/bgp/inst/dom-default/af-ipv4-ucast/rt-[172.16.10.0/24]", "prefix": "172.16.10.0/24", "nextHop": "192.168.1.2", "origin": "ebgp", "asPath": "65002 65100"}}},
+    {"bgpBdpRoute": {"attributes": {"dn": "topology/pod-1/node-149/sys/bgp/inst/dom-PRODUCTION:PROD_VRF/af-ipv4-ucast/rt-[10.200.10.0/24]", "pfx": "10.200.10.0/24", "nh": "10.200.10.1", "origin": "igp", "asPath": ""}}},
+    {"bgpEvpnRoute": {"attributes": {"dn": "topology/pod-1/node-149/sys/bgp/inst/dom-overlay-1/af-evpn/rt-[[2]:[0]:[0]:[48]:[00:50:56:00:00:01]:[32]:[10.1.1.1]]", "prefix": "10.1.1.1/32", "nextHop": "192.168.255.10", "origin": "igp", "asPath": ""}}}
 ]
 
 MOCK_ACI_BGP_RIB_IN = [
@@ -357,24 +334,10 @@ MOCK_ACI_BGP_RIB_OUT = [
 ]
 
 MOCK_ACI_BGP_DOMS_ALL = [
-    {
-        "bgpDom": {
-            "attributes": {"dn": "topology/pod-1/node-149/sys/bgp/inst/dom-default"},
-            "children": [{"bgpRoute": {"attributes": {"count": "150"}}}]
-        }
-    },
-    {
-        "bgpDom": {
-            "attributes": {"dn": "topology/pod-2/node-150/sys/bgp/inst/dom-VRF-PRODUCTION"},
-            "children": [{"bgpBdpRoute": {"attributes": {"cnt": "45"}}}]
-        }
-    },
-    {
-        "bgpDom": {
-            "attributes": {"dn": "topology/pod-1/node-149/sys/bgp/inst/dom-VRF-EXT"},
-            "children": [{"bgpRoute": {"attributes": {"totalCount": "10"}}}]
-        }
-    }
+    {"bgpDomAf": {"attributes": {"dn": "topology/pod-1/node-149/sys/bgp/inst/dom-default/af-ipv4-ucast", "count": "2"}}},
+    {"bgpDomAf": {"attributes": {"dn": "topology/pod-1/node-149/sys/bgp/inst/dom-PRODUCTION:PROD_VRF/af-ipv4-ucast", "count": "1"}}},
+    {"bgpDomAf": {"attributes": {"dn": "topology/pod-1/node-149/sys/bgp/inst/dom-overlay-1/af-evpn", "count": "1"}}},
+    {"bgpDomAf": {"attributes": {"dn": "topology/pod-2/node-150/sys/bgp/inst/dom-default/af-ipv4-ucast", "count": "100"}}}
 ]
 
 MOCK_ACI_FAULT_INST = [
