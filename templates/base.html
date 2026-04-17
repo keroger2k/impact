@@ -179,8 +179,11 @@
         return;
     }
 
-    const modal = new bootstrap.Modal(document.getElementById('rawDataModal'));
+    const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('rawDataModal'));
+    const title = document.getElementById('rawDataModalLabel');
     const content = document.getElementById('rawDataContent');
+
+    title.innerHTML = '<i class="fas fa-code me-2"></i>Raw API Response';
     content.textContent = JSON.stringify(rawData, null, 2);
     modal.show();
   }
