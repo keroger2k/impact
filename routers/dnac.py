@@ -534,6 +534,7 @@ class ConfigSearchRequest(BaseModel):
     reachability:  str = "Reachable"
     tag:           Optional[str] = None
     max_devices:   Optional[int] = None
+    context_lines: int = 5
 
 
 @router.post("/config-search")
@@ -630,16 +631,39 @@ async def config_search(req: ConfigSearchRequest, session: SessionEntry = Depend
                 config = dc.get_device_config(dnac, dev_id)
                 if config: cache.set(cfg_key, config, 600)
         if not config: return None
-        matching_lines = [
-            {"line_num": i + 1, "text": line}
-            for i, line in enumerate(config.splitlines())
-            if search in line.lower()
-        ]
-        if not matching_lines: return None
+
+        lines = config.splitlines()
+        match_indices = [i for i, line in enumerate(lines) if search in line.lower()]
+        if not match_indices: return None
+
+        context = req.context_lines
+        blocks = []
+        include_indices = set()
+        for idx in match_indices:
+            for i in range(max(0, idx - context), min(len(lines), idx + context + 1)):
+                include_indices.add(i)
+
+        sorted_indices = sorted(list(include_indices))
+        if sorted_indices:
+            temp_block = []
+            for i, idx in enumerate(sorted_indices):
+                if i > 0 and idx != sorted_indices[i-1] + 1:
+                    blocks.append(temp_block)
+                    temp_block = []
+
+                temp_block.append({
+                    "line_num": idx + 1,
+                    "text": lines[idx],
+                    "is_match": idx in match_indices
+                })
+            blocks.append(temp_block)
+
         return {
             "hostname": device.get("hostname"), "ip": device.get("managementIpAddress"),
             "platform": device.get("platformId"), "device_id": dev_id,
-            "match_count": len(matching_lines), "lines": matching_lines[:200],
+            "match_count": len(match_indices),
+            "lines": [lines[i] for i in match_indices], # Keep for backward compatibility
+            "blocks": blocks[:50],
         }
 
     with ThreadPoolExecutor(max_workers=20) as executor:
@@ -664,6 +688,7 @@ async def config_search_ui(
     device_family: Optional[str] = Form(None),
     reachability: str = Form("Reachable"),
     tag: Optional[str] = Form(None),
+    context_lines: int = Form(5),
     session: SessionEntry = Depends(require_auth)
 ):
     req = ConfigSearchRequest(
@@ -673,12 +698,14 @@ async def config_search_ui(
         role=role,
         device_family=device_family,
         reachability=reachability,
-        tag=tag
+        tag=tag,
+        context_lines=context_lines
     )
     results = await config_search(req, session)
     from templates_module import templates
+    token = request.cookies.get("impact_token") or request.headers.get("Authorization", "").replace("Bearer ", "")
     return templates.TemplateResponse(request, "partials/config_search_results.html", {
-        "results": results, "search_string": search_string
+        "results": results, "search_string": search_string, "token": token
     })
 
 

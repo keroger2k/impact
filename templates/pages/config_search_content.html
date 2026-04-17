@@ -12,6 +12,16 @@
             <input type="text" name="search_string" class="form-control" placeholder="e.g. snmp-server" required minlength="2">
           </div>
 
+          <div class="mb-3">
+            <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Context Lines</label>
+            <select name="context_lines" class="form-select">
+              <option value="0">No Context</option>
+              <option value="5" selected>5 Lines</option>
+              <option value="10">10 Lines</option>
+              <option value="20">20 Lines</option>
+            </select>
+          </div>
+
           <div class="accordion accordion-flush mb-4" id="searchFilters">
             <div class="accordion-item">
               <h2 class="accordion-header">

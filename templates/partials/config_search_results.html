@@ -21,16 +21,51 @@
             </h2>
             <div id="cfg-{{ loop.index }}" class="accordion-collapse collapse">
               <div class="accordion-body bg-dark p-0">
-                <pre class="mb-0 p-3 text-success small" style="max-height: 300px; overflow: auto; font-family: 'SF Mono', monospace;">
-{%- for line in r.lines -%}
-<span class="text-muted opacity-50 me-3">{{ line.line_num }}</span>{{ line.text }}
-{% endfor -%}
+                <div class="d-flex justify-content-end p-2 border-bottom border-secondary">
+                  <button class="btn btn-xs btn-outline-light"
+                          onclick="showFullConfig('{{ r.device_id }}', '{{ r.hostname }}')">
+                    <i class="fas fa-external-link-alt me-1"></i> View Full Config
+                  </button>
+                </div>
+                <pre class="mb-0 p-3 text-success small" style="max-height: 400px; overflow: auto; font-family: 'SF Mono', monospace;">
+{%- for block in r.blocks -%}
+{%- if not loop.first -%}
+<div class="text-muted opacity-25 my-2">--- context break ---</div>
+{%- endif -%}
+{%- for line in block -%}
+<div class="{% if line.is_match %}bg-primary bg-opacity-25 fw-bold text-white{% endif %}"><span class="text-muted opacity-50 me-3 d-inline-block text-end" style="width: 40px;">{{ line.line_num }}</span>{{ line.text }}</div>
+{%- endfor -%}
+{%- endfor -%}
                 </pre>
               </div>
             </div>
           </div>
         {% endfor %}
       </div>
+
+      <script>
+        function showFullConfig(deviceId, hostname) {
+          const modalEl = document.getElementById('rawDataModal');
+          const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+          const title = document.getElementById('rawDataModalLabel');
+          const content = document.getElementById('rawDataContent');
+
+          title.innerHTML = `<i class="fas fa-file-code me-2"></i>Full Configuration: ${hostname}`;
+          content.textContent = "Loading configuration...";
+          modal.show();
+
+          fetch(`/api/dnac/devices/${deviceId}/config`, {
+            headers: { 'Authorization': 'Bearer {{ token }}' }
+          })
+          .then(res => res.json())
+          .then(data => {
+            content.textContent = data.config || "Config not found.";
+          })
+          .catch(err => {
+            content.textContent = "Error loading configuration: " + err;
+          });
+        }
+      </script>
     {% else %}
       <div class="p-5 text-center text-muted">
         <i class="fas fa-info-circle mb-2" style="font-size: 24px;"></i>
