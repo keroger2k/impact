@@ -7,3 +7,6 @@ ciscoisesdk>=2.4.0
 requests>=2.31.0
 netmiko>=4.3.0
 pydantic>=2.0.0
+diskcache>=5.6.0
+jinja2>=3.1.2
+python-multipart>=0.0.9

@@ -14,7 +14,7 @@ from cache import cache
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-ACI_TTL = 1800   # 30 min
+from cache import TTL_ACI_STATUS as ACI_TTL
 
 ACI_CACHE_KEYS = [
     "aci_nodes", "aci_l3outs", "aci_bgp_peers", "aci_ospf_peers",
@@ -30,16 +30,15 @@ def _get_aci(session: SessionEntry):
 
 def _cached(key: str, loader, ttl: int = ACI_TTL):
     """Generic cached fetch helper."""
-    data = cache.get(key)
-    if data is None:
-        data = loader()
-        # Ensure we always cache a dict with 'imdata' even if loader returns a list (old style)
-        if isinstance(data, list):
-            data = {"imdata": data}
-        if data is not None:
-            cache.set(key, data, ttl)
+    def wrapped_loader():
+        res = loader()
+        if isinstance(res, list):
+            res = {"imdata": res}
+        return res
 
-    # Final normalization: if data is still a list (from disk cache), convert to dict
+    data = cache.get_or_set(key, wrapped_loader, ttl)
+
+    # Final normalization: if data is still a list (from old disk cache), convert to dict
     if isinstance(data, list):
         data = {"imdata": data}
 

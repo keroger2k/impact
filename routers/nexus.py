@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from auth import SessionEntry, require_auth
-from cache import cache
+from cache import cache, TTL_DEVICES
 from collectors.nxos import NXOSCollector
 from models.interface import InterfaceResult
 
@@ -20,8 +20,6 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 NEXUS_CSV_PATH = Path("data/device_lists/nexus.csv")
-NEXUS_CACHE_PATH = Path("data/cache/nexus_inventory.json")
-CONFIG_CACHE_DIR = Path("data/cache/configs")
 
 def get_nexus_devices_from_csv() -> List[Dict[str, str]]:
     if not NEXUS_CSV_PATH.exists():
@@ -95,10 +93,7 @@ async def refresh_nexus_data(session: SessionEntry = Depends(require_auth)):
             try:
                 interfaces, config = collector.collect(collect_config=True)
                 if config:
-                    safe_host = hostname.replace("/", "_")
-                    config_path = CONFIG_CACHE_DIR / f"nexus_{safe_host}.txt"
-                    CONFIG_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-                    config_path.write_text(config, encoding="utf-8")
+                    cache.set(f"config:nexus:{hostname}", config, 86400 * 7)
 
                 inv_item = {
                     "id": f"nexus_{hostname}",
@@ -130,8 +125,8 @@ async def refresh_nexus_data(session: SessionEntry = Depends(require_auth)):
                 else:
                     yield emit({"type": "log", "level": "error", "message": f"[{completed}/{len(devices)}] Failed to collect."})
 
-        cache.set("nexus_inventory", all_inventory_items, 86400 * 7)
-        cache.set("nexus_interfaces", all_interfaces, 86400 * 7)
+        cache.set("nexus_inventory", all_inventory_items, TTL_DEVICES)
+        cache.set("nexus_interfaces", all_interfaces, TTL_DEVICES)
         yield emit({"type": "log", "level": "info", "message": "Nexus cache updated."})
         yield emit({"type": "complete", "count": len(all_inventory_items)})
 
@@ -179,10 +174,7 @@ async def init_nexus_collection(username: Optional[str] = None, password: Option
         try:
             interfaces, config = collector.collect(collect_config=True)
             if config:
-                safe_host = hostname.replace("/", "_")
-                config_path = CONFIG_CACHE_DIR / f"nexus_{safe_host}.txt"
-                CONFIG_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-                config_path.write_text(config, encoding="utf-8")
+                cache.set(f"config:nexus:{hostname}", config, 86400 * 7)
             inv_item = {
                 "id": f"nexus_{hostname}",
                 "hostname": hostname,
@@ -212,5 +204,5 @@ async def init_nexus_collection(username: Optional[str] = None, password: Option
                     all_inventory_items.append(inv_item)
 
         if all_inventory_items:
-            cache.set("nexus_inventory", all_inventory_items, 86400 * 7)
-            cache.set("nexus_interfaces", all_interfaces, 86400 * 7)
+            cache.set("nexus_inventory", all_inventory_items, TTL_DEVICES)
+            cache.set("nexus_interfaces", all_interfaces, TTL_DEVICES)
