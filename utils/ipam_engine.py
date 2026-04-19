@@ -85,22 +85,40 @@ class IPAMEngine:
             return True
         return False
 
-    async def discover_all(self, session, loop):
-        """Aggregate data from all sources"""
+    async def discover_all(self, session, loop, sources: Optional[List[str]] = None, yield_progress=None):
+        """Aggregate data from sources. If sources is None, discover all."""
         self.subnets = []
 
-        tasks = [
-            self._discover_aci(session, loop),
-            self._discover_dnac(session, loop),
-            self._discover_panorama(session, loop),
-            self._discover_ise(session, loop),
-            self._discover_nexus(session, loop)
-        ]
+        # Mapping of source names to their discover methods
+        source_map = {
+            "aci": self._discover_aci,
+            "dnac": self._discover_dnac,
+            "panorama": self._discover_panorama,
+            "ise": self._discover_ise,
+            "nexus": self._discover_nexus
+        }
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for i, res in enumerate(results):
-            if isinstance(res, Exception):
-                logger.error(f"Discovery source {i} failed: {res}")
+        if not sources:
+            sources = list(source_map.keys())
+
+        # Filter to valid sources
+        sources = [s for s in sources if s.lower() in source_map]
+
+        for s_name in sources:
+            if yield_progress:
+                await yield_progress(f"Starting {s_name.upper()} discovery...")
+
+            method = source_map[s_name.lower()]
+            start_count = len(self.subnets)
+            try:
+                await method(session, loop)
+                count = len(self.subnets) - start_count
+                if yield_progress:
+                    await yield_progress(f"Finished {s_name.upper()} discovery: Found {count} subnets.")
+            except Exception as e:
+                logger.error(f"Discovery source {s_name} failed: {e}")
+                if yield_progress:
+                    await yield_progress(f"Error in {s_name.upper()} discovery: {str(e)}")
 
         return self.subnets
 

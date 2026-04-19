@@ -5,18 +5,38 @@
       <p class="text-muted small">Aggregated visibility across ACI, DNAC, Panorama, and Nexus</p>
     </div>
     <div class="d-flex gap-2">
-      <button class="btn btn-outline-primary" hx-post="/api/ipam/refresh" hx-indicator="#ipam-loading" hx-target="#ipam-results" hx-on::after-request="if(event.detail.successful) { htmx.trigger('#ipam-results', 'load'); }">
-        <i class="fas fa-sync-alt me-1"></i> Refresh Discovery
-      </button>
+      <div class="dropdown">
+        <button class="btn btn-outline-primary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+          <i class="fas fa-sync-alt me-1"></i> Refresh Discovery
+        </button>
+        <ul class="dropdown-menu dropdown-menu-end shadow border-0">
+          <li><a class="dropdown-item" href="#" onclick="runRefresh()">Refresh All</a></li>
+          <li><hr class="dropdown-divider"></li>
+          <li><a class="dropdown-item" href="#" onclick="runRefresh('aci')">Refresh ACI Only</a></li>
+          <li><a class="dropdown-item" href="#" onclick="runRefresh('dnac')">Refresh DNAC Only</a></li>
+          <li><a class="dropdown-item" href="#" onclick="runRefresh('nexus')">Refresh Nexus Only</a></li>
+          <li><a class="dropdown-item" href="#" onclick="runRefresh('panorama')">Refresh Panorama Only</a></li>
+        </ul>
+      </div>
       <a href="/api/ipam/export" class="btn btn-navy">
         <i class="fas fa-file-csv me-1"></i> Export SolarWinds CSV
       </a>
     </div>
   </div>
 
-  <div id="ipam-loading" class="htmx-indicator text-center my-5">
-    <div class="spinner spinner-lg"></div>
-    <p class="text-muted mt-2">Aggregating prefixes from all controllers...</p>
+  <div id="ipam-refresh-overlay" class="d-none">
+    <div class="card shadow border-0 mb-4 bg-light bg-opacity-75">
+        <div class="card-body">
+            <div class="d-flex align-items-center gap-3 mb-3">
+                <div class="spinner-border spinner-border-sm text-primary"></div>
+                <h6 class="mb-0 fw-bold">Discovery in Progress...</h6>
+                <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="closeRefreshOverlay()">Close Log</button>
+            </div>
+            <div id="ipam-refresh-log" class="bg-dark text-success p-3 rounded small font-monospace" style="height: 150px; overflow-y: auto;">
+                <!-- Streaming logs here -->
+            </div>
+        </div>
+    </div>
   </div>
 
   <div id="ipam-results" hx-get="/api/ipam/tree" hx-trigger="load" hx-target="this">
@@ -29,6 +49,52 @@
 </div>
 
 <script>
+    function runRefresh(source = null) {
+        const overlay = document.getElementById('ipam-refresh-overlay');
+        const log = document.getElementById('ipam-refresh-log');
+        overlay.classList.remove('d-none');
+        log.innerHTML = '';
+
+        let url = '/api/ipam/refresh';
+        if (source) url += `?sources=${source}`;
+
+        const eventSource = new EventSource(url);
+
+        eventSource.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            const line = document.createElement('div');
+            line.className = 'mb-1';
+            line.textContent = `> ${data.message}`;
+            log.appendChild(line);
+            log.scrollTop = log.scrollHeight;
+
+            if (data.type === 'complete') {
+                eventSource.close();
+                // Trigger HTMX reload of the tree
+                htmx.trigger('#ipam-results', 'load');
+                setTimeout(() => {
+                    const status = document.createElement('div');
+                    status.className = 'mt-2 text-info fw-bold';
+                    status.textContent = '--- TREE REGENERATED ---';
+                    log.appendChild(status);
+                    log.scrollTop = log.scrollHeight;
+                }, 500);
+            }
+        };
+
+        eventSource.onerror = function() {
+            const err = document.createElement('div');
+            err.className = 'text-danger fw-bold mt-1';
+            err.textContent = '!! Connection lost or error occurred.';
+            log.appendChild(err);
+            eventSource.close();
+        };
+    }
+
+    function closeRefreshOverlay() {
+        document.getElementById('ipam-refresh-overlay').classList.add('d-none');
+    }
+
     document.body.addEventListener('htmx:afterOnLoad', function(evt) {
         if (evt.detail.target.id === 'ipam-results') {
             try {
