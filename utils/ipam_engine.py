@@ -41,6 +41,7 @@ class IPAMNode:
         self.description = ""
         self.site = "Unknown"
         self.vlan = ""
+        self.device = ""
         self.children: List['IPAMNode'] = []
         self.conflicts = []
         self.overlaps = []
@@ -57,6 +58,7 @@ class IPAMNode:
             "description": self.description,
             "site": self.site,
             "vlan": self.vlan,
+            "device": self.device,
             "conflicts": self.conflicts,
             "overlaps": self.overlaps,
             "children": [c.to_dict() for c in self.children]
@@ -145,6 +147,17 @@ class IPAMEngine:
                     # Simple heuristic: Chicago_Prod -> Chicago
                     node.site = t_name.split('_')[0]
 
+                # Device for ACI subnets
+                if "BD-" in dn:
+                    node.device = "ACI Fabric"
+                else:
+                    # For L3Outs, try to find node profile in DN
+                    node_prof = re.search(r'/nodeP-([^/]+)/', dn)
+                    if node_prof:
+                        node.device = f"ACI {node_prof.group(1)}"
+                    else:
+                        node.device = "ACI Fabric"
+
                 node.logical_container = name # BD is the container
                 self.subnets.append(node)
         except Exception as e:
@@ -214,6 +227,7 @@ class IPAMEngine:
                         node.display_name = iface.get('portName', 'Unknown')
                         node.description = iface.get('description', '') or node.display_name
                         node.vlan = iface.get('vlanId', '')
+                        node.device = iface.get('hostname', 'DNAC-Managed')
                         node.logical_container = node.vlan if node.vlan else node.display_name
                         # Site detection for interface (harder without device map, but we can try)
                         self.subnets.append(node)
@@ -241,6 +255,7 @@ class IPAMEngine:
                             node = IPAMNode(str(net.cidr), source="Panorama")
                             node.display_name = iface.get('name', 'Unknown')
                             node.site = site
+                            node.device = dev.get('hostname', 'Firewall')
                             node.logical_container = f"{dev['hostname']}-{iface['name']}"
                             self.subnets.append(node)
 
@@ -252,6 +267,7 @@ class IPAMEngine:
                                 node = IPAMNode(str(net.cidr), source="Panorama")
                                 node.display_name = iface.get('name', 'Unknown')
                                 node.site = site
+                                node.device = dev.get('hostname', 'Firewall')
                                 node.logical_container = f"{dev['hostname']}-{iface['name']}"
                                 self.subnets.append(node)
         except Exception as e:
@@ -298,6 +314,7 @@ class IPAMEngine:
                         node = IPAMNode(str(net.cidr), source="Nexus")
                         node.display_name = iface.get('interface_name', 'Unknown')
                         node.site = iface.get('hostname', 'Unknown').split('-')[0]
+                        node.device = iface.get('hostname', 'Nexus')
                         node.logical_container = iface.get('interface_name', '')
                         self.subnets.append(node)
                     except: continue
@@ -344,6 +361,7 @@ class IPAMEngine:
                     node.display_name = current_iface
                     node.site = site
                     node.vlan = vlan_id
+                    node.device = hostname
                     node.logical_container = vlan_id if vlan_id else current_iface
                     self.subnets.append(node)
                 except: continue

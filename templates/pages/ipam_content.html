@@ -142,12 +142,16 @@
         const right = document.createElement('div');
         right.className = 'd-flex align-items-center gap-2';
 
-        if (node.site !== 'Unknown') {
-            right.innerHTML += `<span class="badge bg-light text-primary border">${node.site}</span>`;
+        if (node.site !== 'Unknown' && node.site !== '') {
+            right.innerHTML += `<span class="badge bg-light text-primary border" title="Site">${node.site}</span>`;
+        }
+
+        if (node.device !== 'Unknown' && node.device !== '') {
+            right.innerHTML += `<span class="badge bg-light text-secondary border" title="Device">${node.device}</span>`;
         }
 
         if (node.source !== 'Unknown') {
-            right.innerHTML += `<span class="badge bg-navy-light text-navy border-navy">${node.source}</span>`;
+            right.innerHTML += `<span class="badge bg-navy-light text-navy border-navy" title="Discovery Source">${node.source}</span>`;
         }
 
         if (node.conflicts.length > 0) {
