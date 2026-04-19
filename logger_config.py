@@ -134,14 +134,18 @@ def set_correlation_id(cid=None):
 def run_with_context(func, *args, **kwargs):
     """
     Wrapper to run a function while preserving the correlation_id context.
-    Useful for loop.run_in_executor where contextvars are not propagated.
+    Supports both:
+    1. loop.run_in_executor(None, run_with_context(func, arg1))
+    2. loop.run_in_executor(None, run_with_context(func), arg1)
     """
     cid = correlation_id_ctx.get()
 
-    def wrapped():
+    def wrapped(*extra_args, **extra_kwargs):
         token = correlation_id_ctx.set(cid)
         try:
-            return func(*args, **kwargs)
+            if args or kwargs:
+                return func(*args, **kwargs)
+            return func(*extra_args, **extra_kwargs)
         finally:
             correlation_id_ctx.reset(token)
 
