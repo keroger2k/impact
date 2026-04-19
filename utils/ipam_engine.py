@@ -33,8 +33,8 @@ PRIORITY_SOURCES = ["ACI", "DNAC", "Nexus", "Panorama", "ISE"]
 
 class IPAMNode:
     def __init__(self, cidr: str, node_type: str = "Subnet", source: str = "Unknown"):
-        self.cidr = str(cidr)
         self.network = netaddr.IPNetwork(cidr)
+        self.cidr = str(self.network.cidr)
         self.type = node_type  # Group, Supernet, Subnet
         self.source = source
         self.display_name = ""
@@ -258,6 +258,26 @@ class IPAMEngine:
                         cidr = str(net.cidr)
                         if self.is_excluded(net, iface.get('portName', '')): continue
                         node = IPAMNode(cidr, source="DNAC")
+                        node.display_name = iface.get('portName', 'Unknown')
+                        node.description = iface.get('description', '') or node.display_name
+                        node.vlan = iface.get('vlanId', '')
+
+                        d_info = device_map.get(iface.get('deviceId'), {})
+                        node.device = d_info.get('hostname', iface.get('hostname', 'DNAC-Managed'))
+                        node.site = d_info.get('site', 'Unknown')
+
+                        node.logical_container = node.vlan if node.vlan else node.display_name
+                        self.subnets.append(node)
+                    except: continue
+
+                # IPv6 from Interfaces
+                ipv6_list = iface.get('ipv6AddressList', [])
+                for v6_cidr in ipv6_list:
+                    if not v6_cidr or '/' not in v6_cidr: continue
+                    try:
+                        net = netaddr.IPNetwork(v6_cidr)
+                        if self.is_excluded(net, iface.get('portName', '')): continue
+                        node = IPAMNode(str(net.cidr), source="DNAC")
                         node.display_name = iface.get('portName', 'Unknown')
                         node.description = iface.get('description', '') or node.display_name
                         node.vlan = iface.get('vlanId', '')
@@ -505,7 +525,9 @@ class IPAMEngine:
                 if not is_private:
                     # Create /8 or similar root for public space
                     prefix = 8 if version == 4 else 32
-                    root_cidr = f"{node.network.network}/{prefix}"
+                    # Use canonical CIDR (e.g. 11.0.0.0/8)
+                    temp_net = netaddr.IPNetwork(f"{node.network.network}/{prefix}")
+                    root_cidr = str(temp_net.cidr)
                     new_root = IPAMNode(root_cidr, "Group", "System-Generated")
                     roots.append(new_root)
                     self._insert_into_tree(new_root, node)

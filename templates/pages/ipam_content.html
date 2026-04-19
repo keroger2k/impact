@@ -6,12 +6,12 @@
     </div>
     <div class="d-flex gap-2">
       <div class="btn-group shadow-sm">
-        <button class="btn btn-outline-secondary" onclick="expandAllNodes(true)" title="Expand All"><i class="fas fa-expand-arrows-alt"></i></button>
-        <button class="btn btn-outline-secondary" onclick="expandAllNodes(false)" title="Collapse All"><i class="fas fa-compress-arrows-alt"></i></button>
+        <button class="btn btn-outline-secondary px-3" onclick="expandAllNodes(true)" title="Expand All">📂+</button>
+        <button class="btn btn-outline-secondary px-3" onclick="expandAllNodes(false)" title="Collapse All">📂-</button>
       </div>
       <div class="dropdown">
         <button class="btn btn-outline-navy dropdown-toggle" type="button" data-bs-toggle="dropdown">
-          <i class="fas fa-sync-alt me-1"></i> Refresh Discovery
+          🔄 Refresh Discovery
         </button>
         <ul class="dropdown-menu dropdown-menu-end shadow border-0">
           <li><a class="dropdown-item" href="#" onclick="runRefresh()">Refresh All</a></li>
@@ -23,7 +23,7 @@
         </ul>
       </div>
       <a href="/api/ipam/export" class="btn btn-navy">
-        <i class="fas fa-file-csv me-1"></i> Export SolarWinds CSV
+        📄 Export SolarWinds CSV
       </a>
     </div>
   </div>
@@ -31,8 +31,8 @@
   <div class="row mb-4">
     <div class="col-md-6">
         <div class="input-group shadow-sm">
-            <span class="input-group-text bg-white border-end-0"><i class="fas fa-search text-muted"></i></span>
-            <input type="text" id="ipam-filter" class="form-control border-start-0" placeholder="Filter by CIDR, Site, or Device..." onkeyup="filterIPAMTree()">
+            <span class="input-group-text bg-white border-end-0">🔍</span>
+            <input type="text" id="ipam-filter" class="form-control border-start-0 ps-0" placeholder="Filter by CIDR, Site, or Device..." onkeyup="filterIPAMTree()">
         </div>
     </div>
   </div>
@@ -175,12 +175,12 @@
 
             if (expand) {
                 el.classList.remove('d-none');
-                if (icon && icon.tagName === 'I') icon.className = 'fas fa-chevron-down fa-sm toggle-icon text-primary';
-                if (folder) folder.className = 'fas fa-folder-open me-2 text-warning folder-icon';
+                if (icon) icon.textContent = '▼';
+                if (folder) folder.textContent = '📂';
             } else {
                 el.classList.add('d-none');
-                if (icon && icon.tagName === 'I') icon.className = 'fas fa-chevron-right fa-sm toggle-icon';
-                if (folder) folder.className = 'fas fa-folder me-2 text-warning folder-icon';
+                if (icon) icon.textContent = '▶';
+                if (folder) folder.textContent = '📁';
             }
         });
     }
@@ -232,14 +232,14 @@
 
                 if (isCollapsed) {
                     sub.classList.remove('d-none');
-                    if (icon && icon.tagName === 'I') icon.className = 'fas fa-chevron-down fa-sm toggle-icon text-primary';
+                    if (icon) icon.textContent = '▼';
                     const folder = item.querySelector('.folder-icon');
-                    if (folder) folder.className = 'fas fa-folder-open me-2 text-warning folder-icon';
+                    if (folder) folder.textContent = '📂';
                 } else {
                     sub.classList.add('d-none');
-                    if (icon && icon.tagName === 'I') icon.className = 'fas fa-chevron-right fa-sm toggle-icon';
+                    if (icon) icon.textContent = '▶';
                     const folder = item.querySelector('.folder-icon');
-                    if (folder) folder.className = 'fas fa-folder me-2 text-warning folder-icon';
+                    if (folder) folder.textContent = '📁';
                 }
             };
         }
@@ -249,24 +249,22 @@
         left.className = 'd-flex align-items-center gap-3';
 
         const toggle = document.createElement('span');
-        toggle.className = 'text-muted';
+        toggle.className = 'text-muted toggle-icon';
         toggle.style.width = '20px';
         toggle.style.textAlign = 'center';
+        toggle.style.fontSize = '0.8rem';
         if (hasChildren) {
-            toggle.innerHTML = '<span class="toggle-icon">▶</span>';
-            setTimeout(() => {
-                const i = document.createElement('i');
-                i.className = 'fas fa-chevron-right fa-sm toggle-icon';
-                toggle.innerHTML = '';
-                toggle.appendChild(i);
-            }, 0);
+            toggle.textContent = '▶';
         }
 
         const icon = document.createElement('span');
+        icon.className = 'folder-icon me-2';
         if (node.type === 'Group' || node.type === 'Supernet') {
-            icon.innerHTML = '<i class="fas fa-folder me-2 text-warning folder-icon"></i>';
+            icon.textContent = '📁';
         } else {
-            icon.innerHTML = '<i class="fas fa-network-wired me-2 text-muted" style="font-size: 0.8rem"></i>';
+            icon.textContent = '📍';
+            icon.style.fontSize = '0.9rem';
+            icon.style.opacity = '0.6';
         }
 
         const info = document.createElement('div');
@@ -317,9 +315,9 @@
             if (node._match) {
                 setTimeout(() => {
                     const icon = item.querySelector('.toggle-icon');
-                    if (icon && icon.tagName === 'I') icon.className = 'fas fa-chevron-down fa-sm toggle-icon text-primary';
+                    if (icon) icon.textContent = '▼';
                     const folder = item.querySelector('.folder-icon');
-                    if (folder) folder.className = 'fas fa-folder-open me-2 text-warning folder-icon';
+                    if (folder) folder.textContent = '📂';
                 }, 0);
             }
 
