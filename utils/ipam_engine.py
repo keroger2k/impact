@@ -250,45 +250,75 @@ class IPAMEngine:
 
             # Process Interfaces
             for iface in interfaces:
+                # Common metadata
+                port_name = iface.get('portName', 'Unknown')
+                vlan_id = iface.get('vlanId', '')
+                description = iface.get('description', '')
+                d_info = device_map.get(iface.get('deviceId'), {})
+                hostname = d_info.get('hostname', iface.get('hostname', 'DNAC-Managed'))
+                site = d_info.get('site', 'Unknown')
+                logical_container = vlan_id if vlan_id else port_name
+
+                # IPv4
                 ip = iface.get('ipv4Address')
                 mask = iface.get('ipv4Mask')
                 if ip and mask and ip != "N/A" and mask != "N/A":
                     try:
                         net = netaddr.IPNetwork(f"{ip}/{mask}")
-                        cidr = str(net.cidr)
-                        if self.is_excluded(net, iface.get('portName', '')): continue
-                        node = IPAMNode(cidr, source="DNAC")
-                        node.display_name = iface.get('portName', 'Unknown')
-                        node.description = iface.get('description', '') or node.display_name
-                        node.vlan = iface.get('vlanId', '')
+                        if not self.is_excluded(net, port_name):
+                            node = IPAMNode(str(net.cidr), source="DNAC")
+                            node.display_name = port_name
+                            node.description = description or port_name
+                            node.vlan = vlan_id
+                            node.device = hostname
+                            node.site = site
+                            node.logical_container = logical_container
+                            self.subnets.append(node)
+                    except Exception as e:
+                        logger.debug(f"Failed to parse DNAC IPv4 for {port_name}: {e}")
 
-                        d_info = device_map.get(iface.get('deviceId'), {})
-                        node.device = d_info.get('hostname', iface.get('hostname', 'DNAC-Managed'))
-                        node.site = d_info.get('site', 'Unknown')
+                # IPv6 - Handle multiple possible field names and formats
+                v6_candidates = []
 
-                        node.logical_container = node.vlan if node.vlan else node.display_name
-                        self.subnets.append(node)
-                    except: continue
+                # 1. ipv6AddressList (could be list of strings or list of objects)
+                v6_list = iface.get('ipv6AddressList', [])
+                if isinstance(v6_list, list):
+                    for item in v6_list:
+                        if isinstance(item, str):
+                            v6_candidates.append(item)
+                        elif isinstance(item, dict):
+                            # Some versions use {"address": "...", "prefixLength": "..."}
+                            addr = item.get('address') or item.get('ipv6Address')
+                            prefix = item.get('prefixLength') or item.get('ipv6PrefixLength')
+                            if addr and prefix:
+                                v6_candidates.append(f"{addr}/{prefix}")
+                            elif addr and "/" in addr:
+                                v6_candidates.append(addr)
 
-                # IPv6 from Interfaces
-                ipv6_list = iface.get('ipv6AddressList', [])
-                for v6_cidr in ipv6_list:
-                    if not v6_cidr or '/' not in v6_cidr: continue
+                # 2. Singular fields
+                v6_addr = iface.get('ipv6Address')
+                v6_prefix = iface.get('ipv6PrefixLength')
+                if v6_addr and v6_prefix:
+                    v6_candidates.append(f"{v6_addr}/{v6_prefix}")
+                elif v6_addr and "/" in v6_addr:
+                    v6_candidates.append(v6_addr)
+
+                # Process all unique candidates
+                for v6_cidr in set(v6_candidates):
                     try:
                         net = netaddr.IPNetwork(v6_cidr)
-                        if self.is_excluded(net, iface.get('portName', '')): continue
-                        node = IPAMNode(str(net.cidr), source="DNAC")
-                        node.display_name = iface.get('portName', 'Unknown')
-                        node.description = iface.get('description', '') or node.display_name
-                        node.vlan = iface.get('vlanId', '')
-
-                        d_info = device_map.get(iface.get('deviceId'), {})
-                        node.device = d_info.get('hostname', iface.get('hostname', 'DNAC-Managed'))
-                        node.site = d_info.get('site', 'Unknown')
-
-                        node.logical_container = node.vlan if node.vlan else node.display_name
-                        self.subnets.append(node)
-                    except: continue
+                        if not self.is_excluded(net, port_name):
+                            node = IPAMNode(str(net.cidr), source="DNAC")
+                            node.display_name = port_name
+                            node.description = description or port_name
+                            node.vlan = vlan_id
+                            node.device = hostname
+                            node.site = site
+                            node.logical_container = logical_container
+                            self.subnets.append(node)
+                            logger.debug(f"Discovered DNAC IPv6: {net.cidr} on {hostname} {port_name}")
+                    except Exception as e:
+                        logger.debug(f"Failed to parse DNAC IPv6 candidate '{v6_cidr}' for {port_name}: {e}")
 
         except Exception as e:
             logger.error(f"DNAC discovery failed: {e}")
@@ -454,18 +484,30 @@ class IPAMEngine:
             if s.cidr not in unique_subnets:
                 unique_subnets[s.cidr] = s
             else:
-                # Priority: ACI > DNAC > Nexus > Panorama > ISE
                 current = unique_subnets[s.cidr]
+                logger.debug(f"Merging/Deduplicating subnet {s.cidr}: {s.source} ({s.site}) vs {current.source} ({current.site})")
+
                 # Merge metadata/conflicts
-                if s.site != current.site:
+                if s.site != current.site and s.site != "Unknown" and current.site != "Unknown":
                     conflict_msg = f"Site Conflict: {s.source} ({s.site}) vs {current.source} ({current.site})"
                     if conflict_msg not in current.conflicts:
                         current.conflicts.append(conflict_msg)
+                        logger.info(f"Conflict detected on {s.cidr}: {conflict_msg}")
 
-                if PRIORITY_SOURCES.index(s.source) < PRIORITY_SOURCES.index(current.source):
-                    # Transfer conflicts to the new winner
-                    s.conflicts = list(set(s.conflicts + current.conflicts))
-                    unique_subnets[s.cidr] = s
+                # Priority: ACI > DNAC > Nexus > Panorama > ISE
+                try:
+                    s_idx = PRIORITY_SOURCES.index(s.source)
+                    c_idx = PRIORITY_SOURCES.index(current.source)
+                    if s_idx < c_idx:
+                        # Transfer conflicts to the new winner
+                        s.conflicts = list(set(s.conflicts + current.conflicts))
+                        unique_subnets[s.cidr] = s
+                except ValueError:
+                    # One of the sources is not in priority list (e.g. System-Generated)
+                    # Keep existing unless new one is a known source
+                    if s.source in PRIORITY_SOURCES:
+                        s.conflicts = list(set(s.conflicts + current.conflicts))
+                        unique_subnets[s.cidr] = s
 
         # 2. Separate v4 and v6
         v4_nodes = [n for n in unique_subnets.values() if n.network.version == 4]

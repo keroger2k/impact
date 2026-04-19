@@ -268,10 +268,20 @@
         }
 
         const info = document.createElement('div');
-        info.innerHTML = `
+        let infoHtml = `
             <div class="fw-bold text-navy">${node.cidr}</div>
             <div class="small text-muted">${node.display_name || 'System Generated'}</div>
         `;
+
+        // Show conflicts/overlaps inline if they exist
+        if (node.conflicts.length > 0) {
+            infoHtml += `<div class="text-danger small mt-1 fw-bold">⚠️ ${node.conflicts.join('<br>⚠️ ')}</div>`;
+        }
+        if (node.overlaps.length > 0) {
+            infoHtml += `<div class="text-warning small mt-1">📝 ${node.overlaps.join('<br>📝 ')}</div>`;
+        }
+
+        info.innerHTML = infoHtml;
 
         left.appendChild(toggle);
         left.appendChild(icon);
@@ -281,15 +291,15 @@
         const right = document.createElement('div');
         right.className = 'd-flex align-items-center gap-2';
 
-        if (node.site !== 'Unknown' && node.site !== '' && node.site !== 'N/A') {
+        if (node.site && node.site !== 'Unknown' && node.site !== '' && node.site !== 'N/A') {
             right.innerHTML += `<span class="badge bg-light text-primary border" title="Site">${node.site}</span>`;
         }
 
-        if (node.device !== 'Unknown' && node.device !== '' && node.device !== 'N/A') {
+        if (node.device && node.device !== 'Unknown' && node.device !== '' && node.device !== 'N/A') {
             right.innerHTML += `<span class="badge bg-light text-secondary border" title="Device">${node.device}</span>`;
         }
 
-        if (node.source !== 'Unknown') {
+        if (node.source && node.source !== 'Unknown') {
             right.innerHTML += `<span class="badge bg-navy-light text-navy border-navy" title="Discovery Source">${node.source}</span>`;
         }
 

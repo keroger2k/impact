@@ -311,6 +311,8 @@ MOCK_ACI_SUBNETS = [
     {"l3extSubnet": {"attributes": {"ip": "172.16.0.0/12", "scope": "export-rtctrl", "dn": "uni/tn-PROD/out-L3OUT-FIREWALL/lnodep-FW/lifp-FW/subnet-[172.16.0.0/12]"}}},
     {"fvSubnet": {"attributes": {"ip": "10.10.10.1/24", "dn": "uni/tn-TSA-HQ/BD-Users/subnet-[10.10.10.1/24]", "descr": "User Access"}}},
     {"fvSubnet": {"attributes": {"ip": "fc00:10::1/64", "dn": "uni/tn-TSA-HQ/BD-Users/subnet-[fc00:10::1/64]", "descr": "User Access IPv6"}}},
+    # Add a conflict: This exactly matches a DNAC pool in TSA-BOS-T1 (10.20.0.0/16) but has different site
+    {"fvSubnet": {"attributes": {"ip": "10.20.0.0/16", "dn": "uni/tn-CONFLICT-TENANT/BD-Conflict/subnet-[10.20.0.0/16]", "descr": "Conflict Subnet"}}},
 ]
 
 MOCK_ACI_EPGS = [

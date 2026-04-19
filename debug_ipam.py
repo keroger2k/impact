@@ -15,6 +15,8 @@ async def debug():
     class MockSession:
         def __init__(self):
             self.id = "mock"
+            self.username = "dev"
+            self.password = "dev"
 
     session = MockSession()
     loop = asyncio.get_event_loop()
