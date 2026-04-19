@@ -17,6 +17,16 @@
     <!-- Summary Stats -->
     <div id="ipam-summary-cards">
         <div class="row g-3 mb-4">
+            <div class="col-md-12" id="utilization-summary" style="display:none">
+                <div class="card border-0 shadow-sm mb-3">
+                    <div class="card-body p-2">
+                        <div class="d-flex align-items-center overflow-auto py-1 px-2" id="util-scroll-container">
+                            <div class="text-muted small text-uppercase fw-bold me-3 border-end pe-3">Subnet Utilization</div>
+                            <!-- Utilization items will be injected here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
             <div class="col-md-3">
                 <div class="card border-0 shadow-sm h-100">
                     <div class="card-body">
@@ -143,7 +153,7 @@
         try {
             const resp = await fetch('/api/ipam/discover', {
                 method: 'POST',
-                headers: { 'Authorization': 'Bearer ' + localStorage.getItem('impact_token') }
+                headers: { 'Authorization': 'Bearer {{ token }}' }
             });
             if (resp.ok) {
                 // Poll for status
@@ -159,7 +169,7 @@
     async function pollIpamStatus() {
         const interval = setInterval(async () => {
             const resp = await fetch('/api/ipam/status', {
-                headers: { 'Authorization': 'Bearer ' + localStorage.getItem('impact_token') }
+                headers: { 'Authorization': 'Bearer {{ token }}' }
             });
             const data = await resp.json();
             if (data.status === 'Ready') {
@@ -174,7 +184,7 @@
 
     async function loadIpamData() {
         const resp = await fetch('/api/ipam/dashboard-data', {
-            headers: { 'Authorization': 'Bearer ' + localStorage.getItem('impact_token') }
+            headers: { 'Authorization': 'Bearer {{ token }}' }
         });
         const data = await resp.json();
 
@@ -193,6 +203,29 @@
         if (stats.nexus) breakdown.push(`Nexus: ${stats.nexus}`);
         if (stats.panorama) breakdown.push(`Panorama: ${stats.panorama}`);
         document.getElementById('stat-source-breakdown').textContent = breakdown.join(' | ');
+
+        // Utilization Summary
+        const utilContainer = document.getElementById('util-scroll-container');
+        const utilRow = document.getElementById('utilization-summary');
+        if (stats.utilization && stats.utilization.length > 0) {
+            utilRow.style.display = 'block';
+            // Keep the label
+            const label = utilContainer.firstElementChild.outerHTML;
+            utilContainer.innerHTML = label + stats.utilization.slice(0, 10).map(u => `
+                <div class="d-flex flex-column me-4" style="min-width: 150px;">
+                    <div class="d-flex justify-content-between small mb-1">
+                        <span class="fw-bold">${u.subnet}</span>
+                        <span class="text-muted">${u.percent}%</span>
+                    </div>
+                    <div class="progress" style="height: 4px;">
+                        <div class="progress-bar ${u.percent > 80 ? 'bg-danger' : u.percent > 50 ? 'bg-warning' : 'bg-success'}"
+                             role="progressbar" style="width: ${u.percent}%"></div>
+                    </div>
+                </div>
+            `).join('');
+        } else {
+            utilRow.style.display = 'none';
+        }
 
         // Update Orphaned Table
         const orphanedBody = document.getElementById('table-orphaned');

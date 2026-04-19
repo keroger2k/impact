@@ -3,7 +3,7 @@ import time
 import ipaddress
 import asyncio
 from typing import List, Dict, Set, Optional
-from netaddr import IPAddress, IPNetwork, cidr_merge, iprange_to_cidrs as summarize_address_range
+from netaddr import IPAddress, IPNetwork, iprange_to_cidrs as summarize_address_range
 from cache import cache, TTL_DEVICES
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,8 @@ class IPAMDiscoveryEngine:
             "panorama": 0,
             "total_active": 0,
             "orphaned": 0,
-            "gaps": 0
+            "gaps": 0,
+            "utilization": [] # List of {subnet, used, total, percent}
         }
 
     async def run(self):
@@ -122,7 +123,7 @@ class IPAMDiscoveryEngine:
         dnac_client = auth_module.get_dnac_for_session(self.session)
         devices = cache.get("devices")
         if not devices:
-             devices = await loop.run_in_executor(None, run_with_context(dnac_module.get_all_devices, dnac_client))
+            devices = await loop.run_in_executor(None, run_with_context(dnac_module.get_all_devices, dnac_client))
 
         for d in devices:
             ip = canonicalize_ip(d.get('managementIpAddress'))
@@ -135,11 +136,22 @@ class IPAMDiscoveryEngine:
                     "last_discovered": time.strftime("%m/%d/%Y %H:%M:%S")
                 })
 
+        pools = await loop.run_in_executor(None, run_with_context(dnac_module.get_ip_pools, dnac_client))
+        for p in pools:
+            ip_str = p.get('ipPoolCidr')
+            if ip_str:
+                try:
+                    self.configured_subnets.append(IPNetwork(ip_str))
+                except Exception: pass
+
         # Nexus
         nexus_ifaces = get_cached_nexus_interfaces()
         for i in nexus_ifaces:
             ip_with_prefix = i.get('ipv4_address')
             if ip_with_prefix and ip_with_prefix != "N/A":
+                try:
+                    self.configured_subnets.append(IPNetwork(ip_with_prefix))
+                except Exception: pass
                 ip = canonicalize_ip(ip_with_prefix.split('/')[0])
                 self.stats["nexus"] += 1
                 self._add_active_endpoint(ip, {
@@ -158,6 +170,9 @@ class IPAMDiscoveryEngine:
                     # IPv4
                     v4 = iface.get('ipv4')
                     if v4:
+                        try:
+                            self.configured_subnets.append(IPNetwork(v4))
+                        except Exception: pass
                         ip = canonicalize_ip(v4.split('/')[0])
                         self.stats["panorama"] += 1
                         self._add_active_endpoint(ip, {
@@ -167,6 +182,9 @@ class IPAMDiscoveryEngine:
                         })
                     # IPv6
                     for v6 in iface.get('ipv6', []):
+                        try:
+                            self.configured_subnets.append(IPNetwork(v6))
+                        except Exception: pass
                         ip = canonicalize_ip(v6.split('/')[0])
                         self.stats["panorama"] += 1
                         self._add_active_endpoint(ip, {
@@ -235,6 +253,32 @@ class IPAMDiscoveryEngine:
             if mac and mac != "N/A":
                 if mac not in mac_to_ips: mac_to_ips[mac] = set()
                 mac_to_ips[mac].add(ip)
+
+        # Subnet Utilization Summary
+        unique_subnets = sorted(list(set(str(s) for s in self.configured_subnets)))
+        util_map = {s: 0 for s in unique_subnets}
+        for ip, data in self.active_endpoints.items():
+            if 'subnet' in data:
+                util_map[data['subnet']] += 1
+
+        for s_str in unique_subnets:
+            try:
+                net = IPNetwork(s_str)
+                used = util_map[s_str]
+                total = net.size
+                if total > 0:
+                    percent = round((used / total) * 100, 1)
+                    if percent > 0: # Only show subnets with some usage
+                        self.stats["utilization"].append({
+                            "subnet": s_str,
+                            "used": used,
+                            "total": total,
+                            "percent": percent
+                        })
+            except Exception: pass
+
+        # Sort by utilization percent descending
+        self.stats["utilization"].sort(key=lambda x: x['percent'], reverse=True)
 
         # Dual-Stack Gaps
         for mac, ips in mac_to_ips.items():

@@ -92,6 +92,17 @@ def get_all_devices(dnac) -> list[dict]:
     return devices
 
 
+def get_ip_pools(dnac) -> list[dict]:
+    """Fetch all IP pools from DNAC."""
+    try:
+        resp = dnac.custom_caller.call_api("GET", "/dna/intent/api/v1/ip-pool")
+        items = getattr(resp, "response", [])
+        return [_dictify(i) for i in items]
+    except Exception as e:
+        logger.warning(f"Failed to fetch IP pools: {e}")
+        return []
+
+
 def get_all_interfaces(dnac) -> list[dict]:
     interfaces, limit, offset = [], 500, 1
     while True:
