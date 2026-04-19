@@ -1,162 +1,144 @@
 """
-cache.py — In-memory TTL cache with disk persistence + system connectivity checks.
+cache.py — Persistent caching using diskcache.
 
-Replaces Streamlit's @st.cache_data. Thread-safe, async-compatible.
-Data is stored as plain dicts/lists — no SDK objects escape the client layer.
-
-Keys matching DISK_KEYS or DISK_PREFIXES are written to {project}/data/cache/ as JSON and
-survive server restarts. All other keys (status checks, per-device configs) are
-memory-only.
+Replaces manual JSON file storage and in-memory dicts with a robust,
+thread-safe, and process-safe SQLite-backed disk cache.
 """
 
 import asyncio
-import json
+import functools
 import logging
-import re
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Optional
+
+import diskcache
 
 logger = logging.getLogger(__name__)
 
-TTL_DEVICES        = 86400   # 24 hours
-TTL_SITES          = 86400   # 24 hours
+# TTL Constants (in seconds)
+TTL_DEFAULT        = 172800  # 48 hours
+TTL_DEVICES        = 14400   # 4 hours
+TTL_SITES          = 14400   # 4 hours
+TTL_ISE_POLICIES   = 3600    # 1 hour
+TTL_ACI_STATUS     = 900     # 15 minutes
 TTL_STATUS         = 300     # 5 minutes
-TTL_PAN_INTERFACES = 604800  # 7 days
+TTL_PAN_INTERFACES = 172800  # 48 hours
 
-# Absolute path so disk cache works regardless of where uvicorn is invoked from
-CACHE_DIR    = Path(__file__).parent / "data" / "cache"
-DISK_KEYS    = {"devices", "sites", "device_site_map", "nexus_inventory", "nexus_interfaces"}
-DISK_PREFIXES = ("pan_", "ise_", "nexus_", "aci_")
-
-
-def _should_persist(key: str) -> bool:
-    return key in DISK_KEYS or any(key.startswith(p) for p in DISK_PREFIXES)
-
-
-def _disk_path(key: str) -> Path:
-    safe = re.sub(r"[^\w\-]", "_", key)
-    return CACHE_DIR / f"{safe}.json"
-
-
-class _Entry:
-    __slots__ = ("data", "expires_at", "set_at", "ttl")
-
-    def __init__(self, data: Any, ttl: int, set_at: float | None = None):
-        self.data    = data
-        self.set_at  = set_at if set_at is not None else time.time()
-        self.ttl     = ttl
-        remaining    = ttl if set_at is None else max(0.0, ttl - (time.time() - set_at))
-        self.expires_at = time.monotonic() + remaining
-
-    @property
-    def valid(self) -> bool:
-        return time.monotonic() < self.expires_at
-
+CACHE_DIR = Path(__file__).parent / "data" / "cache" / "diskcache"
 
 class AppCache:
-    def __init__(self):
-        self._store: dict[str, _Entry] = {}
-        self._lock = asyncio.Lock()
+    def __init__(self, directory: Path = CACHE_DIR):
+        directory.mkdir(parents=True, exist_ok=True)
+        self._cache = diskcache.Cache(str(directory))
 
-    def get(self, key: str) -> Any | None:
-        entry = self._store.get(key)
-        if entry and entry.valid:
-            return entry.data
-        # Fall back to disk for persistent keys
-        if _should_persist(key):
-            path = _disk_path(key)
-            if path.exists():
-                try:
-                    raw   = json.loads(path.read_text())
-                    entry = _Entry(raw["data"], raw["ttl"], set_at=raw["set_at"])
-                    if entry.valid:
-                        self._store[key] = entry
-                        return entry.data
-                except Exception:
-                    path.unlink(missing_ok=True)
+    def get(self, key: str) -> Any:
+        """Standard get from cache. Returns only if not logically expired."""
+        entry = self._cache.get(key)
+        if entry is None:
+            return None
+
+        data, expires_at, _ = entry
+        if time.time() < expires_at:
+            return data
         return None
 
-    def set(self, key: str, data: Any, ttl: int):
-        entry = _Entry(data, ttl)
-        self._store[key] = entry
-        if _should_persist(key):
+    def set(self, key: str, value: Any, ttl: Optional[int] = TTL_DEFAULT):
+        """Standard set to cache with logical TTL and longer physical TTL for stale support."""
+        now = time.time()
+        expires_at = now + (ttl if ttl is not None else TTL_DEFAULT)
+        # Store (data, logical_expiry, set_at)
+        # Physical expiry is 30 days to support stale-while-revalidate
+        self._cache.set(key, (value, expires_at, now), expire=2592000)
+
+    def get_or_set(self, key: str, loader: Callable, ttl: int = TTL_DEFAULT) -> Any:
+        """
+        Get a value from cache or fetch it using the loader if missing or expired.
+        Implements stale-while-revalidate: if the loader fails, returns stale data if available.
+        """
+        entry = self._cache.get(key)
+        now = time.time()
+
+        if entry is not None:
+            data, expires_at, _ = entry
+            if now < expires_at:
+                return data
+
+            # Logically expired, try to revalidate
             try:
-                CACHE_DIR.mkdir(parents=True, exist_ok=True)
-                _disk_path(key).write_text(json.dumps(
-                    {"key": key, "data": data, "set_at": entry.set_at, "ttl": ttl}
-                ))
+                new_data = loader()
+                if new_data is not None:
+                    self.set(key, new_data, ttl)
+                    return new_data
             except Exception as e:
-                logger.warning(f"Disk cache write failed for {key}: {e}")
+                logger.error(f"Cache revalidation failed for key '{key}', returning stale data: {e}")
+                return data # Return stale data
+
+        # Cache miss (truly missing)
+        try:
+            new_data = loader()
+            if new_data is not None:
+                self.set(key, new_data, ttl)
+                return new_data
+        except Exception as e:
+            logger.error(f"Cache loader failed for new key '{key}': {e}")
+
+        return None
+
+    def cache_result(self, ttl: int = TTL_DEFAULT):
+        """Decorator for caching function results."""
+        def decorator(func: Callable):
+            @functools.wraps(func)
+            def wrapper(*args, **kwargs):
+                # Simple key generation based on function name and args
+                key = f"decorator:{func.__module__}.{func.__name__}:{args}:{kwargs}"
+                return self.get_or_set(key, lambda: func(*args, **kwargs), ttl)
+            return wrapper
+        return decorator
 
     def invalidate(self, key: str):
-        self._store.pop(key, None)
-        _disk_path(key).unlink(missing_ok=True)
+        self._cache.delete(key)
 
     def invalidate_prefix(self, prefix: str):
-        """Invalidate all in-memory and on-disk keys with the given prefix."""
-        keys = [k for k in list(self._store) if k.startswith(prefix)]
-        for k in keys:
-            self.invalidate(k)
-        if CACHE_DIR.exists():
-            safe = re.sub(r"[^\w\-]", "_", prefix)
-            for f in CACHE_DIR.glob(f"{safe}*.json"):
-                f.unlink(missing_ok=True)
+        """Invalidate all keys starting with the given prefix."""
+        keys_to_delete = [k for k in self._cache.iterkeys() if isinstance(k, str) and k.startswith(prefix)]
+        for k in keys_to_delete:
+            self._cache.delete(k)
 
     def keys_for_prefix(self, prefix: str) -> list[str]:
-        """Return all cached keys (memory + disk) that start with prefix."""
-        keys: set[str] = {k for k in self._store if k.startswith(prefix)}
-        if CACHE_DIR.exists():
-            safe = re.sub(r"[^\w\-]", "_", prefix)
-            for f in CACHE_DIR.glob(f"{safe}*.json"):
-                try:
-                    raw = json.loads(f.read_text())
-                    if "key" in raw:
-                        keys.add(raw["key"])
-                except Exception:
-                    pass
-        return list(keys)
+        return [k for k in self._cache.iterkeys() if isinstance(k, str) and k.startswith(prefix)]
 
     def clear(self):
-        self._store.clear()
-        if CACHE_DIR.exists():
-            import shutil
-            for item in CACHE_DIR.iterdir():
-                if item.is_file():
-                    item.unlink()
-                elif item.is_dir():
-                    shutil.rmtree(item)
+        self._cache.clear()
 
     def cache_info(self, key: str) -> dict | None:
-        """Return {set_at, ttl} for a key, checking disk if not in memory."""
-        entry = self._store.get(key)
-        if entry and entry.valid:
-            return {"set_at": entry.set_at, "ttl": entry.ttl}
-        if _should_persist(key):
-            path = _disk_path(key)
-            if path.exists():
-                try:
-                    raw = json.loads(path.read_text())
-                    if time.time() - raw["set_at"] < raw["ttl"]:
-                        return {"set_at": raw["set_at"], "ttl": raw["ttl"]}
-                except Exception:
-                    pass
+        """Return some metadata about a cached key."""
+        entry = self._cache.get(key)
+        if entry:
+            data, expires_at, set_at = entry
+            return {
+                "set_at": set_at,
+                "expires_at": expires_at,
+                "ttl": expires_at - set_at,
+                "is_expired": time.time() > expires_at
+            }
         return None
 
-    async def warm(self):
-        """Pre-fetch devices, sites, and device-site map on startup (skipped if disk cache is valid)."""
-        async with self._lock:
-            if self.get("devices") is None:
-                await asyncio.get_event_loop().run_in_executor(None, self._load_devices)
-            if self.get("sites") is None:
-                await asyncio.get_event_loop().run_in_executor(None, self._load_sites)
-            if self.get("device_site_map") is None:
-                await asyncio.get_event_loop().run_in_executor(None, self._load_device_site_map)
+    # ── Warming logic ──────────────────────────────────────────────────────────
 
-            # Nexus warm-up
-            if self.get("nexus_inventory") is None:
-                from routers.nexus import init_nexus_collection
-                await init_nexus_collection()
+    async def warm(self):
+        """Pre-fetch devices, sites, and device-site map on startup."""
+        if self.get("devices") is None:
+            await asyncio.get_event_loop().run_in_executor(None, self._load_devices)
+        if self.get("sites") is None:
+            await asyncio.get_event_loop().run_in_executor(None, self._load_sites)
+        if self.get("device_site_map") is None:
+            await asyncio.get_event_loop().run_in_executor(None, self._load_device_site_map)
+
+        # Nexus warm-up
+        if self.get("nexus_inventory") is None:
+            from routers.nexus import init_nexus_collection
+            await init_nexus_collection()
 
     def _load_devices(self):
         try:
@@ -189,6 +171,8 @@ class AppCache:
         except Exception as e:
             logger.warning(f"Device site map warm failed: {e}")
 
+    # ── Connectivity checks ─────────────────────────────────────────────────────
+
     async def check_all_systems(self) -> dict:
         """Non-blocking connectivity check for all three systems."""
         loop = asyncio.get_event_loop()
@@ -207,46 +191,40 @@ class AppCache:
         }
 
     def _check_dnac(self) -> dict:
-        cached = self.get("status_dnac")
-        if cached:
-            return cached
+        return self.get_or_set("status_dnac", self.__check_dnac_internal, TTL_STATUS)
+
+    def __check_dnac_internal(self) -> dict:
         try:
             import clients.dnac as dc
             dnac   = dc.get_client()
             result = dnac.custom_caller.call_api("GET", "/dna/intent/api/v1/network-device/count")
             count  = getattr(result, "response", 0)
-            r = {"ok": True, "detail": f"{count:,} devices"}
+            return {"ok": True, "detail": f"{count:,} devices"}
         except Exception as e:
-            r = {"ok": False, "detail": str(e)[:80]}
-        self.set("status_dnac", r, TTL_STATUS)
-        return r
+            return {"ok": False, "detail": str(e)[:80]}
 
     def _check_ise(self) -> dict:
-        cached = self.get("status_ise")
-        if cached:
-            return cached
+        return self.get_or_set("status_ise", self.__check_ise_internal, TTL_STATUS)
+
+    def __check_ise_internal(self) -> dict:
         try:
             import clients.ise as ic
             ise = ic.get_client()
             ok  = ic.connectivity_check(ise)
-            r   = {"ok": ok, "detail": "Connected" if ok else "Unreachable"}
+            return {"ok": ok, "detail": "Connected" if ok else "Unreachable"}
         except Exception as e:
-            r = {"ok": False, "detail": str(e)[:80]}
-        self.set("status_ise", r, TTL_STATUS)
-        return r
+            return {"ok": False, "detail": str(e)[:80]}
 
     def _check_panorama(self) -> dict:
-        cached = self.get("status_panorama")
-        if cached:
-            return cached
+        return self.get_or_set("status_panorama", self.__check_panorama_internal, TTL_STATUS)
+
+    def __check_panorama_internal(self) -> dict:
         try:
             import clients.panorama as pc
             ok, detail = pc.connectivity_check()
-            r = {"ok": ok, "detail": detail}
+            return {"ok": ok, "detail": detail}
         except Exception as e:
-            r = {"ok": False, "detail": str(e)[:80]}
-        self.set("status_panorama", r, TTL_STATUS)
-        return r
+            return {"ok": False, "detail": str(e)[:80]}
 
 
 # Singleton used by routers

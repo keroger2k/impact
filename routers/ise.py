@@ -10,12 +10,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 import auth as auth_module
 import clients.ise as ic
 from auth import SessionEntry, require_auth
-from cache import cache
+from cache import cache, TTL_ISE_POLICIES as ISE_TTL
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-ISE_TTL = 1800   # 30 min — ISE data changes less often
 
 ISE_CACHE_KEYS = [
     "ise_nads", "ise_nad_groups", "ise_endpoint_groups", "ise_identity_groups",
@@ -34,11 +32,7 @@ def _get_ise(session: SessionEntry):
 
 def _cached(key: str, loader, ttl: int = ISE_TTL):
     """Generic cached fetch helper — synchronous, call via run_in_executor."""
-    data = cache.get(key)
-    if data is None:
-        data = loader()
-        cache.set(key, data, ttl)
-    return data
+    return cache.get_or_set(key, loader, ttl)
 
 
 # ── Cache management ──────────────────────────────────────────────────────────

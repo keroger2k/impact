@@ -31,6 +31,7 @@ async def get_cache_status(request: Request, session: SessionEntry = Depends(req
             "icon": icon,
             "color": color,
             "set_at": _fmt_time(info["set_at"]) if info else "Empty",
+            "is_expired": info["is_expired"] if info else False,
             "count": count,
             "refresh_url": refresh_url,
             "sse": sse

@@ -58,10 +58,7 @@ def _flatten_rules(rules_cache: dict, target_dgs: list[str] | None) -> list[dict
 async def list_device_groups(request: Request, session: SessionEntry = Depends(require_auth)):
     key  = _get_key(session)
     loop = asyncio.get_event_loop()
-    dgs = cache.get("pan_device_groups")
-    if dgs is None:
-        dgs = await loop.run_in_executor(None, pc.get_device_groups, key)
-        cache.set("pan_device_groups", dgs, PAN_TTL)
+    dgs = await loop.run_in_executor(None, cache.get_or_set, "pan_device_groups", lambda: pc.get_device_groups(key), PAN_TTL)
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
@@ -78,29 +75,23 @@ async def policy_lookup(req: PolicyLookupRequest, session: SessionEntry = Depend
             raise HTTPException(400, f"'{val}' is not a valid IP address")
     key  = _get_key(session)
     loop = asyncio.get_event_loop()
-    all_dgs = cache.get("pan_device_groups")
-    if all_dgs is None:
-        all_dgs = await loop.run_in_executor(None, pc.get_device_groups, key)
-        cache.set("pan_device_groups", all_dgs, PAN_TTL)
-    addr_data = cache.get("pan_addr")
-    if addr_data is None:
-        addr_data = await loop.run_in_executor(None, pc.get_address_objects_and_groups, key, all_dgs)
-        cache.set("pan_addr", addr_data, PAN_TTL)
+    all_dgs = await loop.run_in_executor(None, cache.get_or_set, "pan_device_groups", lambda: pc.get_device_groups(key), PAN_TTL)
+
+    addr_data = await loop.run_in_executor(None, cache.get_or_set, "pan_addr", lambda: pc.get_address_objects_and_groups(key, all_dgs), PAN_TTL)
     objects, groups = addr_data
-    svc_data = cache.get("pan_svc")
-    if svc_data is None:
-        svc_data = await loop.run_in_executor(None, pc.get_services, key, all_dgs)
-        cache.set("pan_svc", svc_data, PAN_TTL)
+
+    svc_data = await loop.run_in_executor(None, cache.get_or_set, "pan_svc", lambda: pc.get_services(key, all_dgs), PAN_TTL)
     svc_obj, svc_grp = svc_data
-    rules_cache = cache.get("pan_rules")
-    if rules_cache is None:
-        all_rules = await loop.run_in_executor(None, pc.get_all_security_rules, key, all_dgs)
+
+    def load_rules():
+        all_rules = pc.get_all_security_rules(key, all_dgs)
         by_dg: dict[str, list] = {}
         for rule in all_rules:
             dg = rule.get("device_group", "shared")
             by_dg.setdefault(dg, []).append(rule)
-        rules_cache = {"dg_order": all_dgs, "by_dg": by_dg}
-        cache.set("pan_rules", rules_cache, PAN_TTL)
+        return {"dg_order": all_dgs, "by_dg": by_dg}
+
+    rules_cache = await loop.run_in_executor(None, cache.get_or_set, "pan_rules", load_rules, PAN_TTL)
     target_dgs = req.device_groups or None
     rules = _flatten_rules(rules_cache, target_dgs)
     matches = pc.find_matching_rules(
@@ -145,6 +136,7 @@ async def refresh_firewall_cache():
 
 @router.get("/interfaces")
 async def list_firewall_interfaces(request: Request, session: SessionEntry = Depends(require_auth)):
+    from cache import TTL_PAN_INTERFACES
     from dev import DEV_MODE
     if DEV_MODE:
         # Generate some mock interfaces with mixed cases to test the new robust parser
@@ -176,13 +168,9 @@ async def list_firewall_interfaces(request: Request, session: SessionEntry = Dep
     try:
         key  = _get_key(session)
         loop = asyncio.get_event_loop()
-        devices = cache.get("pan_interfaces")
+        devices = await loop.run_in_executor(None, cache.get_or_set, "pan_interfaces", lambda: pc.fetch_firewall_interfaces(key), TTL_PAN_INTERFACES)
         if devices is None:
-            devices = await loop.run_in_executor(None, pc.fetch_firewall_interfaces, key)
-            if devices is not None:
-                cache.set("pan_interfaces", devices, TTL_PAN_INTERFACES)
-            else:
-                devices = []
+            devices = []
     except Exception as e:
         logger.error(f"Failed to list firewall interfaces: {e}")
         raise HTTPException(500, f"Panorama Error: {str(e)}")
@@ -194,11 +182,11 @@ async def list_firewall_interfaces(request: Request, session: SessionEntry = Dep
 
 @router.post("/interfaces/refresh")
 async def refresh_firewall_interfaces(request: Request, session: SessionEntry = Depends(require_auth)):
+    from cache import TTL_PAN_INTERFACES
     cache.invalidate("pan_interfaces")
     key  = _get_key(session)
     loop = asyncio.get_event_loop()
-    devices = await loop.run_in_executor(None, pc.fetch_firewall_interfaces, key)
-    cache.set("pan_interfaces", devices, TTL_PAN_INTERFACES)
+    devices = await loop.run_in_executor(None, cache.get_or_set, "pan_interfaces", lambda: pc.fetch_firewall_interfaces(key), TTL_PAN_INTERFACES)
     if request.headers.get("HX-Request"):
         from templates_module import templates
         return templates.TemplateResponse(request, "partials/firewall_interfaces.html", {"items": devices})
@@ -206,12 +194,9 @@ async def refresh_firewall_interfaces(request: Request, session: SessionEntry = 
 
 @router.get("/devices")
 async def list_managed_devices(request: Request, session: SessionEntry = Depends(require_auth)):
-    cached = cache.get("pan_managed_devices")
-    if cached is None:
-        key  = _get_key(session)
-        loop = asyncio.get_event_loop()
-        cached = await loop.run_in_executor(None, pc.get_managed_devices, key)
-        cache.set("pan_managed_devices", cached, PAN_TTL)
+    key  = _get_key(session)
+    loop = asyncio.get_event_loop()
+    cached = await loop.run_in_executor(None, cache.get_or_set, "pan_managed_devices", lambda: pc.get_managed_devices(key), PAN_TTL)
     if request.headers.get("HX-Request"):
         from templates_module import templates
         return templates.TemplateResponse(request, "partials/firewall_devices.html", {"items": cached})

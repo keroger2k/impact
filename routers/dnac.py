@@ -61,10 +61,7 @@ async def list_devices(
     loop = asyncio.get_event_loop()
     dnac = _get_dnac(session)
 
-    devices = cache.get("devices")
-    if devices is None:
-        devices = await loop.run_in_executor(None, dc.get_all_devices, dnac)
-        cache.set("devices", devices, TTL_DEVICES)
+    devices = await loop.run_in_executor(None, cache.get_or_set, "devices", lambda: dc.get_all_devices(dnac), TTL_DEVICES)
 
     filtered = devices
     if hostname:
@@ -81,14 +78,8 @@ async def list_devices(
         elif reachability.lower() == "unreachable":
             filtered = [d for d in filtered if d.get("reachabilityStatus") != "Reachable"]
 
-    dev_site_map = cache.get("device_site_map")
-    if dev_site_map is None:
-        sites = cache.get("sites")
-        if sites is None:
-            sites = await loop.run_in_executor(None, dc.get_site_cache, dnac)
-            cache.set("sites", sites, TTL_SITES)
-        dev_site_map = await loop.run_in_executor(None, dc.build_device_site_map, dnac, sites)
-        cache.set("device_site_map", dev_site_map, TTL_SITES)
+    sites = await loop.run_in_executor(None, cache.get_or_set, "sites", lambda: dc.get_site_cache(dnac), TTL_SITES)
+    dev_site_map = await loop.run_in_executor(None, cache.get_or_set, "device_site_map", lambda: dc.build_device_site_map(dnac, sites), TTL_SITES)
 
     if site:
         filtered = [d for d in filtered if site.lower() in (dev_site_map.get(d.get("id")) or "").lower()]
@@ -140,12 +131,9 @@ async def list_devices(
 @router.get("/devices/stats")
 async def device_stats(session: SessionEntry = Depends(require_auth)):
     """Summary statistics for the dashboard."""
-    devices = cache.get("devices")
-    if devices is None:
-        loop    = asyncio.get_event_loop()
-        dnac    = _get_dnac(session)
-        devices = await loop.run_in_executor(None, dc.get_all_devices, dnac)
-        cache.set("devices", devices, TTL_DEVICES)
+    loop    = asyncio.get_event_loop()
+    dnac    = _get_dnac(session)
+    devices = await loop.run_in_executor(None, cache.get_or_set, "devices", lambda: dc.get_all_devices(dnac), TTL_DEVICES)
 
     from routers.nexus import get_cached_nexus_inventory
     nexus_devices = get_cached_nexus_inventory()
@@ -244,11 +232,7 @@ async def get_device_config(
             config = get_mock_config(device_id)
         else:
             hostname = device_id.replace("nexus_", "")
-            safe_host = hostname.replace("/", "_")
-            from routers.nexus import CONFIG_CACHE_DIR
-            config_path = CONFIG_CACHE_DIR / f"nexus_{safe_host}.txt"
-            if config_path.exists():
-                config = config_path.read_text(encoding="utf-8")
+            config = cache.get(f"config:nexus:{hostname}")
 
         if config:
             if request.headers.get("HX-Request"):
@@ -262,32 +246,21 @@ async def get_device_config(
              raise HTTPException(404, "Nexus config not found in cache. Please refresh Nexus data.")
 
     cache_key = f"config_{device_id}"
-    cached    = cache.get(cache_key)
+    loop      = asyncio.get_event_loop()
+    dnac      = _get_dnac(session)
 
-    if cached is not None:
-        if request.headers.get("HX-Request"):
-            from templates_module import templates
-            return templates.TemplateResponse(request, "partials/device_config.html", {
-                "config": cached,
-                "cached": True
-            })
-        return {"config": cached, "cached": True}
+    config = await loop.run_in_executor(None, cache.get_or_set, cache_key, lambda: dc.get_device_config(dnac, device_id), 600)
 
-    loop   = asyncio.get_event_loop()
-    dnac   = _get_dnac(session)
-    config = await loop.run_in_executor(None, dc.get_device_config, dnac, device_id)
     if not config:
         raise HTTPException(404, "Config not available for this device")
-
-    cache.set(cache_key, config, 600)
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
         return templates.TemplateResponse(request, "partials/device_config.html", {
             "config": config,
-            "cached": False
+            "cached": True # With get_or_set, it's effectively always potentially from cache
         })
-    return {"config": config, "cached": False}
+    return {"config": config, "cached": True}
 
 
 # ── IP Lookup ─────────────────────────────────────────────────────────────────
@@ -409,12 +382,9 @@ async def ip_lookup_ui(request: Request, ip: str, session: SessionEntry = Depend
 
 @router.get("/sites")
 async def list_sites(filter: Optional[str] = None, session: SessionEntry = Depends(require_auth)):
-    sites = cache.get("sites")
-    if sites is None:
-        loop  = asyncio.get_event_loop()
-        dnac  = _get_dnac(session)
-        sites = await loop.run_in_executor(None, dc.get_site_cache, dnac)
-        cache.set("sites", sites, TTL_SITES)
+    loop  = asyncio.get_event_loop()
+    dnac  = _get_dnac(session)
+    sites = await loop.run_in_executor(None, cache.get_or_set, "sites", lambda: dc.get_site_cache(dnac), TTL_SITES)
 
     if filter:
         sites = [s for s in sites if filter.lower() in s["name"].lower()]
@@ -542,12 +512,9 @@ async def config_search(req: ConfigSearchRequest, session: SessionEntry = Depend
     if not req.search_string or len(req.search_string.strip()) < 2:
         raise HTTPException(400, "search_string must be at least 2 characters")
 
-    devices = cache.get("devices")
-    if devices is None:
-        loop    = asyncio.get_event_loop()
-        dnac    = _get_dnac(session)
-        devices = await loop.run_in_executor(None, dc.get_all_devices, dnac)
-        cache.set("devices", devices, TTL_DEVICES)
+    loop    = asyncio.get_event_loop()
+    dnac    = _get_dnac(session)
+    devices = await loop.run_in_executor(None, cache.get_or_set, "devices", lambda: dc.get_all_devices(dnac), TTL_DEVICES)
 
     filtered = devices
     q = lambda field, val: val and val.lower() in ((field or "").lower())
@@ -617,19 +584,10 @@ async def config_search(req: ConfigSearchRequest, session: SessionEntry = Depend
                 config = get_mock_config(dev_id)
             else:
                 hostname = dev_id.replace("nexus_", "")
-                safe_host = hostname.replace("/", "_")
-                from routers.nexus import CONFIG_CACHE_DIR
-                config_path = CONFIG_CACHE_DIR / f"nexus_{safe_host}.txt"
-                if config_path.exists():
-                    config = config_path.read_text(encoding="utf-8")
-                else:
-                    config = None
+                config = cache.get(f"config:nexus:{hostname}")
         else:
             cfg_key = f"config_{dev_id}"
-            config  = cache.get(cfg_key)
-            if config is None:
-                config = dc.get_device_config(dnac, dev_id)
-                if config: cache.set(cfg_key, config, 600)
+            config  = cache.get_or_set(cfg_key, lambda: dc.get_device_config(dnac, dev_id), 600)
         if not config: return None
 
         lines = config.splitlines()
@@ -762,11 +720,9 @@ async def path_trace_result_ui(request: Request, flow_id: str, session: SessionE
 
 @router.get("/devices-select", response_class=HTMLResponse)
 async def device_select_partial(request: Request, session: SessionEntry = Depends(require_auth)):
-    devices = cache.get("devices") or []
-    if not devices:
-        dnac = _get_dnac(session)
-        devices = await asyncio.get_event_loop().run_in_executor(None, dc.get_all_devices, dnac)
-        cache.set("devices", devices, TTL_DEVICES)
+    loop = asyncio.get_event_loop()
+    dnac = _get_dnac(session)
+    devices = await loop.run_in_executor(None, cache.get_or_set, "devices", lambda: dc.get_all_devices(dnac), TTL_DEVICES)
     html = '<select id="device-multi-select" class="form-select" multiple style="height: 150px;">'
     for d in sorted(devices, key=lambda x: x.get("hostname", "") or ""):
         data_json = json.dumps({"ip": d.get("managementIpAddress"), "hostname": d.get("hostname"), "platform": d.get("platformId")})
