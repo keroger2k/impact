@@ -1,0 +1,169 @@
+<div class="animate-fade-in">
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+      <h4 class="mb-0 text-navy fw-bold">Network Hierarchy Engine</h4>
+      <p class="text-muted small">Aggregated visibility across ACI, DNAC, Panorama, and Nexus</p>
+    </div>
+    <div class="d-flex gap-2">
+      <button class="btn btn-outline-primary" hx-post="/api/ipam/refresh" hx-indicator="#ipam-loading" hx-target="#ipam-results" hx-on::after-request="if(event.detail.successful) { htmx.trigger('#ipam-results', 'load'); }">
+        <i class="fas fa-sync-alt me-1"></i> Refresh Discovery
+      </button>
+      <a href="/api/ipam/export" class="btn btn-navy">
+        <i class="fas fa-file-csv me-1"></i> Export SolarWinds CSV
+      </a>
+    </div>
+  </div>
+
+  <div id="ipam-loading" class="htmx-indicator text-center my-5">
+    <div class="spinner spinner-lg"></div>
+    <p class="text-muted mt-2">Aggregating prefixes from all controllers...</p>
+  </div>
+
+  <div id="ipam-results" hx-get="/api/ipam/tree" hx-trigger="load" hx-target="this">
+    <!-- Tree will be rendered here by JS -->
+    <div class="text-center my-5 py-5">
+        <i class="fas fa-network-wired fa-3x text-light mb-3"></i>
+        <p class="text-muted">Loading hierarchical IPAM view...</p>
+    </div>
+  </div>
+</div>
+
+<script>
+    document.body.addEventListener('htmx:afterOnLoad', function(evt) {
+        if (evt.detail.target.id === 'ipam-results') {
+            try {
+                const data = JSON.parse(evt.detail.xhr.responseText);
+                renderIPAMTree(data);
+            } catch (e) {
+                console.error("Failed to parse IPAM tree data", e);
+            }
+        }
+    });
+
+    function renderIPAMTree(data) {
+        const container = document.getElementById('ipam-results');
+        container.innerHTML = '';
+
+        const v4Card = createTreeCard("Global IPv4 Space (RFC1918 & Public)", data.ipv4);
+        const v6Card = createTreeCard("Global IPv6 Space (ULA & Public)", data.ipv6);
+
+        container.appendChild(v4Card);
+        container.appendChild(v6Card);
+    }
+
+    function createTreeCard(title, nodes) {
+        const card = document.createElement('div');
+        card.className = 'card shadow-sm border-0 mb-4';
+
+        const header = document.createElement('div');
+        header.className = 'card-header bg-light fw-bold text-navy';
+        header.innerHTML = `<i class="fas fa-sitemap me-2"></i>${title}`;
+        card.appendChild(header);
+
+        const body = document.createElement('div');
+        body.className = 'card-body p-0';
+
+        if (!nodes || nodes.length === 0) {
+            body.innerHTML = '<div class="p-4 text-center text-muted">No data discovered in this space.</div>';
+        } else {
+            const list = document.createElement('div');
+            list.className = 'list-group list-group-flush';
+            nodes.forEach(node => {
+                list.appendChild(createNodeElement(node));
+            });
+            body.appendChild(list);
+        }
+
+        card.appendChild(body);
+        return card;
+    }
+
+    function createNodeElement(node, depth = 0) {
+        const item = document.createElement('div');
+        item.className = 'list-group-item border-0 border-bottom';
+        item.style.paddingLeft = (depth * 2) + 'rem';
+
+        const content = document.createElement('div');
+        content.className = 'd-flex align-items-center justify-content-between';
+
+        // Left side: Icon + Name + CIDR
+        const left = document.createElement('div');
+        left.className = 'd-flex align-items-center gap-3';
+
+        const toggle = document.createElement('span');
+        toggle.className = 'text-muted cursor-pointer';
+        toggle.style.width = '20px';
+        if (node.children && node.children.length > 0) {
+            toggle.innerHTML = '<i class="fas fa-chevron-right fa-xs transition-transform"></i>';
+            toggle.onclick = (e) => {
+                const sub = item.querySelector('.sub-nodes');
+                const icon = toggle.querySelector('i');
+                if (sub.classList.contains('d-none')) {
+                    sub.classList.remove('d-none');
+                    icon.classList.add('rotate-90');
+                } else {
+                    sub.classList.add('d-none');
+                    icon.classList.remove('rotate-90');
+                }
+            };
+        }
+
+        const icon = document.createElement('span');
+        if (node.type === 'Group') icon.innerHTML = '📁';
+        else if (node.type === 'Supernet') icon.innerHTML = '📦';
+        else icon.innerHTML = '📍';
+
+        const info = document.createElement('div');
+        info.innerHTML = `
+            <div class="fw-bold text-navy">${node.cidr}</div>
+            <div class="small text-muted">${node.display_name || 'System Generated'}</div>
+        `;
+
+        left.appendChild(toggle);
+        left.appendChild(icon);
+        left.appendChild(info);
+
+        // Right side: Metadata + Flags
+        const right = document.createElement('div');
+        right.className = 'd-flex align-items-center gap-2';
+
+        if (node.site !== 'Unknown') {
+            right.innerHTML += `<span class="badge bg-light text-primary border">${node.site}</span>`;
+        }
+
+        if (node.source !== 'Unknown') {
+            right.innerHTML += `<span class="badge bg-navy-light text-navy border-navy">${node.source}</span>`;
+        }
+
+        if (node.conflicts.length > 0) {
+            right.innerHTML += `<span class="badge bg-danger" title="${node.conflicts.join(', ')}">Conflict</span>`;
+        }
+
+        if (node.overlaps.length > 0) {
+            right.innerHTML += `<span class="badge bg-warning text-dark" title="${node.overlaps.join(', ')}">Overlap</span>`;
+        }
+
+        content.appendChild(left);
+        content.appendChild(right);
+        item.appendChild(content);
+
+        if (node.children && node.children.length > 0) {
+            const subNodes = document.createElement('div');
+            subNodes.className = 'sub-nodes d-none mt-2';
+            node.children.forEach(child => {
+                subNodes.appendChild(createNodeElement(child, depth + 1));
+            });
+            item.appendChild(subNodes);
+        }
+
+        return item;
+    }
+</script>
+
+<style>
+    .cursor-pointer { cursor: pointer; }
+    .rotate-90 { transform: rotate(90deg); }
+    .transition-transform { transition: transform 0.2s; }
+    .bg-navy-light { background-color: rgba(0, 51, 102, 0.05); }
+    .border-navy { border: 1px solid rgba(0, 51, 102, 0.2); }
+</style>

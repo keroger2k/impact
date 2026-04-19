@@ -182,6 +182,14 @@ async def ip_lookup_page(request: Request, user: SessionEntry = Depends(get_curr
         return templates.TemplateResponse(request, "pages/ip_lookup_content.html", context)
     return templates.TemplateResponse(request, "ip_lookup.html", context)
 
+@router.get("/ipam", response_class=HTMLResponse)
+async def ipam_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
+    if not user: return RedirectResponse(url="/login")
+    context = {"active_page": "ipam", "username": user.username, "token": request.cookies.get("impact_token")}
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse(request, "pages/ipam_content.html", context)
+    return templates.TemplateResponse(request, "ipam.html", context)
+
 @router.get("/cache-mgmt", response_class=HTMLResponse)
 async def cache_mgmt_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
     if not user: return RedirectResponse(url="/login")

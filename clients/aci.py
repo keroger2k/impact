@@ -105,6 +105,13 @@ class ACIClient:
             if "l3extOut" in path: return {"imdata": MOCK_ACI_L3OUTS}
             if "bgpPeerEntry" in path: return {"imdata": MOCK_ACI_BGP_PEERS}
             if "l3extSubnet" in path: return {"imdata": MOCK_ACI_SUBNETS}
+            if "fvSubnet" in path:
+                return {
+                    "imdata": [
+                        {"fvSubnet": {"attributes": {"ip": "10.10.10.1/24", "dn": "uni/tn-TSA-HQ/BD-Users/subnet-[10.10.10.1/24]", "descr": "User Access"}}},
+                        {"fvSubnet": {"attributes": {"ip": "fc00:10::1/64", "dn": "uni/tn-TSA-HQ/BD-Users/subnet-[fc00:10::1/64]", "descr": "User Access IPv6"}}}
+                    ]
+                }
             if "fvAEPg" in path: return {"imdata": MOCK_ACI_EPGS}
             if "faultInst" in path: return {"imdata": MOCK_ACI_FAULT_INST}
             if "bgpDomAf.json" in path: return {"imdata": MOCK_ACI_BGP_DOMS_ALL}

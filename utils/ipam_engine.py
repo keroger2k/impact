@@ -1,0 +1,451 @@
+import logging
+import re
+import json
+import asyncio
+from typing import List, Dict, Any, Optional, Set, Tuple
+import netaddr
+from cache import cache
+import auth as auth_module
+import clients.aci as aci_client_mod
+import clients.dnac as dnac_client_mod
+import clients.ise as ise_client_mod
+import clients.panorama as pan_client_mod
+from collectors.nxos import NXOSCollector
+from routers.nexus import get_cached_nexus_inventory
+
+logger = logging.getLogger(__name__)
+
+# Constants for IP space
+PRIVATE_RANGES = [
+    netaddr.IPNetwork("10.0.0.0/8"),
+    netaddr.IPNetwork("172.16.0.0/12"),
+    netaddr.IPNetwork("100.64.0.0/10"), # CGNAT
+    netaddr.IPNetwork("fc00::/7"),      # IPv6 ULA
+]
+EXCLUDED_RANGES = [
+    netaddr.IPNetwork("192.168.0.0/16"),
+    netaddr.IPNetwork("169.254.0.0/16"), # Link-Local
+]
+
+HA_PATTERNS = re.compile(r"HA|KEEPALIVE|VPC_PEER|FAILOVER", re.IGNORECASE)
+
+PRIORITY_SOURCES = ["ACI", "DNAC", "Nexus", "Panorama", "ISE"]
+
+class IPAMNode:
+    def __init__(self, cidr: str, node_type: str = "Subnet", source: str = "Unknown"):
+        self.cidr = str(cidr)
+        self.network = netaddr.IPNetwork(cidr)
+        self.type = node_type  # Group, Supernet, Subnet
+        self.source = source
+        self.display_name = ""
+        self.description = ""
+        self.site = "Unknown"
+        self.vlan = ""
+        self.children: List['IPAMNode'] = []
+        self.conflicts = []
+        self.overlaps = []
+        self.logical_container = "" # For dual-stack linking (BD, VLAN, Pool Name)
+
+    def to_dict(self):
+        return {
+            "cidr": self.cidr,
+            "address": str(self.network.network),
+            "prefix": self.network.prefixlen,
+            "type": self.type,
+            "source": self.source,
+            "display_name": self.display_name,
+            "description": self.description,
+            "site": self.site,
+            "vlan": self.vlan,
+            "conflicts": self.conflicts,
+            "overlaps": self.overlaps,
+            "children": [c.to_dict() for c in self.children]
+        }
+
+class IPAMEngine:
+    def __init__(self):
+        self.subnets: List[IPAMNode] = []
+        self.v4_tree: List[IPAMNode] = []
+        self.v6_tree: List[IPAMNode] = []
+
+    def is_excluded(self, network: netaddr.IPNetwork, name: str = "", desc: str = "") -> bool:
+        # Skip host addresses (/32 or /128)
+        if (network.version == 4 and network.prefixlen == 32) or \
+           (network.version == 6 and network.prefixlen == 128):
+            return True
+
+        # Check explicit exclusions
+        for ex in EXCLUDED_RANGES:
+            if network in ex or ex in network:
+                return True
+        # Check HA patterns
+        if HA_PATTERNS.search(name) or HA_PATTERNS.search(desc):
+            return True
+        return False
+
+    async def discover_all(self, session, loop):
+        """Aggregate data from all sources"""
+        self.subnets = []
+
+        tasks = [
+            self._discover_aci(session, loop),
+            self._discover_dnac(session, loop),
+            self._discover_panorama(session, loop),
+            self._discover_ise(session, loop),
+            self._discover_nexus(session, loop)
+        ]
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for i, res in enumerate(results):
+            if isinstance(res, Exception):
+                logger.error(f"Discovery source {i} failed: {res}")
+
+        return self.subnets
+
+    async def _discover_aci(self, session, loop):
+        try:
+            client = auth_module.get_aci_for_session(session)
+            # Query fvSubnet for bridge domain subnets
+            data = await loop.run_in_executor(None, client.get, "api/node/class/fvSubnet.json")
+            # Also query l3extSubnet for L3Out subnets
+            l3_data = await loop.run_in_executor(None, client.get, "api/node/class/l3extSubnet.json")
+
+            all_imdata = []
+            if data and 'imdata' in data: all_imdata.extend(data['imdata'])
+            if l3_data and 'imdata' in l3_data: all_imdata.extend(l3_data['imdata'])
+
+            for item in all_imdata:
+                cls_name = list(item.keys())[0]
+                attr = item[cls_name]['attributes']
+                cidr = attr.get('ip')
+                if not cidr: continue
+
+                net = netaddr.IPNetwork(cidr)
+                name = ""
+                # Try to get BD name from DN: uni/tn-common/BD-myBD/subnet-[10.1.1.1/24]
+                dn = attr.get('dn', '')
+                bd_match = re.search(r'/BD-([^/]+)/', dn)
+                if bd_match:
+                    name = bd_match.group(1)
+
+                desc = attr.get('descr', '')
+                if self.is_excluded(net, name, desc): continue
+
+                node = IPAMNode(cidr, source="ACI")
+                node.display_name = name
+                if desc:
+                    node.description = f"{name} ({desc})"
+                else:
+                    node.description = name
+
+                # Site from Tenant
+                tenant_match = re.search(r'uni/tn-([^/]+)/', dn)
+                if tenant_match:
+                    t_name = tenant_match.group(1)
+                    # Simple heuristic: Chicago_Prod -> Chicago
+                    node.site = t_name.split('_')[0]
+
+                node.logical_container = name # BD is the container
+                self.subnets.append(node)
+        except Exception as e:
+            logger.error(f"ACI discovery failed: {e}")
+
+    async def _discover_dnac(self, session, loop):
+        from dev import DEV_MODE
+        try:
+            if DEV_MODE:
+                pools = [
+                    {"ipPoolCidr": "10.20.0.0/16", "ipPoolName": "BOS-Pool", "groupName": "Global/TSA-BOS-T1"},
+                    {"ipPoolCidr": "10.30.0.0/16", "ipPoolName": "LAX-Pool", "groupName": "Global/TSA-LAX-T1"}
+                ]
+            else:
+                dnac = auth_module.get_dnac_for_session(session)
+                resp = await loop.run_in_executor(None, dnac.custom_caller.call_api, "GET", "/dna/intent/api/v1/ip-pool")
+                pools = getattr(resp, "response", [])
+
+            for p in pools:
+                cidr = p.get('ipPoolCidr')
+                if not cidr: continue
+
+                net = netaddr.IPNetwork(cidr)
+                name = p.get('ipPoolName', '')
+                if self.is_excluded(net, name): continue
+
+                node = IPAMNode(cidr, source="DNAC")
+                node.display_name = name
+                node.description = f"Pool: {name}"
+                node.logical_container = name
+
+                # Site detection - DNAC pools are often assigned to sites
+                # The SDK doesn't always show the site in the pool list directly
+                # For now, placeholder or use groupName if present
+                node.site = p.get('groupName', 'Unknown').split('/')[-1]
+
+                self.subnets.append(node)
+        except Exception as e:
+            logger.error(f"DNAC discovery failed: {e}")
+
+    async def _discover_panorama(self, session, loop):
+        try:
+            key = auth_module.get_panorama_key_for_session(session)
+            if not key: return
+
+            devices = await loop.run_in_executor(None, pan_client_mod.fetch_firewall_interfaces, key)
+            for dev in devices:
+                dg = dev.get('device_group', 'Unknown')
+                site = dg # Panorama Site = Device Group
+
+                for iface in dev.get('interfaces', []):
+                    # IPv4
+                    v4 = iface.get('ipv4')
+                    if v4 and '/' in v4:
+                        net = netaddr.IPNetwork(v4)
+                        if not self.is_excluded(net, iface.get('name', '')):
+                            node = IPAMNode(str(net.cidr), source="Panorama")
+                            node.display_name = iface.get('name', 'Unknown')
+                            node.site = site
+                            node.logical_container = f"{dev['hostname']}-{iface['name']}"
+                            self.subnets.append(node)
+
+                    # IPv6
+                    for v6 in iface.get('ipv6', []):
+                        if '/' in v6:
+                            net = netaddr.IPNetwork(v6)
+                            if not self.is_excluded(net, iface.get('name', '')):
+                                node = IPAMNode(str(net.cidr), source="Panorama")
+                                node.display_name = iface.get('name', 'Unknown')
+                                node.site = site
+                                node.logical_container = f"{dev['hostname']}-{iface['name']}"
+                                self.subnets.append(node)
+        except Exception as e:
+            logger.error(f"Panorama discovery failed: {e}")
+
+    async def _discover_ise(self, session, loop):
+        from dev import DEV_MODE
+        try:
+            if DEV_MODE:
+                # Mock ISE Guest/VPN pools
+                mock_pools = [
+                    {"cidr": "192.168.100.0/24", "name": "ISE-Guest-Wifi", "site": "Global"},
+                    {"cidr": "10.254.0.0/16", "name": "AnyConnect-VPN", "site": "Remote"}
+                ]
+                for p in mock_pools:
+                    net = netaddr.IPNetwork(p['cidr'])
+                    if self.is_excluded(net, p['name']): continue
+                    node = IPAMNode(p['cidr'], source="ISE")
+                    node.display_name = p['name']
+                    node.site = p['site']
+                    node.description = f"ISE Managed Pool: {p['name']}"
+                    self.subnets.append(node)
+                return
+
+            # Note: ISE IP pools for Guest/VPN are often defined on the NAD (Network Access Device)
+            # and referenced by name in ISE Authorization Profiles.
+            # Direct API access to pool subnets in ISE ERS/OpenAPI is version-specific.
+            # Future enhancement: Query Authorization Profiles and extract pool metadata if available.
+            pass
+        except Exception as e:
+            logger.error(f"ISE discovery failed: {e}")
+
+    async def _discover_nexus(self, session, loop):
+        from dev import DEV_MODE
+        try:
+            if DEV_MODE:
+                # Add some mock Nexus data directly
+                mock_config = """
+interface Vlan10
+  description Users
+  ip address 10.40.10.1/24
+interface Vlan20
+  description Servers
+  ip address 10.40.20.1/24
+interface Loopback0
+  ip address 10.40.255.1/32
+"""
+                self._parse_nexus_config(mock_config, "ORD-N9K-01", "ORD")
+                return
+
+            # Nexus via SSH (already cached in some cases)
+            nexus_list = get_cached_nexus_inventory()
+            if not nexus_list:
+                return
+
+            for n in nexus_list:
+                hostname = n.get('hostname', 'Unknown')
+                site = hostname.split('-')[0] # CHI-N9K-01 -> CHI
+
+                # We need to collect/parse SVIs. The cached inventory might only have mgmt.
+                # If we have configs cached, we can parse them.
+                config = cache.get(f"config:nexus:{hostname}")
+                if config:
+                    # Parse config for SVI/Loopbacks
+                    self._parse_nexus_config(config, hostname, site)
+        except Exception as e:
+            logger.error(f"Nexus discovery failed: {e}")
+
+    def _parse_nexus_config(self, config: str, hostname: str, site: str):
+        # Very basic parser for demonstration
+        current_iface = None
+        vlan_id = ""
+        for line in config.splitlines():
+            line = line.strip()
+            if line.startswith("interface "):
+                current_iface = line.split()[-1]
+                vlan_id = ""
+                if "Vlan" in current_iface:
+                    vlan_id = current_iface.replace("Vlan", "")
+            elif current_iface and (line.startswith("ip address ") or line.startswith("ipv6 address ")):
+                parts = line.split()
+                if len(parts) < 3: continue
+                cidr = parts[2]
+                if "/" not in cidr:
+                    # Handle "ip address 10.1.1.1 255.255.255.0"
+                    if len(parts) >= 4:
+                        try:
+                            net = netaddr.IPNetwork(f"{parts[2]}/{parts[3]}")
+                            cidr = str(net.cidr)
+                        except: continue
+
+                try:
+                    net = netaddr.IPNetwork(cidr)
+                    if self.is_excluded(net, current_iface): continue
+
+                    node = IPAMNode(str(net.cidr), source="Nexus")
+                    node.display_name = current_iface
+                    node.site = site
+                    node.vlan = vlan_id
+                    node.logical_container = vlan_id if vlan_id else current_iface
+                    self.subnets.append(node)
+                except: continue
+
+    def build_tree(self):
+        """Organize flat subnets into hierarchical v4 and v6 trees"""
+        self.v4_tree = []
+        self.v6_tree = []
+
+        # 1. Deduplicate & Handle Priority
+        unique_subnets: Dict[str, IPAMNode] = {}
+        for s in self.subnets:
+            if s.cidr not in unique_subnets:
+                unique_subnets[s.cidr] = s
+            else:
+                # Priority: ACI > DNAC > Nexus > Panorama > ISE
+                current = unique_subnets[s.cidr]
+                if PRIORITY_SOURCES.index(s.source) < PRIORITY_SOURCES.index(current.source):
+                    # Flag conflict before replacing
+                    if s.site != current.site:
+                        s.conflicts.append(f"Site Conflict: {s.source} ({s.site}) vs {current.source} ({current.site})")
+                    unique_subnets[s.cidr] = s
+                elif s.site != current.site:
+                    current.conflicts.append(f"Site Conflict: {current.source} ({current.site}) vs {s.source} ({s.site})")
+
+        # 2. Separate v4 and v6
+        v4_nodes = [n for n in unique_subnets.values() if n.network.version == 4]
+        v6_nodes = [n for n in unique_subnets.values() if n.network.version == 6]
+
+        # 3. Build Trees
+        self.v4_tree = self._build_recursive_tree(v4_nodes, version=4)
+        self.v6_tree = self._build_recursive_tree(v6_nodes, version=6)
+
+        # 4. Process Dual-Stack Linking
+        self._link_dual_stack()
+
+    def _build_recursive_tree(self, nodes: List[IPAMNode], version: int) -> List[IPAMNode]:
+        if not nodes: return []
+
+        # Sort by prefix length (largest first)
+        nodes.sort(key=lambda x: x.network.prefixlen)
+
+        # Ensure root nodes exist (10.0.0.0/8, etc)
+        roots = []
+        if version == 4:
+            roots = [IPAMNode("10.0.0.0/8", "Group", "System-Generated"),
+                     IPAMNode("172.16.0.0/12", "Group", "System-Generated"),
+                     IPAMNode("100.64.0.0/10", "Group", "System-Generated")]
+        else:
+            roots = [IPAMNode("fc00::/7", "Group", "System-Generated")]
+
+        # Add nodes to tree
+        for node in nodes:
+            # Check if it fits in existing root
+            placed = False
+            for root in roots:
+                if node.network in root.network:
+                    self._insert_into_tree(root, node)
+                    placed = True
+                    break
+
+            if not placed:
+                # If public IP, create a root if needed
+                is_private = False
+                for pr in PRIVATE_RANGES:
+                    if node.network in pr:
+                        is_private = True
+                        break
+
+                if not is_private:
+                    # Create /8 or similar root for public space
+                    prefix = 8 if version == 4 else 32
+                    root_cidr = f"{node.network.network}/{prefix}"
+                    new_root = IPAMNode(root_cidr, "Group", "System-Generated")
+                    roots.append(new_root)
+                    self._insert_into_tree(new_root, node)
+                else:
+                    # It's private but outside our predefined roots? (shouldn't happen with RFC1918)
+                    roots.append(node)
+
+        # Filter empty roots and clean up
+        final_roots = []
+        for r in roots:
+            if r.children or r.source != "System-Generated":
+                final_roots.append(r)
+
+        return final_roots
+
+    def _insert_into_tree(self, parent: IPAMNode, node: IPAMNode):
+        # Find if it fits in any existing child
+        # Use a copy of children for safe removal while iterating
+        for child in list(parent.children):
+            if node.network in child.network:
+                self._insert_into_tree(child, node)
+                return
+            elif child.network in node.network:
+                # Node is a new parent for this child
+                parent.children.remove(child)
+                node.children.append(child)
+                node.type = "Supernet"
+                # Flag overlap
+                node.overlaps.append(f"Nesting Overlap: {child.cidr} ({child.source}) is inside {node.cidr}")
+
+        # Doesn't fit in children, or became a parent for some. Add to children.
+        parent.children.append(node)
+        parent.children.sort(key=lambda x: x.network.prefixlen)
+        if parent.source != "System-Generated":
+            parent.type = "Supernet"
+
+    def _link_dual_stack(self):
+        # Link based on logical_container
+        v4_map = {}
+        for n in self._flatten(self.v4_tree):
+            if n.logical_container:
+                v4_map[n.logical_container] = n
+
+        for n in self._flatten(self.v6_tree):
+            if n.logical_container and n.logical_container in v4_map:
+                v4_node = v4_map[n.logical_container]
+                # In UI they will be linked. For model, we can just store reference or flag
+                n.display_name = f"[Dual-Stack] {n.display_name}"
+                v4_node.display_name = f"[Dual-Stack] {v4_node.display_name}"
+
+    def _flatten(self, nodes: List[IPAMNode]) -> List[IPAMNode]:
+        flat = []
+        for n in nodes:
+            flat.append(n)
+            flat.extend(self._flatten(n.children))
+        return flat
+
+    def get_tree(self):
+        return {
+            "ipv4": [n.to_dict() for n in self.v4_tree],
+            "ipv6": [n.to_dict() for n in self.v6_tree]
+        }
