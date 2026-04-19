@@ -154,13 +154,17 @@ class IPAMEngine:
         from dev import DEV_MODE
         try:
             if DEV_MODE:
+                # Mock data
                 pools = [
                     {"ipPoolCidr": "10.20.0.0/16", "ipPoolName": "BOS-Pool", "groupName": "Global/TSA-BOS-T1"},
                     {"ipPoolCidr": "10.30.0.0/16", "ipPoolName": "LAX-Pool", "groupName": "Global/TSA-LAX-T1"}
                 ]
+                interfaces = [
+                    {"ipv4Address": "10.50.1.1", "ipv4Mask": "255.255.255.0", "portName": "GigabitEthernet1/0/1", "description": "User VLAN"}
+                ]
             else:
                 dnac = auth_module.get_dnac_for_session(session)
-                # Try multiple endpoints for compatibility across DNAC versions
+                # 1. Discover via IP Pools
                 pools = []
                 for endpoint in ["/dna/intent/api/v1/global-pool", "/dna/intent/api/v1/network-design/ip-pool"]:
                     try:
@@ -168,36 +172,53 @@ class IPAMEngine:
                         data = getattr(resp, "response", [])
                         if isinstance(data, list) and data:
                             pools.extend(data)
-                    except Exception as e:
-                        logger.debug(f"DNAC {endpoint} failed: {e}")
+                    except Exception: pass
 
                 if not pools:
-                    # Fallback to reserve-ip-subpool
                     try:
                         resp = await loop.run_in_executor(None, dnac.network_design.get_reserve_ip_subpool)
                         pools = getattr(resp, "response", [])
-                    except:
-                        pass
+                    except: pass
 
+                # 2. Discover via Interfaces (for SVIs/Routed ports not in pools)
+                try:
+                    import clients.dnac as dnac_client
+                    interfaces = await loop.run_in_executor(None, dnac_client.get_all_interfaces, dnac)
+                except:
+                    interfaces = []
+
+            # Process Pools
             for p in pools:
                 cidr = p.get('ipPoolCidr')
                 if not cidr: continue
-
                 net = netaddr.IPNetwork(cidr)
                 name = p.get('ipPoolName', '')
                 if self.is_excluded(net, name): continue
-
                 node = IPAMNode(cidr, source="DNAC")
                 node.display_name = name
                 node.description = f"Pool: {name}"
                 node.logical_container = name
-
-                # Site detection - DNAC pools are often assigned to sites
-                # The SDK doesn't always show the site in the pool list directly
-                # For now, placeholder or use groupName if present
                 node.site = p.get('groupName', 'Unknown').split('/')[-1]
-
                 self.subnets.append(node)
+
+            # Process Interfaces
+            for iface in interfaces:
+                ip = iface.get('ipv4Address')
+                mask = iface.get('ipv4Mask')
+                if ip and mask and ip != "N/A" and mask != "N/A":
+                    try:
+                        net = netaddr.IPNetwork(f"{ip}/{mask}")
+                        cidr = str(net.cidr)
+                        if self.is_excluded(net, iface.get('portName', '')): continue
+                        node = IPAMNode(cidr, source="DNAC")
+                        node.display_name = iface.get('portName', 'Unknown')
+                        node.description = iface.get('description', '') or node.display_name
+                        node.vlan = iface.get('vlanId', '')
+                        node.logical_container = node.vlan if node.vlan else node.display_name
+                        # Site detection for interface (harder without device map, but we can try)
+                        self.subnets.append(node)
+                    except: continue
+
         except Exception as e:
             logger.error(f"DNAC discovery failed: {e}")
 
@@ -264,37 +285,30 @@ class IPAMEngine:
             logger.error(f"ISE discovery failed: {e}")
 
     async def _discover_nexus(self, session, loop):
-        from dev import DEV_MODE
         try:
-            if DEV_MODE:
-                # Add some mock Nexus data directly
-                mock_config = """
-interface Vlan10
-  description Users
-  ip address 10.40.10.1/24
-interface Vlan20
-  description Servers
-  ip address 10.40.20.1/24
-interface Loopback0
-  ip address 10.40.255.1/32
-"""
-                self._parse_nexus_config(mock_config, "ORD-N9K-01", "ORD")
-                return
+            # 1. Use cached interfaces (faster, covers what we've already collected)
+            from routers.nexus import get_cached_nexus_interfaces
+            interfaces = get_cached_nexus_interfaces()
+            for iface in interfaces:
+                ip_cidr = iface.get('ipv4_address')
+                if ip_cidr and ip_cidr != "N/A":
+                    try:
+                        net = netaddr.IPNetwork(ip_cidr)
+                        if self.is_excluded(net, iface.get('interface_name', '')): continue
+                        node = IPAMNode(str(net.cidr), source="Nexus")
+                        node.display_name = iface.get('interface_name', 'Unknown')
+                        node.site = iface.get('hostname', 'Unknown').split('-')[0]
+                        node.logical_container = iface.get('interface_name', '')
+                        self.subnets.append(node)
+                    except: continue
 
-            # Nexus via SSH (already cached in some cases)
-            nexus_list = get_cached_nexus_inventory()
-            if not nexus_list:
-                return
-
-            for n in nexus_list:
+            # 2. Parse cached configs for anything missed or more metadata
+            nexus_inventory = get_cached_nexus_inventory()
+            for n in nexus_inventory:
                 hostname = n.get('hostname', 'Unknown')
-                site = hostname.split('-')[0] # CHI-N9K-01 -> CHI
-
-                # We need to collect/parse SVIs. The cached inventory might only have mgmt.
-                # If we have configs cached, we can parse them.
+                site = hostname.split('-')[0]
                 config = cache.get(f"config:nexus:{hostname}")
                 if config:
-                    # Parse config for SVI/Loopbacks
                     self._parse_nexus_config(config, hostname, site)
         except Exception as e:
             logger.error(f"Nexus discovery failed: {e}")

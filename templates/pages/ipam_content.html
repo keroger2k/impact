@@ -90,6 +90,7 @@
         const hasChildren = node.children && node.children.length > 0;
 
         if (hasChildren) {
+            content.title = "Click to expand/collapse";
             content.onclick = (e) => {
                 const sub = item.querySelector('.sub-nodes');
                 const icon = item.querySelector('.toggle-icon');
