@@ -1,12 +1,16 @@
 <div class="animate-fade-in">
-  <div class="d-flex justify-content-between align-items-center mb-4">
+  <div class="d-flex justify-content-between align-items-center mb-3">
     <div>
       <h4 class="mb-0 text-navy fw-bold">Network Hierarchy Engine</h4>
-      <p class="text-muted small">Aggregated visibility across ACI, DNAC, Panorama, and Nexus</p>
+      <p class="text-muted small mb-0">Aggregated visibility across ACI, DNAC, Panorama, and Nexus</p>
     </div>
     <div class="d-flex gap-2">
+      <div class="btn-group shadow-sm">
+        <button class="btn btn-outline-secondary" onclick="expandAllNodes(true)" title="Expand All"><i class="fas fa-expand-arrows-alt"></i></button>
+        <button class="btn btn-outline-secondary" onclick="expandAllNodes(false)" title="Collapse All"><i class="fas fa-compress-arrows-alt"></i></button>
+      </div>
       <div class="dropdown">
-        <button class="btn btn-outline-primary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+        <button class="btn btn-outline-navy dropdown-toggle" type="button" data-bs-toggle="dropdown">
           <i class="fas fa-sync-alt me-1"></i> Refresh Discovery
         </button>
         <ul class="dropdown-menu dropdown-menu-end shadow border-0">
@@ -21,6 +25,15 @@
       <a href="/api/ipam/export" class="btn btn-navy">
         <i class="fas fa-file-csv me-1"></i> Export SolarWinds CSV
       </a>
+    </div>
+  </div>
+
+  <div class="row mb-4">
+    <div class="col-md-6">
+        <div class="input-group shadow-sm">
+            <span class="input-group-text bg-white border-end-0"><i class="fas fa-search text-muted"></i></span>
+            <input type="text" id="ipam-filter" class="form-control border-start-0" placeholder="Filter by CIDR, Site, or Device..." onkeyup="filterIPAMTree()">
+        </div>
     </div>
   </div>
 
@@ -106,8 +119,11 @@
         }
     });
 
+    let currentIPAMData = null;
+
     function renderIPAMTree(data) {
         console.log("Rendering IPAM Tree:", data);
+        currentIPAMData = data;
         const container = document.getElementById('ipam-results');
         container.innerHTML = '';
 
@@ -116,6 +132,57 @@
 
         container.appendChild(v4Card);
         container.appendChild(v6Card);
+    }
+
+    function filterIPAMTree() {
+        if (!currentIPAMData) return;
+        const query = document.getElementById('ipam-filter').value.toLowerCase();
+
+        // Deep copy data for filtering or just re-render with filter logic
+        const filteredData = {
+            ipv4: filterNodes(currentIPAMData.ipv4, query),
+            ipv6: filterNodes(currentIPAMData.ipv6, query)
+        };
+
+        const container = document.getElementById('ipam-results');
+        container.innerHTML = '';
+        container.appendChild(createTreeCard("Global IPv4 Space (RFC1918 & Public)", filteredData.ipv4));
+        container.appendChild(createTreeCard("Global IPv6 Space (ULA & Public)", filteredData.ipv6));
+    }
+
+    function filterNodes(nodes, query) {
+        if (!query) return nodes;
+        return nodes.map(n => {
+            const matchSelf = n.cidr.toLowerCase().includes(query) ||
+                             n.site.toLowerCase().includes(query) ||
+                             n.device.toLowerCase().includes(query) ||
+                             n.display_name.toLowerCase().includes(query);
+
+            const filteredChildren = filterNodes(n.children, query);
+            if (matchSelf || filteredChildren.length > 0) {
+                // If it's a match, we mark it to be expanded by default
+                return { ...n, children: filteredChildren, _match: true };
+            }
+            return null;
+        }).filter(n => n !== null);
+    }
+
+    function expandAllNodes(expand = true) {
+        document.querySelectorAll('.sub-nodes').forEach(el => {
+            const item = el.closest('.list-group-item');
+            const icon = item.querySelector('.toggle-icon');
+            const folder = item.querySelector('.folder-icon');
+
+            if (expand) {
+                el.classList.remove('d-none');
+                if (icon && icon.tagName === 'I') icon.className = 'fas fa-chevron-down fa-sm toggle-icon text-primary';
+                if (folder) folder.className = 'fas fa-folder-open me-2 text-warning folder-icon';
+            } else {
+                el.classList.add('d-none');
+                if (icon && icon.tagName === 'I') icon.className = 'fas fa-chevron-right fa-sm toggle-icon';
+                if (folder) folder.className = 'fas fa-folder me-2 text-warning folder-icon';
+            }
+        });
     }
 
     function createTreeCard(title, nodes) {
@@ -147,11 +214,12 @@
 
     function createNodeElement(node, depth = 0) {
         const item = document.createElement('div');
-        item.className = 'list-group-item border-0 border-bottom p-0';
+        item.className = 'list-group-item border-0 p-0';
+        if (depth > 0) item.classList.add('border-start');
 
         const content = document.createElement('div');
-        content.className = 'd-flex align-items-center justify-content-between py-3 px-3 cursor-pointer hover-bg-light';
-        content.style.paddingLeft = (depth * 2 + 1) + 'rem';
+        content.className = 'd-flex align-items-center justify-content-between py-2 px-3 cursor-pointer hover-bg-light border-bottom';
+        content.style.paddingLeft = (depth * 1.5 + 1) + 'rem';
 
         const hasChildren = node.children && node.children.length > 0;
 
@@ -160,12 +228,18 @@
             content.onclick = (e) => {
                 const sub = item.querySelector('.sub-nodes');
                 const icon = item.querySelector('.toggle-icon');
-                if (sub.classList.contains('d-none')) {
+                const isCollapsed = sub.classList.contains('d-none');
+
+                if (isCollapsed) {
                     sub.classList.remove('d-none');
-                    icon.classList.add('rotate-90');
+                    if (icon && icon.tagName === 'I') icon.className = 'fas fa-chevron-down fa-sm toggle-icon text-primary';
+                    const folder = item.querySelector('.folder-icon');
+                    if (folder) folder.className = 'fas fa-folder-open me-2 text-warning folder-icon';
                 } else {
                     sub.classList.add('d-none');
-                    icon.classList.remove('rotate-90');
+                    if (icon && icon.tagName === 'I') icon.className = 'fas fa-chevron-right fa-sm toggle-icon';
+                    const folder = item.querySelector('.folder-icon');
+                    if (folder) folder.className = 'fas fa-folder me-2 text-warning folder-icon';
                 }
             };
         }
@@ -176,23 +250,24 @@
 
         const toggle = document.createElement('span');
         toggle.className = 'text-muted';
-        toggle.style.width = '24px';
+        toggle.style.width = '20px';
         toggle.style.textAlign = 'center';
         if (hasChildren) {
-            toggle.innerHTML = '<span class="toggle-icon transition-transform">▶</span>';
-            // Try Font Awesome if available
+            toggle.innerHTML = '<span class="toggle-icon">▶</span>';
             setTimeout(() => {
                 const i = document.createElement('i');
-                i.className = 'fas fa-chevron-right fa-sm toggle-icon transition-transform';
+                i.className = 'fas fa-chevron-right fa-sm toggle-icon';
                 toggle.innerHTML = '';
                 toggle.appendChild(i);
             }, 0);
         }
 
         const icon = document.createElement('span');
-        if (node.type === 'Group') icon.innerHTML = '📁';
-        else if (node.type === 'Supernet') icon.innerHTML = '📦';
-        else icon.innerHTML = '📍';
+        if (node.type === 'Group' || node.type === 'Supernet') {
+            icon.innerHTML = '<i class="fas fa-folder me-2 text-warning folder-icon"></i>';
+        } else {
+            icon.innerHTML = '<i class="fas fa-network-wired me-2 text-muted" style="font-size: 0.8rem"></i>';
+        }
 
         const info = document.createElement('div');
         info.innerHTML = `
@@ -234,7 +309,20 @@
 
         if (node.children && node.children.length > 0) {
             const subNodes = document.createElement('div');
-            subNodes.className = 'sub-nodes d-none mt-2';
+            // If it was a filter match, expand it
+            const show = node._match ? '' : 'd-none';
+            subNodes.className = `sub-nodes ${show}`;
+
+            // Sync icon state for pre-expanded nodes
+            if (node._match) {
+                setTimeout(() => {
+                    const icon = item.querySelector('.toggle-icon');
+                    if (icon && icon.tagName === 'I') icon.className = 'fas fa-chevron-down fa-sm toggle-icon text-primary';
+                    const folder = item.querySelector('.folder-icon');
+                    if (folder) folder.className = 'fas fa-folder-open me-2 text-warning folder-icon';
+                }, 0);
+            }
+
             node.children.forEach(child => {
                 subNodes.appendChild(createNodeElement(child, depth + 1));
             });
@@ -253,4 +341,9 @@
     .border-navy { border: 1px solid rgba(0, 51, 102, 0.2); }
     .hover-bg-light:hover { background-color: rgba(0,0,0,0.02); }
     .toggle-icon { pointer-events: none; }
+    .list-group-item.border-start {
+        border-left: 1px solid #dee2e6 !important;
+        margin-left: 0.85rem;
+    }
+    .folder-icon { font-size: 1.1rem; }
 </style>

@@ -97,7 +97,7 @@ for dev in MOCK_NEXUS_DEVICES:
         "device_ip": dev["managementIpAddress"],
         "platform": "nxos",
         "interface_name": "Ethernet1/1",
-        "ipv4_address": f"192.168.{MOCK_NEXUS_DEVICES.index(dev)+1}.1/24",
+        "ipv4_address": f"10.60.{MOCK_NEXUS_DEVICES.index(dev)+1}.1/24",
         "vlans": [10, 20],
         "zone": "trust",
         "mac_address": f"00:50:56:00:00:{MOCK_NEXUS_DEVICES.index(dev)+1:02x}",
@@ -424,6 +424,9 @@ def seed_cache(cache) -> None:
     # Nexus
     cache.set("nexus_inventory", MOCK_NEXUS_DEVICES, LONG)
     cache.set("nexus_interfaces", MOCK_NEXUS_INTERFACES, LONG)
+
+    for dev in MOCK_NEXUS_DEVICES:
+        cache.set(f"config:nexus:{dev['hostname']}", MOCK_CONFIGS[dev['id']], LONG)
 
 
 def create_dev_session() -> None:

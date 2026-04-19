@@ -348,7 +348,8 @@ class IPAMEngine:
     async def _discover_nexus(self, session, loop):
         try:
             # 1. Use cached interfaces (faster, covers what we've already collected)
-            from routers.nexus import get_cached_nexus_interfaces
+            from routers.nexus import get_cached_nexus_interfaces, get_nexus_devices_from_csv
+
             interfaces = get_cached_nexus_interfaces()
             for iface in interfaces:
                 ip_cidr = iface.get('ipv4_address')
@@ -358,17 +359,28 @@ class IPAMEngine:
                         if self.is_excluded(net, iface.get('interface_name', '')): continue
                         node = IPAMNode(str(net.cidr), source="Nexus")
                         node.display_name = iface.get('interface_name', 'Unknown')
-                        node.site = iface.get('hostname', 'Unknown').split('-')[0]
-                        node.device = iface.get('hostname', 'Nexus')
+
+                        hostname = iface.get('hostname', 'Unknown')
+                        # Use heuristic for site extraction
+                        match = re.match(r'^([A-Z]{3,4})', hostname)
+                        node.site = match.group(1) if match else hostname.split('-')[0]
+
+                        node.device = hostname
                         node.logical_container = iface.get('interface_name', '')
                         self.subnets.append(node)
                     except: continue
 
             # 2. Parse cached configs for anything missed or more metadata
+            # Fallback to CSV for device list if inventory cache is empty
             nexus_inventory = get_cached_nexus_inventory()
+            if not nexus_inventory:
+                nexus_inventory = get_nexus_devices_from_csv()
+
             for n in nexus_inventory:
                 hostname = n.get('hostname', 'Unknown')
-                site = hostname.split('-')[0]
+                match = re.match(r'^([A-Z]{3,4})', hostname)
+                site = match.group(1) if match else hostname.split('-')[0]
+
                 config = cache.get(f"config:nexus:{hostname}")
                 if config:
                     self._parse_nexus_config(config, hostname, site)
