@@ -310,15 +310,15 @@ async def status(session: SessionEntry = Depends(require_auth)):
 
     async def check_aci():
         try:
-            import clients.aci as ac
             from routers.aci import _get_processed_nodes
             aci_client = auth_module.get_aci_for_session(session)
-            ok = await loop.run_in_executor(None, ac.connectivity_check, aci_client)
-            if ok:
-                nodes = await _get_processed_nodes(aci_client, loop)
-                up = len([n for n in nodes if n['status'] == 'active'])
-                return {"ok": True, "detail": f"{up}/{len(nodes)} Nodes"}
-            return {"ok": False, "detail": "Login failed"}
+            # Use cached node data directly. This avoids redundant ACI logins
+            # and API calls during every sidebar poll (every 60s).
+            processed, _ = await _get_processed_nodes(aci_client, loop)
+            if processed:
+                up = len([n for n in processed if n.get('status') == 'active'])
+                return {"ok": True, "detail": f"{up}/{len(processed)} Nodes"}
+            return {"ok": False, "detail": "No nodes found"}
         except Exception as e:
             return {"ok": False, "detail": str(e)[:80]}
 

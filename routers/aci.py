@@ -63,14 +63,14 @@ async def refresh_aci_cache():
 async def _get_processed_nodes(aci, loop):
     nodes_raw = await loop.run_in_executor(None, _cached, "aci_nodes", aci.get_fabric_nodes)
     nodes = nodes_raw.get('imdata', [])
-    logger.info(f"ACI fabric nodes raw count: {len(nodes)}")
+    logger.debug(f"ACI fabric nodes raw count: {len(nodes)}")
 
     route_counts = {}
     try:
         # Fetch BGP route counts for all nodes
         doms_raw = await loop.run_in_executor(None, _cached, "aci_bgp_doms_all", aci.get_all_bgp_doms)
         doms = doms_raw.get('imdata', [])
-        logger.info(f"ACI BGP DOMs raw count: {len(doms)}")
+        logger.debug(f"ACI BGP DOMs raw count: {len(doms)}")
 
         for item in doms:
             # item is {"bgpDomAf": {"attributes": {...}}}
@@ -88,7 +88,7 @@ async def _get_processed_nodes(aci, loop):
                 # Sum up count from attributes
                 count = int(attr.get('count') or 0)
                 route_counts[node_id] = route_counts.get(node_id, 0) + count
-        logger.info(f"ACI route counts calculated: {route_counts}")
+        logger.debug(f"ACI route counts calculated: {route_counts}")
     except Exception as e:
         logger.warning(f"Failed to calculate ACI route counts: {e}")
 
@@ -112,7 +112,7 @@ async def _get_processed_nodes(aci, loop):
             "dn": attr.get('dn'),
             "route_count": route_counts.get(node_id_str, 0)
         })
-    logger.info(f"ACI fabric nodes processed: {processed}")
+    logger.debug(f"ACI fabric nodes processed: {processed}")
     return processed, nodes_raw
 
 @router.get("/fabric/nodes")

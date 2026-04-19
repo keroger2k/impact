@@ -99,9 +99,12 @@ def setup_logging():
     if root_logger.hasHandlers():
         root_logger.handlers.clear()
 
-    # Console Handler (INFO level, human-readable)
+    # Console Handler (Level configurable via env, default INFO)
+    console_level_name = os.getenv("CONSOLE_LOG_LEVEL", "INFO").upper()
+    console_level = getattr(logging, console_level_name, logging.INFO)
+
     console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
+    console_handler.setLevel(console_level)
     console_formatter = RedactingFormatter(
         "%(asctime)s [%(levelname)s] [%(correlation_id)s] %(name)s: %(message)s"
     )
