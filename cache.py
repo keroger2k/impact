@@ -128,6 +128,10 @@ class AppCache:
 
     async def warm(self):
         """Pre-fetch devices, sites, and device-site map on startup."""
+        from logger_config import set_correlation_id
+        import uuid
+        set_correlation_id(f"warm-startup-{uuid.uuid4().hex[:8]}")
+
         if self.get("devices") is None:
             await asyncio.get_event_loop().run_in_executor(None, self._load_devices)
         if self.get("sites") is None:

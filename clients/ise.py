@@ -10,6 +10,7 @@ OpenAPI base: https://{host}/api/v1/{resource}
 
 import logging
 import os
+import time
 from urllib.parse import urlencode
 
 import urllib3
@@ -88,19 +89,35 @@ def _build_url(base: str, params: dict) -> str:
     return f"{base}?{urlencode(params)}"
 
 
-def _ers_get(ise, path: str, params: dict = None) -> dict:
+def _ers_get(ise, path: str, params: dict = None, action: str = "ERS_GET") -> dict:
     """
     Single ERS GET with proper JSON headers.
     Returns a plain Python dict (never an SDK wrapper object).
     Returns {} on any error.
     """
     url = _build_url(f"/ers/config/{path}", params or {})
+    start_time = time.time()
     try:
         resp = ise.custom_caller.call_api("GET", url, headers=_ERS_HEADERS)
+        duration = int((time.time() - start_time) * 1000)
+        logger.info(f"ISE ERS GET {path}", extra={
+            "target": "ISE",
+            "action": action,
+            "status": resp.status_code if hasattr(resp, "status_code") else 200,
+            "duration_ms": duration
+        })
         raw  = getattr(resp, "response", None)
-        return _to_dict(raw)
+        data = _to_dict(raw)
+        logger.debug(f"ISE ERS Response: {data}", extra={"payload": data})
+        return data
     except Exception as e:
-        logger.warning(f"ERS GET {url}: {e}")
+        duration = int((time.time() - start_time) * 1000)
+        logger.warning(f"ERS GET {url}: {e}", extra={
+            "target": "ISE",
+            "action": action,
+            "status": 500,
+            "duration_ms": duration
+        })
         return {}
 
 
@@ -142,19 +159,39 @@ def _ers_by_id(ise, resource: str, rid: str) -> dict:
     return data
 
 
-def _openapi_get(ise, path: str, params: dict = None) -> list | dict | None:
+def _openapi_get(ise, path: str, params: dict = None, action: str = "OPENAPI_GET") -> list | dict | None:
     """Single OpenAPI GET with JSON headers. Returns plain Python object or None."""
     url = _build_url(f"/api/v1/{path}", params or {})
+    start_time = time.time()
     try:
         resp = ise.custom_caller.call_api("GET", url, headers=_ERS_HEADERS)
+        duration = int((time.time() - start_time) * 1000)
+        logger.info(f"ISE OpenAPI GET {path}", extra={
+            "target": "ISE",
+            "action": action,
+            "status": resp.status_code if hasattr(resp, "status_code") else 200,
+            "duration_ms": duration
+        })
         raw  = getattr(resp, "response", None)
         if raw is None:
             return None
+
+        data = None
         if isinstance(raw, list):
-            return [_to_dict(i) if hasattr(i, "get") else i for i in raw]
-        return _to_dict(raw)
+            data = [_to_dict(i) if hasattr(i, "get") else i for i in raw]
+        else:
+            data = _to_dict(raw)
+
+        logger.debug(f"ISE OpenAPI Response: {data}", extra={"payload": data})
+        return data
     except Exception as e:
-        logger.warning(f"OpenAPI GET {url}: {e}")
+        duration = int((time.time() - start_time) * 1000)
+        logger.warning(f"OpenAPI GET {url}: {e}", extra={
+            "target": "ISE",
+            "action": action,
+            "status": 500,
+            "duration_ms": duration
+        })
         return None
 
 

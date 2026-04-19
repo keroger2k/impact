@@ -9,10 +9,11 @@ Run:  uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 import logging
 import asyncio
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from templates_module import templates
@@ -20,11 +21,9 @@ from templates_module import templates
 import auth as auth_module
 from auth import require_auth, SessionEntry
 from routers import dnac, ise, firewall, aci, commands, import_, auth as auth_router, pages, routing, nexus, cache_mgmt
+from logger_config import setup_logging, set_correlation_id
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -32,12 +31,17 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     from dev import DEV_MODE, seed_cache, create_dev_session
     from cache import cache
+
+    # Generate correlation ID for the startup lifecycle
+    set_correlation_id(f"startup-{uuid.uuid4().hex[:8]}")
+
     if DEV_MODE:
         seed_cache(cache)
         create_dev_session()
         logger.info("DEV_MODE enabled — mock data loaded, LDAP bypassed.")
     else:
         # Initial warm-up for production using service credentials
+        # Each warm cycle should have its own ID
         asyncio.create_task(cache.warm())
 
     logger.info("IMPACT II starting up.")
@@ -60,6 +64,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def add_correlation_id(request: Request, call_next):
+    # Try to get correlation ID from header, otherwise generate new one
+    cid = request.headers.get("X-Correlation-ID") or f"req-{uuid.uuid4().hex[:8]}"
+    set_correlation_id(cid)
+
+    response = await call_next(request)
+    response.headers["X-Correlation-ID"] = cid
+    return response
 
 # ── API routers ────────────────────────────────────────────────────────────────
 _auth_dep = {"dependencies": [Depends(require_auth)]}
@@ -100,7 +114,13 @@ async def warm_cache(session: SessionEntry = Depends(require_auth)):
     from cache import cache, TTL_DEVICES, TTL_SITES
     from dev import DEV_MODE, MOCK_DEVICES
 
+    # Generate a single correlation ID for the entire warm cycle
+    warm_cid = f"warm-{uuid.uuid4().hex[:8]}"
+    set_correlation_id(warm_cid)
+    logger.info(f"Starting post-login cache warm cycle", extra={"action": "CACHE_WARM_START"})
+
     async def generate():
+        set_correlation_id(warm_cid) # Re-set in the generator for safety in async streaming
         loop = asyncio.get_event_loop()
 
         def emit(data: dict) -> str:

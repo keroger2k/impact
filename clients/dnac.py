@@ -2,7 +2,7 @@
 
 import logging
 import os
-
+import time
 import urllib3
 from dnacentersdk import api
 from dotenv import load_dotenv
@@ -63,8 +63,16 @@ def _dictify(obj) -> dict:
 def get_all_devices(dnac) -> list[dict]:
     devices, limit, offset = [], 500, 1
     while True:
+        start_time = time.time()
         try:
             page  = dnac.devices.get_device_list(limit=limit, offset=offset)
+            duration = int((time.time() - start_time) * 1000)
+            logger.info(f"DNAC GET Device List (offset={offset})", extra={
+                "target": "DNAC",
+                "action": "FETCH_DNAC_DEVICES",
+                "status": 200,
+                "duration_ms": duration
+            })
             items = page.response if hasattr(page, "response") else page
             if not items:
                 break
@@ -73,7 +81,13 @@ def get_all_devices(dnac) -> list[dict]:
                 break
             offset += limit
         except Exception as e:
-            logger.error(f"Device fetch failed at offset {offset}: {e}")
+            duration = int((time.time() - start_time) * 1000)
+            logger.error(f"Device fetch failed at offset {offset}: {e}", extra={
+                "target": "DNAC",
+                "action": "FETCH_DNAC_DEVICES",
+                "status": 500,
+                "duration_ms": duration
+            })
             break
     return devices
 
@@ -134,13 +148,29 @@ def find_best_site_match(site_cache: list, term: str) -> tuple[str | None, str |
 def get_device_config(dnac, device_id: str) -> str:
     from dev import DEV_MODE, get_mock_config
     if DEV_MODE: return get_mock_config(device_id)
+    start_time = time.time()
     try:
         resp = dnac.custom_caller.call_api(
             "GET", f"/dna/intent/api/v1/network-device/{device_id}/config"
         )
-        return getattr(resp, "response", "") or ""
+        duration = int((time.time() - start_time) * 1000)
+        logger.info(f"DNAC GET Device Config: {device_id}", extra={
+            "target": "DNAC",
+            "action": "FETCH_DNAC_CONFIG",
+            "status": 200,
+            "duration_ms": duration
+        })
+        config = getattr(resp, "response", "") or ""
+        logger.debug(f"DNAC Config Response: {config}", extra={"payload": config})
+        return config
     except Exception as e:
-        logger.warning(f"Config fetch failed for {device_id}: {e}")
+        duration = int((time.time() - start_time) * 1000)
+        logger.warning(f"Config fetch failed for {device_id}: {e}", extra={
+            "target": "DNAC",
+            "action": "FETCH_DNAC_CONFIG",
+            "status": 500,
+            "duration_ms": duration
+        })
         return ""
 
 

@@ -26,6 +26,7 @@ Data collection (two commands per device):
 
 import logging
 import re
+import time
 from typing import Dict, List, Optional, Tuple
 
 from netmiko import ConnectHandler
@@ -102,6 +103,7 @@ class NXOSCollector(BaseCollector):
         """
         logger.debug("[%s] Connecting via SSH to %s", self.hostname, self.ip_address)
 
+        start_time = time.time()
         try:
             conn = ConnectHandler(
                 device_type=NETMIKO_DEVICE_TYPE,
@@ -113,16 +115,42 @@ class NXOSCollector(BaseCollector):
                 auth_timeout=30,
                 banner_timeout=30,
             )
+            duration = int((time.time() - start_time) * 1000)
+            logger.info(f"SSH Connected: {self.hostname} ({self.ip_address})", extra={
+                "target": "Nexus",
+                "action": "SSH_CONNECT",
+                "status": 200,
+                "duration_ms": duration
+            })
         except NetmikoAuthenticationException as exc:
+            duration = int((time.time() - start_time) * 1000)
+            logger.error(f"[{self.hostname}] Authentication failed: {exc}", extra={
+                "target": "Nexus",
+                "action": "SSH_CONNECT",
+                "status": 401,
+                "duration_ms": duration
+            })
             logger.error("[%s] Authentication failed: %s", self.hostname, exc)
             res = self._error_result(f"Authentication failed: {exc}")
             return (res, None) if collect_config else res
         except NetmikoTimeoutException as exc:
-            logger.error("[%s] Connection timed out: %s", self.hostname, exc)
+            duration = int((time.time() - start_time) * 1000)
+            logger.error("[%s] Connection timed out: %s", self.hostname, exc, extra={
+                "target": "Nexus",
+                "action": "SSH_CONNECT",
+                "status": 408,
+                "duration_ms": duration
+            })
             res = self._error_result(f"Connection timed out: {exc}")
             return (res, None) if collect_config else res
         except Exception as exc:
-            logger.error("[%s] SSH connection failed: %s", self.hostname, exc)
+            duration = int((time.time() - start_time) * 1000)
+            logger.error("[%s] SSH connection failed: %s", self.hostname, exc, extra={
+                "target": "Nexus",
+                "action": "SSH_CONNECT",
+                "status": 500,
+                "duration_ms": duration
+            })
             res = self._error_result(f"SSH connection failed: {exc}")
             return (res, None) if collect_config else res
 
@@ -138,14 +166,28 @@ class NXOSCollector(BaseCollector):
     # ------------------------------------------------------------------ #
 
     def _collect_with_connection(self, conn, collect_config: bool = False) -> Tuple[List[InterfaceResult], Optional[str]]:
-
         # Step 1: interface names, MACs, IPv4
         try:
-            iface_raw = conn.send_command("show interface", read_timeout=60)
+            cmd = "show interface"
+            start_time = time.time()
+            iface_raw = conn.send_command(cmd, read_timeout=60)
+            duration = int((time.time() - start_time) * 1000)
+            logger.info(f"SSH CMD: {self.hostname} - {cmd}", extra={
+                "target": "Nexus",
+                "action": "FETCH_NEXUS_INTERFACES",
+                "status": 200,
+                "duration_ms": duration
+            })
             self._save_raw(iface_raw, "show_interface")
             iface_map = self._parse_show_interface(iface_raw)
         except Exception as exc:
-            logger.error("[%s] 'show interface' failed: %s", self.hostname, exc)
+            duration = int((time.time() - start_time) * 1000)
+            logger.error("[%s] 'show interface' failed: %s", self.hostname, exc, extra={
+                "target": "Nexus",
+                "action": "FETCH_NEXUS_INTERFACES",
+                "status": 500,
+                "duration_ms": duration
+            })
             return self._error_result(f"'show interface' failed: {exc}"), None
 
         if not iface_map:
@@ -177,11 +219,27 @@ class NXOSCollector(BaseCollector):
         # Step 3: configuration (optional)
         config = None
         if collect_config:
+            cmd = "show running-config"
+            start_time = time.time()
             try:
-                config = conn.send_command("show running-config", read_timeout=120)
+                config = conn.send_command(cmd, read_timeout=120)
+                duration = int((time.time() - start_time) * 1000)
+                logger.info(f"SSH CMD: {self.hostname} - {cmd}", extra={
+                    "target": "Nexus",
+                    "action": "FETCH_NEXUS_CONFIG",
+                    "status": 200,
+                    "duration_ms": duration
+                })
                 self._save_raw(config, "show_running_config")
+                logger.debug(f"Nexus Config: {config}", extra={"payload": config})
             except Exception as exc:
-                logger.error("[%s] 'show running-config' failed: %s", self.hostname, exc)
+                duration = int((time.time() - start_time) * 1000)
+                logger.error("[%s] 'show running-config' failed: %s", self.hostname, exc, extra={
+                    "target": "Nexus",
+                    "action": "FETCH_NEXUS_CONFIG",
+                    "status": 500,
+                    "duration_ms": duration
+                })
 
         # Step 4: merge
         results: List[InterfaceResult] = []

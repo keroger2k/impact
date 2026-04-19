@@ -5,6 +5,7 @@ clients/aci.py — Cisco ACI REST API client.
 import logging
 import os
 import re
+import time
 import urllib.parse
 import requests
 import urllib3
@@ -61,20 +62,36 @@ class ACIClient:
             }
         }
 
+        start_time = time.time()
         try:
             response = self.session.post(login_url, json=payload, verify=False, timeout=10)
+            duration = int((time.time() - start_time) * 1000)
+            logger.info(f"ACI Login: {formatted_user}", extra={
+                "target": "ACI",
+                "action": "LOGIN",
+                "status": response.status_code,
+                "duration_ms": duration
+            })
+            logger.debug(f"ACI Login payload: {payload}", extra={"payload": payload})
+
             response.raise_for_status()
             data = response.json()
             self.token = data['imdata'][0]['aaaLogin']['attributes']['token']
-            # APIC session usually uses a cookie named 'APIC-cookie'
-            # requests.Session() handles cookies automatically if they are sent in Set-Cookie header.
-            logger.info(f"Successfully logged into ACI: {self.url} as {formatted_user}")
+
+            logger.debug(f"ACI Login response: {data}", extra={"payload": data})
             return True
         except Exception as e:
-            logger.error(f"ACI Login failed for {self.url}: {e}")
+            duration = int((time.time() - start_time) * 1000)
+            status = getattr(e.response, 'status_code', 500) if hasattr(e, 'response') else 500
+            logger.error(f"ACI Login failed for {self.url}: {e}", extra={
+                "target": "ACI",
+                "action": "LOGIN",
+                "status": status,
+                "duration_ms": duration
+            })
             return False
 
-    def get(self, path):
+    def get(self, path, action="GET_DATA"):
         """Generic GET request to the APIC."""
         from dev import DEV_MODE
         if DEV_MODE:
@@ -101,20 +118,35 @@ class ACIClient:
                 return None
 
         url = f"{self.url}/{path.lstrip('/')}"
+        start_time = time.time()
         try:
             response = self.session.get(url, verify=False, timeout=15)
-            logger.info(f"ACI GET {url} → HTTP {response.status_code}")
+            duration = int((time.time() - start_time) * 1000)
+            logger.info(f"ACI GET {path}", extra={
+                "target": "ACI",
+                "action": action,
+                "status": response.status_code,
+                "duration_ms": duration
+            })
+
             response.raise_for_status()
             data = response.json()
-            logger.info(f"ACI response body: {data}")
+            logger.debug(f"ACI response body: {data}", extra={"payload": data})
             return data
         except Exception as e:
-            logger.error(f"ACI GET {url} failed: {e}")
+            duration = int((time.time() - start_time) * 1000)
+            status = getattr(e.response, 'status_code', 500) if hasattr(e, 'response') else 500
+            logger.error(f"ACI GET {path} failed: {e}", extra={
+                "target": "ACI",
+                "action": action,
+                "status": status,
+                "duration_ms": duration
+            })
             return None
 
     def get_fabric_nodes(self):
         """List all fabricNode objects."""
-        return self.get("api/node/class/fabricNode.json")
+        return self.get("api/node/class/fabricNode.json", action="FETCH_ACI_NODES")
 
     def get_l3outs(self, tenant=None):
         """Fetch L3Out configurations."""
@@ -122,25 +154,25 @@ class ACIClient:
             path = f"api/node/mo/uni/tn-{tenant}.json?query-target=subtree&target-subtree-class=l3extOut"
         else:
             path = "api/node/class/l3extOut.json"
-        return self.get(path)
+        return self.get(path, action="FETCH_ACI_L3OUTS")
 
     def get_l3out_details(self, dn):
         """Fetch details for a specific L3Out including children like node profiles and interface profiles."""
         # Query with rsp-subtree=full to get children
         path = f"api/node/mo/{_quote_dn(dn)}.json?rsp-subtree=full"
-        return self.get(path)
+        return self.get(path, action="FETCH_ACI_L3OUT_DETAIL")
 
     def get_bgp_peers(self):
         """Query bgpPeerEntry for BGP neighbor states."""
-        return self.get("api/node/class/bgpPeerEntry.json")
+        return self.get("api/node/class/bgpPeerEntry.json", action="FETCH_ACI_BGP_PEERS")
 
     def get_ospf_peers(self):
         """Query ospfAdjEp for OSPF neighbor states."""
-        return self.get("api/node/class/ospfAdjEp.json")
+        return self.get("api/node/class/ospfAdjEp.json", action="FETCH_ACI_OSPF_PEERS")
 
     def get_l3_subnets(self):
         """Query l3extSubnet for external subnet policies."""
-        return self.get("api/node/class/l3extSubnet.json")
+        return self.get("api/node/class/l3extSubnet.json", action="FETCH_ACI_SUBNETS")
 
     def get_bgp_routes(self, dn):
         """Query all BGP route types on a specific node."""
@@ -148,14 +180,14 @@ class ACIClient:
             dn = f"topology/pod-1/node-{dn}"
         # Query route classes directly to get a clean list
         path = f"api/node/mo/{_quote_dn(dn)}.json?query-target=subtree&target-subtree-class=bgpRoute,bgpBdpRoute,bgpEvpnRoute"
-        return self.get(path)
+        return self.get(path, action="FETCH_ACI_BGP_ROUTES")
 
     def get_all_bgp_doms(self):
         """Query all bgpDomAf objects across the fabric to get route counts."""
         # We query bgpDomAf and count its route children.
         # This is more accurate than counting all children of bgpDom.
         path = "api/node/class/bgpDomAf.json?rsp-subtree-class=bgpRoute,bgpBdpRoute,bgpEvpnRoute&rsp-subtree-include=count&page-size=1000"
-        return self.get(path)
+        return self.get(path, action="FETCH_ACI_BGP_DOMS")
 
     def get_epgs(self, tenant=None):
         """Fetch Endpoint Groups (fvAEPg) with health score."""
@@ -163,20 +195,20 @@ class ACIClient:
             path = f"api/node/mo/uni/tn-{_quote_dn(tenant)}.json?query-target=subtree&target-subtree-class=fvAEPg&rsp-subtree-include=health"
         else:
             path = "api/node/class/fvAEPg.json?rsp-subtree-include=health"
-        return self.get(path)
+        return self.get(path, action="FETCH_ACI_EPGS")
 
     def get_bgp_adj_rib(self, peer_dn, direction="in"):
         """Fetch BGP Received or Advertised routes for a specific peer."""
         # direction can be "in" (bgpAdjRibIn) or "out" (bgpAdjRibOut)
         cls = "bgpAdjRibIn" if direction == "in" else "bgpAdjRibOut"
         path = f"api/node/mo/{_quote_dn(peer_dn)}.json?query-target=subtree&target-subtree-class={cls}"
-        return self.get(path)
+        return self.get(path, action=f"FETCH_ACI_BGP_RIB_{direction.upper()}")
 
     def get_epg_stats(self, dn):
         """Fetch health and stats for a specific EPG."""
         # healthInst and dbgrStats
         path = f"api/node/mo/{_quote_dn(dn)}.json?rsp-subtree-include=health,stats"
-        return self.get(path)
+        return self.get(path, action="FETCH_ACI_EPG_STATS")
 
     def get_faults(self, severity=None):
         """Fetch faults."""
@@ -184,12 +216,12 @@ class ACIClient:
             path = f"api/node/class/faultInst.json?query-target-filter=eq(faultInst.severity,\"{severity}\")"
         else:
             path = "api/node/class/faultInst.json"
-        return self.get(path)
+        return self.get(path, action="FETCH_ACI_FAULTS")
 
     def get_health_score(self, dn="topology/health"):
         """Fetch health score for a specific DN."""
         path = f"api/node/mo/{_quote_dn(dn)}.json?rsp-subtree-include=health"
-        return self.get(path)
+        return self.get(path, action="FETCH_ACI_HEALTH")
 
     def get_overall_health(self):
         """Fetch overall system health score."""
