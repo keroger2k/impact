@@ -184,6 +184,7 @@ class IPAMEngine:
     async def _discover_dnac(self, session, loop):
         from dev import DEV_MODE
         try:
+            device_map = {} # deviceId -> {hostname, site}
             if DEV_MODE:
                 # Mock data
                 pools = [
@@ -191,10 +192,25 @@ class IPAMEngine:
                     {"ipPoolCidr": "10.30.0.0/16", "ipPoolName": "LAX-Pool", "groupName": "Global/TSA-LAX-T1"}
                 ]
                 interfaces = [
-                    {"ipv4Address": "10.50.1.1", "ipv4Mask": "255.255.255.0", "portName": "GigabitEthernet1/0/1", "description": "User VLAN"}
+                    {"ipv4Address": "10.50.1.1", "ipv4Mask": "255.255.255.0", "portName": "GigabitEthernet1/0/1", "description": "User VLAN", "deviceId": "dev1"}
                 ]
+                device_map = {"dev1": {"hostname": "BOS-SW-01", "site": "BOS"}}
             else:
                 dnac = auth_module.get_dnac_for_session(session)
+                # Build device map for metadata
+                import clients.dnac as dnac_client
+                devices = await loop.run_in_executor(None, dnac_client.get_all_devices, dnac)
+                site_cache = await loop.run_in_executor(None, dnac_client.get_site_cache, dnac)
+                site_map = await loop.run_in_executor(None, dnac_client.build_device_site_map, dnac, site_cache)
+
+                for d in devices:
+                    d_id = d.get('instanceUuid')
+                    if d_id:
+                        device_map[d_id] = {
+                            "hostname": d.get('hostname', 'Unknown'),
+                            "site": site_map.get(d_id, 'Unknown').split('/')[-1]
+                        }
+
                 # 1. Discover via IP Pools
                 pools = []
                 for endpoint in ["/dna/intent/api/v1/global-pool", "/dna/intent/api/v1/network-design/ip-pool"]:
@@ -245,9 +261,12 @@ class IPAMEngine:
                         node.display_name = iface.get('portName', 'Unknown')
                         node.description = iface.get('description', '') or node.display_name
                         node.vlan = iface.get('vlanId', '')
-                        node.device = iface.get('hostname', 'DNAC-Managed')
+
+                        d_info = device_map.get(iface.get('deviceId'), {})
+                        node.device = d_info.get('hostname', iface.get('hostname', 'DNAC-Managed'))
+                        node.site = d_info.get('site', 'Unknown')
+
                         node.logical_container = node.vlan if node.vlan else node.display_name
-                        # Site detection for interface (harder without device map, but we can try)
                         self.subnets.append(node)
                     except: continue
 
@@ -262,7 +281,15 @@ class IPAMEngine:
             devices = await loop.run_in_executor(None, pan_client_mod.fetch_firewall_interfaces, key)
             for dev in devices:
                 dg = dev.get('device_group', 'Unknown')
-                site = dg # Panorama Site = Device Group
+                # Panorama Site = Device Group split by / (SiteHierarchy)
+                site = dg.split('/')[-1] if '/' in dg else dg
+
+                # Further site extraction from hostname (e.g. SDCZFWL100 -> SDCZ)
+                hostname = dev.get('hostname', '')
+                if site == 'Unknown' or site == 'Global' or site == 'Firewall':
+                    match = re.match(r'^([A-Z]{3,4})', hostname)
+                    if match:
+                        site = match.group(1)
 
                 for iface in dev.get('interfaces', []):
                     # IPv4
