@@ -128,12 +128,17 @@ class AppCache:
 
     async def warm(self):
         """Pre-fetch devices, sites, and device-site map on startup."""
+        from logger_config import set_correlation_id, run_with_context
+        import uuid
+        set_correlation_id(f"warm-startup-{uuid.uuid4().hex[:8]}")
+
+        loop = asyncio.get_event_loop()
         if self.get("devices") is None:
-            await asyncio.get_event_loop().run_in_executor(None, self._load_devices)
+            await loop.run_in_executor(None, run_with_context(self._load_devices))
         if self.get("sites") is None:
-            await asyncio.get_event_loop().run_in_executor(None, self._load_sites)
+            await loop.run_in_executor(None, run_with_context(self._load_sites))
         if self.get("device_site_map") is None:
-            await asyncio.get_event_loop().run_in_executor(None, self._load_device_site_map)
+            await loop.run_in_executor(None, run_with_context(self._load_device_site_map))
 
         # Nexus warm-up
         if self.get("nexus_inventory") is None:

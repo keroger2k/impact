@@ -9,10 +9,11 @@ Run:  uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 import logging
 import asyncio
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from templates_module import templates
@@ -20,11 +21,9 @@ from templates_module import templates
 import auth as auth_module
 from auth import require_auth, SessionEntry
 from routers import dnac, ise, firewall, aci, commands, import_, auth as auth_router, pages, routing, nexus, cache_mgmt
+from logger_config import setup_logging, set_correlation_id, run_with_context
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -32,12 +31,17 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     from dev import DEV_MODE, seed_cache, create_dev_session
     from cache import cache
+
+    # Generate correlation ID for the startup lifecycle
+    set_correlation_id(f"startup-{uuid.uuid4().hex[:8]}")
+
     if DEV_MODE:
         seed_cache(cache)
         create_dev_session()
         logger.info("DEV_MODE enabled — mock data loaded, LDAP bypassed.")
     else:
         # Initial warm-up for production using service credentials
+        # Each warm cycle should have its own ID
         asyncio.create_task(cache.warm())
 
     logger.info("IMPACT II starting up.")
@@ -60,6 +64,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def add_correlation_id(request: Request, call_next):
+    # Try to get correlation ID from header, otherwise generate new one
+    cid = request.headers.get("X-Correlation-ID") or f"req-{uuid.uuid4().hex[:8]}"
+    set_correlation_id(cid)
+
+    response = await call_next(request)
+    response.headers["X-Correlation-ID"] = cid
+    return response
 
 # ── API routers ────────────────────────────────────────────────────────────────
 _auth_dep = {"dependencies": [Depends(require_auth)]}
@@ -100,7 +114,13 @@ async def warm_cache(session: SessionEntry = Depends(require_auth)):
     from cache import cache, TTL_DEVICES, TTL_SITES
     from dev import DEV_MODE, MOCK_DEVICES
 
+    # Generate a single correlation ID for the entire warm cycle
+    warm_cid = f"warm-{uuid.uuid4().hex[:8]}"
+    set_correlation_id(warm_cid)
+    logger.info(f"Starting post-login cache warm cycle", extra={"action": "CACHE_WARM_START"})
+
     async def generate():
+        set_correlation_id(warm_cid) # Re-set in the generator for safety in async streaming
         loop = asyncio.get_event_loop()
 
         def emit(data: dict) -> str:
@@ -141,7 +161,7 @@ async def warm_cache(session: SessionEntry = Depends(require_auth)):
             yield emit({"step": "devices", "status": "loading",
                         "message": "Loading devices from Catalyst Center…"})
             try:
-                devices = await loop.run_in_executor(None, dc.get_all_devices, dnac)
+                devices = await loop.run_in_executor(None, run_with_context(dc.get_all_devices, dnac))
                 cache.set("devices", devices, TTL_DEVICES)
                 yield emit({"step": "devices", "status": "done",
                             "message": f"{len(devices):,} devices loaded from Catalyst Center"})
@@ -158,7 +178,7 @@ async def warm_cache(session: SessionEntry = Depends(require_auth)):
         else:
             yield emit({"step": "sites", "status": "loading", "message": "Loading sites…"})
             try:
-                sites = await loop.run_in_executor(None, dc.get_site_cache, dnac)
+                sites = await loop.run_in_executor(None, run_with_context(dc.get_site_cache, dnac))
                 cache.set("sites", sites, TTL_SITES)
                 yield emit({"step": "sites", "status": "done",
                             "message": f"{len(sites):,} sites loaded"})
@@ -177,7 +197,7 @@ async def warm_cache(session: SessionEntry = Depends(require_auth)):
                         "message": "Building device-to-site map (this may take a minute)…"})
             try:
                 dev_site_map = await loop.run_in_executor(
-                    None, dc.build_device_site_map, dnac, sites or []
+                    None, run_with_context(dc.build_device_site_map, dnac, sites or [])
                 )
                 cache.set("device_site_map", dev_site_map, TTL_SITES)
                 yield emit({"step": "sitemap", "status": "done",
@@ -190,7 +210,7 @@ async def warm_cache(session: SessionEntry = Depends(require_auth)):
         yield emit({"step": "ise", "status": "loading", "message": "Connecting to Cisco ISE…"})
         try:
             ise = auth_module.get_ise_for_session(session)
-            ok  = await loop.run_in_executor(None, ic.connectivity_check, ise)
+            ok  = await loop.run_in_executor(None, run_with_context(ic.connectivity_check, ise))
             yield emit({"step": "ise", "status": "done" if ok else "error",
                         "message": "ISE connected" if ok else "ISE unreachable"})
         except Exception as e:
@@ -200,7 +220,7 @@ async def warm_cache(session: SessionEntry = Depends(require_auth)):
         yield emit({"step": "panorama", "status": "loading", "message": "Connecting to Panorama…"})
         try:
             key      = auth_module.get_panorama_key_for_session(session)
-            ok, detail = await loop.run_in_executor(None, pc.connectivity_check_with_key, key)
+            ok, detail = await loop.run_in_executor(None, run_with_context(pc.connectivity_check_with_key, key))
             yield emit({"step": "panorama", "status": "done" if ok else "error",
                         "message": detail if ok else f"Panorama: {detail}"})
         except Exception as e:
@@ -212,7 +232,7 @@ async def warm_cache(session: SessionEntry = Depends(require_auth)):
         try:
             aci_client = auth_module.get_aci_for_session(session)
             import clients.aci as ac
-            ok = await loop.run_in_executor(None, ac.connectivity_check, aci_client)
+            ok = await loop.run_in_executor(None, run_with_context(ac.connectivity_check, aci_client))
             yield emit({"step": "aci", "status": "done" if ok else "error",
                         "message": "ACI connected" if ok else "ACI login failed"})
         except Exception as e:
@@ -263,7 +283,7 @@ async def status(session: SessionEntry = Depends(require_auth)):
             dnac = auth_module.get_dnac_for_session(session)
             result = await loop.run_in_executor(
                 None,
-                lambda: dnac.custom_caller.call_api("GET", "/dna/intent/api/v1/network-device/count")
+                run_with_context(lambda: dnac.custom_caller.call_api("GET", "/dna/intent/api/v1/network-device/count"))
             )
             count = getattr(result, "response", 0)
             return {"ok": True, "detail": f"{count:,} devices"}
@@ -272,33 +292,48 @@ async def status(session: SessionEntry = Depends(require_auth)):
 
     async def check_ise():
         try:
+            # Check cache for status first to avoid redundant API calls every 60s
+            from cache import cache, TTL_STATUS
+            cached_status = cache.get("status_ise_live")
+            if cached_status is not None:
+                return cached_status
+
             import clients.ise as ic
             ise = auth_module.get_ise_for_session(session)
-            ok  = await loop.run_in_executor(None, ic.connectivity_check, ise)
-            return {"ok": ok, "detail": "Connected" if ok else "Unreachable"}
+            ok  = await loop.run_in_executor(None, run_with_context(ic.connectivity_check, ise))
+            res = {"ok": ok, "detail": "Connected" if ok else "Unreachable"}
+            cache.set("status_ise_live", res, TTL_STATUS)
+            return res
         except Exception as e:
             return {"ok": False, "detail": str(e)[:80]}
 
     async def check_panorama():
         try:
+            from cache import cache, TTL_STATUS
+            cached_status = cache.get("status_pan_live")
+            if cached_status is not None:
+                return cached_status
+
             import clients.panorama as pc
             key = auth_module.get_panorama_key_for_session(session)
-            ok, detail = await loop.run_in_executor(None, pc.connectivity_check_with_key, key)
-            return {"ok": ok, "detail": detail}
+            ok, detail = await loop.run_in_executor(None, run_with_context(pc.connectivity_check_with_key, key))
+            res = {"ok": ok, "detail": detail}
+            cache.set("status_pan_live", res, TTL_STATUS)
+            return res
         except Exception as e:
             return {"ok": False, "detail": str(e)[:80]}
 
     async def check_aci():
         try:
-            import clients.aci as ac
             from routers.aci import _get_processed_nodes
             aci_client = auth_module.get_aci_for_session(session)
-            ok = await loop.run_in_executor(None, ac.connectivity_check, aci_client)
-            if ok:
-                nodes = await _get_processed_nodes(aci_client, loop)
-                up = len([n for n in nodes if n['status'] == 'active'])
-                return {"ok": True, "detail": f"{up}/{len(nodes)} Nodes"}
-            return {"ok": False, "detail": "Login failed"}
+            # Use cached node data directly. This avoids redundant ACI logins
+            # and API calls during every sidebar poll (every 60s).
+            processed, _ = await _get_processed_nodes(aci_client, loop)
+            if processed:
+                up = len([n for n in processed if n.get('status') == 'active'])
+                return {"ok": True, "detail": f"{up}/{len(processed)} Nodes"}
+            return {"ok": False, "detail": "No nodes found"}
         except Exception as e:
             return {"ok": False, "detail": str(e)[:80]}
 

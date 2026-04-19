@@ -14,6 +14,7 @@ Required env vars:
 import ipaddress
 import logging
 import os
+import time
 import xml.etree.ElementTree as ET
 
 import requests
@@ -38,6 +39,7 @@ BASE_XPATH = "/config/devices/entry[@name='localhost.localdomain']"
 def _keygen(host: str, user: str, pwd: str) -> str | None:
     """Exchange credentials for a Panorama API key."""
     if not host: return None
+    start_time = time.time()
     try:
         host_clean = host.strip().split('/')[0]
         resp = requests.get(
@@ -46,6 +48,13 @@ def _keygen(host: str, user: str, pwd: str) -> str | None:
             verify=False,
             timeout=15,
         )
+        duration = int((time.time() - start_time) * 1000)
+        logger.info(f"Panorama Keygen: {user}", extra={
+            "target": "Panorama",
+            "action": "KEYGEN",
+            "status": resp.status_code,
+            "duration_ms": duration
+        })
         root   = ET.fromstring(resp.text)
         key_el = root.find(".//key")
         if key_el is not None and key_el.text:
@@ -87,6 +96,7 @@ def _config_get(xpath: str, api_key: str) -> ET.Element | None:
     """Panorama config GET — returns the <result> element or None."""
     host = os.getenv("PANORAMA_HOST")
     if not host: return None
+    start_time = time.time()
     try:
         # Sanitize host to prevent Error #4 (idna codec empty label)
         host_clean = host.strip().split('/')[0]
@@ -101,6 +111,14 @@ def _config_get(xpath: str, api_key: str) -> ET.Element | None:
             verify=False,
             timeout=30,
         )
+        duration = int((time.time() - start_time) * 1000)
+        logger.info(f"Panorama Config GET: {xpath}", extra={
+            "target": "Panorama",
+            "action": "CONFIG_GET",
+            "status": resp.status_code,
+            "duration_ms": duration
+        })
+        logger.debug(f"Panorama response: {resp.text}", extra={"payload": resp.text})
         root   = ET.fromstring(resp.text)
         status = root.get("status", "")
         if status != "success":
@@ -116,6 +134,7 @@ def _op(cmd: str, api_key: str) -> ET.Element | None:
     """Panorama op command — returns the <result> element or None."""
     host = os.getenv("PANORAMA_HOST")
     if not host: return None
+    start_time = time.time()
     try:
         host_clean = host.strip().split('/')[0]
         resp = requests.get(
@@ -124,6 +143,14 @@ def _op(cmd: str, api_key: str) -> ET.Element | None:
             verify=False,
             timeout=30,
         )
+        duration = int((time.time() - start_time) * 1000)
+        logger.info(f"Panorama OP: {cmd}", extra={
+            "target": "Panorama",
+            "action": "OP",
+            "status": resp.status_code,
+            "duration_ms": duration
+        })
+        logger.debug(f"Panorama response: {resp.text}", extra={"payload": resp.text})
         root = ET.fromstring(resp.text)
         return root.find("result")
     except Exception as e:
@@ -720,8 +747,8 @@ def get_managed_devices(api_key: str) -> list[dict]:
         
         # Log the entire XML structure for debugging
         xml_str = ET.tostring(result, encoding='unicode')
-        print(f"[DEVICES] XML Response (first 2000 chars):\n{xml_str[:2000]}\n")
-        logger.info(f"Panorama op response (first 2000 chars): {xml_str[:2000]}")
+        # print(f"[DEVICES] XML Response (first 2000 chars):\n{xml_str[:2000]}\n")
+        logger.debug(f"Panorama op response (first 2000 chars): {xml_str[:2000]}")
         logger.info(f"Result tag: {result.tag}, children tags: {[child.tag for child in result]}")
         
         # Try multiple XPath patterns (Panorama versions vary)
