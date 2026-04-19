@@ -160,8 +160,24 @@ class IPAMEngine:
                 ]
             else:
                 dnac = auth_module.get_dnac_for_session(session)
-                resp = await loop.run_in_executor(None, dnac.custom_caller.call_api, "GET", "/dna/intent/api/v1/ip-pool")
-                pools = getattr(resp, "response", [])
+                # Try multiple endpoints for compatibility across DNAC versions
+                pools = []
+                for endpoint in ["/dna/intent/api/v1/global-pool", "/dna/intent/api/v1/network-design/ip-pool"]:
+                    try:
+                        resp = await loop.run_in_executor(None, dnac.custom_caller.call_api, "GET", endpoint)
+                        data = getattr(resp, "response", [])
+                        if isinstance(data, list) and data:
+                            pools.extend(data)
+                    except Exception as e:
+                        logger.debug(f"DNAC {endpoint} failed: {e}")
+
+                if not pools:
+                    # Fallback to reserve-ip-subpool
+                    try:
+                        resp = await loop.run_in_executor(None, dnac.network_design.get_reserve_ip_subpool)
+                        pools = getattr(resp, "response", [])
+                    except:
+                        pass
 
             for p in pools:
                 cidr = p.get('ipPoolCidr')
@@ -331,13 +347,16 @@ interface Loopback0
             else:
                 # Priority: ACI > DNAC > Nexus > Panorama > ISE
                 current = unique_subnets[s.cidr]
+                # Merge metadata/conflicts
+                if s.site != current.site:
+                    conflict_msg = f"Site Conflict: {s.source} ({s.site}) vs {current.source} ({current.site})"
+                    if conflict_msg not in current.conflicts:
+                        current.conflicts.append(conflict_msg)
+
                 if PRIORITY_SOURCES.index(s.source) < PRIORITY_SOURCES.index(current.source):
-                    # Flag conflict before replacing
-                    if s.site != current.site:
-                        s.conflicts.append(f"Site Conflict: {s.source} ({s.site}) vs {current.source} ({current.site})")
+                    # Transfer conflicts to the new winner
+                    s.conflicts = list(set(s.conflicts + current.conflicts))
                     unique_subnets[s.cidr] = s
-                elif s.site != current.site:
-                    current.conflicts.append(f"Site Conflict: {current.source} ({current.site}) vs {s.source} ({s.site})")
 
         # 2. Separate v4 and v6
         v4_nodes = [n for n in unique_subnets.values() if n.network.version == 4]
@@ -370,7 +389,18 @@ interface Loopback0
             # Check if it fits in existing root
             placed = False
             for root in roots:
-                if node.network in root.network:
+                if node.network == root.network:
+                    # Merge discovered node into system root
+                    root.source = node.source
+                    root.display_name = node.display_name
+                    root.description = node.description
+                    root.site = node.site
+                    root.vlan = node.vlan
+                    root.conflicts = node.conflicts
+                    root.logical_container = node.logical_container
+                    placed = True
+                    break
+                elif node.network in root.network:
                     self._insert_into_tree(root, node)
                     placed = True
                     break

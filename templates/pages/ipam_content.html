@@ -41,6 +41,7 @@
     });
 
     function renderIPAMTree(data) {
+        console.log("Rendering IPAM Tree:", data);
         const container = document.getElementById('ipam-results');
         container.innerHTML = '';
 
@@ -80,24 +81,18 @@
 
     function createNodeElement(node, depth = 0) {
         const item = document.createElement('div');
-        item.className = 'list-group-item border-0 border-bottom';
-        item.style.paddingLeft = (depth * 2) + 'rem';
+        item.className = 'list-group-item border-0 border-bottom p-0';
 
         const content = document.createElement('div');
-        content.className = 'd-flex align-items-center justify-content-between';
+        content.className = 'd-flex align-items-center justify-content-between py-3 px-3 cursor-pointer hover-bg-light';
+        content.style.paddingLeft = (depth * 2 + 1) + 'rem';
 
-        // Left side: Icon + Name + CIDR
-        const left = document.createElement('div');
-        left.className = 'd-flex align-items-center gap-3';
+        const hasChildren = node.children && node.children.length > 0;
 
-        const toggle = document.createElement('span');
-        toggle.className = 'text-muted cursor-pointer';
-        toggle.style.width = '20px';
-        if (node.children && node.children.length > 0) {
-            toggle.innerHTML = '<i class="fas fa-chevron-right fa-xs transition-transform"></i>';
-            toggle.onclick = (e) => {
+        if (hasChildren) {
+            content.onclick = (e) => {
                 const sub = item.querySelector('.sub-nodes');
-                const icon = toggle.querySelector('i');
+                const icon = item.querySelector('.toggle-icon');
                 if (sub.classList.contains('d-none')) {
                     sub.classList.remove('d-none');
                     icon.classList.add('rotate-90');
@@ -106,6 +101,25 @@
                     icon.classList.remove('rotate-90');
                 }
             };
+        }
+
+        // Left side: Icon + Name + CIDR
+        const left = document.createElement('div');
+        left.className = 'd-flex align-items-center gap-3';
+
+        const toggle = document.createElement('span');
+        toggle.className = 'text-muted';
+        toggle.style.width = '24px';
+        toggle.style.textAlign = 'center';
+        if (hasChildren) {
+            toggle.innerHTML = '<span class="toggle-icon transition-transform">▶</span>';
+            // Try Font Awesome if available
+            setTimeout(() => {
+                const i = document.createElement('i');
+                i.className = 'fas fa-chevron-right fa-sm toggle-icon transition-transform';
+                toggle.innerHTML = '';
+                toggle.appendChild(i);
+            }, 0);
         }
 
         const icon = document.createElement('span');
@@ -163,7 +177,9 @@
 <style>
     .cursor-pointer { cursor: pointer; }
     .rotate-90 { transform: rotate(90deg); }
-    .transition-transform { transition: transform 0.2s; }
+    .transition-transform { transition: transform 0.2s; display: inline-block; }
     .bg-navy-light { background-color: rgba(0, 51, 102, 0.05); }
     .border-navy { border: 1px solid rgba(0, 51, 102, 0.2); }
+    .hover-bg-light:hover { background-color: rgba(0,0,0,0.02); }
+    .toggle-icon { pointer-events: none; }
 </style>
