@@ -54,11 +54,13 @@ def _flatten_rules(rules_cache: dict, target_dgs: list[str] | None) -> list[dict
         if r.get("rulebase") == "post": result.append(r)
     return result
 
+from logger_config import run_with_context
+
 @router.get("/device-groups")
 async def list_device_groups(request: Request, session: SessionEntry = Depends(require_auth)):
     key  = _get_key(session)
     loop = asyncio.get_event_loop()
-    dgs = await loop.run_in_executor(None, cache.get_or_set, "pan_device_groups", lambda: pc.get_device_groups(key), PAN_TTL)
+    dgs = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_device_groups", lambda: pc.get_device_groups(key), PAN_TTL)
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
@@ -75,12 +77,12 @@ async def policy_lookup(req: PolicyLookupRequest, session: SessionEntry = Depend
             raise HTTPException(400, f"'{val}' is not a valid IP address")
     key  = _get_key(session)
     loop = asyncio.get_event_loop()
-    all_dgs = await loop.run_in_executor(None, cache.get_or_set, "pan_device_groups", lambda: pc.get_device_groups(key), PAN_TTL)
+    all_dgs = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_device_groups", lambda: pc.get_device_groups(key), PAN_TTL)
 
-    addr_data = await loop.run_in_executor(None, cache.get_or_set, "pan_addr", lambda: pc.get_address_objects_and_groups(key, all_dgs), PAN_TTL)
+    addr_data = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_addr", lambda: pc.get_address_objects_and_groups(key, all_dgs), PAN_TTL)
     objects, groups = addr_data
 
-    svc_data = await loop.run_in_executor(None, cache.get_or_set, "pan_svc", lambda: pc.get_services(key, all_dgs), PAN_TTL)
+    svc_data = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_svc", lambda: pc.get_services(key, all_dgs), PAN_TTL)
     svc_obj, svc_grp = svc_data
 
     def load_rules():
@@ -91,7 +93,7 @@ async def policy_lookup(req: PolicyLookupRequest, session: SessionEntry = Depend
             by_dg.setdefault(dg, []).append(rule)
         return {"dg_order": all_dgs, "by_dg": by_dg}
 
-    rules_cache = await loop.run_in_executor(None, cache.get_or_set, "pan_rules", load_rules, PAN_TTL)
+    rules_cache = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_rules", load_rules, PAN_TTL)
     target_dgs = req.device_groups or None
     rules = _flatten_rules(rules_cache, target_dgs)
     matches = pc.find_matching_rules(
@@ -168,7 +170,7 @@ async def list_firewall_interfaces(request: Request, session: SessionEntry = Dep
     try:
         key  = _get_key(session)
         loop = asyncio.get_event_loop()
-        devices = await loop.run_in_executor(None, cache.get_or_set, "pan_interfaces", lambda: pc.fetch_firewall_interfaces(key), TTL_PAN_INTERFACES)
+        devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_interfaces", lambda: pc.fetch_firewall_interfaces(key), TTL_PAN_INTERFACES)
         if devices is None:
             devices = []
     except Exception as e:
@@ -186,7 +188,7 @@ async def refresh_firewall_interfaces(request: Request, session: SessionEntry = 
     cache.invalidate("pan_interfaces")
     key  = _get_key(session)
     loop = asyncio.get_event_loop()
-    devices = await loop.run_in_executor(None, cache.get_or_set, "pan_interfaces", lambda: pc.fetch_firewall_interfaces(key), TTL_PAN_INTERFACES)
+    devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_interfaces", lambda: pc.fetch_firewall_interfaces(key), TTL_PAN_INTERFACES)
     if request.headers.get("HX-Request"):
         from templates_module import templates
         return templates.TemplateResponse(request, "partials/firewall_interfaces.html", {"items": devices})
@@ -196,7 +198,7 @@ async def refresh_firewall_interfaces(request: Request, session: SessionEntry = 
 async def list_managed_devices(request: Request, session: SessionEntry = Depends(require_auth)):
     key  = _get_key(session)
     loop = asyncio.get_event_loop()
-    cached = await loop.run_in_executor(None, cache.get_or_set, "pan_managed_devices", lambda: pc.get_managed_devices(key), PAN_TTL)
+    cached = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_managed_devices", lambda: pc.get_managed_devices(key), PAN_TTL)
     if request.headers.get("HX-Request"):
         from templates_module import templates
         return templates.TemplateResponse(request, "partials/firewall_devices.html", {"items": cached})
@@ -239,7 +241,7 @@ async def get_device_group_policies(request: Request, device_group: str, session
         key  = _get_key(session)
         loop = asyncio.get_event_loop()
         # Fetching pre-rules and post-rules for this DG
-        rules = await loop.run_in_executor(None, pc.get_all_security_rules, key, [device_group])
+        rules = await loop.run_in_executor(None, run_with_context(pc.get_all_security_rules), key, [device_group])
 
     if request.headers.get("HX-Request"):
         from templates_module import templates

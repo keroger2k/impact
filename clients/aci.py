@@ -186,7 +186,8 @@ class ACIClient:
         """Query all bgpDomAf objects across the fabric to get route counts."""
         # We query bgpDomAf and count its route children.
         # This is more accurate than counting all children of bgpDom.
-        path = "api/node/class/bgpDomAf.json?rsp-subtree-class=bgpRoute,bgpBdpRoute,bgpEvpnRoute&rsp-subtree-include=count&page-size=1000"
+        # We remove redundant query parameters that can cause 400 errors on some versions
+        path = "api/node/class/bgpDomAf.json?rsp-subtree-include=count&page-size=1000"
         return self.get(path, action="FETCH_ACI_BGP_DOMS")
 
     def get_epgs(self, tenant=None):
@@ -234,6 +235,7 @@ class ACIClient:
 
     def get_pod_health(self):
         """Fetch health scores for pods."""
+        # Some ACI versions prefer fabricPod objects directly
         path = "api/node/class/fabricPod.json?rsp-subtree-include=health"
         return self.get(path)
 

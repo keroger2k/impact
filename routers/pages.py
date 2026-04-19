@@ -3,6 +3,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from templates_module import templates
 import auth as auth_module
 from auth import SessionEntry, verify_ldap_or_mock
+from logger_config import run_with_context
 import logging
 
 logger = logging.getLogger(__name__)
@@ -48,7 +49,7 @@ async def dashboard(request: Request, user: SessionEntry = Depends(get_current_u
     dnac = _get_dnac(user)
 
     stats = await device_stats(user)
-    issues = await loop.run_in_executor(None, dc.get_recent_issues, dnac)
+    issues = await loop.run_in_executor(None, run_with_context(dc.get_recent_issues), dnac)
 
     # Status check is live
     from main import status

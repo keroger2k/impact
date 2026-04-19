@@ -60,15 +60,17 @@ async def refresh_aci_cache():
 
 # ── Fabric Nodes ──────────────────────────────────────────────────────────────
 
+from logger_config import run_with_context
+
 async def _get_processed_nodes(aci, loop):
-    nodes_raw = await loop.run_in_executor(None, _cached, "aci_nodes", aci.get_fabric_nodes)
+    nodes_raw = await loop.run_in_executor(None, run_with_context(_cached), "aci_nodes", aci.get_fabric_nodes)
     nodes = nodes_raw.get('imdata', [])
     logger.debug(f"ACI fabric nodes raw count: {len(nodes)}")
 
     route_counts = {}
     try:
         # Fetch BGP route counts for all nodes
-        doms_raw = await loop.run_in_executor(None, _cached, "aci_bgp_doms_all", aci.get_all_bgp_doms)
+        doms_raw = await loop.run_in_executor(None, run_with_context(_cached), "aci_bgp_doms_all", aci.get_all_bgp_doms)
         doms = doms_raw.get('imdata', [])
         logger.debug(f"ACI BGP DOMs raw count: {len(doms)}")
 
@@ -135,7 +137,7 @@ async def list_fabric_nodes(request: Request, session: SessionEntry = Depends(re
 async def list_l3outs(request: Request, session: SessionEntry = Depends(require_auth)):
     aci = _get_aci(session)
     loop = asyncio.get_event_loop()
-    l3outs_raw = await loop.run_in_executor(None, _cached, "aci_l3outs", aci.get_l3outs)
+    l3outs_raw = await loop.run_in_executor(None, run_with_context(_cached), "aci_l3outs", aci.get_l3outs)
 
     processed = []
     for item in l3outs_raw.get('imdata', []):
@@ -163,7 +165,7 @@ async def list_l3outs(request: Request, session: SessionEntry = Depends(require_
 async def get_l3out_detail(request: Request, dn: str, session: SessionEntry = Depends(require_auth)):
     aci = _get_aci(session)
     loop = asyncio.get_event_loop()
-    detail_raw_orig = await loop.run_in_executor(None, aci.get_l3out_details, dn)
+    detail_raw_orig = await loop.run_in_executor(None, run_with_context(aci.get_l3out_details), dn)
 
     if isinstance(detail_raw_orig, list):
         detail_raw = {"imdata": detail_raw_orig}
@@ -204,8 +206,8 @@ async def list_bgp_peers(request: Request, session: SessionEntry = Depends(requi
     loop = asyncio.get_event_loop()
 
     # We also need subnets to map advertisements
-    peers_raw = await loop.run_in_executor(None, _cached, "aci_bgp_peers", aci.get_bgp_peers)
-    subnets_raw = await loop.run_in_executor(None, _cached, "aci_subnets", aci.get_l3_subnets)
+    peers_raw = await loop.run_in_executor(None, run_with_context(_cached), "aci_bgp_peers", aci.get_bgp_peers)
+    subnets_raw = await loop.run_in_executor(None, run_with_context(_cached), "aci_subnets", aci.get_l3_subnets)
 
     # Map subnets to L3Outs
     ads_map = {}
@@ -258,7 +260,7 @@ async def get_bgp_routes(request: Request, node_id: str = None, dn: str = None, 
     aci = _get_aci(session)
     loop = asyncio.get_event_loop()
     target = dn or node_id
-    routes_raw_orig = await loop.run_in_executor(None, aci.get_bgp_routes, target)
+    routes_raw_orig = await loop.run_in_executor(None, run_with_context(aci.get_bgp_routes), target)
 
     # Normalize routes_raw to ensure it's a dict with imdata
     if isinstance(routes_raw_orig, list):
@@ -305,7 +307,7 @@ async def get_bgp_routes(request: Request, node_id: str = None, dn: str = None, 
 async def list_epgs(request: Request, session: SessionEntry = Depends(require_auth)):
     aci = _get_aci(session)
     loop = asyncio.get_event_loop()
-    epgs_raw = await loop.run_in_executor(None, _cached, "aci_epgs", aci.get_epgs)
+    epgs_raw = await loop.run_in_executor(None, run_with_context(_cached), "aci_epgs", aci.get_epgs)
 
     processed = []
     for item in epgs_raw.get('imdata', []):
@@ -339,7 +341,7 @@ async def list_epgs(request: Request, session: SessionEntry = Depends(require_au
 async def get_epg_health(request: Request, dn: str, session: SessionEntry = Depends(require_auth)):
     aci = _get_aci(session)
     loop = asyncio.get_event_loop()
-    data_raw_orig = await loop.run_in_executor(None, aci.get_epg_stats, dn)
+    data_raw_orig = await loop.run_in_executor(None, run_with_context(aci.get_epg_stats), dn)
 
     if isinstance(data_raw_orig, list):
         data_raw = {"imdata": data_raw_orig}
@@ -370,9 +372,9 @@ async def get_health_summary(session: SessionEntry = Depends(require_auth)):
     aci = _get_aci(session)
     loop = asyncio.get_event_loop()
 
-    overall = await loop.run_in_executor(None, _cached, "aci_health_overall", aci.get_overall_health)
-    tenants = await loop.run_in_executor(None, _cached, "aci_health_tenants", aci.get_tenant_health)
-    pods    = await loop.run_in_executor(None, _cached, "aci_health_pods",    aci.get_pod_health)
+    overall = await loop.run_in_executor(None, run_with_context(_cached), "aci_health_overall", aci.get_overall_health)
+    tenants = await loop.run_in_executor(None, run_with_context(_cached), "aci_health_tenants", aci.get_tenant_health)
+    pods    = await loop.run_in_executor(None, run_with_context(_cached), "aci_health_pods",    aci.get_pod_health)
 
     def _extract_health(item, key):
         obj = item.get(key, {})
@@ -398,7 +400,7 @@ async def get_health_summary(session: SessionEntry = Depends(require_auth)):
 async def list_faults(request: Request, severity: Optional[str] = None, session: SessionEntry = Depends(require_auth)):
     aci = _get_aci(session)
     loop = asyncio.get_event_loop()
-    faults_raw = await loop.run_in_executor(None, aci.get_faults, severity)
+    faults_raw = await loop.run_in_executor(None, run_with_context(aci.get_faults), severity)
 
     processed = []
     for f in faults_raw.get('imdata', []):
@@ -423,7 +425,7 @@ async def list_faults(request: Request, severity: Optional[str] = None, session:
 async def get_bgp_peer_routes(request: Request, dn: str, direction: str = "in", session: SessionEntry = Depends(require_auth)):
     aci = _get_aci(session)
     loop = asyncio.get_event_loop()
-    routes_raw_orig = await loop.run_in_executor(None, aci.get_bgp_adj_rib, dn, direction)
+    routes_raw_orig = await loop.run_in_executor(None, run_with_context(aci.get_bgp_adj_rib), dn, direction)
 
     if isinstance(routes_raw_orig, list):
         routes_raw = {"imdata": routes_raw_orig}

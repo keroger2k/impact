@@ -130,3 +130,19 @@ def set_correlation_id(cid=None):
         cid = str(uuid.uuid4())
     correlation_id_ctx.set(cid)
     return cid
+
+def run_with_context(func, *args, **kwargs):
+    """
+    Wrapper to run a function while preserving the correlation_id context.
+    Useful for loop.run_in_executor where contextvars are not propagated.
+    """
+    cid = correlation_id_ctx.get()
+
+    def wrapped():
+        token = correlation_id_ctx.set(cid)
+        try:
+            return func(*args, **kwargs)
+        finally:
+            correlation_id_ctx.reset(token)
+
+    return wrapped

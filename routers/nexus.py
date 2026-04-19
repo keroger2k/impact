@@ -15,6 +15,7 @@ from auth import SessionEntry, require_auth
 from cache import cache, TTL_DEVICES
 from collectors.nxos import NXOSCollector
 from models.interface import InterfaceResult
+from logger_config import run_with_context
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -113,7 +114,7 @@ async def refresh_nexus_data(session: SessionEntry = Depends(require_auth)):
                 return [], None, str(e)
 
         with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = [loop.run_in_executor(executor, collect_device, d) for d in devices]
+            futures = [loop.run_in_executor(executor, run_with_context(collect_device), d) for d in devices]
             completed = 0
             for fut in asyncio.as_completed(futures):
                 interfaces, inv_item, error = await fut
@@ -192,7 +193,7 @@ async def init_nexus_collection(username: Optional[str] = None, password: Option
             return [], None, None
 
     with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = [loop.run_in_executor(executor, collect_device, d) for d in devices]
+        futures = [loop.run_in_executor(executor, run_with_context(collect_device), d) for d in devices]
         results = await asyncio.gather(*futures)
         all_interfaces = []
         all_inventory_items = []

@@ -747,8 +747,8 @@ def get_managed_devices(api_key: str) -> list[dict]:
         
         # Log the entire XML structure for debugging
         xml_str = ET.tostring(result, encoding='unicode')
-        print(f"[DEVICES] XML Response (first 2000 chars):\n{xml_str[:2000]}\n")
-        logger.info(f"Panorama op response (first 2000 chars): {xml_str[:2000]}")
+        # print(f"[DEVICES] XML Response (first 2000 chars):\n{xml_str[:2000]}\n")
+        logger.debug(f"Panorama op response (first 2000 chars): {xml_str[:2000]}")
         logger.info(f"Result tag: {result.tag}, children tags: {[child.tag for child in result]}")
         
         # Try multiple XPath patterns (Panorama versions vary)

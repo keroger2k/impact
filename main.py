@@ -21,7 +21,7 @@ from templates_module import templates
 import auth as auth_module
 from auth import require_auth, SessionEntry
 from routers import dnac, ise, firewall, aci, commands, import_, auth as auth_router, pages, routing, nexus, cache_mgmt
-from logger_config import setup_logging, set_correlation_id
+from logger_config import setup_logging, set_correlation_id, run_with_context
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -161,7 +161,7 @@ async def warm_cache(session: SessionEntry = Depends(require_auth)):
             yield emit({"step": "devices", "status": "loading",
                         "message": "Loading devices from Catalyst Center…"})
             try:
-                devices = await loop.run_in_executor(None, dc.get_all_devices, dnac)
+                devices = await loop.run_in_executor(None, run_with_context(dc.get_all_devices, dnac))
                 cache.set("devices", devices, TTL_DEVICES)
                 yield emit({"step": "devices", "status": "done",
                             "message": f"{len(devices):,} devices loaded from Catalyst Center"})
@@ -178,7 +178,7 @@ async def warm_cache(session: SessionEntry = Depends(require_auth)):
         else:
             yield emit({"step": "sites", "status": "loading", "message": "Loading sites…"})
             try:
-                sites = await loop.run_in_executor(None, dc.get_site_cache, dnac)
+                sites = await loop.run_in_executor(None, run_with_context(dc.get_site_cache, dnac))
                 cache.set("sites", sites, TTL_SITES)
                 yield emit({"step": "sites", "status": "done",
                             "message": f"{len(sites):,} sites loaded"})
@@ -197,7 +197,7 @@ async def warm_cache(session: SessionEntry = Depends(require_auth)):
                         "message": "Building device-to-site map (this may take a minute)…"})
             try:
                 dev_site_map = await loop.run_in_executor(
-                    None, dc.build_device_site_map, dnac, sites or []
+                    None, run_with_context(dc.build_device_site_map, dnac, sites or [])
                 )
                 cache.set("device_site_map", dev_site_map, TTL_SITES)
                 yield emit({"step": "sitemap", "status": "done",
@@ -210,7 +210,7 @@ async def warm_cache(session: SessionEntry = Depends(require_auth)):
         yield emit({"step": "ise", "status": "loading", "message": "Connecting to Cisco ISE…"})
         try:
             ise = auth_module.get_ise_for_session(session)
-            ok  = await loop.run_in_executor(None, ic.connectivity_check, ise)
+            ok  = await loop.run_in_executor(None, run_with_context(ic.connectivity_check, ise))
             yield emit({"step": "ise", "status": "done" if ok else "error",
                         "message": "ISE connected" if ok else "ISE unreachable"})
         except Exception as e:
@@ -220,7 +220,7 @@ async def warm_cache(session: SessionEntry = Depends(require_auth)):
         yield emit({"step": "panorama", "status": "loading", "message": "Connecting to Panorama…"})
         try:
             key      = auth_module.get_panorama_key_for_session(session)
-            ok, detail = await loop.run_in_executor(None, pc.connectivity_check_with_key, key)
+            ok, detail = await loop.run_in_executor(None, run_with_context(pc.connectivity_check_with_key, key))
             yield emit({"step": "panorama", "status": "done" if ok else "error",
                         "message": detail if ok else f"Panorama: {detail}"})
         except Exception as e:
@@ -232,7 +232,7 @@ async def warm_cache(session: SessionEntry = Depends(require_auth)):
         try:
             aci_client = auth_module.get_aci_for_session(session)
             import clients.aci as ac
-            ok = await loop.run_in_executor(None, ac.connectivity_check, aci_client)
+            ok = await loop.run_in_executor(None, run_with_context(ac.connectivity_check, aci_client))
             yield emit({"step": "aci", "status": "done" if ok else "error",
                         "message": "ACI connected" if ok else "ACI login failed"})
         except Exception as e:
@@ -283,7 +283,7 @@ async def status(session: SessionEntry = Depends(require_auth)):
             dnac = auth_module.get_dnac_for_session(session)
             result = await loop.run_in_executor(
                 None,
-                lambda: dnac.custom_caller.call_api("GET", "/dna/intent/api/v1/network-device/count")
+                run_with_context(lambda: dnac.custom_caller.call_api("GET", "/dna/intent/api/v1/network-device/count"))
             )
             count = getattr(result, "response", 0)
             return {"ok": True, "detail": f"{count:,} devices"}
@@ -292,19 +292,34 @@ async def status(session: SessionEntry = Depends(require_auth)):
 
     async def check_ise():
         try:
+            # Check cache for status first to avoid redundant API calls every 60s
+            from cache import cache, TTL_STATUS
+            cached_status = cache.get("status_ise_live")
+            if cached_status is not None:
+                return cached_status
+
             import clients.ise as ic
             ise = auth_module.get_ise_for_session(session)
-            ok  = await loop.run_in_executor(None, ic.connectivity_check, ise)
-            return {"ok": ok, "detail": "Connected" if ok else "Unreachable"}
+            ok  = await loop.run_in_executor(None, run_with_context(ic.connectivity_check, ise))
+            res = {"ok": ok, "detail": "Connected" if ok else "Unreachable"}
+            cache.set("status_ise_live", res, TTL_STATUS)
+            return res
         except Exception as e:
             return {"ok": False, "detail": str(e)[:80]}
 
     async def check_panorama():
         try:
+            from cache import cache, TTL_STATUS
+            cached_status = cache.get("status_pan_live")
+            if cached_status is not None:
+                return cached_status
+
             import clients.panorama as pc
             key = auth_module.get_panorama_key_for_session(session)
-            ok, detail = await loop.run_in_executor(None, pc.connectivity_check_with_key, key)
-            return {"ok": ok, "detail": detail}
+            ok, detail = await loop.run_in_executor(None, run_with_context(pc.connectivity_check_with_key, key))
+            res = {"ok": ok, "detail": detail}
+            cache.set("status_pan_live", res, TTL_STATUS)
+            return res
         except Exception as e:
             return {"ok": False, "detail": str(e)[:80]}
 

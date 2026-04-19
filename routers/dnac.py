@@ -14,6 +14,7 @@ import clients.panorama as pc
 import auth as auth_module
 from auth import SessionEntry, require_auth
 from cache import cache, TTL_DEVICES, TTL_SITES
+from logger_config import run_with_context
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -61,7 +62,7 @@ async def list_devices(
     loop = asyncio.get_event_loop()
     dnac = _get_dnac(session)
 
-    devices = await loop.run_in_executor(None, cache.get_or_set, "devices", lambda: dc.get_all_devices(dnac), TTL_DEVICES)
+    devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "devices", lambda: dc.get_all_devices(dnac), TTL_DEVICES)
 
     filtered = devices
     if hostname:
@@ -78,8 +79,8 @@ async def list_devices(
         elif reachability.lower() == "unreachable":
             filtered = [d for d in filtered if d.get("reachabilityStatus") != "Reachable"]
 
-    sites = await loop.run_in_executor(None, cache.get_or_set, "sites", lambda: dc.get_site_cache(dnac), TTL_SITES)
-    dev_site_map = await loop.run_in_executor(None, cache.get_or_set, "device_site_map", lambda: dc.build_device_site_map(dnac, sites), TTL_SITES)
+    sites = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "sites", lambda: dc.get_site_cache(dnac), TTL_SITES)
+    dev_site_map = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "device_site_map", lambda: dc.build_device_site_map(dnac, sites), TTL_SITES)
 
     if site:
         filtered = [d for d in filtered if site.lower() in (dev_site_map.get(d.get("id")) or "").lower()]
@@ -133,7 +134,7 @@ async def device_stats(session: SessionEntry = Depends(require_auth)):
     """Summary statistics for the dashboard."""
     loop    = asyncio.get_event_loop()
     dnac    = _get_dnac(session)
-    devices = await loop.run_in_executor(None, cache.get_or_set, "devices", lambda: dc.get_all_devices(dnac), TTL_DEVICES)
+    devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "devices", lambda: dc.get_all_devices(dnac), TTL_DEVICES)
 
     from routers.nexus import get_cached_nexus_inventory
     nexus_devices = get_cached_nexus_inventory()
@@ -199,7 +200,7 @@ async def get_device_detail_partial(
         loop = asyncio.get_event_loop()
         dnac = _get_dnac(session)
         try:
-            device = await loop.run_in_executor(None, dc.get_device_detail, dnac, device_id)
+            device = await loop.run_in_executor(None, run_with_context(dc.get_device_detail), dnac, device_id)
         except:
             raise HTTPException(404, "Device not found")
 
@@ -249,7 +250,7 @@ async def get_device_config(
     loop      = asyncio.get_event_loop()
     dnac      = _get_dnac(session)
 
-    config = await loop.run_in_executor(None, cache.get_or_set, cache_key, lambda: dc.get_device_config(dnac, device_id), 600)
+    config = await loop.run_in_executor(None, run_with_context(cache.get_or_set), cache_key, lambda: dc.get_device_config(dnac, device_id), 600)
 
     if not config:
         raise HTTPException(404, "Config not available for this device")
@@ -281,7 +282,7 @@ async def ip_lookup_handler(ip: str, session: SessionEntry = Depends(require_aut
     dnac = _get_dnac(session)
 
     # ── DNAC lookup ───────────────────────────────────────────────────────────
-    ifaces = await loop.run_in_executor(None, dc.get_interface_by_ip, dnac, ip)
+    ifaces = await loop.run_in_executor(None, run_with_context(dc.get_interface_by_ip), dnac, ip)
 
     enriched = []
     if ifaces:
@@ -384,7 +385,7 @@ async def ip_lookup_ui(request: Request, ip: str, session: SessionEntry = Depend
 async def list_sites(filter: Optional[str] = None, session: SessionEntry = Depends(require_auth)):
     loop  = asyncio.get_event_loop()
     dnac  = _get_dnac(session)
-    sites = await loop.run_in_executor(None, cache.get_or_set, "sites", lambda: dc.get_site_cache(dnac), TTL_SITES)
+    sites = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "sites", lambda: dc.get_site_cache(dnac), TTL_SITES)
 
     if filter:
         sites = [s for s in sites if filter.lower() in s["name"].lower()]
@@ -460,7 +461,7 @@ async def tag_devices(req: TagDevicesRequest, session: SessionEntry = Depends(re
         # Get or create the tag
         try:
             yield emit({"type": "log", "level": "info", "message": f"Resolving tag '{req.tag_name}'…"})
-            tag_id = await loop.run_in_executor(None, dc.get_or_create_tag, dnac, req.tag_name)
+            tag_id = await loop.run_in_executor(None, run_with_context(dc.get_or_create_tag), dnac, req.tag_name)
             yield emit({"type": "log", "level": "info", "message": f"Tag ID: {tag_id}"})
         except Exception as e:
             yield emit({"type": "log", "level": "error", "message": f"Tag lookup/create failed: {e}"})
@@ -470,7 +471,7 @@ async def tag_devices(req: TagDevicesRequest, session: SessionEntry = Depends(re
         # Apply tag to all found devices in one call
         device_ids = [d["id"] for d in found]
         try:
-            await loop.run_in_executor(None, dc.tag_network_devices, dnac, tag_id, device_ids)
+            await loop.run_in_executor(None, run_with_context(dc.tag_network_devices), dnac, tag_id, device_ids)
             for d in found:
                 yield emit({"type": "log", "level": "success",
                             "message": f"{d['hostname']} ({d['ip']}): tagged ✓"})
@@ -514,7 +515,7 @@ async def config_search(req: ConfigSearchRequest, session: SessionEntry = Depend
 
     loop    = asyncio.get_event_loop()
     dnac    = _get_dnac(session)
-    devices = await loop.run_in_executor(None, cache.get_or_set, "devices", lambda: dc.get_all_devices(dnac), TTL_DEVICES)
+    devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "devices", lambda: dc.get_all_devices(dnac), TTL_DEVICES)
 
     filtered = devices
     q = lambda field, val: val and val.lower() in ((field or "").lower())
@@ -681,7 +682,7 @@ async def path_trace_ui(
     loop = asyncio.get_event_loop()
     dnac = _get_dnac(session)
     try:
-        task = await loop.run_in_executor(None, dc.initiate_path_trace, dnac, source_ip, dest_ip, protocol, dest_port)
+        task = await loop.run_in_executor(None, run_with_context(dc.initiate_path_trace), dnac, source_ip, dest_ip, protocol, dest_port)
         flow_id = task.get("response", {}).get("flowAnalysisId")
         return HTMLResponse(f"""
             <div class="card shadow-sm animate-fade-in" hx-get="/api/dnac/path-trace/result/{flow_id}" hx-trigger="load delay:3s" hx-swap="outerHTML">
@@ -699,7 +700,7 @@ async def path_trace_ui(
 async def path_trace_result_ui(request: Request, flow_id: str, session: SessionEntry = Depends(require_auth)):
     loop = asyncio.get_event_loop()
     dnac = _get_dnac(session)
-    result = await loop.run_in_executor(None, dc.get_path_trace_result, dnac, flow_id)
+    result = await loop.run_in_executor(None, run_with_context(dc.get_path_trace_result), dnac, flow_id)
     status = result.get("response", {}).get("request", {}).get("status", "")
     if status in ("INPROGRESS", "PENDING"):
          return HTMLResponse(f"""
@@ -722,7 +723,7 @@ async def path_trace_result_ui(request: Request, flow_id: str, session: SessionE
 async def device_select_partial(request: Request, session: SessionEntry = Depends(require_auth)):
     loop = asyncio.get_event_loop()
     dnac = _get_dnac(session)
-    devices = await loop.run_in_executor(None, cache.get_or_set, "devices", lambda: dc.get_all_devices(dnac), TTL_DEVICES)
+    devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "devices", lambda: dc.get_all_devices(dnac), TTL_DEVICES)
     html = '<select id="device-multi-select" class="form-select" multiple style="height: 150px;">'
     for d in sorted(devices, key=lambda x: x.get("hostname", "") or ""):
         data_json = json.dumps({"ip": d.get("managementIpAddress"), "hostname": d.get("hostname"), "platform": d.get("platformId")})
