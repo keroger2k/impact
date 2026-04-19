@@ -2,7 +2,7 @@
     <div class="d-flex justify-content-between align-items-center mb-4">
         <div>
             <h2 class="fw-bold mb-1">IPAM Discovery Engine</h2>
-            <p class="text-muted">Reconciliation of ACI, ISE, DNAC, and Nexus IP data</p>
+            <p class="text-muted">Reconciliation of ACI, ISE, DNAC, Nexus, and Panorama IP data</p>
         </div>
         <div class="d-flex gap-2">
             <button class="btn btn-navy" id="btn-discover" onclick="startIpamDiscovery()">
@@ -22,6 +22,7 @@
                     <div class="card-body">
                         <div class="text-muted small text-uppercase fw-bold mb-1">Total Active IPs</div>
                         <h3 class="fw-bold mb-0" id="stat-total-active">-</h3>
+                        <div class="mt-2 small text-muted" id="stat-source-breakdown"></div>
                     </div>
                 </div>
             </div>
@@ -182,6 +183,16 @@
         document.getElementById('stat-orphaned').textContent = data.stats.orphaned || 0;
         document.getElementById('stat-gaps').textContent = data.stats.gaps || 0;
         document.getElementById('stat-last-run').textContent = data.last_run || 'Never';
+
+        // Source breakdown
+        const stats = data.stats;
+        const breakdown = [];
+        if (stats.aci) breakdown.push(`ACI: ${stats.aci}`);
+        if (stats.ise) breakdown.push(`ISE: ${stats.ise}`);
+        if (stats.dnac) breakdown.push(`DNAC: ${stats.dnac}`);
+        if (stats.nexus) breakdown.push(`Nexus: ${stats.nexus}`);
+        if (stats.panorama) breakdown.push(`Panorama: ${stats.panorama}`);
+        document.getElementById('stat-source-breakdown').textContent = breakdown.join(' | ');
 
         // Update Orphaned Table
         const orphanedBody = document.getElementById('table-orphaned');

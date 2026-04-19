@@ -31,6 +31,7 @@ class IPAMDiscoveryEngine:
             "ise": 0,
             "dnac": 0,
             "nexus": 0,
+            "panorama": 0,
             "total_active": 0,
             "orphaned": 0,
             "gaps": 0
@@ -57,14 +58,16 @@ class IPAMDiscoveryEngine:
         import clients.aci as aci_module
         import clients.ise as ise_module
         import clients.dnac as dnac_module
+        import clients.panorama as pan_module
         from routers.nexus import get_cached_nexus_interfaces
 
         loop = asyncio.get_event_loop()
 
+        from logger_config import run_with_context
         # ACI
         aci_client = auth_module.get_aci_for_session(self.session)
-        bd_subnets_raw = await loop.run_in_executor(None, aci_client.get_bd_subnets)
-        endpoints_raw = await loop.run_in_executor(None, aci_client.get_active_endpoints)
+        bd_subnets_raw = await loop.run_in_executor(None, run_with_context(aci_client.get_bd_subnets))
+        endpoints_raw = await loop.run_in_executor(None, run_with_context(aci_client.get_active_endpoints))
 
         for item in bd_subnets_raw.get('imdata', []):
             ip_str = item.get('fvSubnet', {}).get('attributes', {}).get('ip')
@@ -101,7 +104,7 @@ class IPAMDiscoveryEngine:
 
         # ISE
         ise_client = auth_module.get_ise_for_session(self.session)
-        sessions_raw = await loop.run_in_executor(None, ise_module.get_active_sessions, ise_client)
+        sessions_raw = await loop.run_in_executor(None, run_with_context(ise_module.get_active_sessions, ise_client))
         for s in sessions_raw:
             ip = canonicalize_ip(s.get('framed_ip_address'))
             if ip and ip != "0.0.0.0":
@@ -119,7 +122,7 @@ class IPAMDiscoveryEngine:
         dnac_client = auth_module.get_dnac_for_session(self.session)
         devices = cache.get("devices")
         if not devices:
-             devices = await loop.run_in_executor(None, dnac_module.get_all_devices, dnac_client)
+             devices = await loop.run_in_executor(None, run_with_context(dnac_module.get_all_devices, dnac_client))
 
         for d in devices:
             ip = canonicalize_ip(d.get('managementIpAddress'))
@@ -145,15 +148,32 @@ class IPAMDiscoveryEngine:
                     "location": f"Switch: {i.get('hostname')} ({i.get('interface_name')})",
                     "last_discovered": time.strftime("%m/%d/%Y %H:%M:%S")
                 })
-            for v6 in i.get('ipv6_addresses', []):
-                ip = canonicalize_ip(v6.split('/')[0])
-                self.stats["nexus"] += 1
-                self._add_active_endpoint(ip, {
-                    "source": "Nexus",
-                    "mac": i.get('mac_address'),
-                    "location": f"Switch: {i.get('hostname')} ({i.get('interface_name')})",
-                    "last_discovered": time.strftime("%m/%d/%Y %H:%M:%S")
-                })
+
+        # Panorama
+        pan_key = auth_module.get_panorama_key_for_session(self.session)
+        if pan_key:
+            pan_devices = await loop.run_in_executor(None, run_with_context(pan_module.fetch_firewall_interfaces, pan_key))
+            for dev in pan_devices:
+                for iface in dev.get('interfaces', []):
+                    # IPv4
+                    v4 = iface.get('ipv4')
+                    if v4:
+                        ip = canonicalize_ip(v4.split('/')[0])
+                        self.stats["panorama"] += 1
+                        self._add_active_endpoint(ip, {
+                            "source": "Panorama",
+                            "location": f"Firewall: {dev.get('hostname')} ({iface.get('name')})",
+                            "last_discovered": time.strftime("%m/%d/%Y %H:%M:%S")
+                        })
+                    # IPv6
+                    for v6 in iface.get('ipv6', []):
+                        ip = canonicalize_ip(v6.split('/')[0])
+                        self.stats["panorama"] += 1
+                        self._add_active_endpoint(ip, {
+                            "source": "Panorama",
+                            "location": f"Firewall: {dev.get('hostname')} ({iface.get('name')})",
+                            "last_discovered": time.strftime("%m/%d/%Y %H:%M:%S")
+                        })
 
     def _add_active_endpoint(self, ip: str, data: Dict, priority: bool = True):
         if ip not in self.active_endpoints:

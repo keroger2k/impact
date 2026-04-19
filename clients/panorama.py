@@ -199,6 +199,26 @@ def fetch_firewall_interfaces(api_key: str) -> list[dict]:
     Skips disconnected/unreachable devices gracefully.
     Returns a list of device dicts ordered by hostname.
     """
+    from dev import DEV_MODE
+    if DEV_MODE:
+        return [
+            {
+                "hostname": "FW-DCA-01",
+                "serial": "MOCKPAN01",
+                "interfaces": [
+                    {"name": "ethernet1/1", "ipv4": "10.10.254.1/24", "ipv6": ["2001:db8:254::1/64"]},
+                    {"name": "ethernet1/2", "ipv4": "10.10.254.2/24", "ipv6": []}
+                ]
+            },
+            {
+                "hostname": "FW-BOS-01",
+                "serial": "MOCKPAN02",
+                "interfaces": [
+                    {"name": "ethernet1/1", "ipv4": "10.20.254.1/24", "ipv6": []}
+                ]
+            }
+        ]
+
     try:
         result = _op("<show><devices><all/></devices></show>", api_key)
     except Exception as e:
