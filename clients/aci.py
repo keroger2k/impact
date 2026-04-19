@@ -99,13 +99,15 @@ class ACIClient:
                 MOCK_ACI_NODES, MOCK_ACI_L3OUTS, MOCK_ACI_BGP_PEERS,
                 MOCK_ACI_SUBNETS, MOCK_ACI_EPGS, MOCK_ACI_FAULT_INST,
                 MOCK_ACI_BGP_DOMS, MOCK_ACI_BGP_RIB_IN, MOCK_ACI_BGP_RIB_OUT,
-                MOCK_ACI_BGP_DOMS_ALL
+                MOCK_ACI_BGP_DOMS_ALL, MOCK_ACI_BD_SUBNETS, MOCK_ACI_ENDPOINTS
             )
             if "fabricNode" in path: return {"imdata": MOCK_ACI_NODES}
             if "l3extOut" in path: return {"imdata": MOCK_ACI_L3OUTS}
             if "bgpPeerEntry" in path: return {"imdata": MOCK_ACI_BGP_PEERS}
             if "l3extSubnet" in path: return {"imdata": MOCK_ACI_SUBNETS}
             if "fvAEPg" in path: return {"imdata": MOCK_ACI_EPGS}
+            if "fvSubnet" in path: return {"imdata": MOCK_ACI_BD_SUBNETS}
+            if "fvCEp" in path: return {"imdata": MOCK_ACI_ENDPOINTS}
             if "faultInst" in path: return {"imdata": MOCK_ACI_FAULT_INST}
             if "bgpDomAf.json" in path: return {"imdata": MOCK_ACI_BGP_DOMS_ALL}
             if "target-subtree-class=bgpRoute" in path: return {"imdata": MOCK_ACI_BGP_DOMS}
@@ -173,6 +175,16 @@ class ACIClient:
     def get_l3_subnets(self):
         """Query l3extSubnet for external subnet policies."""
         return self.get("api/node/class/l3extSubnet.json", action="FETCH_ACI_SUBNETS")
+
+    def get_bd_subnets(self):
+        """Query fvSubnet for Bridge Domain subnets (Internal SoT)."""
+        return self.get("api/node/class/fvSubnet.json", action="FETCH_ACI_BD_SUBNETS")
+
+    def get_active_endpoints(self):
+        """Query fvCEp for active learned endpoints on the fabric."""
+        # Include ip and mac attributes, and fvIp for multiple IPs per MAC
+        path = "api/node/class/fvCEp.json?rsp-subtree=children&target-subtree-class=fvIp"
+        return self.get(path, action="FETCH_ACI_ENDPOINTS")
 
     def get_bgp_routes(self, dn):
         """Query all BGP route types on a specific node."""

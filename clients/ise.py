@@ -466,7 +466,12 @@ def _mnt_get(path: str) -> dict:
     Bypasses the SDK because the SDK assumes JSON and the MNT API only speaks XML.
     Returns a flat dict of attributes, or {} on any error.
     """
-    from urllib.parse import urljoin
+    from dev import DEV_MODE
+    if DEV_MODE:
+        from dev import MOCK_ISE_SESSIONS
+        if "ActiveList" in path:
+            return {"sessions": MOCK_ISE_SESSIONS}
+        return {}
 
     host     = os.getenv("ISE_HOST")
     username = os.getenv("DOMAIN_USERNAME")
@@ -485,6 +490,14 @@ def _mnt_get(path: str) -> dict:
             timeout = 15,
         )
         if resp.status_code == 200 and resp.text:
+            # If it's a list (ActiveList), we might need special handling
+            if "ActiveList" in path:
+                # ActiveList returns multiple <session> tags
+                root = _ET.fromstring(resp.text)
+                sessions = []
+                for s in root.findall("session"):
+                    sessions.append({child.tag: child.text for child in s})
+                return {"sessions": sessions}
             return _xml_to_dict(resp.text)
         logger.warning(f"MNT {path}: HTTP {resp.status_code}")
         return {}
@@ -493,8 +506,13 @@ def _mnt_get(path: str) -> dict:
         return {}
 
 
+def get_active_sessions(ise) -> list[dict]:
+    """Fetch all active sessions from ISE MNT API."""
+    data = _mnt_get("/admin/API/mnt/Session/ActiveList")
+    return data.get("sessions", [])
 
 
+def get_active_session_by_mac(ise, mac: str) -> dict:
     """
     Fetch active RADIUS/TACACS session details from the ISE MNT REST API.
     This is the source of authentication attributes shown in ISE Context Visibility
@@ -510,21 +528,8 @@ def _mnt_get(path: str) -> dict:
     if ":" not in mac_clean and len(mac_clean) == 12:
         mac_clean = ":".join(mac_clean[i:i+2] for i in range(0, 12, 2))
 
-    url = f"/admin/API/mnt/Session/MACAddress/{mac_clean}"
-    try:
-        resp = ise.custom_caller.call_api("GET", url, headers=_ERS_HEADERS)
-        raw  = getattr(resp, "response", None)
-        if raw is None:
-            return {}
-        result = _to_dict(raw)
-        # MNT wraps under "sessionParameters" or "passed" depending on ISE version
-        for key in ("sessionParameters", "passed", "failed"):
-            if key in result and isinstance(result[key], dict):
-                return result[key]
-        return result
-    except Exception as e:
-        logger.warning(f"MNT session GET {url}: {e}")
-        return {}
+    # We use _mnt_get for consistency
+    return _mnt_get(f"/admin/API/mnt/Session/MACAddress/{mac_clean}")
 
 # Convenience alias for FastAPI routers
 _ise_client = None

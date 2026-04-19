@@ -202,6 +202,11 @@ MOCK_DEPLOYMENT_NODES: list[dict] = [
     {"id": _uid("node-psn-2"),   "hostname": "ise-psn-02", "ipAddress": "192.168.1.12", "fqdn": "ise-psn-02.tsa.local", "nodeType": "PSN"},
 ]
 
+MOCK_ISE_SESSIONS = [
+    {"calling_station_id": "00:50:56:00:00:01", "framed_ip_address": "10.10.10.101", "user_name": "jdoe", "identity_group": "Employees", "sgt": "Employees"},
+    {"calling_station_id": "00:50:56:00:00:02", "framed_ip_address": "10.10.10.102", "user_name": "asmith", "identity_group": "Employees", "sgt": "Employees"},
+]
+
 MOCK_NAD_GROUPS: list[dict] = [
     {"id": _uid("ndg-access"),   "name": "NetworkDeviceGroup#All Device Types#Access",   "description": ""},
     {"id": _uid("ndg-core"),     "name": "NetworkDeviceGroup#All Device Types#Core",     "description": ""},
@@ -314,6 +319,20 @@ MOCK_ACI_SUBNETS = [
 MOCK_ACI_EPGS = [
     {"fvAEPg": {"attributes": {"name": "EPG-WEB", "dn": "uni/tn-PROD/ap-APP-01/epg-EPG-WEB"}, "children": [{"healthInst": {"attributes": {"cur": "98"}}}]}},
     {"fvAEPg": {"attributes": {"name": "EPG-DB", "dn": "uni/tn-PROD/ap-APP-01/epg-EPG-DB"}, "children": [{"healthInst": {"attributes": {"cur": "45"}}}]}},
+]
+
+MOCK_ACI_BD_SUBNETS = [
+    {"fvSubnet": {"attributes": {"ip": "10.10.10.1/24", "dn": "uni/tn-PROD/BD-WEB/subnet-[10.10.10.1/24]"}}},
+    {"fvSubnet": {"attributes": {"ip": "10.10.20.1/24", "dn": "uni/tn-PROD/BD-DB/subnet-[10.10.20.1/24]"}}},
+    {"fvSubnet": {"attributes": {"ip": "2001:db8:10::1/64", "dn": "uni/tn-PROD/BD-WEB/subnet-[2001:db8:10::1/64]"}}},
+]
+
+MOCK_ACI_ENDPOINTS = [
+    {"fvCEp": {"attributes": {"mac": "00:50:56:00:00:01", "ip": "10.10.10.101", "dn": "uni/tn-PROD/ap-APP-01/epg-EPG-WEB/cep-00:50:56:00:00:01"}}},
+    {"fvCEp": {"attributes": {"mac": "00:50:56:00:00:01", "ip": "2001:db8:10::101", "dn": "uni/tn-PROD/ap-APP-01/epg-EPG-WEB/cep-00:50:56:00:00:01"}}},
+    {"fvCEp": {"attributes": {"mac": "00:50:56:00:00:02", "ip": "10.10.10.102", "dn": "uni/tn-PROD/ap-APP-01/epg-EPG-WEB/cep-00:50:56:00:00:02"}}},
+    # Orphaned IP (Active but not in fvSubnet if we consider a mismatching subnet, but here let's just use it to test discovery)
+    {"fvCEp": {"attributes": {"mac": "00:50:56:00:00:99", "ip": "192.168.99.99", "dn": "uni/tn-PROD/ap-APP-01/epg-EPG-WEB/cep-00:50:56:00:00:99"}}},
 ]
 
 MOCK_ACI_BGP_DOMS = [

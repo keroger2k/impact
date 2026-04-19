@@ -1,0 +1,258 @@
+<div class="container-fluid animate-fade-in">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="fw-bold mb-1">IPAM Discovery Engine</h2>
+            <p class="text-muted">Reconciliation of ACI, ISE, DNAC, and Nexus IP data</p>
+        </div>
+        <div class="d-flex gap-2">
+            <button class="btn btn-navy" id="btn-discover" onclick="startIpamDiscovery()">
+                <i class="fas fa-search me-2"></i>Start Discovery
+            </button>
+            <a href="/api/ipam/export" class="btn btn-outline-navy" id="btn-export">
+                <i class="fas fa-download me-2"></i>Export SolarWinds CSV
+            </a>
+        </div>
+    </div>
+
+    <!-- Summary Stats -->
+    <div id="ipam-summary-cards">
+        <div class="row g-3 mb-4">
+            <div class="col-md-3">
+                <div class="card border-0 shadow-sm h-100">
+                    <div class="card-body">
+                        <div class="text-muted small text-uppercase fw-bold mb-1">Total Active IPs</div>
+                        <h3 class="fw-bold mb-0" id="stat-total-active">-</h3>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card border-0 shadow-sm h-100 border-start border-danger border-4">
+                    <div class="card-body">
+                        <div class="text-danger small text-uppercase fw-bold mb-1">Orphaned IPs</div>
+                        <h3 class="fw-bold mb-0" id="stat-orphaned">-</h3>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card border-0 shadow-sm h-100 border-start border-warning border-4">
+                    <div class="card-body">
+                        <div class="text-warning small text-uppercase fw-bold mb-1">Dual-Stack Gaps</div>
+                        <h3 class="fw-bold mb-0" id="stat-gaps">-</h3>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card border-0 shadow-sm h-100">
+                    <div class="card-body">
+                        <div class="text-muted small text-uppercase fw-bold mb-1">Last Run</div>
+                        <h3 class="fs-5 fw-bold mb-0" id="stat-last-run">Never</h3>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tabs for Tables -->
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white border-0 pt-3">
+            <ul class="nav nav-tabs card-header-tabs" id="ipamTabs" role="tablist">
+                <li class="nav-item">
+                    <button class="nav-link active" id="orphaned-tab" data-bs-toggle="tab" data-bs-target="#orphaned" type="button" role="tab">Discrepancies (Orphaned)</button>
+                </li>
+                <li class="nav-item">
+                    <button class="nav-link" id="gaps-tab" data-bs-toggle="tab" data-bs-target="#gaps" type="button" role="tab">Dual-Stack Gaps</button>
+                </li>
+                <li class="nav-item">
+                    <button class="nav-link" id="master-tab" data-bs-toggle="tab" data-bs-target="#master" type="button" role="tab">Master IP Map</button>
+                </li>
+            </ul>
+        </div>
+        <div class="card-body">
+            <div class="tab-content" id="ipamTabContent">
+                <!-- Orphaned IPs -->
+                <div class="tab-pane fade show active" id="orphaned" role="tabpanel">
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>IP Address</th>
+                                    <th>MAC Address</th>
+                                    <th>Primary Source</th>
+                                    <th>Location Context</th>
+                                    <th>Last Seen</th>
+                                </tr>
+                            </thead>
+                            <tbody id="table-orphaned">
+                                <tr><td colspan="5" class="text-center py-4 text-muted">No discovery data yet. Click "Start Discovery".</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <!-- Dual-Stack Gaps -->
+                <div class="tab-pane fade" id="gaps" role="tabpanel">
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>MAC Address</th>
+                                    <th>Found IPs</th>
+                                    <th>Missing Stack</th>
+                                </tr>
+                            </thead>
+                            <tbody id="table-gaps">
+                                <tr><td colspan="3" class="text-center py-4 text-muted">No discovery data yet.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <!-- Master Map -->
+                <div class="tab-pane fade" id="master" role="tabpanel">
+                    <div class="d-flex mb-3">
+                        <input type="text" id="master-search" class="form-control form-control-sm w-25" placeholder="Search Master Map..." onkeyup="filterMasterMap()">
+                    </div>
+                    <div class="table-responsive" style="max-height: 600px; overflow-y: auto;">
+                        <table class="table table-hover align-middle" id="table-master-main">
+                            <thead class="table-light sticky-top">
+                                <tr>
+                                    <th>IP Address</th>
+                                    <th>Status</th>
+                                    <th>MAC</th>
+                                    <th>Subnet (SoT)</th>
+                                    <th>Sources</th>
+                                </tr>
+                            </thead>
+                            <tbody id="table-master">
+                                <tr><td colspan="5" class="text-center py-4 text-muted">No discovery data yet.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    async function startIpamDiscovery() {
+        const btn = document.getElementById('btn-discover');
+        const originalContent = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Discovering...';
+
+        try {
+            const resp = await fetch('/api/ipam/discover', {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + localStorage.getItem('impact_token') }
+            });
+            if (resp.ok) {
+                // Poll for status
+                pollIpamStatus();
+            }
+        } catch (e) {
+            console.error(e);
+            btn.disabled = false;
+            btn.innerHTML = originalContent;
+        }
+    }
+
+    async function pollIpamStatus() {
+        const interval = setInterval(async () => {
+            const resp = await fetch('/api/ipam/status', {
+                headers: { 'Authorization': 'Bearer ' + localStorage.getItem('impact_token') }
+            });
+            const data = await resp.json();
+            if (data.status === 'Ready') {
+                clearInterval(interval);
+                const btn = document.getElementById('btn-discover');
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-search me-2"></i>Start Discovery';
+                loadIpamData();
+            }
+        }, 2000);
+    }
+
+    async function loadIpamData() {
+        const resp = await fetch('/api/ipam/dashboard-data', {
+            headers: { 'Authorization': 'Bearer ' + localStorage.getItem('impact_token') }
+        });
+        const data = await resp.json();
+
+        // Update Stats
+        document.getElementById('stat-total-active').textContent = data.stats.total_active || 0;
+        document.getElementById('stat-orphaned').textContent = data.stats.orphaned || 0;
+        document.getElementById('stat-gaps').textContent = data.stats.gaps || 0;
+        document.getElementById('stat-last-run').textContent = data.last_run || 'Never';
+
+        // Update Orphaned Table
+        const orphanedBody = document.getElementById('table-orphaned');
+        if (data.orphaned.length === 0) {
+            orphanedBody.innerHTML = '<tr><td colspan="5" class="text-center py-4 text-muted">No Orphaned IPs found.</td></tr>';
+        } else {
+            orphanedBody.innerHTML = data.orphaned.map(row => `
+                <tr>
+                    <td><span class="badge bg-danger bg-opacity-10 text-danger fw-mono">${row.ip}</span></td>
+                    <td class="small fw-mono">${row.mac || '—'}</td>
+                    <td><span class="badge bg-secondary">${row.source}</span></td>
+                    <td class="small">${row.location || '—'}</td>
+                    <td class="small">${row.last_discovered}</td>
+                </tr>
+            `).join('');
+        }
+
+        // Update Gaps Table
+        const gapsBody = document.getElementById('table-gaps');
+        if (data.gaps.length === 0) {
+            gapsBody.innerHTML = '<tr><td colspan="3" class="text-center py-4 text-muted">No Dual-Stack Gaps found.</td></tr>';
+        } else {
+            gapsBody.innerHTML = data.gaps.map(row => `
+                <tr>
+                    <td class="fw-mono">${row.mac}</td>
+                    <td class="small">${row.ips.join(', ')}</td>
+                    <td><span class="badge bg-warning text-dark">Missing ${row.missing}</span></td>
+                </tr>
+            `).join('');
+        }
+
+        // Update Master Table
+        const masterBody = document.getElementById('table-master');
+        if (data.full.length === 0) {
+            masterBody.innerHTML = '<tr><td colspan="5" class="text-center py-4 text-muted">No IPs found.</td></tr>';
+        } else {
+            window.fullIpamData = data.full; // Cache for filtering
+            renderMasterTable(data.full);
+        }
+    }
+
+    function renderMasterTable(items) {
+        const masterBody = document.getElementById('table-master');
+        masterBody.innerHTML = items.map(row => `
+            <tr>
+                <td class="fw-mono">${row.ip}</td>
+                <td><span class="badge ${row.status === 'Orphaned' ? 'bg-danger' : 'bg-success'}">${row.status}</span></td>
+                <td class="small fw-mono">${row.mac || '—'}</td>
+                <td class="small">${row.subnet || '—'}</td>
+                <td class="small">${row.all_sources.map(s => s.source).join(', ')}</td>
+            </tr>
+        `).join('');
+    }
+
+    function filterMasterMap() {
+        const query = document.getElementById('master-search').value.toLowerCase();
+        if (!window.fullIpamData) return;
+        const filtered = window.fullIpamData.filter(row =>
+            row.ip.toLowerCase().includes(query) ||
+            (row.mac && row.mac.toLowerCase().includes(query)) ||
+            (row.subnet && row.subnet.toLowerCase().includes(query))
+        );
+        renderMasterTable(filtered);
+    }
+
+    // Initial load if data exists
+    document.addEventListener('DOMContentLoaded', loadIpamData);
+    // Also handle HTMX swaps
+    document.body.addEventListener('htmx:afterSwap', function(evt) {
+        if (evt.detail.target.id === 'main-content') {
+            loadIpamData();
+        }
+    });
+</script>
