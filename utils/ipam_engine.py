@@ -444,6 +444,8 @@ class IPAMEngine:
             if r.children or r.source != "System-Generated":
                 final_roots.append(r)
 
+        # Sort roots numerically by IP address
+        final_roots.sort(key=lambda x: x.network.value)
         return final_roots
 
     def _insert_into_tree(self, parent: IPAMNode, node: IPAMNode):
@@ -463,7 +465,8 @@ class IPAMEngine:
 
         # Doesn't fit in children, or became a parent for some. Add to children.
         parent.children.append(node)
-        parent.children.sort(key=lambda x: x.network.prefixlen)
+        # Sort children numerically by IP address, then by prefix length
+        parent.children.sort(key=lambda x: (x.network.value, x.network.prefixlen))
         if parent.source != "System-Generated":
             parent.type = "Supernet"
 
