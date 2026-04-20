@@ -236,17 +236,26 @@ class IPAMEngine:
 
             # Process Pools
             for p in pools:
-                cidr = p.get('ipPoolCidr')
-                if not cidr: continue
-                net = netaddr.IPNetwork(cidr)
-                name = p.get('ipPoolName', '')
-                if self.is_excluded(net, name): continue
-                node = IPAMNode(cidr, source="DNAC")
-                node.display_name = name
-                node.description = f"Pool: {name}"
-                node.logical_container = name
-                node.site = p.get('groupName', 'Unknown').split('/')[-1]
-                self.subnets.append(node)
+                name = p.get('ipPoolName', p.get('poolName', ''))
+                site = p.get('groupName', 'Unknown').split('/')[-1]
+
+                # Check for both v4 and v6 CIDRs in pools
+                for cidr_key in ['ipPoolCidr', 'ipv6PoolCidr', 'cidr']:
+                    cidr = p.get(cidr_key)
+                    if not cidr: continue
+
+                    try:
+                        net = netaddr.IPNetwork(cidr)
+                        if self.is_excluded(net, name): continue
+                        node = IPAMNode(str(net.cidr), source="DNAC")
+                        node.display_name = name
+                        node.description = f"Pool: {name}"
+                        node.logical_container = name
+                        node.site = site
+                        self.subnets.append(node)
+                        logger.debug(f"Discovered DNAC Pool {net.version}: {net.cidr}")
+                    except Exception as e:
+                        logger.debug(f"Failed to parse DNAC pool CIDR '{cidr}': {e}")
 
             # Process Interfaces
             for iface in interfaces:
