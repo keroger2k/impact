@@ -1,19 +1,19 @@
 <div class="animate-fade-in">
-  <div class="d-flex justify-content-between align-items-center mb-3">
+  <div class="flex-between mb-4">
     <div>
-      <h4 class="mb-0 text-navy fw-bold">Network Hierarchy Engine</h4>
+      <h4 class="mb-1 font-weight-bold" style="color: var(--sidebar-bg)">Network Hierarchy Engine</h4>
       <p class="text-muted small mb-0">Aggregated visibility across ACI, DNAC, Panorama, and Nexus</p>
     </div>
     <div class="d-flex gap-2">
       <div class="btn-group shadow-sm">
-        <button class="btn btn-outline-secondary px-3" onclick="expandAllNodes(true)" title="Expand All">📂+</button>
-        <button class="btn btn-outline-secondary px-3" onclick="expandAllNodes(false)" title="Collapse All">📂-</button>
+        <button class="btn btn-outline px-3" onclick="expandAllNodes(true)" title="Expand All"><i class="ph ph-folders"></i></button>
+        <button class="btn btn-outline px-3" onclick="expandAllNodes(false)" title="Collapse All"><i class="ph ph-folder"></i></button>
       </div>
       <div class="dropdown">
-        <button class="btn btn-outline-navy dropdown-toggle" type="button" data-bs-toggle="dropdown">
-          🔄 Refresh Discovery
+        <button class="btn btn-outline dropdown-toggle" type="button" data-bs-toggle="dropdown">
+          <i class="ph ph-arrows-clockwise me-1"></i> Refresh Discovery
         </button>
-        <ul class="dropdown-menu dropdown-menu-end shadow border-0">
+        <ul class="dropdown-menu dropdown-menu-end shadow-md border-0">
           <li><a class="dropdown-item" href="#" onclick="runRefresh()">Refresh All</a></li>
           <li><hr class="dropdown-divider"></li>
           <li><a class="dropdown-item" href="#" onclick="runRefresh('aci')">Refresh ACI Only</a></li>
@@ -22,40 +22,42 @@
           <li><a class="dropdown-item" href="#" onclick="runRefresh('panorama')">Refresh Panorama Only</a></li>
         </ul>
       </div>
-      <a href="/api/ipam/export" class="btn btn-navy">
-        📄 Export SolarWinds CSV
+      <a href="/api/ipam/export" class="btn btn-primary">
+        <i class="ph ph-file-csv me-1"></i> Export SolarWinds CSV
       </a>
     </div>
   </div>
 
   <div class="row mb-4">
     <div class="col-md-6">
-        <div class="input-group shadow-sm">
-            <span class="input-group-text bg-white border-end-0">🔍</span>
-            <input type="text" id="ipam-filter" class="form-control border-start-0 ps-0" placeholder="Filter by CIDR, Site, or Device..." onkeyup="filterIPAMTree()">
+        <div class="position-relative">
+            <span class="position-absolute top-50 start-0 translate-middle-y ps-3 text-muted">
+                <i class="ph ph-magnifying-glass"></i>
+            </span>
+            <input type="text" id="ipam-filter" class="form-control ps-5" placeholder="Filter by CIDR, Site, or Device..." onkeyup="filterIPAMTree()">
         </div>
     </div>
   </div>
 
   <div id="ipam-refresh-overlay" class="d-none">
-    <div class="card shadow border-0 mb-4 bg-light bg-opacity-75">
+    <div class="card shadow-md border-0 mb-4 bg-white">
         <div class="card-body">
             <div class="d-flex align-items-center gap-3 mb-3">
                 <div class="spinner-border spinner-border-sm text-primary"></div>
-                <h6 class="mb-0 fw-bold">Discovery in Progress...</h6>
-                <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="closeRefreshOverlay()">Close Log</button>
+                <h6 class="mb-0 font-weight-bold">Discovery in Progress...</h6>
+                <button class="btn btn-xs btn-outline ms-auto" onclick="closeRefreshOverlay()">Close Log</button>
             </div>
-            <div id="ipam-refresh-log" class="bg-dark text-success p-3 rounded small font-monospace" style="height: 150px; overflow-y: auto;">
+            <div id="ipam-refresh-log" class="bg-dark text-success p-3 rounded-md small font-monospace" style="height: 150px; overflow-y: auto;">
                 <!-- Streaming logs here -->
             </div>
         </div>
     </div>
   </div>
 
-  <div id="ipam-results" hx-get="/api/ipam/tree" hx-trigger="load" hx-target="this">
+  <div id="ipam-results" hx-get="/api/ipam/tree" hx-trigger="load" hx-target="this" class="table-container shadow-md">
     <!-- Tree will be rendered here by JS -->
     <div class="text-center my-5 py-5">
-        <i class="fas fa-network-wired fa-3x text-light mb-3"></i>
+        <i class="ph ph-network ph-3x text-light mb-3" style="font-size: 3rem; opacity: 0.2"></i>
         <p class="text-muted">Loading hierarchical IPAM view...</p>
     </div>
   </div>
@@ -83,7 +85,6 @@
 
             if (data.type === 'complete') {
                 eventSource.close();
-                // Trigger HTMX reload of the tree
                 htmx.trigger('#ipam-results', 'load');
                 setTimeout(() => {
                     const status = document.createElement('div');
@@ -122,7 +123,6 @@
     let currentIPAMData = null;
 
     function renderIPAMTree(data) {
-        console.log("Rendering IPAM Tree:", data);
         currentIPAMData = data;
         const container = document.getElementById('ipam-results');
         container.innerHTML = '';
@@ -138,7 +138,6 @@
         if (!currentIPAMData) return;
         const query = document.getElementById('ipam-filter').value.toLowerCase();
 
-        // Deep copy data for filtering or just re-render with filter logic
         const filteredData = {
             ipv4: filterNodes(currentIPAMData.ipv4, query),
             ipv6: filterNodes(currentIPAMData.ipv6, query)
@@ -160,7 +159,6 @@
 
             const filteredChildren = filterNodes(n.children, query);
             if (matchSelf || filteredChildren.length > 0) {
-                // If it's a match, we mark it to be expanded by default
                 return { ...n, children: filteredChildren, _match: true };
             }
             return null;
@@ -169,39 +167,36 @@
 
     function expandAllNodes(expand = true) {
         document.querySelectorAll('.sub-nodes').forEach(el => {
-            const item = el.closest('.list-group-item');
-            const icon = item.querySelector('.toggle-icon');
-            const folder = item.querySelector('.folder-icon');
+            const item = el.closest('.ipam-node-item');
+            const icon = item.querySelector('.toggle-icon i');
 
             if (expand) {
                 el.classList.remove('d-none');
-                if (icon) icon.textContent = '▼';
-                if (folder) folder.textContent = '📂';
+                if (icon) icon.className = 'ph ph-caret-down';
             } else {
                 el.classList.add('d-none');
-                if (icon) icon.textContent = '▶';
-                if (folder) folder.textContent = '📁';
+                if (icon) icon.className = 'ph ph-caret-right';
             }
         });
     }
 
     function createTreeCard(title, nodes) {
         const card = document.createElement('div');
-        card.className = 'card shadow-sm border-0 mb-4';
+        card.className = 'mb-0';
 
         const header = document.createElement('div');
-        header.className = 'card-header bg-light fw-bold text-navy';
-        header.innerHTML = `<i class="fas fa-sitemap me-2"></i>${title}`;
+        header.className = 'bg-light py-3 px-4 fw-bold small text-uppercase letter-spacing-05 border-bottom';
+        header.style.color = 'var(--text-muted)';
+        header.innerHTML = `<i class="ph ph-tree-structure me-2"></i>${title}`;
         card.appendChild(header);
 
         const body = document.createElement('div');
-        body.className = 'card-body p-0';
+        body.className = 'p-0';
 
         if (!nodes || nodes.length === 0) {
-            body.innerHTML = '<div class="p-4 text-center text-muted">No data discovered in this space.</div>';
+            body.innerHTML = '<div class="p-5 text-center text-muted">No data discovered in this space.</div>';
         } else {
             const list = document.createElement('div');
-            list.className = 'list-group list-group-flush';
             nodes.forEach(node => {
                 list.appendChild(createNodeElement(node));
             });
@@ -214,32 +209,26 @@
 
     function createNodeElement(node, depth = 0) {
         const item = document.createElement('div');
-        item.className = 'list-group-item border-0 p-0';
-        if (depth > 0) item.classList.add('border-start');
+        item.className = 'ipam-node-item';
 
         const content = document.createElement('div');
-        content.className = 'd-flex align-items-center justify-content-between py-2 px-3 cursor-pointer hover-bg-light border-bottom';
-        content.style.paddingLeft = (depth * 1.5 + 1) + 'rem';
+        content.className = 'd-flex align-items-center justify-content-between py-3 px-4 cursor-pointer border-bottom hover-bg';
+        content.style.paddingLeft = (depth * 2 + 1.5) + 'rem';
 
         const hasChildren = node.children && node.children.length > 0;
 
         if (hasChildren) {
-            content.title = "Click to expand/collapse";
             content.onclick = (e) => {
                 const sub = item.querySelector('.sub-nodes');
-                const icon = item.querySelector('.toggle-icon');
+                const icon = item.querySelector('.toggle-icon i');
                 const isCollapsed = sub.classList.contains('d-none');
 
                 if (isCollapsed) {
                     sub.classList.remove('d-none');
-                    if (icon) icon.textContent = '▼';
-                    const folder = item.querySelector('.folder-icon');
-                    if (folder) folder.textContent = '📂';
+                    if (icon) icon.className = 'ph ph-caret-down';
                 } else {
                     sub.classList.add('d-none');
-                    if (icon) icon.textContent = '▶';
-                    const folder = item.querySelector('.folder-icon');
-                    if (folder) folder.textContent = '📁';
+                    if (icon) icon.className = 'ph ph-caret-right';
                 }
             };
         }
@@ -251,65 +240,85 @@
         const toggle = document.createElement('span');
         toggle.className = 'text-muted toggle-icon';
         toggle.style.width = '20px';
-        toggle.style.textAlign = 'center';
-        toggle.style.fontSize = '0.8rem';
+        toggle.style.display = 'inline-flex';
+        toggle.style.justifyContent = 'center';
         if (hasChildren) {
-            toggle.textContent = '▶';
+            toggle.innerHTML = '<i class="ph ph-caret-right"></i>';
         }
 
         const icon = document.createElement('span');
-        icon.className = 'folder-icon me-2';
+        icon.className = 'me-1';
         if (node.type === 'Group' || node.type === 'Supernet') {
-            icon.textContent = '📁';
+            icon.innerHTML = '<i class="ph ph-folder text-muted"></i>';
         } else {
-            icon.textContent = '📍';
-            icon.style.fontSize = '0.9rem';
-            icon.style.opacity = '0.6';
+            icon.innerHTML = '<i class="ph ph-hash text-muted" style="font-size: 0.85rem"></i>';
         }
 
         const info = document.createElement('div');
-        let infoHtml = `
-            <div class="fw-bold text-navy">${node.cidr}</div>
-            <div class="small text-muted">${node.display_name || 'System Generated'}</div>
+        let labelClass = "badge badge-muted ms-2";
+        let labelText = node.display_name || 'System-Generated';
+
+        info.innerHTML = `
+            <div class="d-flex align-items-center">
+                <span class="font-weight-bold" style="color: var(--sidebar-bg)">${node.cidr}</span>
+                <span class="${labelClass}">${labelText}</span>
+            </div>
         `;
 
-        // Show conflicts/overlaps inline if they exist
         if (node.conflicts.length > 0) {
-            infoHtml += `<div class="text-danger small mt-1 fw-bold">⚠️ ${node.conflicts.join('<br>⚠️ ')}</div>`;
+            info.innerHTML += `<div class="text-danger small mt-1 font-weight-bold">⚠️ ${node.conflicts.join('<br>⚠️ ')}</div>`;
         }
         if (node.overlaps.length > 0) {
-            infoHtml += `<div class="text-warning small mt-1">📝 ${node.overlaps.join('<br>📝 ')}</div>`;
+            info.innerHTML += `<div class="text-warning small mt-1">📝 ${node.overlaps.join('<br>📝 ')}</div>`;
         }
-
-        info.innerHTML = infoHtml;
 
         left.appendChild(toggle);
         left.appendChild(icon);
         left.appendChild(info);
 
-        // Right side: Metadata + Flags
+        // Right side: Metadata + Actions
         const right = document.createElement('div');
         right.className = 'd-flex align-items-center gap-2';
 
         if (node.site && node.site !== 'Unknown' && node.site !== '' && node.site !== 'N/A') {
-            right.innerHTML += `<span class="badge bg-light text-primary border" title="Site">${node.site}</span>`;
+            right.innerHTML += `<span class="badge badge-info">${node.site}</span>`;
         }
 
         if (node.device && node.device !== 'Unknown' && node.device !== '' && node.device !== 'N/A') {
-            right.innerHTML += `<span class="badge bg-light text-secondary border" title="Device">${node.device}</span>`;
+            right.innerHTML += `<span class="badge badge-muted">${node.device}</span>`;
         }
 
         if (node.source && node.source !== 'Unknown') {
-            right.innerHTML += `<span class="badge bg-navy-light text-navy border-navy" title="Discovery Source">${node.source}</span>`;
+            right.innerHTML += `<span class="badge badge-muted" style="background: #F8FAFC">${node.source}</span>`;
         }
 
-        if (node.conflicts.length > 0) {
-            right.innerHTML += `<span class="badge bg-danger" title="${node.conflicts.join(', ')}">Conflict</span>`;
-        }
+        // Action buttons
+        const actions = document.createElement('div');
+        actions.className = 'row-actions ms-3';
 
-        if (node.overlaps.length > 0) {
-            right.innerHTML += `<span class="badge bg-warning text-dark" title="${node.overlaps.join(', ')}">Overlap</span>`;
-        }
+        // Link to config search for this CIDR
+        const searchBtn = document.createElement('button');
+        searchBtn.className = 'btn-action';
+        searchBtn.title = 'Search in Configs';
+        searchBtn.innerHTML = '<i class="ph ph-magnifying-glass"></i>';
+        searchBtn.onclick = (e) => {
+            e.stopPropagation();
+            htmx.ajax('GET', '/config-search?q=' + encodeURIComponent(node.cidr), { target: '#main-content', pushUrl: true });
+        };
+
+        // Link to IP Lookup for this CIDR
+        const lookupBtn = document.createElement('button');
+        lookupBtn.className = 'btn-action';
+        lookupBtn.title = 'IP Lookup';
+        lookupBtn.innerHTML = '<i class="ph ph-map-pin"></i>';
+        lookupBtn.onclick = (e) => {
+            e.stopPropagation();
+            htmx.ajax('GET', '/ip-lookup?q=' + encodeURIComponent(node.cidr), { target: '#main-content', pushUrl: true });
+        };
+
+        actions.appendChild(searchBtn);
+        actions.appendChild(lookupBtn);
+        right.appendChild(actions);
 
         content.appendChild(left);
         content.appendChild(right);
@@ -317,17 +326,13 @@
 
         if (node.children && node.children.length > 0) {
             const subNodes = document.createElement('div');
-            // If it was a filter match, expand it
             const show = node._match ? '' : 'd-none';
             subNodes.className = `sub-nodes ${show}`;
 
-            // Sync icon state for pre-expanded nodes
             if (node._match) {
                 setTimeout(() => {
-                    const icon = item.querySelector('.toggle-icon');
-                    if (icon) icon.textContent = '▼';
-                    const folder = item.querySelector('.folder-icon');
-                    if (folder) folder.textContent = '📂';
+                    const icon = item.querySelector('.toggle-icon i');
+                    if (icon) icon.className = 'ph ph-caret-down';
                 }, 0);
             }
 
@@ -343,15 +348,8 @@
 
 <style>
     .cursor-pointer { cursor: pointer; }
-    .rotate-90 { transform: rotate(90deg); }
-    .transition-transform { transition: transform 0.2s; display: inline-block; }
-    .bg-navy-light { background-color: rgba(0, 51, 102, 0.05); }
-    .border-navy { border: 1px solid rgba(0, 51, 102, 0.2); }
-    .hover-bg-light:hover { background-color: rgba(0,0,0,0.02); }
-    .toggle-icon { pointer-events: none; }
-    .list-group-item.border-start {
-        border-left: 1px solid #dee2e6 !important;
-        margin-left: 0.85rem;
-    }
-    .folder-icon { font-size: 1.1rem; }
+    .hover-bg:hover { background-color: #F8FAFC; }
+    .letter-spacing-05 { letter-spacing: 0.05em; }
+    .row-actions { opacity: 0; transition: opacity var(--transition); }
+    .hover-bg:hover .row-actions { opacity: 1; }
 </style>

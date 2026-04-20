@@ -17,9 +17,10 @@ logger = logging.getLogger(__name__)
 from cache import TTL_ACI_STATUS as ACI_TTL
 
 ACI_CACHE_KEYS = [
-    "aci_nodes", "aci_l3outs", "aci_bgp_peers", "aci_ospf_peers",
-    "aci_epgs", "aci_faults", "aci_subnets", "aci_health_overall",
-    "aci_health_tenants", "aci_health_pods", "aci_bgp_doms_all"
+    "aci_nodes", "aci_l3outs", "aci_bgp_peers", "aci_bgp_peer_cfg",
+    "aci_ospf_peers", "aci_epgs", "aci_faults", "aci_subnets",
+    "aci_health_overall", "aci_health_tenants", "aci_health_pods",
+    "aci_bgp_doms_all", "aci_bgp_adj_rib_out", "aci_bgp_adj_rib_in"
 ]
 
 def _get_aci(session: SessionEntry):
@@ -205,34 +206,43 @@ async def list_bgp_peers(request: Request, session: SessionEntry = Depends(requi
     aci = _get_aci(session)
     loop = asyncio.get_event_loop()
 
-    # We also need subnets to map advertisements
-    peers_raw = await loop.run_in_executor(None, run_with_context(_cached), "aci_bgp_peers", aci.get_bgp_peers)
-    subnets_raw = await loop.run_in_executor(None, run_with_context(_cached), "aci_subnets", aci.get_l3_subnets)
+    peers_raw, subnets_raw, peer_cfg_raw = await asyncio.gather(
+        loop.run_in_executor(None, run_with_context(_cached), "aci_bgp_peers", aci.get_bgp_peers),
+        loop.run_in_executor(None, run_with_context(_cached), "aci_subnets", aci.get_l3_subnets),
+        loop.run_in_executor(None, run_with_context(_cached), "aci_bgp_peer_cfg", aci.get_bgp_peer_configs),
+    )
 
-    # Map subnets to L3Outs
+    # Build peer IP → L3Out map from bgpPeerP (policy-space objects contain L3Out in their DN)
+    peer_to_l3out = {}
+    for entry in peer_cfg_raw.get('imdata', []):
+        attr = entry.get('bgpPeerP', {}).get('attributes', {})
+        dn_parts = attr.get('dn', '').split('/')
+        addr = attr.get('addr', '').split('/')[0]
+        l3out = next((p.replace('out-', '') for p in dn_parts if p.startswith('out-')), None)
+        if addr and l3out:
+            peer_to_l3out[addr] = l3out
+
+    # Map configured export subnets to L3Outs
     ads_map = {}
     for entry in subnets_raw.get('imdata', []):
         attr = entry.get('l3extSubnet', {}).get('attributes', {})
         if 'export-rtctrl' in attr.get('scope', ''):
             dn_parts = attr.get('dn', '').split('/')
-            l3out = next((p.replace('out-', '') for p in dn_parts if p.startswith('out-')), "N/A")
-            ads_map.setdefault(l3out, []).append(attr.get('ip'))
+            l3out = next((p.replace('out-', '') for p in dn_parts if p.startswith('out-')), None)
+            if l3out:
+                ads_map.setdefault(l3out, []).append(attr.get('ip'))
 
     processed = []
     for entry in peers_raw.get('imdata', []):
         attr = entry.get('bgpPeerEntry', {}).get('attributes', {})
         dn = attr.get('dn', '')
         dn_parts = dn.split('/')
-        l3out = next((p.replace('out-', '') for p in dn_parts if p.startswith('out-')), "N/A")
 
-        # Get node ID from DN: topology/pod-1/node-101/...
         node_id = next((p.replace('node-', '') for p in dn_parts if p.startswith('node-')), "N/A")
-
-        # Get VRF from DN: .../dom-NAME/...
         vrf = next((p.replace('dom-', '') for p in dn_parts if p.startswith('dom-')), "N/A")
-
-        # More flexible DN mapping for routes - find the base sys DN
-        # topology/pod-1/node-101/sys/bgp/inst/dom-default/peer-[10.255.0.1] -> topology/pod-1/node-101
+        peer_addr = attr.get('addr', '').split('/')[0]
+        # Use bgpPeerP cross-reference for accurate L3Out mapping
+        l3out = peer_to_l3out.get(peer_addr, 'N/A')
         base_dn = "/".join(dn_parts[:3]) if len(dn_parts) >= 3 else ""
 
         processed.append({
@@ -438,12 +448,17 @@ async def get_bgp_peer_routes(request: Request, dn: str, direction: str = "in", 
     cls = "bgpAdjRibIn" if direction == "in" else "bgpAdjRibOut"
     for item in routes_raw.get('imdata', []):
         attr = item.get(cls, {}).get('attributes', {})
+        if not attr:
+            continue
         processed.append({
-            "prefix": attr.get('prefix'),
-            "nextHop": attr.get('nextHop'),
-            "asPath": attr.get('asPath'),
-            "origin": attr.get('origin'),
-            "status": attr.get('status')
+            "prefix": attr.get('prefix') or attr.get('pfx', ''),
+            "nextHop": attr.get('nextHop') or attr.get('nh', ''),
+            "asPath": attr.get('asPath', ''),
+            "origin": attr.get('origin', ''),
+            "flags": attr.get('flags') or attr.get('status', ''),
+            "localPref": attr.get('localPref', ''),
+            "med": attr.get('med', ''),
+            "community": attr.get('community', ''),
         })
 
     # Get neighbor IP from DN
@@ -458,3 +473,102 @@ async def get_bgp_peer_routes(request: Request, dn: str, direction: str = "in", 
             "raw_json": routes_raw
         })
     return {"peer": peer_ip, "direction": direction, "items": processed, "raw": routes_raw}
+
+
+# ── Fabric-wide BGP Route Tables ─────────────────────────────────────────────
+
+def _parse_adj_rib_dn(dn):
+    """Extract node, vrf, peer_ip from a bgpAdjRibIn/Out route DN."""
+    parts = dn.split('/')
+    node_id = next((p.replace('node-', '') for p in parts if p.startswith('node-')), 'N/A')
+    vrf = next((p.replace('dom-', '') for p in parts if p.startswith('dom-')), 'N/A')
+    # peer-[IP] or peer-[IP/32] — the bracket content may be split across parts if DN split on /
+    peer_seg = next((p for p in parts if p.startswith('peer-[')), '')
+    raw = peer_seg[6:].rstrip(']')  # strip 'peer-[' prefix and trailing ']' if present
+    peer_ip = raw.split('/')[0] if raw else 'N/A'
+    return node_id, vrf, peer_ip
+
+
+def _build_adj_rib_rows(raw, cls, peer_to_l3out):
+    rows = []
+    for item in raw.get('imdata', []):
+        attr = item.get(cls, {}).get('attributes', {})
+        if not attr:
+            continue
+        dn = attr.get('dn', '')
+        if 'overlay-1' in dn:
+            continue
+        node_id, vrf, peer_ip = _parse_adj_rib_dn(dn)
+        rows.append({
+            "node": node_id,
+            "vrf": vrf,
+            "peer": peer_ip,
+            "l3out": peer_to_l3out.get(peer_ip, 'N/A'),
+            "prefix": attr.get('prefix') or attr.get('pfx', ''),
+            "nextHop": attr.get('nextHop') or attr.get('nh', ''),
+            "asPath": attr.get('asPath', ''),
+            "origin": attr.get('origin', ''),
+            "flags": attr.get('flags') or attr.get('status', ''),
+            "localPref": attr.get('localPref', ''),
+            "med": attr.get('med', ''),
+            "community": attr.get('community', ''),
+        })
+    return rows
+
+
+@router.get("/bgp/advertised")
+async def get_bgp_advertised(request: Request, session: SessionEntry = Depends(require_auth)):
+    aci = _get_aci(session)
+    loop = asyncio.get_event_loop()
+
+    rib_raw, peer_cfg_raw = await asyncio.gather(
+        loop.run_in_executor(None, run_with_context(_cached), "aci_bgp_adj_rib_out", aci.get_bgp_advertised_routes),
+        loop.run_in_executor(None, run_with_context(_cached), "aci_bgp_peer_cfg", aci.get_bgp_peer_configs),
+    )
+
+    peer_to_l3out = {}
+    for entry in peer_cfg_raw.get('imdata', []):
+        attr = entry.get('bgpPeerP', {}).get('attributes', {})
+        dn_parts = attr.get('dn', '').split('/')
+        addr = attr.get('addr', '').split('/')[0]
+        l3out = next((p.replace('out-', '') for p in dn_parts if p.startswith('out-')), None)
+        if addr and l3out:
+            peer_to_l3out[addr] = l3out
+
+    routes = _build_adj_rib_rows(rib_raw, "bgpAdjRibOut", peer_to_l3out)
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/aci_bgp_advertised.html", {
+            "routes": routes, "raw_json": rib_raw
+        })
+    return {"items": routes, "raw": rib_raw}
+
+
+@router.get("/bgp/received")
+async def get_bgp_received(request: Request, session: SessionEntry = Depends(require_auth)):
+    aci = _get_aci(session)
+    loop = asyncio.get_event_loop()
+
+    rib_raw, peer_cfg_raw = await asyncio.gather(
+        loop.run_in_executor(None, run_with_context(_cached), "aci_bgp_adj_rib_in", aci.get_bgp_received_routes),
+        loop.run_in_executor(None, run_with_context(_cached), "aci_bgp_peer_cfg", aci.get_bgp_peer_configs),
+    )
+
+    peer_to_l3out = {}
+    for entry in peer_cfg_raw.get('imdata', []):
+        attr = entry.get('bgpPeerP', {}).get('attributes', {})
+        dn_parts = attr.get('dn', '').split('/')
+        addr = attr.get('addr', '').split('/')[0]
+        l3out = next((p.replace('out-', '') for p in dn_parts if p.startswith('out-')), None)
+        if addr and l3out:
+            peer_to_l3out[addr] = l3out
+
+    routes = _build_adj_rib_rows(rib_raw, "bgpAdjRibIn", peer_to_l3out)
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/aci_bgp_received.html", {
+            "routes": routes, "raw_json": rib_raw
+        })
+    return {"items": routes, "raw": rib_raw}

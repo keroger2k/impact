@@ -1,97 +1,96 @@
-<div class="dev-page-layout">
+<div class="dev-split-container">
 
-  <!-- ── Top: Device Details Section (Fixed Height) ────────────────────────── -->
-  <div id="dev-detail" class="mb-3 border rounded bg-white shadow-sm overflow-hidden" style="height: 320px; flex-shrink: 0;">
-    <div id="dev-detail-panel" class="h-100 overflow-auto">
-      <div class="empty-state p-5 text-center h-100 d-flex flex-column justify-content-center">
-        <div class="empty-state-icon text-muted" style="font-size: 3rem;">🖥️</div>
-        <div class="empty-state-title h5 fw-bold mt-2">Select a device to view details</div>
-        <div class="empty-state-desc text-muted">Scroll through the inventory below and click on any row.</div>
+  <!-- ── Left: Inventory Table Section ────────── -->
+  <div class="dev-inventory-side">
+    <div class="card shadow-md h-100 d-flex flex-column mb-0">
+      <div class="card-header flex-between flex-shrink-0">
+        <div class="d-flex align-items-center gap-2">
+          <i class="ph ph-list-bullets text-primary" style="font-size: 1.2rem"></i>
+          <span class="font-weight-bold">Network Inventory</span>
+          <span id="dev-count-badge" class="badge badge-muted ms-2">...</span>
+        </div>
+        <div class="d-flex gap-2">
+          <div class="position-relative">
+            <span class="position-absolute top-50 start-0 translate-middle-y ps-3 text-muted" style="font-size: 0.9rem">
+              <i class="ph ph-magnifying-glass"></i>
+            </span>
+            <input type="text" id="dev-table-filter" class="form-control ps-5 py-1" style="font-size: 13px; width: 200px;" placeholder="Search..." onkeyup="filterDevices()">
+          </div>
+
+          <div class="dropdown">
+            <button class="btn btn-outline btn-xs px-3" type="button" data-bs-toggle="dropdown">
+              <i class="ph ph-arrows-clockwise"></i>
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end shadow-md border-0">
+              <li><a class="dropdown-item py-2" href="#" onclick="refreshLocalInventory()"><i class="ph ph-cloud-arrow-down me-2 text-primary"></i>DNAC Sync</a></li>
+              <li><hr class="dropdown-divider"></li>
+              <li><a class="dropdown-item py-2" href="#" onclick="triggerNexusRefresh()"><i class="ph ph-terminal-window me-2 text-success"></i>Nexus SSH</a></li>
+            </ul>
+          </div>
+        </div>
       </div>
-    </div>
-    <div id="dev-detail-loading" class="htmx-indicator p-5 text-center h-100 d-flex flex-column justify-content-center bg-white">
-      <div class="spinner spinner-md mx-auto"></div>
-      <p class="text-muted small mt-2">Fetching device configuration and health metrics...</p>
+
+      <div class="scroll-area bg-white">
+        <table class="table mb-0" id="devices-master-table">
+          <thead>
+            <tr>
+              <th onclick="sortDevices('hostname')" class="cursor-pointer">Hostname</th>
+              <th onclick="sortDevices('managementIpAddress')" class="cursor-pointer">IP</th>
+              <th onclick="sortDevices('platformId')" class="cursor-pointer">Platform</th>
+              <th onclick="sortDevices('reachabilityStatus')" class="cursor-pointer">Status</th>
+              <th class="text-end"></th>
+            </tr>
+          </thead>
+          <tbody id="dev-table-body">
+            <!-- Populated via JS -->
+          </tbody>
+        </table>
+        <div id="dev-master-loading" class="p-5 text-center d-none">
+           <div class="spinner-border text-primary spinner-border-sm"></div>
+           <p class="text-muted small mt-2">Syncing...</p>
+        </div>
+      </div>
+
+      <!-- Paging Footer -->
+      <div class="bg-light border-top flex-between py-2 px-3 flex-shrink-0">
+        <div class="small text-muted" id="paging-info" style="font-size: 11px">0-0 of 0</div>
+        <div class="pagination-controls d-flex gap-1">
+          <button class="btn btn-outline btn-xs px-1" onclick="prevPage()"><i class="ph ph-caret-left"></i></button>
+          <div id="page-numbers" class="d-flex gap-1"></div>
+          <button class="btn btn-outline btn-xs px-1" onclick="nextPage()"><i class="ph ph-caret-right"></i></button>
+        </div>
+      </div>
     </div>
   </div>
 
-  <!-- ── Bottom: Inventory Table Section (Flex Grow + Inner Scroll) ────────── -->
-  <div class="card shadow-sm border-0 flex-grow-1 d-flex flex-column min-h-0 overflow-hidden">
-    <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center flex-shrink-0">
-      <div class="d-flex align-items-center gap-2">
-        <i class="fas fa-list"></i>
-        <span class="fw-bold">Program Inventory</span>
-        <span id="dev-count-badge" class="badge bg-light text-navy ms-2">Loading...</span>
-      </div>
-      <div class="d-flex gap-3">
-        <div class="input-group input-group-sm">
-          <span class="input-group-text bg-white border-0"><i class="fas fa-search text-muted"></i></span>
-          <input type="text" id="dev-table-filter" class="form-control border-0" placeholder="Filter inventory..." onkeyup="filterDevices()">
+  <!-- ── Right: Device Details Section ────────────────────────── -->
+  <div class="dev-detail-side">
+    <div id="dev-detail-panel" class="h-100">
+      <div class="detail-panel shadow-md d-flex flex-column justify-content-center align-items-center text-center p-5">
+        <div class="text-light mb-3" style="font-size: 3rem; opacity: 0.2;">
+            <i class="ph ph-desktop"></i>
         </div>
-
-        <div class="dropdown">
-          <button class="btn btn-sm btn-outline-light dropdown-toggle px-2" type="button" data-bs-toggle="dropdown" aria-expanded="false">
-            <i class="fas fa-sync"></i> Refresh
-          </button>
-          <ul class="dropdown-menu dropdown-menu-end shadow">
-            <li><a class="dropdown-item" href="#" onclick="refreshLocalInventory()"><i class="fas fa-cloud-download-alt me-2 text-primary"></i>DNAC Inventory</a></li>
-            <li><hr class="dropdown-divider"></li>
-            <li><a class="dropdown-item" href="#" onclick="triggerNexusRefresh()"><i class="fas fa-network-wired me-2 text-success"></i>Nexus Devices (SSH)</a></li>
-          </ul>
-        </div>
+        <h6 class="font-weight-bold text-navy">No Device Selected</h6>
+        <p class="text-muted small">Select a device from the inventory to view real-time telemetry, specifications, and configurations.</p>
       </div>
     </div>
 
-    <div class="dev-table-wrap flex-grow-1 bg-white min-h-0" style="position: relative; overflow-y: scroll !important;">
-      <table class="table table-hover table-sm mb-0 sticky-header" id="devices-master-table">
-        <thead class="table-light">
-          <tr>
-            <th onclick="sortDevices('hostname')">Hostname <i class="fas fa-sort small opacity-50"></i></th>
-            <th onclick="sortDevices('managementIpAddress')">IP Address <i class="fas fa-sort small opacity-50"></i></th>
-            <th onclick="sortDevices('source')">Source <i class="fas fa-sort small opacity-50"></i></th>
-            <th onclick="sortDevices('platformId')">Platform <i class="fas fa-sort small opacity-50"></i></th>
-            <th onclick="sortDevices('role')">Role <i class="fas fa-sort small opacity-50"></i></th>
-            <th onclick="sortDevices('siteName')">Site <i class="fas fa-sort small opacity-50"></i></th>
-            <th onclick="sortDevices('reachabilityStatus')">Status <i class="fas fa-sort small opacity-50"></i></th>
-          </tr>
-        </thead>
-        <tbody id="dev-table-body">
-          <!-- Populated via JS -->
-        </tbody>
-      </table>
-      <div id="dev-master-loading" class="position-absolute top-50 start-50 translate-middle text-center">
-         <div class="spinner spinner-lg"></div>
-         <p class="text-muted mt-2 fw-bold">Loading full inventory...</p>
-      </div>
-    </div>
-
-    <!-- Paging Footer -->
-    <div class="card-footer bg-light border-top d-flex justify-content-between align-items-center py-2 flex-shrink-0">
-      <div class="small text-muted" id="paging-info">Showing 0-0 of 0</div>
-      <div class="pagination-controls d-flex gap-1">
-        <button class="btn btn-xs btn-outline-secondary px-2" onclick="prevPage()"><i class="fas fa-chevron-left"></i></button>
-        <div id="page-numbers" class="d-flex gap-1"></div>
-        <button class="btn btn-xs btn-outline-secondary px-2" onclick="nextPage()"><i class="fas fa-chevron-right"></i></button>
-      </div>
+    <div id="dev-detail-loading" class="htmx-indicator detail-panel shadow-md d-flex flex-column justify-content-center align-items-center p-5">
+      <div class="spinner-border text-primary mb-3"></div>
+      <p class="text-muted small font-weight-bold">Fetching Telemetry...</p>
     </div>
   </div>
 
 </div>
 
 <script>
-  // Use var or direct window assignment to avoid "Identifier already declared" errors on HTMX re-nav
   if (typeof ALL_DEVICES === 'undefined') {
     var ALL_DEVICES = [];
     var FILTERED_DEVICES = [];
     var CURRENT_PAGE = 1;
-    var PAGE_SIZE = 50;
+    var PAGE_SIZE = 40;
     var SORT_COL = 'hostname';
     var SORT_DIR = 1;
-  } else {
-    // Reset state for new load
-    CURRENT_PAGE = 1;
-    SORT_COL = 'hostname';
-    SORT_DIR = 1;
   }
 
   async function loadInitialDevices() {
@@ -120,9 +119,7 @@
     FILTERED_DEVICES = ALL_DEVICES.filter(d => {
         return (d.hostname || '').toLowerCase().includes(term) ||
                (d.managementIpAddress || '').toLowerCase().includes(term) ||
-               (d.platformId || '').toLowerCase().includes(term) ||
-               (d.source || 'DNAC').toLowerCase().includes(term) ||
-               (d.siteName || '').toLowerCase().includes(term);
+               (d.platformId || '').toLowerCase().includes(term);
     });
     CURRENT_PAGE = 1;
     renderTable();
@@ -148,16 +145,14 @@
 
     tbody.innerHTML = pageData.map(d => `
       <tr class="clickable-row" onclick="selectDevice('${d.id}', this)">
-        <td class="fw-bold text-navy">${d.hostname}</td>
-        <td class="mono small">${d.managementIpAddress}</td>
-        <td><span class="badge ${d.source === 'Nexus' ? 'bg-info-subtle text-info' : 'bg-primary-subtle text-primary'}">${d.source || 'DNAC'}</span></td>
-        <td class="small">${d.platformId}</td>
-        <td class="small uppercase">${d.role}</td>
-        <td class="small text-truncate" style="max-width: 150px;">${d.siteName || '—'}</td>
+        <td class="font-weight-bold small text-navy">${d.hostname}</td>
+        <td class="mono small text-muted">${d.managementIpAddress}</td>
+        <td class="small text-muted">${d.platformId}</td>
         <td>
-           <span class="badge ${d.reachabilityStatus === 'Reachable' ? 'bg-success-subtle text-success' : 'bg-danger-subtle text-danger'} px-2">
-             ${d.reachabilityStatus}
-           </span>
+           <span class="status-pip ${d.reachabilityStatus === 'Reachable' ? 'online' : 'offline'}" title="${d.reachabilityStatus}"></span>
+        </td>
+        <td class="text-end">
+            <i class="ph ph-caret-right text-light small"></i>
         </td>
       </tr>
     `).join('');
@@ -168,15 +163,19 @@
   function updatePaging(start, end) {
     const total = FILTERED_DEVICES.length;
     const actualEnd = Math.min(end, total);
-    document.getElementById('paging-info').textContent = `Showing ${total > 0 ? start + 1 : 0}-${actualEnd} of ${total}`;
+    document.getElementById('paging-info').textContent = `${total > 0 ? start + 1 : 0}-${actualEnd} of ${total}`;
 
     const pageCount = Math.ceil(total / PAGE_SIZE);
     const container = document.getElementById('page-numbers');
     container.innerHTML = '';
 
-    for (let i = Math.max(1, CURRENT_PAGE - 2); i <= Math.min(pageCount, CURRENT_PAGE + 2); i++) {
+    const maxBtns = 3;
+    let startPage = Math.max(1, CURRENT_PAGE - 1);
+    let endPage = Math.min(pageCount, startPage + maxBtns - 1);
+
+    for (let i = startPage; i <= endPage; i++) {
         const btn = document.createElement('button');
-        btn.className = `btn btn-xs ${i === CURRENT_PAGE ? 'btn-primary' : 'btn-outline-secondary'} px-2`;
+        btn.className = `btn btn-xs ${i === CURRENT_PAGE ? 'btn-primary' : 'btn-outline'} px-2`;
         btn.textContent = i;
         btn.onclick = () => { CURRENT_PAGE = i; renderTable(); };
         container.appendChild(btn);
@@ -187,8 +186,8 @@
   function nextPage() { if (CURRENT_PAGE * PAGE_SIZE < FILTERED_DEVICES.length) { CURRENT_PAGE++; renderTable(); } }
 
   function selectDevice(id, rowEl) {
-    document.querySelectorAll('.clickable-row').forEach(el => el.classList.remove('table-active'));
-    rowEl.classList.add('table-active');
+    document.querySelectorAll('.clickable-row').forEach(el => el.classList.remove('active-row'));
+    rowEl.classList.add('active-row');
 
     htmx.ajax('GET', '/api/dnac/devices/' + id + '/detail', {
         target: '#dev-detail-panel',
@@ -196,9 +195,7 @@
     });
   }
 
-  function refreshLocalInventory() {
-     loadInitialDevices();
-  }
+  function refreshLocalInventory() { loadInitialDevices(); }
 
   function triggerNexusRefresh() {
     const loader = document.getElementById('dev-master-loading');
@@ -230,17 +227,8 @@
 </script>
 
 <style>
-  .clickable-row { cursor: pointer; }
-  .clickable-row:hover { background-color: rgba(0, 112, 210, 0.05); }
-  .table-active { background-color: rgba(0, 112, 210, 0.1) !important; }
-  .btn-xs { padding: 1px 5px; font-size: 0.75rem; }
-  .min-h-0 { min-height: 0; }
-  .sticky-header thead th {
-    position: sticky;
-    top: 0;
-    background: #f8f9fa;
-    z-index: 5;
-    border-bottom: 2px solid var(--border);
-    white-space: nowrap;
-  }
+  .clickable-row { cursor: pointer; transition: background-color var(--transition); }
+  .clickable-row:hover { background-color: #F8FAFC; }
+  .active-row { background-color: #EFF6FF !important; border-left: 3px solid var(--accent); }
+  .active-row td { color: var(--accent) !important; }
 </style>

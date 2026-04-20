@@ -24,7 +24,7 @@
                 <div class="d-flex justify-content-end p-2 border-bottom border-secondary">
                   <button class="btn btn-xs btn-outline-light"
                           onclick="showFullConfig('{{ r.device_id }}', '{{ r.hostname }}')">
-                    <i class="fas fa-external-link-alt me-1"></i> View Full Config
+                    <i class=" ph ph-arrow-square-out me-1"></i> View Full Config
                   </button>
                 </div>
                 <pre class="mb-0 p-3 text-success small" style="max-height: 400px; overflow: auto; font-family: 'SF Mono', monospace;">
@@ -50,7 +50,7 @@
           const title = document.getElementById('rawDataModalLabel');
           const content = document.getElementById('rawDataContent');
 
-          title.innerHTML = `<i class="fas fa-file-code me-2"></i>Full Configuration: ${hostname}`;
+          title.innerHTML = `<i class=" ph ph-file-code me-2"></i>Full Configuration: ${hostname}`;
           content.textContent = "Loading configuration...";
           modal.show();
 
@@ -68,7 +68,7 @@
       </script>
     {% else %}
       <div class="p-5 text-center text-muted">
-        <i class="fas fa-info-circle mb-2" style="font-size: 24px;"></i>
+        <i class=" ph ph-info mb-2" style="font-size: 24px;"></i>
         <p>No matches found for your search criteria.</p>
       </div>
     {% endif %}

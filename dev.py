@@ -301,9 +301,15 @@ MOCK_ACI_L3OUTS = [
 ]
 
 MOCK_ACI_BGP_PEERS = [
-    {"bgpPeerEntry": {"attributes": {"addr": "10.255.0.1", "operSt": "established", "dn": "topology/pod-1/node-101/sys/bgp/inst/dom-default/peer-[10.255.0.1]"}}},
-    {"bgpPeerEntry": {"attributes": {"addr": "10.255.0.2", "operSt": "established", "dn": "topology/pod-1/node-102/sys/bgp/inst/dom-default/peer-[10.255.0.2]"}}},
-    {"bgpPeerEntry": {"attributes": {"addr": "10.238.94.139", "operSt": "established", "dn": "topology/pod-1/node-134/sys/bgp/inst/dom-TSA-HQ:TSA-HQ-VRF/peer-[10.238.94.139/32]/ent-[10.238.94.139]"}}},
+    {"bgpPeerEntry": {"attributes": {"addr": "10.255.0.1", "operSt": "established", "type": "ebgp", "dn": "topology/pod-1/node-101/sys/bgp/inst/dom-default/peer-[10.255.0.1]/ent-[10.255.0.1]"}}},
+    {"bgpPeerEntry": {"attributes": {"addr": "10.255.0.2", "operSt": "established", "type": "ebgp", "dn": "topology/pod-1/node-102/sys/bgp/inst/dom-default/peer-[10.255.0.2]/ent-[10.255.0.2]"}}},
+    {"bgpPeerEntry": {"attributes": {"addr": "10.238.94.139", "operSt": "established", "type": "ebgp", "dn": "topology/pod-1/node-134/sys/bgp/inst/dom-TSA-HQ:TSA-HQ-VRF/peer-[10.238.94.139/32]/ent-[10.238.94.139]"}}},
+]
+
+MOCK_ACI_BGP_PEER_CFG = [
+    {"bgpPeerP": {"attributes": {"addr": "10.255.0.1", "dn": "uni/tn-COMMON/out-L3OUT-CORE/lnodep-BorderLeafs/rspeerToProfile/bgpPeerP-[10.255.0.1]", "descr": "Core Router 1"}}},
+    {"bgpPeerP": {"attributes": {"addr": "10.255.0.2", "dn": "uni/tn-COMMON/out-L3OUT-CORE/lnodep-BorderLeafs/rspeerToProfile/bgpPeerP-[10.255.0.2]", "descr": "Core Router 2"}}},
+    {"bgpPeerP": {"attributes": {"addr": "10.238.94.139", "dn": "uni/tn-TSA-HQ/out-HQL3Out/lnodep-HQ-BorderLeafs/rspeerToProfile/bgpPeerP-[10.238.94.139]", "descr": "HQ Firewall"}}},
 ]
 
 MOCK_ACI_SUBNETS = [
@@ -328,13 +334,59 @@ MOCK_ACI_BGP_DOMS = [
 ]
 
 MOCK_ACI_BGP_RIB_IN = [
-    {"bgpAdjRibIn": {"attributes": {"prefix": "10.100.1.0/24", "nextHop": "10.255.0.1", "asPath": "65123", "origin": "igp", "status": "valid,best"}}},
-    {"bgpAdjRibIn": {"attributes": {"prefix": "10.100.2.0/24", "nextHop": "10.255.0.1", "asPath": "65123", "origin": "igp", "status": "valid,best"}}},
+    {"bgpAdjRibIn": {"attributes": {"prefix": "10.100.1.0/24", "nextHop": "10.255.0.1", "asPath": "65123", "origin": "igp", "flags": "valid,best", "localPref": "100", "med": "0", "community": "65123:100"}}},
+    {"bgpAdjRibIn": {"attributes": {"prefix": "10.100.2.0/24", "nextHop": "10.255.0.1", "asPath": "65123", "origin": "igp", "flags": "valid,best", "localPref": "100", "med": "0", "community": ""}}},
 ]
 
 MOCK_ACI_BGP_RIB_OUT = [
-    {"bgpAdjRibOut": {"attributes": {"prefix": "10.10.0.0/16", "nextHop": "0.0.0.0", "asPath": "", "origin": "igp", "status": "advertised"}}},
-    {"bgpAdjRibOut": {"attributes": {"prefix": "172.16.0.0/12", "nextHop": "0.0.0.0", "asPath": "", "origin": "igp", "status": "advertised"}}},
+    {"bgpAdjRibOut": {"attributes": {"prefix": "10.10.0.0/16", "nextHop": "0.0.0.0", "asPath": "", "origin": "igp", "flags": "advertised", "localPref": "100", "med": "0", "community": ""}}},
+    {"bgpAdjRibOut": {"attributes": {"prefix": "172.16.0.0/12", "nextHop": "0.0.0.0", "asPath": "", "origin": "igp", "flags": "advertised", "localPref": "100", "med": "0", "community": ""}}},
+]
+
+MOCK_ACI_BGP_ADJ_RIB_OUT = [
+    {"bgpAdjRibOut": {"attributes": {
+        "dn": "topology/pod-1/node-101/sys/bgp/inst/dom-default/peer-[10.255.0.1]/ent-[10.255.0.1]/adj-rib-out-post/rt-[10.10.0.0/16]",
+        "prefix": "10.10.0.0/16", "nextHop": "0.0.0.0", "asPath": "", "origin": "igp",
+        "flags": "advertised", "localPref": "100", "med": "0", "community": ""
+    }}},
+    {"bgpAdjRibOut": {"attributes": {
+        "dn": "topology/pod-1/node-101/sys/bgp/inst/dom-default/peer-[10.255.0.1]/ent-[10.255.0.1]/adj-rib-out-post/rt-[172.16.0.0/12]",
+        "prefix": "172.16.0.0/12", "nextHop": "0.0.0.0", "asPath": "", "origin": "igp",
+        "flags": "advertised", "localPref": "100", "med": "0", "community": ""
+    }}},
+    {"bgpAdjRibOut": {"attributes": {
+        "dn": "topology/pod-1/node-102/sys/bgp/inst/dom-default/peer-[10.255.0.2]/ent-[10.255.0.2]/adj-rib-out-post/rt-[10.10.0.0/16]",
+        "prefix": "10.10.0.0/16", "nextHop": "0.0.0.0", "asPath": "", "origin": "igp",
+        "flags": "advertised", "localPref": "100", "med": "0", "community": ""
+    }}},
+    {"bgpAdjRibOut": {"attributes": {
+        "dn": "topology/pod-1/node-134/sys/bgp/inst/dom-TSA-HQ:TSA-HQ-VRF/peer-[10.238.94.139/32]/ent-[10.238.94.139]/adj-rib-out-post/rt-[192.168.10.0/24]",
+        "prefix": "192.168.10.0/24", "nextHop": "0.0.0.0", "asPath": "", "origin": "igp",
+        "flags": "advertised", "localPref": "100", "med": "0", "community": ""
+    }}},
+]
+
+MOCK_ACI_BGP_ADJ_RIB_IN = [
+    {"bgpAdjRibIn": {"attributes": {
+        "dn": "topology/pod-1/node-101/sys/bgp/inst/dom-default/peer-[10.255.0.1]/ent-[10.255.0.1]/adj-rib-in-post/rt-[10.100.1.0/24]",
+        "prefix": "10.100.1.0/24", "nextHop": "10.255.0.1", "asPath": "65123", "origin": "igp",
+        "flags": "valid,best", "localPref": "100", "med": "0", "community": "65123:100"
+    }}},
+    {"bgpAdjRibIn": {"attributes": {
+        "dn": "topology/pod-1/node-101/sys/bgp/inst/dom-default/peer-[10.255.0.1]/ent-[10.255.0.1]/adj-rib-in-post/rt-[10.100.2.0/24]",
+        "prefix": "10.100.2.0/24", "nextHop": "10.255.0.1", "asPath": "65123", "origin": "igp",
+        "flags": "valid,best", "localPref": "100", "med": "0", "community": ""
+    }}},
+    {"bgpAdjRibIn": {"attributes": {
+        "dn": "topology/pod-1/node-134/sys/bgp/inst/dom-TSA-HQ:TSA-HQ-VRF/peer-[10.238.94.139/32]/ent-[10.238.94.139]/adj-rib-in-post/rt-[8.8.8.0/24]",
+        "prefix": "8.8.8.0/24", "nextHop": "10.238.94.139", "asPath": "65200 65300", "origin": "egp",
+        "flags": "valid,best", "localPref": "100", "med": "0", "community": ""
+    }}},
+    {"bgpAdjRibIn": {"attributes": {
+        "dn": "topology/pod-1/node-102/sys/bgp/inst/dom-default/peer-[10.255.0.2]/ent-[10.255.0.2]/adj-rib-in-post/rt-[10.100.1.0/24]",
+        "prefix": "10.100.1.0/24", "nextHop": "10.255.0.2", "asPath": "65123", "origin": "igp",
+        "flags": "valid", "localPref": "100", "med": "0", "community": "65123:100"
+    }}},
 ]
 
 MOCK_ACI_BGP_DOMS_ALL = [
@@ -361,6 +413,59 @@ MOCK_ACI_HEALTH_TENANTS = [
 MOCK_ACI_HEALTH_PODS = [
     {"fabricPod": {"attributes": {"id": "1"}, "children": [{"healthInst": {"attributes": {"cur": "92"}}}]}}
 ]
+
+MOCK_IPAM_TREE = {
+    "ipv4": [
+        {
+            "cidr": "10.0.0.0/8",
+            "display_name": "Internal Network",
+            "type": "Supernet",
+            "site": "Global",
+            "device": "N/A",
+            "source": "Aggregated",
+            "conflicts": [],
+            "overlaps": [],
+            "children": [
+                {
+                    "cidr": "10.10.0.0/16",
+                    "display_name": "DCA Data Center",
+                    "type": "Group",
+                    "site": "TSA-DCA-HQ",
+                    "device": "N/A",
+                    "source": "DNAC",
+                    "conflicts": [],
+                    "overlaps": [],
+                    "children": [
+                        {
+                            "cidr": "10.10.1.0/24",
+                            "display_name": "User Access",
+                            "type": "Subnet",
+                            "site": "TSA-DCA-HQ",
+                            "device": "SW-DCA-HQ-01",
+                            "source": "DNAC",
+                            "conflicts": [],
+                            "overlaps": [],
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        }
+    ],
+    "ipv6": [
+        {
+            "cidr": "fc00::/7",
+            "display_name": "Unique Local Address",
+            "type": "Supernet",
+            "site": "Global",
+            "device": "N/A",
+            "source": "Aggregated",
+            "conflicts": [],
+            "overlaps": [],
+            "children": []
+        }
+    ]
+}
 
 # ── Cache seeding ─────────────────────────────────────────────────────────────
 
@@ -409,19 +514,25 @@ def seed_cache(cache) -> None:
     cache.set("status_panorama", {"ok": True, "detail": "Connected (mock)"}, LONG)
 
     # ACI
-    cache.set("aci_nodes",     {"imdata": MOCK_ACI_NODES},      LONG)
-    cache.set("aci_l3outs",    {"imdata": MOCK_ACI_L3OUTS},     LONG)
-    cache.set("aci_bgp_peers", {"imdata": MOCK_ACI_BGP_PEERS},  LONG)
-    cache.set("aci_subnets",   {"imdata": MOCK_ACI_SUBNETS},    LONG)
-    cache.set("aci_epgs",      {"imdata": MOCK_ACI_EPGS},       LONG)
-    cache.set("aci_faults",    {"imdata": MOCK_ACI_FAULT_INST}, LONG)
-    cache.set("aci_bgp_doms_all", {"imdata": MOCK_ACI_BGP_DOMS_ALL}, LONG)
+    cache.set("aci_nodes",          {"imdata": MOCK_ACI_NODES},         LONG)
+    cache.set("aci_l3outs",         {"imdata": MOCK_ACI_L3OUTS},        LONG)
+    cache.set("aci_bgp_peers",      {"imdata": MOCK_ACI_BGP_PEERS},     LONG)
+    cache.set("aci_bgp_peer_cfg",   {"imdata": MOCK_ACI_BGP_PEER_CFG},  LONG)
+    cache.set("aci_subnets",        {"imdata": MOCK_ACI_SUBNETS},       LONG)
+    cache.set("aci_epgs",           {"imdata": MOCK_ACI_EPGS},          LONG)
+    cache.set("aci_faults",         {"imdata": MOCK_ACI_FAULT_INST},    LONG)
+    cache.set("aci_bgp_doms_all",   {"imdata": MOCK_ACI_BGP_DOMS_ALL},  LONG)
+    cache.set("aci_bgp_adj_rib_out",{"imdata": MOCK_ACI_BGP_ADJ_RIB_OUT}, LONG)
+    cache.set("aci_bgp_adj_rib_in", {"imdata": MOCK_ACI_BGP_ADJ_RIB_IN},  LONG)
 
     # ACI status
     cache.set("aci_health_overall", {"imdata": MOCK_ACI_HEALTH_OVERALL}, LONG)
     cache.set("aci_health_tenants", {"imdata": MOCK_ACI_HEALTH_TENANTS}, LONG)
     cache.set("aci_health_pods",    {"imdata": MOCK_ACI_HEALTH_PODS},    LONG)
     cache.set("status_aci", {"ok": True, "detail": "Connected (mock)"}, LONG)
+
+    # IPAM
+    cache.set("ipam_tree", MOCK_IPAM_TREE, LONG)
 
     # Nexus
     cache.set("nexus_inventory", MOCK_NEXUS_DEVICES, LONG)

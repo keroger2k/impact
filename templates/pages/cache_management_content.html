@@ -4,14 +4,14 @@
       <div class="card shadow-sm border-0 bg-navy text-white p-4">
         <div class="d-flex justify-content-between align-items-center">
           <div>
-            <h3 class="fw-bold mb-1"><i class="fas fa-database me-2"></i> Cache Management</h3>
+            <h3 class="fw-bold mb-1"><i class=" ph ph-database me-2"></i> Cache Management</h3>
             <p class="mb-0 opacity-75">Inspect and refresh application cache objects across all systems.</p>
           </div>
           <button class="btn btn-outline-light"
                   hx-post="/api/dnac/cache/refresh"
                   hx-swap="none"
                   hx-on::after-request="if(event.detail.successful) { alert('Full application cache (memory + disk) has been cleared.'); window.location.reload(); }">
-            <i class="fas fa-trash-alt me-2"></i> Clear All Cache
+            <i class=" ph ph-trash me-2"></i> Clear All Cache
           </button>
         </div>
       </div>

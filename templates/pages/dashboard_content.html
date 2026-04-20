@@ -1,44 +1,46 @@
 <div class="kpi-row cols-4 animate-fade-in">
-  <div class="kpi-card teal shadow-sm">
+  <div class="kpi-card">
     <div class="kpi-label">Systems Status</div>
-    <div class="kpi-value">{{ systems_online }}/4</div>
-    <div class="kpi-sub d-flex align-items-center gap-2">
-      <span class="status-dot {% if dnac.ok %}ok{% else %}err{% endif %}"></span> DNAC
-      <span class="status-dot {% if ise.ok %}ok{% else %}err{% endif %}"></span> ISE
-      <span class="status-dot {% if panorama.ok %}ok{% else %}err{% endif %}"></span> Pan
-      <span class="status-dot {% if aci.ok %}ok{% else %}err{% endif %}"></span> ACI
+    <div class="kpi-value" style="color: var(--sidebar-bg)">{{ systems_online }}/4</div>
+    <div class="kpi-sub d-flex align-items-center gap-2 mt-2">
+      <span class="status-pip {% if dnac.ok %}online{% else %}offline{% endif %}"></span> DNAC
+      <span class="status-pip {% if ise.ok %}online{% else %}offline{% endif %}"></span> ISE
+      <span class="status-pip {% if panorama.ok %}online{% else %}offline{% endif %}"></span> Pan
+      <span class="status-pip {% if aci.ok %}online{% else %}offline{% endif %}"></span> ACI
     </div>
   </div>
-  <div class="kpi-card shadow-sm">
+  <div class="kpi-card">
     <div class="kpi-label">Device Inventory</div>
-    <div class="kpi-value">{{ stats.total }}</div>
-    <div class="kpi-sub">{{ stats.pct_reachable }}% Reachability</div>
+    <div class="kpi-value" style="color: var(--sidebar-bg)">{{ stats.total }}</div>
+    <div class="kpi-sub font-weight-bold" style="color: var(--accent)">{{ stats.pct_reachable }}% Reachability</div>
   </div>
-  <div class="kpi-card success shadow-sm">
+  <div class="kpi-card">
     <div class="kpi-label">Reachable</div>
     <div class="kpi-value text-success">{{ stats.reachable }}</div>
-    <div class="kpi-sub">Last updated now</div>
+    <div class="kpi-sub text-muted">Active nodes in production</div>
   </div>
-  <div class="kpi-card danger shadow-sm">
+  <div class="kpi-card">
     <div class="kpi-label">Unreachable</div>
     <div class="kpi-value text-danger">{{ stats.unreachable }}</div>
-    <div class="kpi-sub">Troubleshoot down nodes</div>
+    <div class="kpi-sub text-muted">Troubleshoot down nodes</div>
   </div>
 </div>
 
 <div class="row g-4 animate-fade-in" style="animation-delay: 100ms;">
   <div class="col-md-6">
-    <div class="card shadow-sm h-100">
-      <div class="card-header bg-navy text-white d-flex align-items-center gap-2">
-        <i class="fas fa-layer-group"></i>
-        <span class="fw-bold">Platform Distribution</span>
+    <div class="card shadow-md h-100">
+      <div class="card-header flex-between">
+        <div class="d-flex align-items-center gap-2">
+            <i class="ph ph-stack text-primary"></i>
+            <span class="font-weight-bold">Platform Distribution</span>
+        </div>
       </div>
       <div class="card-body">
         <div class="list-group list-group-flush">
           {% for p, count in stats.platforms %}
-          <div class="list-group-item d-flex justify-content-between align-items-center border-0 py-2">
-             <span class="text-navy fw-bold small">{{ p }}</span>
-             <span class="badge bg-light text-navy fw-bold">{{ count }}</span>
+          <div class="list-group-item d-flex justify-content-between align-items-center border-0 py-2 px-0">
+             <span class="font-weight-bold small" style="color: var(--sidebar-bg)">{{ p }}</span>
+             <span class="badge badge-muted">{{ count }}</span>
           </div>
           {% endfor %}
         </div>
@@ -46,17 +48,19 @@
     </div>
   </div>
   <div class="col-md-6">
-     <div class="card shadow-sm h-100">
-      <div class="card-header bg-navy text-white d-flex align-items-center gap-2">
-        <i class="fas fa-network-wired"></i>
-        <span class="fw-bold">Device Roles</span>
+     <div class="card shadow-md h-100">
+      <div class="card-header flex-between">
+        <div class="d-flex align-items-center gap-2">
+            <i class="ph ph-user-gear text-primary"></i>
+            <span class="font-weight-bold">Device Roles</span>
+        </div>
       </div>
       <div class="card-body">
          <div class="list-group list-group-flush">
           {% for r, count in stats.roles %}
-          <div class="list-group-item d-flex justify-content-between align-items-center border-0 py-2">
-             <span class="text-navy fw-bold small uppercase">{{ r }}</span>
-             <span class="badge bg-light text-navy fw-bold">{{ count }}</span>
+          <div class="list-group-item d-flex justify-content-between align-items-center border-0 py-2 px-0">
+             <span class="font-weight-bold small text-uppercase" style="color: var(--sidebar-bg)">{{ r }}</span>
+             <span class="badge badge-muted">{{ count }}</span>
           </div>
           {% endfor %}
         </div>
@@ -67,24 +71,24 @@
 
 {% if aci_health %}
 <div class="kpi-row cols-4 animate-fade-in mt-4" style="animation-delay: 150ms;">
-  <div class="kpi-card shadow-sm {% if aci_health.overall|int >= 90 %}success{% elif aci_health.overall|int >= 70 %}warning{% else %}danger{% endif %}">
+  <div class="kpi-card">
     <div class="kpi-label">ACI Overall Health</div>
-    <div class="kpi-value">{{ aci_health.overall }}%</div>
-    <div class="kpi-sub">Fabric Health Score</div>
+    <div class="kpi-value {% if aci_health.overall|int >= 90 %}text-success{% elif aci_health.overall|int >= 70 %}text-warning{% else %}text-danger{% endif %}">{{ aci_health.overall }}%</div>
+    <div class="kpi-sub text-muted">Fabric Health Score</div>
   </div>
   {% for pod in aci_health.pods %}
-  <div class="kpi-card shadow-sm {% if pod.health|int >= 90 %}success{% elif pod.health|int >= 70 %}warning{% else %}danger{% endif %}">
+  <div class="kpi-card">
     <div class="kpi-label">Pod {{ pod.id }} Health</div>
-    <div class="kpi-value">{{ pod.health }}%</div>
-    <div class="kpi-sub">Operational Integrity</div>
+    <div class="kpi-value {% if pod.health|int >= 90 %}text-success{% elif pod.health|int >= 70 %}text-warning{% else %}text-danger{% endif %}">{{ pod.health }}%</div>
+    <div class="kpi-sub text-muted">Operational Integrity</div>
   </div>
   {% endfor %}
   {% for tenant in aci_health.tenants %}
   {% if loop.index <= 2 %}
-  <div class="kpi-card shadow-sm {% if tenant.health|int >= 90 %}success{% elif tenant.health|int >= 70 %}warning{% else %}danger{% endif %}">
+  <div class="kpi-card">
     <div class="kpi-label">{{ tenant.name }} Health</div>
-    <div class="kpi-value">{{ tenant.health }}%</div>
-    <div class="kpi-sub">Tenant Resource Health</div>
+    <div class="kpi-value {% if tenant.health|int >= 90 %}text-success{% elif tenant.health|int >= 70 %}text-warning{% else %}text-danger{% endif %}">{{ tenant.health }}%</div>
+    <div class="kpi-sub text-muted">Tenant Resource Health</div>
   </div>
   {% endif %}
   {% endfor %}
@@ -92,22 +96,24 @@
 
 <div class="row g-4 mt-1 animate-fade-in" style="animation-delay: 200ms;">
   <div class="col-md-4">
-    <div class="card shadow-sm h-100">
-      <div class="card-header bg-navy text-white d-flex align-items-center gap-2">
-        <i class="fas fa-exclamation-triangle"></i>
-        <span class="fw-bold">ACI Fault Summary</span>
+    <div class="card shadow-md h-100">
+      <div class="card-header flex-between">
+        <div class="d-flex align-items-center gap-2">
+            <i class="ph ph-warning-circle text-danger"></i>
+            <span class="font-weight-bold">ACI Fault Summary</span>
+        </div>
       </div>
       <div class="card-body p-0">
         {% if aci_faults %}
         <div class="list-group list-group-flush">
           {% for fault in aci_faults %}
           {% if fault.severity in ['critical', 'major'] %}
-          <div class="list-group-item d-flex flex-column border-0 py-2">
-            <div class="d-flex justify-content-between align-items-center">
-              <span class="badge {% if fault.severity == 'critical' %}bg-danger{% else %}bg-warning text-dark{% endif %} mb-1">{{ fault.severity|upper }}</span>
-              <span class="small text-muted">{{ fault.code }}</span>
+          <div class="list-group-item d-flex flex-column border-bottom py-3 px-4 hover-bg">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <span class="badge {% if fault.severity == 'critical' %}badge-danger{% else %}badge-warning{% endif %}">{{ fault.severity|upper }}</span>
+              <span class="small text-muted font-weight-bold">{{ fault.code }}</span>
             </div>
-            <span class="small text-navy fw-bold">{{ fault.descr }}</span>
+            <span class="small font-weight-bold" style="color: var(--sidebar-bg)">{{ fault.descr }}</span>
           </div>
           {% endif %}
           {% endfor %}
@@ -121,20 +127,22 @@
     </div>
   </div>
   <div class="col-md-8">
-    <div class="card shadow-sm h-100">
+    <div class="card shadow-md h-100">
 {% else %}
   <div class="col-md-12">
-    <div class="card shadow-sm h-100">
+    <div class="card shadow-md h-100">
 {% endif %}
-       <div class="card-header bg-navy text-white d-flex align-items-center gap-2">
-        <i class="fas fa-info-circle"></i>
-        <span class="fw-bold">Recent Network Events (Last 24 Hours)</span>
+       <div class="card-header flex-between">
+        <div class="d-flex align-items-center gap-2">
+            <i class="ph ph-activity text-primary"></i>
+            <span class="font-weight-bold">Recent Network Events (Last 24 Hours)</span>
+        </div>
       </div>
       <div class="card-body p-0">
         {% if issues %}
-        <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
-          <table class="table table-hover mb-0 sticky-header">
-            <thead class="table-light">
+        <div class="table-container">
+          <table class="table">
+            <thead>
               <tr>
                 <th>Severity</th>
                 <th>Issue</th>
@@ -145,15 +153,15 @@
             </thead>
             <tbody>
               {% for issue in issues %}
-              <tr>
+              <tr class="hover-bg">
                 <td>
-                  <span class="badge {% if issue.priority == 'P1' %}bg-danger{% elif issue.priority == 'P2' %}bg-warning text-dark{% else %}bg-info{% endif %}">
+                  <span class="badge {% if issue.priority == 'P1' %}badge-danger{% elif issue.priority == 'P2' %}badge-warning{% else %}badge-info{% endif %}">
                     {{ issue.priority }}
                   </span>
                 </td>
-                <td class="text-wrap" style="max-width: 300px;">{{ issue.issue_title }}</td>
-                <td class="mono small">{{ issue.device_name }}</td>
-                <td class="small">{{ issue.site_name or '—' }}</td>
+                <td class="text-wrap font-weight-bold" style="max-width: 300px; color: var(--sidebar-bg)">{{ issue.issue_title }}</td>
+                <td class="mono small text-muted">{{ issue.device_name }}</td>
+                <td class="small text-muted">{{ issue.site_name or '—' }}</td>
                 <td class="small text-muted">{{ issue.last_occurrence_time }}</td>
               </tr>
               {% endfor %}
@@ -162,11 +170,15 @@
         </div>
         {% else %}
         <div class="p-5 text-center">
-          <i class="fas fa-clipboard-check text-muted mb-3" style="font-size: 40px; opacity: 0.5;"></i>
-          <p class="text-muted small">No critical alerts detected in the last 24 hours.</p>
+          <i class="ph ph-check-circle text-success mb-3" style="font-size: 3rem; opacity: 0.2"></i>
+          <p class="text-muted small font-weight-bold">No critical alerts detected in the last 24 hours.</p>
         </div>
         {% endif %}
       </div>
     </div>
   </div>
 </div>
+
+<style>
+    .hover-bg:hover { background-color: #F8FAFC; }
+</style>

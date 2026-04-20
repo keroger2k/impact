@@ -11,13 +11,13 @@
                         </h3>
                     </div>
                     <div class="bg-{{ card.color }} bg-opacity-10 p-3 rounded text-{{ card.color }}">
-                        <i class="{{ card.icon }} fa-2x"></i>
+                        <i class="{{ card.icon }} "></i>
                     </div>
                 </div>
 
                 <div class="mt-auto">
                     <p class="card-text mb-3 small">
-                        <i class="fas fa-clock me-1 text-muted"></i>
+                        <i class=" ph ph-clock me-1 text-muted"></i>
                         Last updated: <span class="fw-bold">{{ card.set_at }}</span>
                         {% if card.is_expired %}
                         <span class="badge bg-warning text-dark ms-1">Expired</span>
@@ -33,7 +33,7 @@
                             hx-indicator="#cache-spinner"
                             hx-on::after-request="if(event.detail.successful) htmx.ajax('GET', '/api/cache/status', {target: '#cache-cards-container', swap: 'innerHTML'})"
                             {% endif %}>
-                        <i class="fas fa-sync-alt me-1"></i> Refresh {{ card.title }}
+                        <i class=" ph ph-arrows-clockwise me-1"></i> Refresh {{ card.title }}
                     </button>
                 </div>
             </div>
