@@ -105,6 +105,13 @@ class ACIClient:
             if "l3extOut" in path: return {"imdata": MOCK_ACI_L3OUTS}
             if "bgpPeerEntry" in path: return {"imdata": MOCK_ACI_BGP_PEERS}
             if "l3extSubnet" in path: return {"imdata": MOCK_ACI_SUBNETS}
+            if "fvSubnet" in path:
+                return {
+                    "imdata": [
+                        {"fvSubnet": {"attributes": {"ip": "10.10.10.1/24", "dn": "uni/tn-TSA-HQ/BD-Users/subnet-[10.10.10.1/24]", "descr": "User Access"}}},
+                        {"fvSubnet": {"attributes": {"ip": "fc00:10::1/64", "dn": "uni/tn-TSA-HQ/BD-Users/subnet-[fc00:10::1/64]", "descr": "User Access IPv6"}}}
+                    ]
+                }
             if "fvAEPg" in path: return {"imdata": MOCK_ACI_EPGS}
             if "faultInst" in path: return {"imdata": MOCK_ACI_FAULT_INST}
             if "bgpDomAf.json" in path: return {"imdata": MOCK_ACI_BGP_DOMS_ALL}
@@ -236,8 +243,12 @@ class ACIClient:
     def get_pod_health(self):
         """Fetch health scores for pods."""
         # Some ACI versions prefer fabricPod objects directly
+        # If health subtree fails (400), we fallback to the class itself
         path = "api/node/class/fabricPod.json?rsp-subtree-include=health"
-        return self.get(path)
+        resp = self.get(path)
+        if resp is None:
+            return self.get("api/node/class/fabricPod.json")
+        return resp
 
 def connectivity_check(client: ACIClient) -> bool:
     """Lightweight call to verify APIC is reachable."""

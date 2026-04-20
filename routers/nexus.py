@@ -150,6 +150,12 @@ async def init_nexus_collection(username: Optional[str] = None, password: Option
     username = username or os.getenv("DOMAIN_USERNAME")
     password = password or os.getenv("DOMAIN_PASSWORD")
 
+    if not username or not password:
+        from dev import DEV_MODE
+        if not DEV_MODE:
+            logger.warning("Nexus collection skipped: DOMAIN_USERNAME or DOMAIN_PASSWORD not set.")
+            return
+
     def collect_device(dev):
         from dev import DEV_MODE
         hostname = dev['hostname']

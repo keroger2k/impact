@@ -97,7 +97,7 @@ for dev in MOCK_NEXUS_DEVICES:
         "device_ip": dev["managementIpAddress"],
         "platform": "nxos",
         "interface_name": "Ethernet1/1",
-        "ipv4_address": f"192.168.{MOCK_NEXUS_DEVICES.index(dev)+1}.1/24",
+        "ipv4_address": f"10.60.{MOCK_NEXUS_DEVICES.index(dev)+1}.1/24",
         "vlans": [10, 20],
         "zone": "trust",
         "mac_address": f"00:50:56:00:00:{MOCK_NEXUS_DEVICES.index(dev)+1:02x}",
@@ -309,6 +309,10 @@ MOCK_ACI_BGP_PEERS = [
 MOCK_ACI_SUBNETS = [
     {"l3extSubnet": {"attributes": {"ip": "10.0.0.0/8", "scope": "export-rtctrl", "dn": "uni/tn-COMMON/out-L3OUT-CORE/lnodep-CORE/lifp-CORE/subnet-[10.0.0.0/8]"}}},
     {"l3extSubnet": {"attributes": {"ip": "172.16.0.0/12", "scope": "export-rtctrl", "dn": "uni/tn-PROD/out-L3OUT-FIREWALL/lnodep-FW/lifp-FW/subnet-[172.16.0.0/12]"}}},
+    {"fvSubnet": {"attributes": {"ip": "10.10.10.1/24", "dn": "uni/tn-TSA-HQ/BD-Users/subnet-[10.10.10.1/24]", "descr": "User Access"}}},
+    {"fvSubnet": {"attributes": {"ip": "fc00:10::1/64", "dn": "uni/tn-TSA-HQ/BD-Users/subnet-[fc00:10::1/64]", "descr": "User Access IPv6"}}},
+    # Add a conflict: This exactly matches a DNAC pool in TSA-BOS-T1 (10.20.0.0/16) but has different site
+    {"fvSubnet": {"attributes": {"ip": "10.20.0.0/16", "dn": "uni/tn-CONFLICT-TENANT/BD-Conflict/subnet-[10.20.0.0/16]", "descr": "Conflict Subnet"}}},
 ]
 
 MOCK_ACI_EPGS = [
@@ -422,6 +426,9 @@ def seed_cache(cache) -> None:
     # Nexus
     cache.set("nexus_inventory", MOCK_NEXUS_DEVICES, LONG)
     cache.set("nexus_interfaces", MOCK_NEXUS_INTERFACES, LONG)
+
+    for dev in MOCK_NEXUS_DEVICES:
+        cache.set(f"config:nexus:{dev['hostname']}", MOCK_CONFIGS[dev['id']], LONG)
 
 
 def create_dev_session() -> None:
