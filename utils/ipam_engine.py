@@ -189,19 +189,26 @@ class IPAMEngine:
                 # Mock data
                 pools = [
                     {"ipPoolCidr": "10.20.0.0/16", "ipPoolName": "BOS-Pool", "groupName": "Global/TSA-BOS-T1"},
-                    {"ipPoolCidr": "10.30.0.0/16", "ipPoolName": "LAX-Pool", "groupName": "Global/TSA-LAX-T1"}
+                    {"ipPoolCidr": "10.30.0.0/16", "ipPoolName": "LAX-Pool", "groupName": "Global/TSA-LAX-T1"},
+                    {"ipv6PoolCidr": "2600:10::/32", "ipPoolName": "BOS-v6-Pool", "groupName": "Global/TSA-BOS-T1"}
                 ]
                 interfaces = [
-                    {"ipv4Address": "10.50.1.1", "ipv4Mask": "255.255.255.0", "portName": "GigabitEthernet1/0/1", "description": "User VLAN", "deviceId": "dev1"}
+                    {
+                        "ipv4Address": "10.50.1.1",
+                        "ipv4Mask": "255.255.255.0",
+                        "portName": "GigabitEthernet1/0/1",
+                        "description": "User VLAN",
+                        "deviceId": "dev1",
+                        "ipv6AddressList": ["2600:50:1::1/64"]
+                    }
                 ]
                 device_map = {"dev1": {"hostname": "BOS-SW-01", "site": "BOS"}}
             else:
                 dnac = auth_module.get_dnac_for_session(session)
                 # Build device map for metadata
-                import clients.dnac as dnac_client
-                devices = await loop.run_in_executor(None, dnac_client.get_all_devices, dnac)
-                site_cache = await loop.run_in_executor(None, dnac_client.get_site_cache, dnac)
-                site_map = await loop.run_in_executor(None, dnac_client.build_device_site_map, dnac, site_cache)
+                devices = await loop.run_in_executor(None, dnac_client_mod.get_all_devices, dnac)
+                site_cache = await loop.run_in_executor(None, dnac_client_mod.get_site_cache, dnac)
+                site_map = await loop.run_in_executor(None, dnac_client_mod.build_device_site_map, dnac, site_cache)
 
                 for d in devices:
                     d_id = d.get('instanceUuid')
@@ -229,8 +236,7 @@ class IPAMEngine:
 
                 # 2. Discover via Interfaces (for SVIs/Routed ports not in pools)
                 try:
-                    import clients.dnac as dnac_client
-                    interfaces = await loop.run_in_executor(None, dnac_client.get_all_interfaces, dnac)
+                    interfaces = await loop.run_in_executor(None, dnac_client_mod.get_all_interfaces, dnac)
                 except:
                     interfaces = []
 
@@ -238,6 +244,10 @@ class IPAMEngine:
             for p in pools:
                 name = p.get('ipPoolName', p.get('poolName', ''))
                 site = p.get('groupName', 'Unknown').split('/')[-1]
+
+                # Diagnostic logging for pools
+                if not any(k in p for k in ['ipPoolCidr', 'ipv6PoolCidr', 'cidr']):
+                    logger.info(f"DNAC Pool '{name}' has no standard CIDR keys. Keys present: {list(p.keys())}")
 
                 # Check for both v4 and v6 CIDRs in pools
                 for cidr_key in ['ipPoolCidr', 'ipv6PoolCidr', 'cidr']:
@@ -288,6 +298,12 @@ class IPAMEngine:
 
                 # IPv6 - Handle multiple possible field names and formats
                 v6_candidates = []
+
+                # Diagnostic logging for IPv6 presence in interfaces
+                has_v6 = any(k.lower().startswith('ipv6') for k in iface.keys())
+                if has_v6:
+                    v6_keys = [k for k in iface.keys() if k.lower().startswith('ipv6')]
+                    logger.debug(f"DNAC Interface '{port_name}' on '{hostname}' has IPv6 keys: {v6_keys}")
 
                 # 1. ipv6AddressList (could be list of strings or list of objects)
                 v6_list = iface.get('ipv6AddressList', [])

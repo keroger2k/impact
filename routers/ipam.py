@@ -25,13 +25,6 @@ async def refresh_ipam(
         engine = IPAMEngine()
         loop = asyncio.get_event_loop()
 
-        # Helper for progress tracking
-        async def yield_progress(msg):
-             nonlocal loop
-             # We can't directly yield from here as it's not the generator
-             # But we are in the generator scope!
-             pass
-
         yield emit(f"Starting discovery for sources: {sources or 'ALL'}")
 
         # Load existing subnets if we are doing a partial refresh
