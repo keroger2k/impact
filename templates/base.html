@@ -6,7 +6,7 @@
   <title>{% block title %}IMPACT II — Network Operations{% endblock %}</title>
   <link rel="stylesheet" href="/static/bootstrap/css/bootstrap.min.css">
   <link rel="stylesheet" href="/static/app.css">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+  <script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
   <script src="/static/js/htmx.min.js"></script>
 </head>
 <body hx-headers='{"Authorization": "Bearer {{ token }}"}'>
@@ -20,89 +20,100 @@
         <div class="sidebar-title">IMPACT II</div>
         <div class="sidebar-subtitle">TSA Network Operations</div>
       </div>
-      <button id="sidebar-toggle" class="sidebar-toggle" onclick="toggleSidebar()">
-        <span></span>
-        <span></span>
-        <span></span>
-      </button>
     </div>
 
-    <div class="sidebar-section">
-      <div class="sidebar-section-label">Navigation</div>
+    <div class="sidebar-content">
+      <!-- Network Ops -->
+      <div class="sidebar-section-label">Network Ops</div>
       <a class="nav-item {% if active_page == 'dashboard' %}active{% endif %}"
          hx-get="/dashboard" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
-        <span class="nav-icon">📊</span> <span>Dashboard</span>
-      </a>
-      <a class="nav-item {% if active_page == 'devices' %}active{% endif %}"
-         hx-get="/devices" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
-        <span class="nav-icon">🖥️</span> <span>Devices</span>
+        <span class="nav-icon"><i class="ph ph-chart-pie-slice"></i></span> <span class="nav-text">Dashboard</span>
       </a>
       <a class="nav-item {% if active_page == 'path-trace' %}active{% endif %}"
          hx-get="/path-trace" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
-        <span class="nav-icon">🛤️</span> <span>Path Trace</span>
+        <span class="nav-icon"><i class="ph ph-git-branch"></i></span> <span class="nav-text">Path Trace</span>
       </a>
       <a class="nav-item {% if active_page == 'routing' %}active{% endif %}"
          hx-get="/routing/bgp" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
-        <span class="nav-icon">🌐</span> <span>Routing Ops</span>
-      </a>
-      <a class="nav-item {% if active_page == 'config-search' %}active{% endif %}"
-         hx-get="/config-search" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
-        <span class="nav-icon">🔍</span> <span>Config Search</span>
-      </a>
-      <a class="nav-item {% if active_page == 'ip-lookup' %}active{% endif %}"
-         hx-get="/ip-lookup" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
-        <span class="nav-icon">📍</span> <span>IP Lookup</span>
-      </a>
-      <a class="nav-item {% if active_page == 'ipam' %}active{% endif %}"
-         hx-get="/ipam" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
-        <span class="nav-icon">📊</span> <span>IPAM Dashboard</span>
-      </a>
-      <a class="nav-item {% if active_page == 'ise' %}active{% endif %}"
-         hx-get="/ise" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
-        <span class="nav-icon">🔐</span> <span>ISE Control</span>
-      </a>
-      <a class="nav-item {% if active_page == 'firewall' %}active{% endif %}"
-         hx-get="/firewall" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
-        <span class="nav-icon">🔥</span> <span>Firewall Ops</span>
+        <span class="nav-icon"><i class="ph ph-globe-hemisphere-west"></i></span> <span class="nav-text">Routing Ops</span>
       </a>
       <a class="nav-item {% if active_page == 'aci' %}active{% endif %}"
          hx-get="/aci" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
-        <span class="nav-icon">🏢</span> <span>ACI Operations</span>
+        <span class="nav-icon"><i class="ph ph-buildings"></i></span> <span class="nav-text">ACI Operations</span>
+      </a>
+      <a class="nav-item {% if active_page == 'ipam' %}active{% endif %}"
+         hx-get="/ipam" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+        <span class="nav-icon"><i class="ph ph-network"></i></span> <span class="nav-text">IPAM Dashboard</span>
+      </a>
+
+      <!-- Security & Compliance -->
+      <div class="sidebar-section-label">Security & Compliance</div>
+      <a class="nav-item {% if active_page == 'ise' %}active{% endif %}"
+         hx-get="/ise" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+        <span class="nav-icon"><i class="ph ph-shield-check"></i></span> <span class="nav-text">ISE Control</span>
+      </a>
+      <a class="nav-item {% if active_page == 'firewall' %}active{% endif %}"
+         hx-get="/firewall" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+        <span class="nav-icon"><i class="ph ph-fire"></i></span> <span class="nav-text">Firewall Ops</span>
+      </a>
+      <a class="nav-item {% if active_page == 'config-search' %}active{% endif %}"
+         hx-get="/config-search" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+        <span class="nav-icon"><i class="ph ph-magnifying-glass"></i></span> <span class="nav-text">Config Search</span>
+      </a>
+
+      <!-- Engineering Tools -->
+      <div class="sidebar-section-label">Engineering Tools</div>
+      <a class="nav-item {% if active_page == 'devices' %}active{% endif %}"
+         hx-get="/devices" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+        <span class="nav-icon"><i class="ph ph-desktop"></i></span> <span class="nav-text">Devices</span>
+      </a>
+      <a class="nav-item {% if active_page == 'ip-lookup' %}active{% endif %}"
+         hx-get="/ip-lookup" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+        <span class="nav-icon"><i class="ph ph-map-pin"></i></span> <span class="nav-text">IP Lookup</span>
       </a>
       <a class="nav-item {% if active_page == 'command-runner' %}active{% endif %}"
          hx-get="/command-runner" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
-        <span class="nav-icon">⌨️</span> <span>Command Runner</span>
+        <span class="nav-icon"><i class="ph ph-terminal-window"></i></span> <span class="nav-text">Command Runner</span>
       </a>
+
+      <!-- System Admin -->
+      <div class="sidebar-section-label">System Admin</div>
       <a class="nav-item {% if active_page == 'import' %}active{% endif %}"
          hx-get="/import" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
-        <span class="nav-icon">🛠️</span> <span>Device Management</span>
+        <span class="nav-icon"><i class="ph ph-gear"></i></span> <span class="nav-text">Device Management</span>
       </a>
       <a class="nav-item {% if active_page == 'cache-mgmt' %}active{% endif %}"
          hx-get="/cache-mgmt" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
-        <span class="nav-icon">💾</span> <span>Cache Management</span>
+        <span class="nav-icon"><i class="ph ph-database"></i></span> <span class="nav-text">Cache Management</span>
       </a>
-    </div>
-
-    <div class="sidebar-status" id="sys-status" hx-get="/partials/status" hx-trigger="load, every 60s" hx-swap="innerHTML">
-       {% include 'partials/status.html' %}
     </div>
   </nav>
 
   <!-- ── Main ────────────────────────────────────────────── -->
   <div id="main">
     <header id="topbar">
+      <button class="btn btn-action me-3" onclick="toggleSidebar()">
+        <i class="ph ph-list"></i>
+      </button>
       <span id="page-title">{% block page_title %}Dashboard{% endblock %}</span>
       <div id="topbar-actions">
-        <span style="font-size:13px;color:var(--text-light);margin-right:12px">👤 {{ username }}</span>
-        <button class="btn btn-outline-secondary btn-sm"
+        <span style="font-size:13px;color:var(--text-muted);margin-right:12px">👤 {{ username }}</span>
+        <button class="btn btn-outline btn-xs"
                 hx-post="/api/dnac/cache/refresh"
                 hx-swap="none"
-                hx-on::after-request="if(event.detail.successful) { alert('Full application cache (memory + disk) has been cleared.'); window.location.reload(); }">
-          🔄 Refresh Cache
+                hx-on::after-request="if(event.detail.successful) { alert('Full application cache has been cleared.'); window.location.reload(); }">
+          <i class="ph ph-arrows-clockwise"></i> Refresh Cache
         </button>
-        <button class="btn btn-outline-secondary btn-sm" onclick="logout()">Sign Out</button>
+        <button class="btn btn-outline btn-xs" onclick="logout()">
+          <i class="ph ph-sign-out"></i> Sign Out
+        </button>
       </div>
     </header>
+
+    <div class="health-bar" id="sys-status" hx-get="/partials/status" hx-trigger="load, every 60s" hx-swap="innerHTML">
+       <div class="health-item text-muted"><i class="ph ph-circle-notch ph-spin"></i> Initializing System Health...</div>
+    </div>
+
     <div id="content">
       <div id="main-content">
         {% block content %}{% endblock %}
@@ -118,9 +129,9 @@
 <div class="modal fade" id="rawDataModal" tabindex="-1" aria-labelledby="rawDataModalLabel" aria-hidden="true">
   <div class="modal-dialog modal-xl modal-dialog-scrollable">
     <div class="modal-content border-0 shadow-lg">
-      <div class="modal-header bg-navy text-white">
+      <div class="modal-header bg-dark text-white">
         <h5 class="modal-title" id="rawDataModalLabel">
-          <i class="fas fa-code me-2"></i>Raw API Response
+          <i class="ph ph-code me-2"></i>Raw API Response
         </h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
@@ -128,8 +139,8 @@
         <pre class="m-0 p-3 text-success small"><code id="rawDataContent"></code></pre>
       </div>
       <div class="modal-footer bg-light">
-        <button type="button" class="btn btn-outline-secondary" onclick="copyRawData()">
-          <i class="fas fa-copy me-1"></i>Copy to Clipboard
+        <button type="button" class="btn btn-outline" onclick="copyRawData()">
+          <i class="ph ph-copy me-1"></i>Copy to Clipboard
         </button>
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
       </div>
@@ -141,20 +152,27 @@
 <script>
   function toggleSidebar() {
     const sidebar = document.getElementById('sidebar');
-    const main = document.getElementById('main');
-    const collapsed = sidebar.classList.toggle('collapsed');
-    localStorage.setItem('sidebarCollapsed', collapsed ? '1' : '0');
+    const isDesktop = window.innerWidth > 1024;
+
+    if (isDesktop) {
+        sidebar.classList.toggle('collapsed');
+    } else {
+        sidebar.classList.toggle('manual-expand');
+    }
+
+    const isCollapsed = sidebar.classList.contains('collapsed') || (!isDesktop && !sidebar.classList.contains('manual-expand'));
+    localStorage.setItem('sidebarCollapsed', isCollapsed ? '1' : '0');
   }
 
   // Handle sidebar transitions without flash
   if (localStorage.getItem("sidebarCollapsed") === "1") {
-    document.getElementById("sidebar").classList.add("no-transition");
-    document.getElementById("main").classList.add("no-transition");
-    document.getElementById("sidebar").classList.add("collapsed");
-    setTimeout(() => {
-      document.getElementById("sidebar").classList.remove("no-transition");
-      document.getElementById("main").classList.remove("no-transition");
-    }, 100);
+    if (window.innerWidth > 1024) {
+        document.getElementById("sidebar").classList.add("collapsed");
+    }
+  } else {
+    if (window.innerWidth <= 1024) {
+        document.getElementById("sidebar").classList.add("manual-expand");
+    }
   }
 
   function logout() {
@@ -169,7 +187,6 @@
   function showRawData(element) {
     var rawData;
     if (typeof element === 'string') {
-        // Try to find script tag by ID
         const scriptTag = document.getElementById(element);
         if (scriptTag) {
             rawData = JSON.parse(scriptTag.textContent);
@@ -187,7 +204,7 @@
     const title = document.getElementById('rawDataModalLabel');
     const content = document.getElementById('rawDataContent');
 
-    title.innerHTML = '<i class="fas fa-code me-2"></i>Raw API Response';
+    title.innerHTML = '<i class="ph ph-code me-2"></i>Raw API Response';
     content.textContent = JSON.stringify(rawData, null, 2);
     modal.show();
   }
@@ -207,7 +224,7 @@
         const hxGet = el.getAttribute('hx-get');
         if (hxGet === path) {
           el.classList.add('active');
-          const titleSpan = el.querySelector('span:last-child');
+          const titleSpan = el.querySelector('.nav-text');
           if (titleSpan) document.getElementById('page-title').textContent = titleSpan.textContent;
         } else {
           el.classList.remove('active');

@@ -1,39 +1,53 @@
 <div class="row g-4 h-100">
   <div class="col-md-3">
-    <div class="card shadow-sm border-0 animate-fade-in h-100">
-      <div class="card-header bg-navy text-white d-flex align-items-center gap-2">
-        <i class="fas fa-network-wired"></i>
-        <span class="fw-bold">Cisco ACI Dashboard</span>
+    <div class="card shadow-md border-0 animate-fade-in h-100">
+      <div class="card-header flex-between">
+        <div class="d-flex align-items-center gap-2">
+            <i class="ph ph-buildings text-primary"></i>
+            <span class="font-weight-bold">Cisco ACI Dashboard</span>
+        </div>
       </div>
       <div class="card-body p-0">
         <div class="list-group list-group-flush">
-          <button class="list-group-item list-group-item-action active" hx-get="/api/aci/fabric/nodes" hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
-            🏢 Fabric Nodes
+          <button class="list-group-item list-group-item-action py-3 px-4 active" hx-get="/api/aci/fabric/nodes" hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-hard-drives me-2"></i> Fabric Nodes
           </button>
-          <button class="list-group-item list-group-item-action" hx-get="/api/aci/l3outs" hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
-            🌐 L3Out Visibility
+          <button class="list-group-item list-group-item-action py-3 px-4" hx-get="/api/aci/l3outs" hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-globe-hemisphere-east me-2"></i> L3Out Visibility
           </button>
-          <button class="list-group-item list-group-item-action" hx-get="/api/aci/bgp/peers" hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
-            🔌 BGP Troubleshooting
+          <button class="list-group-item list-group-item-action py-3 px-4" hx-get="/api/aci/bgp/peers" hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-plug-connect me-2"></i> BGP Troubleshooting
           </button>
-          <button class="list-group-item list-group-item-action" hx-get="/api/aci/traffic/epgs" hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
-            📊 Traffic Analysis (EPGs)
+          <button class="list-group-item list-group-item-action py-3 px-4" hx-get="/api/aci/traffic/epgs" hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-chart-line-up me-2"></i> Traffic Analysis (EPGs)
           </button>
-          <button class="list-group-item list-group-item-action" hx-get="/api/aci/traffic/faults" hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
-            ⚠️ Operational Faults
+          <button class="list-group-item list-group-item-action py-3 px-4" hx-get="/api/aci/traffic/faults" hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-warning-circle me-2"></i> Operational Faults
           </button>
         </div>
       </div>
     </div>
   </div>
   <div class="col-md-9 d-flex flex-column position-relative">
-    <!-- Spinner overlay to prevent screen shifting. Removed d-flex from the root indicator to honor HTMX display:none. -->
     <div id="aci-loading" class="htmx-indicator position-absolute top-0 start-0 w-100 h-100 bg-white bg-opacity-75 animate-fade-in" style="z-index: 100;">
       <div class="d-flex flex-column align-items-center justify-content-center h-100">
-        <div class="spinner spinner-lg"></div>
-        <p class="text-navy fw-bold small mt-2">Syncing with APIC...</p>
+        <div class="spinner-border text-primary" style="width: 3rem; height: 3rem;"></div>
+        <p class="text-main font-weight-bold mt-3">Syncing with APIC Fabric...</p>
       </div>
     </div>
-    <div id="aci-results" hx-get="/api/aci/fabric/nodes" hx-trigger="load once" hx-indicator="#aci-loading" style="min-height: 600px;"></div>
+    <div id="aci-results" hx-get="/api/aci/fabric/nodes" hx-trigger="load once" hx-indicator="#aci-loading" style="min-height: 600px;" class="table-container shadow-md"></div>
   </div>
 </div>
+
+<style>
+    .list-group-item {
+        border: none;
+        font-weight: 500;
+        color: var(--text-muted);
+        transition: all var(--transition);
+        font-size: 13px;
+    }
+    .list-group-item i { font-size: 1.1rem; vertical-align: middle; }
+    .list-group-item:hover { background-color: #F8FAFC; color: var(--accent); }
+    .list-group-item.active { background-color: rgba(59, 130, 246, 0.05); color: var(--accent); border-left: 3px solid var(--accent); }
+</style>

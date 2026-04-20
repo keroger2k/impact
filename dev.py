@@ -362,6 +362,59 @@ MOCK_ACI_HEALTH_PODS = [
     {"fabricPod": {"attributes": {"id": "1"}, "children": [{"healthInst": {"attributes": {"cur": "92"}}}]}}
 ]
 
+MOCK_IPAM_TREE = {
+    "ipv4": [
+        {
+            "cidr": "10.0.0.0/8",
+            "display_name": "Internal Network",
+            "type": "Supernet",
+            "site": "Global",
+            "device": "N/A",
+            "source": "Aggregated",
+            "conflicts": [],
+            "overlaps": [],
+            "children": [
+                {
+                    "cidr": "10.10.0.0/16",
+                    "display_name": "DCA Data Center",
+                    "type": "Group",
+                    "site": "TSA-DCA-HQ",
+                    "device": "N/A",
+                    "source": "DNAC",
+                    "conflicts": [],
+                    "overlaps": [],
+                    "children": [
+                        {
+                            "cidr": "10.10.1.0/24",
+                            "display_name": "User Access",
+                            "type": "Subnet",
+                            "site": "TSA-DCA-HQ",
+                            "device": "SW-DCA-HQ-01",
+                            "source": "DNAC",
+                            "conflicts": [],
+                            "overlaps": [],
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        }
+    ],
+    "ipv6": [
+        {
+            "cidr": "fc00::/7",
+            "display_name": "Unique Local Address",
+            "type": "Supernet",
+            "site": "Global",
+            "device": "N/A",
+            "source": "Aggregated",
+            "conflicts": [],
+            "overlaps": [],
+            "children": []
+        }
+    ]
+}
+
 # ── Cache seeding ─────────────────────────────────────────────────────────────
 
 def seed_cache(cache) -> None:
@@ -422,6 +475,9 @@ def seed_cache(cache) -> None:
     cache.set("aci_health_tenants", {"imdata": MOCK_ACI_HEALTH_TENANTS}, LONG)
     cache.set("aci_health_pods",    {"imdata": MOCK_ACI_HEALTH_PODS},    LONG)
     cache.set("status_aci", {"ok": True, "detail": "Connected (mock)"}, LONG)
+
+    # IPAM
+    cache.set("ipam_tree", MOCK_IPAM_TREE, LONG)
 
     # Nexus
     cache.set("nexus_inventory", MOCK_NEXUS_DEVICES, LONG)

@@ -4,7 +4,7 @@
         <div class="d-flex align-items-center gap-3">
             <span class="fw-bold text-navy">🔌 BGP Peers</span>
             <button class="btn btn-xs btn-outline-navy" onclick="showRawData('aci-bgp-peers-raw')">
-                <i class="fas fa-code me-1"></i>Raw
+                <i class=" ph ph-code me-1"></i>Raw
             </button>
         </div>
         <span class="badge bg-secondary">{{ peers|length }} Peers</span>
@@ -55,7 +55,7 @@
                         </td>
                         <td>
                             <button class="btn btn-link btn-sm p-0 text-decoration-none" hx-get="/api/aci/bgp/routes?dn={{ p.base_dn|urlencode }}" hx-target="#aci-results" hx-indicator="#aci-loading">
-                                <i class="fas fa-list"></i> Node Routes
+                                <i class=" ph ph-list"></i> Node Routes
                             </button>
                         </td>
                     </tr>

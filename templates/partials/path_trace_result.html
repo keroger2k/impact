@@ -9,9 +9,9 @@
         <div class="path-hop d-flex align-items-center gap-4">
           <div class="hop-icon bg-white border border-navy rounded-circle d-flex align-items-center justify-content-center shadow-sm" style="width: 50px; height: 50px; z-index: 2;">
             {% if 'Switch' in hop.role or 'Router' in hop.role %}
-              <i class="fas fa-network-wired text-navy"></i>
+              <i class=" ph ph-tree-structure text-navy"></i>
             {% else %}
-              <i class="fas fa-laptop text-muted"></i>
+              <i class=" ph ph-laptop text-muted"></i>
             {% endif %}
           </div>
           <div class="hop-details flex-grow-1 bg-white p-3 rounded shadow-sm border-start border-4 border-navy">
@@ -21,10 +21,10 @@
             </div>
             <div class="small text-muted mt-1">
               {% if hop.ingressInterface %}
-                <span class="me-3"><i class="fas fa-sign-in-alt me-1"></i> In: {{ hop.ingressInterface.interfaceName }}</span>
+                <span class="me-3"><i class=" ph ph-sign-in me-1"></i> In: {{ hop.ingressInterface.interfaceName }}</span>
               {% endif %}
               {% if hop.egressInterface %}
-                <span><i class="fas fa-sign-out-alt me-1"></i> Out: {{ hop.egressInterface.interfaceName }}</span>
+                <span><i class=" ph ph-sign-out me-1"></i> Out: {{ hop.egressInterface.interfaceName }}</span>
               {% endif %}
             </div>
           </div>

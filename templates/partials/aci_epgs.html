@@ -4,7 +4,7 @@
         <div class="d-flex align-items-center gap-3">
             <span class="fw-bold text-navy">📊 Endpoint Groups (Traffic Analysis)</span>
             <button class="btn btn-xs btn-outline-navy" onclick="showRawData('aci-epgs-raw')">
-                <i class="fas fa-code me-1"></i>Raw
+                <i class=" ph ph-code me-1"></i>Raw
             </button>
         </div>
         <span class="badge bg-secondary">{{ epgs|length }} EPGs</span>
@@ -41,7 +41,7 @@
                         </td>
                         <td>
                             <button class="btn btn-outline-primary btn-sm" hx-get="/api/aci/traffic/epg-health?dn={{ e.dn | urlencode }}" hx-target="#aci-results" hx-indicator="#aci-loading">
-                                <i class="fas fa-chart-line"></i> Stats
+                                <i class=" ph ph-chart-line"></i> Stats
                             </button>
                         </td>
                     </tr>
