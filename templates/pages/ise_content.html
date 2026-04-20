@@ -7,17 +7,17 @@
       </div>
       <div class="card-body p-0">
         <div class="list-group list-group-flush">
-          <button class="list-group-item list-group-item-action active" hx-get="/api/ise/nads" hx-target="#ise-results" hx-indicator="#ise-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
-            🛡️ Network Access Devices
+          <button class="list-group-item list-group-item-action py-3 px-4 active" hx-get="/api/ise/nads" hx-target="#ise-results" hx-indicator="#ise-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-shield me-2"></i> Network Access Devices
           </button>
-          <button class="list-group-item list-group-item-action" hx-get="/api/ise/sgts" hx-target="#ise-results" hx-indicator="#ise-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
-            🏷️ Scalable Group Tags
+          <button class="list-group-item list-group-item-action py-3 px-4" hx-get="/api/ise/sgts" hx-target="#ise-results" hx-indicator="#ise-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-tag me-2"></i> Scalable Group Tags
           </button>
-          <button class="list-group-item list-group-item-action" hx-get="/api/ise/policy-sets" hx-target="#ise-results" hx-indicator="#ise-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
-            📜 Policy Sets
+          <button class="list-group-item list-group-item-action py-3 px-4" hx-get="/api/ise/policy-sets" hx-target="#ise-results" hx-indicator="#ise-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-scroll me-2"></i> Policy Sets
           </button>
-          <button class="list-group-item list-group-item-action" hx-get="/api/ise/users" hx-target="#ise-results" hx-indicator="#ise-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
-            👤 Internal Users
+          <button class="list-group-item list-group-item-action py-3 px-4" hx-get="/api/ise/users" hx-target="#ise-results" hx-indicator="#ise-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-user me-2"></i> Internal Users
           </button>
         </div>
         <div class="p-3 bg-light border-top">
@@ -37,6 +37,19 @@
       <div class="spinner spinner-lg"></div>
       <p class="text-muted small mt-2">Connecting to Cisco ISE and fetching data...</p>
     </div>
-    <div id="ise-results" hx-get="/api/ise/nads" hx-trigger="load"></div>
+    <div id="ise-results" hx-get="/api/ise/nads" hx-trigger="load" class="table-container shadow-md"></div>
   </div>
-</div>
+  </div>
+
+<style>
+    .list-group-item {
+        border: none;
+        font-weight: 500;
+        color: var(--text-muted);
+        transition: all var(--transition);
+        font-size: 13px;
+    }
+    .list-group-item i { font-size: 1.1rem; vertical-align: middle; }
+    .list-group-item:hover { background-color: #F8FAFC; color: var(--accent); }
+    .list-group-item.active { background-color: rgba(59, 130, 246, 0.05); color: var(--accent); border-left: 3px solid var(--accent); }
+</style>

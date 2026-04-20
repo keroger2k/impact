@@ -1,92 +1,126 @@
-<div class="detail-panel shadow-sm animate-fade-in">
+<div class="detail-panel animate-fade-in h-100 d-flex flex-column">
   <div class="detail-header">
-    <div class="d-flex align-items-center gap-3">
-      <div class="bg-white text-navy rounded-circle d-flex align-items-center justify-content-center" style="width: 40px; height: 40px; font-weight: 800;">
-        {{ d.hostname[0] | upper if d.hostname else 'D' }}
+    <div class="d-flex align-items-center justify-content-between mb-3">
+      <div class="d-flex align-items-center gap-3">
+        <div class="bg-white text-navy rounded-circle d-flex align-items-center justify-content-center" style="width: 36px; height: 36px; font-weight: 800; font-size: 14px;">
+          {{ d.hostname[0] | upper if d.hostname else 'D' }}
+        </div>
+        <div class="overflow-hidden">
+          <div class="font-weight-bold text-truncate" style="font-size: 15px; width: 250px;">{{ d.hostname or 'Unknown Device' }}</div>
+          <div class="small opacity-75">{{ d.managementIpAddress }}</div>
+        </div>
       </div>
-      <div>
-        <div class="detail-hostname">{{ d.hostname or 'Unknown Device' }}</div>
-        <div class="small opacity-75">{{ d.managementIpAddress }} • {{ site_name }}</div>
-      </div>
+      <div class="status-pip {% if d.reachabilityStatus == 'Reachable' %}online{% else %}offline{% endif %}" title="{{ d.reachabilityStatus }}"></div>
     </div>
-    <div class="d-flex gap-2">
-       <button class="btn btn-sm btn-outline-light" hx-get="/api/dnac/devices/{{ d.id }}/config" hx-target="#detail-tabs-content">
-         <i class=" ph ph-file-code me-1"></i> Config
-       </button>
-       <button class="btn btn-sm btn-outline-light" onclick="this.closest('.detail-panel').remove()">
-         <i class=" ph ph-x"></i>
-       </button>
+
+    <div class="nav nav-pills gap-2" id="device-tabs">
+      <button class="btn btn-xs btn-outline-light active" onclick="switchTab(this, 'overview')">Overview</button>
+      <button class="btn btn-xs btn-outline-light" onclick="switchTab(this, 'specs')">Specs</button>
+      <button class="btn btn-xs btn-outline-light" onclick="switchTab(this, 'config')" hx-get="/api/dnac/devices/{{ d.id }}/config" hx-target="#tab-config-container" hx-indicator="#tab-config-loading">Config</button>
     </div>
   </div>
 
   <div class="detail-body">
-    <div class="nav nav-tabs mb-4" id="device-tabs">
-      <button class="nav-link active" id="tab-btn-overview" onclick="switchTab(this, 'overview')">Overview</button>
-      <button class="nav-link" id="tab-btn-specs" onclick="switchTab(this, 'specs')">Specifications</button>
-      <button class="nav-link" id="tab-btn-config" onclick="switchTab(this, 'config')" hx-get="/api/dnac/devices/{{ d.id }}/config" hx-target="#tab-config-container" hx-indicator="#tab-config-loading">Config</button>
-    </div>
-
     <div id="detail-tabs-content">
+      <!-- Overview Tab -->
       <div id="tab-overview" class="device-tab-pane">
-        <div class="detail-grid">
-          <div class="detail-section">
-            <div class="detail-section-title">Connectivity</div>
-            <div class="kv-row"><span class="kv-label">Status</span><span class="kv-value">
-              <span class="badge {% if d.reachabilityStatus == 'Reachable' %}bg-success{% else %}bg-danger{% endif %} text-white">
-                {{ d.reachabilityStatus }}
-              </span>
-            </span></div>
-            <div class="kv-row"><span class="kv-label">Management IP</span><span class="kv-value mono">{{ d.managementIpAddress }}</span></div>
-            <div class="kv-row"><span class="kv-label">Source</span><span class="kv-value"><span class="badge bg-secondary text-white">{{ d.source or 'DNAC' }}</span></span></div>
-            <div class="kv-row"><span class="kv-label">MAC Address</span><span class="kv-value mono">{{ d.macAddress }}</span></div>
-            <div class="kv-row"><span class="kv-label">Last Updated</span><span class="kv-value small">{{ d.lastContactFormatted }}</span></div>
+        <div class="mb-4">
+          <div class="text-muted small font-weight-bold text-uppercase mb-2" style="letter-spacing: 0.05em; font-size: 10px;">Primary Details</div>
+          <div class="bg-light p-3 rounded-md">
+            <div class="flex-between mb-2 pb-2 border-bottom">
+              <span class="text-muted small">Status</span>
+              <span class="badge {% if d.reachabilityStatus == 'Reachable' %}badge-success{% else %}badge-danger{% endif %}">{{ d.reachabilityStatus }}</span>
+            </div>
+            <div class="flex-between mb-2 pb-2 border-bottom">
+              <span class="text-muted small">Platform</span>
+              <span class="font-weight-bold small">{{ d.platformId }}</span>
+            </div>
+            <div class="flex-between mb-2 pb-2 border-bottom">
+              <span class="text-muted small">Role</span>
+              <span class="small text-uppercase">{{ d.role }}</span>
+            </div>
+            <div class="flex-between">
+              <span class="text-muted small">MAC</span>
+              <span class="mono small">{{ d.macAddress }}</span>
+            </div>
           </div>
+        </div>
 
-          <div class="detail-section">
-            <div class="detail-section-title">Inventory & Site</div>
-            <div class="kv-row"><span class="kv-label">Site</span><span class="kv-value text-primary fw-bold">{{ site_name }}</span></div>
-            <div class="kv-row"><span class="kv-label">Role</span><span class="kv-value uppercase">{{ d.role }}</span></div>
-            <div class="kv-row"><span class="kv-label">Serial Number</span><span class="kv-value mono">{{ d.serialNumber }}</span></div>
-            <div class="kv-row"><span class="kv-label">Tag</span><span class="kv-value"><span class="badge bg-info text-white">{{ d.tagName or 'Untagged' }}</span></span></div>
+        <div>
+          <div class="text-muted small font-weight-bold text-uppercase mb-2" style="letter-spacing: 0.05em; font-size: 10px;">Inventory Info</div>
+          <div class="bg-light p-3 rounded-md">
+             <div class="flex-between mb-2 pb-2 border-bottom">
+              <span class="text-muted small">Serial</span>
+              <span class="mono small">{{ d.serialNumber }}</span>
+            </div>
+            <div class="flex-between">
+              <span class="text-muted small">Source</span>
+              <span class="badge badge-muted">{{ d.source or 'DNAC' }}</span>
+            </div>
           </div>
         </div>
       </div>
 
+      <!-- Specs Tab -->
       <div id="tab-specs" class="device-tab-pane d-none">
-         <div class="detail-grid">
-          <div class="detail-section">
-            <div class="detail-section-title">Hardware</div>
-            <div class="kv-row"><span class="kv-label">Platform</span><span class="kv-value">{{ d.platformId }}</span></div>
-            <div class="kv-row"><span class="kv-label">Family</span><span class="kv-value">{{ d.family }}</span></div>
-            <div class="kv-row"><span class="kv-label">Type</span><span class="kv-value small">{{ d.type }}</span></div>
+        <div class="mb-4">
+          <div class="text-muted small font-weight-bold text-uppercase mb-2" style="letter-spacing: 0.05em; font-size: 10px;">Software</div>
+          <div class="bg-light p-3 rounded-md">
+            <div class="flex-between mb-2 pb-2 border-bottom">
+              <span class="text-muted small">Version</span>
+              <span class="font-weight-bold small text-navy">{{ d.softwareVersion }}</span>
+            </div>
+            <div class="flex-between">
+              <span class="text-muted small">OS Type</span>
+              <span class="small">{{ d.softwareType }}</span>
+            </div>
           </div>
-
-          <div class="detail-section">
-            <div class="detail-section-title">Software</div>
-            <div class="kv-row"><span class="kv-label">Version</span><span class="kv-value fw-bold text-navy">{{ d.softwareVersion }}</span></div>
-            <div class="kv-row"><span class="kv-label">OS Type</span><span class="kv-value">{{ d.softwareType }}</span></div>
-            <div class="kv-row"><span class="kv-label">Uptime</span><span class="kv-value small">{{ d.upTime or 'Unknown' }}</span></div>
-          </div>
+        </div>
+        <div class="bg-light p-3 rounded-md">
+            <div class="flex-between mb-2 pb-2 border-bottom">
+              <span class="text-muted small">Family</span>
+              <span class="small">{{ d.family }}</span>
+            </div>
+            <div class="flex-between">
+              <span class="text-muted small">Uptime</span>
+              <span class="small">{{ d.upTime or 'N/A' }}</span>
+            </div>
         </div>
       </div>
 
+      <!-- Config Tab -->
       <div id="tab-config" class="device-tab-pane d-none">
         <div id="tab-config-loading" class="htmx-indicator p-4 text-center">
-           <div class="spinner spinner-sm mx-auto"></div>
-           <p class="text-muted small mt-2">Loading configuration...</p>
+           <div class="spinner-border spinner-border-sm text-primary mx-auto"></div>
+           <p class="text-muted small mt-2">Streaming Config...</p>
         </div>
-        <div id="tab-config-container">
+        <div id="tab-config-container" class="config-container">
           <!-- Populated via HTMX -->
         </div>
       </div>
     </div>
+  </div>
+
+  <div class="detail-footer p-3 border-top bg-light flex-between flex-shrink-0">
+      <button class="btn btn-outline btn-xs px-3"
+              hx-get="/ip-lookup?q={{ d.managementIpAddress }}"
+              hx-target="#main-content"
+              hx-push-url="true">
+        <i class="ph ph-broadcast me-1"></i> Path Trace
+      </button>
+      <button class="btn btn-primary btn-xs px-3"
+              hx-get="/command-runner?ip={{ d.managementIpAddress }}"
+              hx-target="#main-content"
+              hx-push-url="true">
+        <i class="ph ph-terminal-window me-1"></i> Command Runner
+      </button>
   </div>
 </div>
 
 <script>
   function switchTab(btn, tabId) {
     // Buttons
-    btn.closest('.nav-tabs').querySelectorAll('.nav-link').forEach(el => el.classList.remove('active'));
+    btn.closest('#device-tabs').querySelectorAll('.btn').forEach(el => el.classList.remove('active'));
     btn.classList.add('active');
 
     // Panes
@@ -96,3 +130,14 @@
     if (target) target.classList.remove('d-none');
   }
 </script>
+
+<style>
+  #device-tabs .btn-outline-light {
+    border-color: rgba(255,255,255,0.2);
+    color: rgba(255,255,255,0.8);
+  }
+  #device-tabs .btn-outline-light:hover, #device-tabs .btn-outline-light.active {
+    background: #fff;
+    color: var(--sidebar-bg);
+  }
+</style>

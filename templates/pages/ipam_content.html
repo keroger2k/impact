@@ -256,7 +256,7 @@
 
         const info = document.createElement('div');
         let labelClass = "badge badge-muted ms-2";
-        let labelText = node.display_name || 'System Generated';
+        let labelText = node.display_name || 'System-Generated';
 
         info.innerHTML = `
             <div class="d-flex align-items-center">
@@ -295,11 +295,29 @@
         // Action buttons
         const actions = document.createElement('div');
         actions.className = 'row-actions ms-3';
-        actions.innerHTML = `
-            <button class="btn-action" title="Edit" onclick="event.stopPropagation();"><i class="ph ph-pencil-simple"></i></button>
-            <button class="btn-action" title="View Logs" onclick="event.stopPropagation();"><i class="ph ph-clock-counter-clockwise"></i></button>
-            <button class="btn-action" title="Quick Config" onclick="event.stopPropagation();"><i class="ph ph-command"></i></button>
-        `;
+
+        // Link to config search for this CIDR
+        const searchBtn = document.createElement('button');
+        searchBtn.className = 'btn-action';
+        searchBtn.title = 'Search in Configs';
+        searchBtn.innerHTML = '<i class="ph ph-magnifying-glass"></i>';
+        searchBtn.onclick = (e) => {
+            e.stopPropagation();
+            htmx.ajax('GET', '/config-search?q=' + encodeURIComponent(node.cidr), { target: '#main-content', pushUrl: true });
+        };
+
+        // Link to IP Lookup for this CIDR
+        const lookupBtn = document.createElement('button');
+        lookupBtn.className = 'btn-action';
+        lookupBtn.title = 'IP Lookup';
+        lookupBtn.innerHTML = '<i class="ph ph-map-pin"></i>';
+        lookupBtn.onclick = (e) => {
+            e.stopPropagation();
+            htmx.ajax('GET', '/ip-lookup?q=' + encodeURIComponent(node.cidr), { target: '#main-content', pushUrl: true });
+        };
+
+        actions.appendChild(searchBtn);
+        actions.appendChild(lookupBtn);
         right.appendChild(actions);
 
         content.appendChild(left);
