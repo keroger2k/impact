@@ -16,7 +16,13 @@
             <i class="ph ph-globe-hemisphere-east me-2"></i> L3Out Visibility
           </button>
           <button class="list-group-item list-group-item-action py-3 px-4" hx-get="/api/aci/bgp/peers" hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
-            <i class="ph ph-plug-connect me-2"></i> BGP Troubleshooting
+            <i class="ph ph-plug-connect me-2"></i> BGP Peers
+          </button>
+          <button class="list-group-item list-group-item-action py-3 px-4" hx-get="/api/aci/bgp/advertised" hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-arrow-up-right me-2"></i> Advertised Routes (TX)
+          </button>
+          <button class="list-group-item list-group-item-action py-3 px-4" hx-get="/api/aci/bgp/received" hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-arrow-down-left me-2"></i> Received Routes (RX)
           </button>
           <button class="list-group-item list-group-item-action py-3 px-4" hx-get="/api/aci/traffic/epgs" hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
             <i class="ph ph-chart-line-up me-2"></i> Traffic Analysis (EPGs)

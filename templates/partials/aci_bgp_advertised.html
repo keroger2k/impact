@@ -1,0 +1,68 @@
+<div class="card shadow-sm border-0 animate-fade-in">
+    <script id="aci-bgp-advertised-raw" type="application/json">{{ raw_json|tojson }}</script>
+    <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <div class="d-flex align-items-center gap-3">
+            <span class="fw-bold text-navy"><i class="ph ph-arrow-up-right me-1"></i>BGP Advertised Routes (TX)</span>
+            <button class="btn btn-xs btn-outline-navy" onclick="showRawData('aci-bgp-advertised-raw')">
+                <i class=" ph ph-code me-1"></i>Raw
+            </button>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+            <button class="btn btn-sm btn-outline-secondary" hx-get="/api/aci/bgp/received" hx-target="#aci-results" hx-indicator="#aci-loading">
+                <i class="ph ph-arrow-down-left me-1"></i>View Received (RX)
+            </button>
+            <span class="badge bg-success">{{ routes|length }} Prefixes</span>
+        </div>
+    </div>
+    <div class="card-body p-0">
+        {% if routes %}
+        <div class="table-responsive sticky-header" style="max-height: calc(100vh - 250px);">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Node</th>
+                        <th>VRF</th>
+                        <th>Peer</th>
+                        <th>L3Out</th>
+                        <th>Prefix</th>
+                        <th>Next Hop</th>
+                        <th>AS Path</th>
+                        <th>Origin</th>
+                        <th>Local Pref</th>
+                        <th>MED</th>
+                        <th>Community</th>
+                    </tr>
+                </thead>
+                <tbody class="mono small">
+                    {% for r in routes %}
+                    <tr>
+                        <td><span class="badge bg-secondary">{{ r.node }}</span></td>
+                        <td class="small text-muted">{{ r.vrf }}</td>
+                        <td>{{ r.peer }}</td>
+                        <td>
+                            {% if r.l3out != 'N/A' %}
+                            <span class="badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25">{{ r.l3out }}</span>
+                            {% else %}
+                            <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
+                        <td class="fw-bold text-navy">{{ r.prefix }}</td>
+                        <td>{{ r.nextHop or '—' }}</td>
+                        <td>{{ r.asPath or '—' }}</td>
+                        <td><span class="badge bg-light text-dark border">{{ r.origin or '—' }}</span></td>
+                        <td>{{ r.localPref or '—' }}</td>
+                        <td>{{ r.med or '—' }}</td>
+                        <td>{{ r.community or '—' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center p-5 text-muted">
+            <i class="ph ph-arrow-up-right" style="font-size:2rem;"></i>
+            <p class="mt-2 small">No advertised BGP routes found.<br>Verify that border leaf nodes have established BGP sessions and export policies are configured on L3Outs.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>

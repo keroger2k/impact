@@ -3,6 +3,7 @@
    ============================================================ */
 
 /* ── Typography & Fonts ────────────────────────────────────── */
+/* Inter font — loaded from CDN; falls back to system sans-serif if unavailable */
 @import url('https://rsms.me/inter/inter.css');
 
 :root {
@@ -435,6 +436,37 @@ body {
 .font-weight-bold { font-weight: 700; }
 .text-navy { color: var(--sidebar-bg) !important; }
 .bg-navy { background-color: var(--sidebar-bg) !important; }
+.shadow-md { box-shadow: var(--shadow-md) !important; }
+.rounded-md { border-radius: var(--radius-md) !important; }
+.rounded-lg { border-radius: var(--radius-lg) !important; }
+.hover-bg:hover { background-color: #F8FAFC; }
+
+/* ── Font mono variable ─────────────────────────────────── */
+:root { --font-mono: 'SF Mono', 'Consolas', 'Monaco', monospace; }
+
+/* ── KPI sub-label ────────────────────────────────────────── */
+.kpi-sub { font-size: 12px; color: var(--text-muted); }
+
+/* ── Fade-in animation ────────────────────────────────────── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in { animation: fadeIn 0.3s ease-out both; }
+
+/* ── Phosphor icon spin ───────────────────────────────────── */
+@keyframes phSpin { to { transform: rotate(360deg); } }
+.ph-spin { display: inline-block; animation: phSpin 1s linear infinite; }
+
+/* ── Empty state component ────────────────────────────────── */
+.empty-state {
+  text-align: center;
+  padding: 60px 24px;
+  border-radius: var(--radius-lg);
+}
+.empty-state-icon { font-size: 3rem; margin-bottom: 16px; opacity: 0.4; }
+.empty-state-title { font-size: 16px; font-weight: 700; color: var(--text-main); margin-bottom: 8px; }
+.empty-state-desc { font-size: 13px; color: var(--text-muted); max-width: 400px; margin: 0 auto; }
 
 /* ── Login Page ───────────────────────────────────────────── */
 .login-container {

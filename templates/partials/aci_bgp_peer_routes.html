@@ -6,7 +6,7 @@
                 <i class=" ph ph-arrow-left"></i>
             </button>
             <div class="d-flex align-items-center gap-3">
-                <span class="fw-bold text-navy">BGP {{ direction }} Routes: {{ peer_ip }}</span>
+                <span class="fw-bold text-navy">BGP {{ direction }} Routes — {{ peer_ip }}</span>
                 <button class="btn btn-xs btn-outline-navy" onclick="showRawData('aci-bgp-peer-routes-raw')">
                     <i class=" ph ph-code me-1"></i>Raw
                 </button>
@@ -23,26 +23,33 @@
                         <th>Next Hop</th>
                         <th>AS Path</th>
                         <th>Origin</th>
-                        <th>Status</th>
+                        <th>Local Pref</th>
+                        <th>MED</th>
+                        <th>Community</th>
+                        <th>Flags</th>
                     </tr>
                 </thead>
                 <tbody class="mono small">
                     {% for r in routes %}
                     <tr>
                         <td class="fw-bold text-navy">{{ r.prefix }}</td>
-                        <td>{{ r.nextHop }}</td>
+                        <td>{{ r.nextHop or '—' }}</td>
                         <td>{{ r.asPath or '—' }}</td>
-                        <td>{{ r.origin }}</td>
+                        <td><span class="badge bg-light text-dark border">{{ r.origin or '—' }}</span></td>
+                        <td>{{ r.localPref or '—' }}</td>
+                        <td>{{ r.med or '—' }}</td>
+                        <td>{{ r.community or '—' }}</td>
                         <td>
-                            <span class="badge {% if 'best' in r.status or 'advertised' in r.status %}bg-success{% else %}bg-light text-muted border{% endif %}">
-                                {{ r.status }}
+                            {% set flags = r.flags or '' %}
+                            <span class="badge {% if 'best' in flags or 'advertised' in flags %}bg-success{% elif 'valid' in flags %}bg-info text-dark{% else %}bg-light text-muted border{% endif %}">
+                                {{ flags or '—' }}
                             </span>
                         </td>
                     </tr>
                     {% endfor %}
                     {% if not routes %}
                     <tr>
-                        <td colspan="5" class="text-center p-4 text-muted small">No {{ direction|lower }} routes found for this neighbor.</td>
+                        <td colspan="8" class="text-center p-4 text-muted small">No {{ direction|lower }} routes found for this neighbor.</td>
                     </tr>
                     {% endif %}
                 </tbody>
