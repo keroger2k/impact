@@ -26,6 +26,7 @@ CACHE_SYSTEMS = [
         "count_key": "ipam_tree",
         "refresh_url": None,
         "sse": True,
+        "sse_fn": "triggerIpamCacheRefresh()",
     },
     {
         "id": "ise",
@@ -46,6 +47,15 @@ CACHE_SYSTEMS = [
         "sse": False,
     },
     {
+        "id": "aci",
+        "label": "ACI",
+        "icon": "ph-buildings",
+        "keys": ["aci_nodes", "aci_l3outs", "aci_bgp_peers", "aci_epgs", "aci_faults"],
+        "count_key": "aci_nodes",
+        "refresh_url": "/api/cache/refresh/aci",
+        "sse": False,
+    },
+    {
         "id": "nexus",
         "label": "Nexus",
         "icon": "ph-hard-drives",
@@ -53,6 +63,7 @@ CACHE_SYSTEMS = [
         "count_key": "nexus_inventory",
         "refresh_url": None,
         "sse": True,
+        "sse_fn": "triggerNexusCacheRefresh()",
     },
 ]
 
@@ -93,6 +104,8 @@ def _get_system_status(system: dict) -> dict:
     elif isinstance(data, dict):
         if "ipv4" in data and "ipv6" in data:
             count = len(data.get("ipv4", [])) + len(data.get("ipv6", []))
+        elif "imdata" in data:
+            count = len(data["imdata"])
         else:
             count = len(data)
 
@@ -114,7 +127,7 @@ def _get_system_status(system: dict) -> dict:
     }
 
 
-def _get_card_info(key, title, icon, color, refresh_url, sse=False):
+def _get_card_info(key, title, icon, color, refresh_url, sse=False, sse_fn=None):
     info = cache.cache_info(key)
     data = cache.get(key)
     count = 0
@@ -123,6 +136,8 @@ def _get_card_info(key, title, icon, color, refresh_url, sse=False):
     elif isinstance(data, dict):
         if "ipv4" in data and "ipv6" in data:
             count = len(data.get("ipv4", [])) + len(data.get("ipv6", []))
+        elif "imdata" in data:
+            count = len(data["imdata"])
         else:
             count = len(data)
 
@@ -136,6 +151,7 @@ def _get_card_info(key, title, icon, color, refresh_url, sse=False):
         "count": count,
         "refresh_url": refresh_url,
         "sse": sse,
+        "sse_fn": sse_fn or "triggerNexusCacheRefresh()",
     }
 
 
@@ -153,8 +169,10 @@ async def get_cache_status(request: Request, session: SessionEntry = Depends(req
         _get_card_info("pan_managed_devices","Panorama Devices",     "ph ph-fire",            "danger",    "/api/cache/refresh/panorama"),
         _get_card_info("pan_rules",         "Firewall Rules",        "ph ph-fire",            "danger",    "/api/cache/refresh/panorama"),
         _get_card_info("pan_interfaces",    "Firewall Interfaces",   "ph ph-fire",            "danger",    "/api/firewall/interfaces/refresh"),
-        _get_card_info("nexus_inventory",   "Nexus Switch Inventory","ph ph-hard-drives",     "warning",   None,                           sse=True),
-        _get_card_info("nexus_interfaces",  "Nexus Interface Cache", "ph ph-hard-drives",     "warning",   None,                           sse=True),
+        _get_card_info("aci_nodes",         "ACI Fabric Nodes",      "ph ph-buildings",       "purple",    "/api/cache/refresh/aci"),
+        _get_card_info("aci_bgp_peers",     "ACI BGP Peers",         "ph ph-buildings",       "purple",    "/api/cache/refresh/aci"),
+        _get_card_info("nexus_inventory",   "Nexus Switch Inventory","ph ph-hard-drives",     "warning",   None,                           sse=True, sse_fn="triggerNexusCacheRefresh()"),
+        _get_card_info("nexus_interfaces",  "Nexus Interface Cache", "ph ph-hard-drives",     "warning",   None,                           sse=True, sse_fn="triggerNexusCacheRefresh()"),
     ]
 
     return templates.TemplateResponse(request, "partials/cache_cards.html", {"cards": cards})
@@ -184,6 +202,8 @@ async def refresh_specific_cache(category: str, session: SessionEntry = Depends(
         cache.invalidate_prefix("pan_")
     elif category == "ise":
         cache.invalidate_prefix("ise_")
+    elif category == "aci":
+        cache.invalidate_prefix("aci_")
     elif category == "ipam":
         cache.invalidate("ipam_tree")
 
