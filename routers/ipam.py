@@ -73,67 +73,73 @@ async def get_ipam_tree(session: SessionEntry = Depends(require_auth)):
 
 @router.get("/debug")
 async def debug_ipam_sources(session: SessionEntry = Depends(require_auth)):
-    """
-    Run a quick per-source discovery and report exactly what was found,
-    what was excluded, and why. Does NOT rebuild the ipam_tree cache.
-    """
-    import netaddr
-    from utils.ipam_engine import IPAMEngine, EXCLUDED_RANGES, HA_PATTERNS, PRIVATE_RANGES
+    """Inspect raw cache data for IPAM sources — no network calls."""
     from cache import cache
 
-    loop = asyncio.get_event_loop()
-    engine = IPAMEngine()
-
-    report = {}
-    for source in ["aci", "dnac", "panorama", "nexus", "ise"]:
-        before = len(engine.subnets)
-        try:
-            method = {
-                "aci": engine._discover_aci,
-                "dnac": engine._discover_dnac,
-                "panorama": engine._discover_panorama,
-                "nexus": engine._discover_nexus,
-                "ise": engine._discover_ise,
-            }[source]
-            await method(session, loop)
-        except Exception as e:
-            report[source] = {"error": str(e), "found": 0, "samples": []}
-            continue
-
-        new_subnets = engine.subnets[before:]
-        report[source] = {
-            "found": len(new_subnets),
-            "samples": [
-                {"cidr": s.cidr, "device": s.device, "site": s.site, "display_name": s.display_name}
-                for s in new_subnets[:10]
-            ],
-        }
-
-    # Also report raw cache state
+    # ── Panorama ──────────────────────────────────────────────────────────────
     pan_ifaces = cache.get("pan_interfaces") or []
-    nex_ifaces = cache.get("nexus_interfaces") or []
+    pan_sample, pan_with_prefix, pan_without_prefix = [], 0, 0
+    for dev in pan_ifaces:
+        for iface in dev.get("interfaces", []):
+            ipv4 = iface.get("ipv4") or ""
+            has_prefix = "/" in ipv4
+            if has_prefix:
+                pan_with_prefix += 1
+            else:
+                pan_without_prefix += 1
+            if len(pan_sample) < 15:
+                pan_sample.append({
+                    "hostname": dev.get("hostname"),
+                    "iface": iface.get("name"),
+                    "ipv4": ipv4 or "none",
+                    "has_prefix": has_prefix,
+                })
 
-    pan_summary = []
-    for dev in pan_ifaces[:3]:
-        for iface in dev.get("interfaces", [])[:3]:
-            pan_summary.append({
-                "hostname": dev.get("hostname"),
-                "iface": iface.get("name"),
-                "ipv4": iface.get("ipv4"),
-                "has_prefix": "/" in (iface.get("ipv4") or ""),
+    # ── Nexus ─────────────────────────────────────────────────────────────────
+    nex_ifaces = cache.get("nexus_interfaces") or []
+    nex_sample, nex_with_ip, nex_na = [], 0, 0
+    for iface in nex_ifaces:
+        ipv4 = iface.get("ipv4_address") or "N/A"
+        if ipv4 and ipv4 != "N/A":
+            nex_with_ip += 1
+        else:
+            nex_na += 1
+        if len(nex_sample) < 15:
+            nex_sample.append({
+                "hostname": iface.get("hostname"),
+                "iface": iface.get("interface_name"),
+                "ipv4": ipv4,
             })
 
-    nex_summary = [
-        {"hostname": i.get("hostname"), "iface": i.get("interface_name"), "ipv4": i.get("ipv4_address")}
-        for i in nex_ifaces[:10]
-    ]
+    # ── DNAC ──────────────────────────────────────────────────────────────────
+    devices = cache.get("devices") or []
+    sites   = cache.get("sites") or []
+    sitemap = cache.get("device_site_map") or {}
+
+    # ── ACI ───────────────────────────────────────────────────────────────────
+    aci_nodes = cache.get("aci_nodes") or {"imdata": []}
+
+    # ── ipam_tree ────────────────────────────────────────────────────────────
+    tree = cache.get("ipam_tree")
+    tree_v4 = len(tree.get("ipv4", [])) if tree else 0
+    tree_v6 = len(tree.get("ipv6", [])) if tree else 0
 
     return {
-        "discovery": report,
-        "raw_pan_interfaces_sample": pan_summary,
-        "raw_nexus_interfaces_sample": nex_summary,
-        "pan_interfaces_total": len(pan_ifaces),
-        "nexus_interfaces_total": len(nex_ifaces),
+        "ipam_tree": {"cached": tree is not None, "v4_roots": tree_v4, "v6_roots": tree_v6},
+        "dnac": {"devices_cached": len(devices), "sites_cached": len(sites), "sitemap_entries": len(sitemap)},
+        "aci_nodes_cached": len(aci_nodes.get("imdata", [])),
+        "panorama": {
+            "devices_in_cache": len(pan_ifaces),
+            "interfaces_with_prefix": pan_with_prefix,
+            "interfaces_without_prefix": pan_without_prefix,
+            "sample": pan_sample,
+        },
+        "nexus": {
+            "interfaces_in_cache": len(nex_ifaces),
+            "interfaces_with_ip": nex_with_ip,
+            "interfaces_na": nex_na,
+            "sample": nex_sample,
+        },
     }
 
 
