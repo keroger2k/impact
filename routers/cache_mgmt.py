@@ -303,9 +303,30 @@ async def get_cache_widget(request: Request, session: SessionEntry = Depends(req
     return templates.TemplateResponse(request, "partials/cache_widget.html", {"systems": systems})
 
 
+_KEY_TO_CATEGORY = {
+    "devices": "devices",
+    "sites": "sites",
+    "device_site_map": "sites",
+    "ipam_tree": "ipam",
+    "ise_nads": "ise", "ise_nad_groups": "ise", "ise_endpoint_groups": "ise",
+    "ise_identity_groups": "ise", "ise_users": "ise", "ise_sgts": "ise",
+    "ise_sgacls": "ise", "ise_egress_matrix": "ise", "ise_policy_sets": "ise",
+    "ise_authz_profiles": "ise", "ise_allowed_protocols": "ise",
+    "ise_profiling_policies": "ise", "ise_deployment_nodes": "ise",
+    "pan_device_groups": "panorama", "pan_managed_devices": "panorama",
+    "pan_addr": "panorama", "pan_svc": "panorama", "pan_rules": "panorama",
+    "pan_interfaces": "pan_interfaces",
+    "aci_nodes": "aci", "aci_l3outs": "aci", "aci_bgp_peers": "aci",
+    "aci_bgp_peer_cfg": "aci", "aci_ospf_peers": "aci", "aci_epgs": "aci",
+    "aci_faults": "aci", "aci_subnets": "aci", "aci_health_overall": "aci",
+    "nexus_inventory": "nexus", "nexus_interfaces": "nexus",
+}
+
+
 @router.post("/refresh/{category}")
 async def refresh_specific_cache(category: str, session: SessionEntry = Depends(require_auth)):
     """Invalidate and re-fetch the specified cache category."""
+    category = _KEY_TO_CATEGORY.get(category, category)
 
     if category == "devices":
         cache.invalidate("devices")
@@ -326,9 +347,22 @@ async def refresh_specific_cache(category: str, session: SessionEntry = Depends(
         cache.invalidate("nexus_interfaces")
         msg = "Nexus cache cleared. Use the Collect button to run SSH collection."
 
-    elif category in ("pan_interfaces", "firewall"):
+    elif category == "pan_interfaces":
+        from logger_config import run_with_context
+        import clients.panorama as pc
+        import auth as auth_module
+        from cache import TTL_PAN_INTERFACES
         cache.invalidate("pan_interfaces")
-        msg = "Firewall Interfaces cache cleared."
+        async def _refetch_pan_interfaces():
+            try:
+                loop = asyncio.get_event_loop()
+                pan_key = auth_module.get_panorama_key_for_session(session)
+                await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_interfaces", lambda: pc.fetch_firewall_interfaces(pan_key), TTL_PAN_INTERFACES)
+                logger.info("Cache refresh: Panorama interfaces re-fetch complete")
+            except Exception as e:
+                logger.warning(f"Panorama interfaces re-fetch failed: {e}")
+        asyncio.create_task(_refetch_pan_interfaces())
+        msg = "Firewall Interfaces are being refreshed in the background."
 
     elif category == "panorama":
         cache.invalidate_prefix("pan_")
