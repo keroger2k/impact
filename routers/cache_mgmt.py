@@ -5,8 +5,14 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from auth import require_auth, SessionEntry
 from cache import cache
+import logging
+
+
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+# ── System definitions for cache widget ──────────────────────────────────────
 
 CACHE_SYSTEMS = [
     {
@@ -67,6 +73,7 @@ CACHE_SYSTEMS = [
     },
 ]
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _fmt_time(ts: float | None) -> str:
     if not ts:
@@ -85,6 +92,19 @@ def _fmt_age(ts: float | None) -> str:
     return f"{int(age / 3600)}h ago"
 
 
+def _count_cached(key: str) -> int:
+    data = cache.get(key)
+    if isinstance(data, list):
+        return len(data)
+    if isinstance(data, dict):
+        if "ipv4" in data and "ipv6" in data:
+            return len(data.get("ipv4", [])) + len(data.get("ipv6", []))
+        if "imdata" in data:
+            return len(data["imdata"])
+        return len(data)
+    return 0
+
+
 def _get_system_status(system: dict) -> dict:
     warm_keys = 0
     total_keys = len(system["keys"])
@@ -97,17 +117,7 @@ def _get_system_status(system: dict) -> dict:
             if set_at is None:
                 set_at = info["set_at"]
 
-    count = 0
-    data = cache.get(system["count_key"])
-    if isinstance(data, list):
-        count = len(data)
-    elif isinstance(data, dict):
-        if "ipv4" in data and "ipv6" in data:
-            count = len(data.get("ipv4", [])) + len(data.get("ipv6", []))
-        elif "imdata" in data:
-            count = len(data["imdata"])
-        else:
-            count = len(data)
+    count = _count_cached(system["count_key"])
 
     if warm_keys == 0:
         status = "empty"
@@ -129,18 +139,6 @@ def _get_system_status(system: dict) -> dict:
 
 def _get_card_info(key, title, icon, color, refresh_url, sse=False, sse_fn=None):
     info = cache.cache_info(key)
-    data = cache.get(key)
-    count = 0
-    if isinstance(data, list):
-        count = len(data)
-    elif isinstance(data, dict):
-        if "ipv4" in data and "ipv6" in data:
-            count = len(data.get("ipv4", [])) + len(data.get("ipv6", []))
-        elif "imdata" in data:
-            count = len(data["imdata"])
-        else:
-            count = len(data)
-
     return {
         "key": key,
         "title": title,
@@ -148,31 +146,151 @@ def _get_card_info(key, title, icon, color, refresh_url, sse=False, sse_fn=None)
         "color": color,
         "set_at": _fmt_time(info["set_at"]) if info else "Empty",
         "is_expired": info["is_expired"] if info else False,
-        "count": count,
+        "count": _count_cached(key),
         "refresh_url": refresh_url,
         "sse": sse,
         "sse_fn": sse_fn or "triggerNexusCacheRefresh()",
     }
 
+# ── Background re-fetch helpers ───────────────────────────────────────────────
+
+async def _refetch_dnac(session: SessionEntry, include_devices: bool, include_sites: bool):
+    from logger_config import run_with_context
+    import clients.dnac as dc
+    import auth as auth_module
+    from cache import TTL_DEVICES, TTL_SITES
+    loop = asyncio.get_event_loop()
+    try:
+        dnac = auth_module.get_dnac_for_session(session)
+
+        if include_devices:
+            logger.info("Cache refresh: re-fetching DNAC devices")
+            devices = await loop.run_in_executor(None, run_with_context(dc.get_all_devices, dnac))
+            if devices is not None:
+                cache.set("devices", devices, TTL_DEVICES)
+                logger.info(f"Cache refresh: stored {len(devices)} devices")
+
+        if include_sites:
+            logger.info("Cache refresh: re-fetching DNAC sites")
+            sites = await loop.run_in_executor(None, run_with_context(dc.get_site_cache, dnac))
+            if sites is not None:
+                cache.set("sites", sites, TTL_SITES)
+                logger.info(f"Cache refresh: stored {len(sites)} sites")
+
+        # Rebuild device→site map if both are now available
+        devices = cache.get("devices")
+        sites = cache.get("sites")
+        if devices is not None and sites is not None:
+            logger.info("Cache refresh: rebuilding device-to-site map")
+            dev_site_map = await loop.run_in_executor(
+                None, run_with_context(dc.build_device_site_map, dnac, sites)
+            )
+            if dev_site_map is not None:
+                cache.set("device_site_map", dev_site_map, TTL_SITES)
+                logger.info(f"Cache refresh: stored {len(dev_site_map)} device-site mappings")
+
+    except Exception as e:
+        logger.warning(f"DNAC re-fetch failed: {e}")
+
+
+async def _refetch_ise(session: SessionEntry):
+    from logger_config import run_with_context
+    import clients.ise as ic
+    import auth as auth_module
+    from cache import TTL_ISE_POLICIES
+    loop = asyncio.get_event_loop()
+    try:
+        ise = auth_module.get_ise_for_session(session)
+        key_loaders = [
+            ("ise_nads",               lambda: ic.get_network_devices(ise, "")),
+            ("ise_nad_groups",         lambda: ic.get_network_device_groups(ise)),
+            ("ise_endpoint_groups",    lambda: ic.get_endpoint_groups(ise)),
+            ("ise_identity_groups",    lambda: ic.get_identity_groups(ise)),
+            ("ise_users",              lambda: ic.get_internal_users(ise, "")),
+            ("ise_sgts",               lambda: ic.get_sgts(ise)),
+            ("ise_sgacls",             lambda: ic.get_sgacls(ise)),
+            ("ise_egress_matrix",      lambda: ic.get_egress_matrix(ise)),
+            ("ise_policy_sets",        lambda: ic.get_policy_sets(ise)),
+            ("ise_authz_profiles",     lambda: ic.get_authz_profiles(ise)),
+            ("ise_allowed_protocols",  lambda: ic.get_allowed_protocols(ise)),
+            ("ise_profiling_policies", lambda: ic.get_profiling_policies(ise)),
+            ("ise_deployment_nodes",   lambda: ic.get_deployment_nodes(ise)),
+        ]
+        for key, loader in key_loaders:
+            try:
+                data = await loop.run_in_executor(None, run_with_context(loader))
+                if data is not None:
+                    cache.set(key, data, TTL_ISE_POLICIES)
+            except Exception as e:
+                logger.warning(f"ISE re-fetch failed for {key}: {e}")
+        logger.info("Cache refresh: ISE re-fetch complete")
+    except Exception as e:
+        logger.warning(f"ISE re-fetch failed: {e}")
+
+
+async def _refetch_panorama(session: SessionEntry):
+    from logger_config import run_with_context
+    import clients.panorama as pc
+    import auth as auth_module
+    from routers.firewall import PAN_TTL
+    loop = asyncio.get_event_loop()
+    try:
+        pan_key = auth_module.get_panorama_key_for_session(session)
+        all_dgs = await loop.run_in_executor(
+            None, run_with_context(cache.get_or_set), "pan_device_groups",
+            lambda: pc.get_device_groups(pan_key), PAN_TTL
+        )
+        await loop.run_in_executor(
+            None, run_with_context(cache.get_or_set), "pan_managed_devices",
+            lambda: pc.get_managed_devices(pan_key), PAN_TTL
+        )
+        await loop.run_in_executor(
+            None, run_with_context(cache.get_or_set), "pan_addr",
+            lambda: pc.get_address_objects_and_groups(pan_key, all_dgs), PAN_TTL
+        )
+        await loop.run_in_executor(
+            None, run_with_context(cache.get_or_set), "pan_svc",
+            lambda: pc.get_services(pan_key, all_dgs), PAN_TTL
+        )
+
+        def _build_rules():
+            all_rules = pc.get_all_security_rules(pan_key, all_dgs)
+            by_dg: dict[str, list] = {}
+            for rule in all_rules:
+                dg = rule.get("device_group", "shared")
+                by_dg.setdefault(dg, []).append(rule)
+            return {"dg_order": all_dgs, "by_dg": by_dg}
+
+        await loop.run_in_executor(
+            None, run_with_context(cache.get_or_set), "pan_rules", _build_rules, PAN_TTL
+        )
+        logger.info("Cache refresh: Panorama re-fetch complete")
+    except Exception as e:
+        logger.warning(f"Panorama re-fetch failed: {e}")
+
+# ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.get("/status", response_class=HTMLResponse)
 async def get_cache_status(request: Request, session: SessionEntry = Depends(require_auth)):
     from templates_module import templates
 
     cards = [
-        _get_card_info("devices",           "DNAC Inventory",        "ph ph-network",        "primary",   "/api/cache/refresh/devices"),
-        _get_card_info("sites",             "DNAC Sites",            "ph ph-map-pin",         "secondary", "/api/cache/refresh/sites"),
-        _get_card_info("ipam_tree",         "IPAM Tree",             "ph ph-tree-structure",  "info",      None,                           sse=True),
-        _get_card_info("ise_nads",          "ISE NADs",              "ph ph-shield-check",    "success",   "/api/cache/refresh/ise"),
-        _get_card_info("ise_users",         "ISE Users",             "ph ph-users",           "success",   "/api/cache/refresh/ise"),
-        _get_card_info("ise_sgts",          "ISE SGTs",              "ph ph-tag",             "success",   "/api/cache/refresh/ise"),
-        _get_card_info("pan_managed_devices","Panorama Devices",     "ph ph-fire",            "danger",    "/api/cache/refresh/panorama"),
-        _get_card_info("pan_rules",         "Firewall Rules",        "ph ph-fire",            "danger",    "/api/cache/refresh/panorama"),
-        _get_card_info("pan_interfaces",    "Firewall Interfaces",   "ph ph-fire",            "danger",    "/api/firewall/interfaces/refresh"),
-        _get_card_info("aci_nodes",         "ACI Fabric Nodes",      "ph ph-buildings",       "purple",    "/api/cache/refresh/aci"),
-        _get_card_info("aci_bgp_peers",     "ACI BGP Peers",         "ph ph-buildings",       "purple",    "/api/cache/refresh/aci"),
-        _get_card_info("nexus_inventory",   "Nexus Switch Inventory","ph ph-hard-drives",     "warning",   None,                           sse=True, sse_fn="triggerNexusCacheRefresh()"),
-        _get_card_info("nexus_interfaces",  "Nexus Interface Cache", "ph ph-hard-drives",     "warning",   None,                           sse=True, sse_fn="triggerNexusCacheRefresh()"),
+        _get_card_info("devices",            "DNAC Inventory",        "ph ph-network",         "primary",   "/api/cache/refresh/devices"),
+        _get_card_info("sites",              "DNAC Sites",            "ph ph-map-pin",          "primary",   "/api/cache/refresh/sites"),
+        _get_card_info("device_site_map",    "DNAC Device-Site Map",  "ph ph-map-trifold",      "primary",   "/api/cache/refresh/sites"),
+        _get_card_info("ipam_tree",          "IPAM Tree",             "ph ph-tree-structure",   "info",      None,                             sse=True, sse_fn="triggerIpamCacheRefresh()"),
+        _get_card_info("ise_nads",           "ISE NADs",              "ph ph-shield-check",     "success",   "/api/cache/refresh/ise"),
+        _get_card_info("ise_users",          "ISE Users",             "ph ph-users",            "success",   "/api/cache/refresh/ise"),
+        _get_card_info("ise_sgts",           "ISE SGTs",              "ph ph-tag",              "success",   "/api/cache/refresh/ise"),
+        _get_card_info("ise_policy_sets",    "ISE Policy Sets",       "ph ph-scroll",           "success",   "/api/cache/refresh/ise"),
+        _get_card_info("pan_managed_devices","Panorama Devices",      "ph ph-fire",             "danger",    "/api/cache/refresh/panorama"),
+        _get_card_info("pan_rules",          "Firewall Rules",        "ph ph-fire",             "danger",    "/api/cache/refresh/panorama"),
+        _get_card_info("pan_interfaces",     "Firewall Interfaces",   "ph ph-fire",             "danger",    "/api/firewall/interfaces/refresh"),
+        _get_card_info("aci_nodes",          "ACI Fabric Nodes",      "ph ph-buildings",        "secondary", "/api/cache/refresh/aci"),
+        _get_card_info("aci_bgp_peers",      "ACI BGP Peers",         "ph ph-plug-connect",     "secondary", "/api/cache/refresh/aci"),
+        _get_card_info("aci_l3outs",         "ACI L3Outs",            "ph ph-globe-hemisphere-east", "secondary", "/api/cache/refresh/aci"),
+        _get_card_info("nexus_inventory",    "Nexus Switch Inventory","ph ph-hard-drives",      "warning",   None,                             sse=True, sse_fn="triggerNexusCacheRefresh()"),
+        _get_card_info("nexus_interfaces",   "Nexus Interface Cache", "ph ph-hard-drives",      "warning",   None,                             sse=True, sse_fn="triggerNexusCacheRefresh()"),
     ]
 
     return templates.TemplateResponse(request, "partials/cache_cards.html", {"cards": cards})
@@ -187,29 +305,55 @@ async def get_cache_widget(request: Request, session: SessionEntry = Depends(req
 
 @router.post("/refresh/{category}")
 async def refresh_specific_cache(category: str, session: SessionEntry = Depends(require_auth)):
-    if category in ("devices", "dnac"):
+    """Invalidate and re-fetch the specified cache category."""
+
+    if category == "devices":
         cache.invalidate("devices")
         cache.invalidate("device_site_map")
-        cache.invalidate("ipam_tree")
+        cache.invalidate("ipam_tree")  # IPAM depends on device IP data
+        asyncio.create_task(_refetch_dnac(session, include_devices=True, include_sites=False))
+        msg = "DNAC Inventory is being refreshed in the background."
+
     elif category == "sites":
         cache.invalidate("sites")
         cache.invalidate("device_site_map")
-        cache.invalidate("ipam_tree")
+        # IPAM does not depend on site hierarchy — do not invalidate ipam_tree here
+        asyncio.create_task(_refetch_dnac(session, include_devices=False, include_sites=True))
+        msg = "DNAC Sites is being refreshed in the background."
+
     elif category in ("nexus", "nexus_inventory", "nexus_interfaces"):
         cache.invalidate("nexus_inventory")
         cache.invalidate("nexus_interfaces")
-    elif category in ("pan_interfaces", "firewall", "panorama"):
+        msg = "Nexus cache cleared. Use the Collect button to run SSH collection."
+
+    elif category in ("pan_interfaces", "firewall"):
+        cache.invalidate("pan_interfaces")
+        msg = "Firewall Interfaces cache cleared."
+
+    elif category == "panorama":
         cache.invalidate_prefix("pan_")
+        asyncio.create_task(_refetch_panorama(session))
+        msg = "Panorama data is being refreshed in the background."
+
     elif category == "ise":
         cache.invalidate_prefix("ise_")
+        asyncio.create_task(_refetch_ise(session))
+        msg = "ISE data is being refreshed in the background."
+
     elif category == "aci":
         cache.invalidate_prefix("aci_")
+        msg = "ACI cache cleared. Data will reload automatically when you visit ACI pages."
+
     elif category == "ipam":
         cache.invalidate("ipam_tree")
+        msg = "IPAM cache cleared. Use the Collect button to rebuild the tree."
+
+    else:
+        msg = f"{category.replace('_', ' ').title()} cache cleared."
 
     return HTMLResponse(f"""
         <div class="alert alert-success alert-dismissible fade show mb-0" role="alert">
-            <strong>Success!</strong> {category.replace('_', ' ').title()} cache invalidated.
+            <strong>Done.</strong> {msg}
             <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
         </div>
     """)
