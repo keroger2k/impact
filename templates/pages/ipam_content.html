@@ -95,43 +95,39 @@
 
             let html = '';
 
-            // Per-source discovery results
-            html += '<div class="fw-bold mb-2">Discovery Results (what engine found):</div>';
-            for (const [src, info] of Object.entries(data.discovery)) {
-                const cls = info.error ? 'text-danger' : info.found === 0 ? 'text-warning' : 'text-success';
-                html += `<div class="${cls} mb-1">▸ <strong>${src.toUpperCase()}</strong>: `;
-                if (info.error) {
-                    html += `ERROR — ${info.error}`;
-                } else {
-                    html += `${info.found} subnets`;
-                    if (info.samples?.length) {
-                        html += '<div class="ms-3 text-muted">' +
-                            info.samples.map(s => `${s.cidr} (${s.device} / ${s.site})`).join('<br>') +
-                            '</div>';
-                    }
-                }
-                html += '</div>';
-            }
+            // Cache summary
+            const tree = data.ipam_tree;
+            const dn = data.dnac;
+            html += `<div class="fw-bold mb-2">Cache State:</div>`;
+            html += `<div class="${tree.cached ? 'text-success' : 'text-danger'}">▸ IPAM Tree: ${tree.cached ? `cached (${tree.v4_roots} v4 roots, ${tree.v6_roots} v6 roots)` : 'NOT CACHED'}</div>`;
+            html += `<div class="text-info">▸ DNAC: ${dn.devices_cached} devices, ${dn.sites_cached} sites, ${dn.sitemap_entries} site-map entries</div>`;
+            html += `<div class="text-info">▸ ACI Nodes: ${data.aci_nodes_cached} cached</div>`;
 
-            // Panorama raw cache
-            html += `<div class="fw-bold mt-3 mb-2">Raw pan_interfaces cache (${data.pan_interfaces_total} total devices):</div>`;
-            if (data.raw_pan_interfaces_sample.length === 0) {
-                html += '<div class="text-danger">pan_interfaces cache is EMPTY — Firewall Interfaces not cached yet</div>';
+            // Panorama
+            const pan = data.panorama;
+            html += `<div class="fw-bold mt-3 mb-1">Panorama (pan_interfaces cache — ${pan.devices_in_cache} devices):</div>`;
+            if (pan.devices_in_cache === 0) {
+                html += '<div class="text-danger">⚠ pan_interfaces cache is EMPTY — go to Cache Management and refresh Firewall Interfaces first</div>';
             } else {
-                for (const e of data.raw_pan_interfaces_sample) {
+                html += `<div class="${pan.interfaces_with_prefix > 0 ? 'text-success' : 'text-danger'}">  ${pan.interfaces_with_prefix} interfaces WITH prefix (usable by IPAM)</div>`;
+                html += `<div class="${pan.interfaces_without_prefix > 0 ? 'text-warning' : 'text-muted'}">  ${pan.interfaces_without_prefix} interfaces WITHOUT prefix (skipped — no CIDR)</div>`;
+                for (const e of pan.sample) {
                     const cls = e.has_prefix ? 'text-success' : 'text-warning';
-                    html += `<div class="${cls}">  ${e.hostname} / ${e.iface}: ${e.ipv4 || 'no IP'} ${e.has_prefix ? '✓' : '⚠ no prefix'}</div>`;
+                    html += `<div class="${cls} ms-2">  ${e.hostname} / ${e.iface}: ${e.ipv4} ${e.has_prefix ? '✓' : '⚠ no /prefix'}</div>`;
                 }
             }
 
-            // Nexus raw cache
-            html += `<div class="fw-bold mt-3 mb-2">Raw nexus_interfaces cache (${data.nexus_interfaces_total} total interfaces):</div>`;
-            if (data.raw_nexus_interfaces_sample.length === 0) {
-                html += '<div class="text-danger">nexus_interfaces cache is EMPTY — run Nexus SSH collection first</div>';
+            // Nexus
+            const nex = data.nexus;
+            html += `<div class="fw-bold mt-3 mb-1">Nexus (nexus_interfaces cache — ${nex.interfaces_in_cache} interfaces):</div>`;
+            if (nex.interfaces_in_cache === 0) {
+                html += '<div class="text-danger">⚠ nexus_interfaces cache is EMPTY — run Nexus SSH collection in Cache Management first</div>';
             } else {
-                for (const e of data.raw_nexus_interfaces_sample) {
+                html += `<div class="${nex.interfaces_with_ip > 0 ? 'text-success' : 'text-danger'}">  ${nex.interfaces_with_ip} interfaces with IP (usable by IPAM)</div>`;
+                html += `<div class="${nex.interfaces_na > 0 ? 'text-warning' : 'text-muted'}">  ${nex.interfaces_na} interfaces with N/A (skipped)</div>`;
+                for (const e of nex.sample) {
                     const cls = e.ipv4 && e.ipv4 !== 'N/A' ? 'text-success' : 'text-warning';
-                    html += `<div class="${cls}">  ${e.hostname} / ${e.iface}: ${e.ipv4 || 'N/A'}</div>`;
+                    html += `<div class="${cls} ms-2">  ${e.hostname} / ${e.iface}: ${e.ipv4}</div>`;
                 }
             }
 
