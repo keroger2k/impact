@@ -124,8 +124,24 @@ async def debug_ipam_sources(session: SessionEntry = Depends(require_auth)):
     tree_v4 = len(tree.get("ipv4", [])) if tree else 0
     tree_v6 = len(tree.get("ipv6", [])) if tree else 0
 
+    # Count sources in the existing tree
+    source_counts: dict = {}
+    if tree:
+        def _count_sources(nodes: list):
+            for n in nodes:
+                src = n.get("source", "Unknown")
+                source_counts[src] = source_counts.get(src, 0) + 1
+                _count_sources(n.get("children", []))
+        _count_sources(tree.get("ipv4", []))
+        _count_sources(tree.get("ipv6", []))
+
     return {
-        "ipam_tree": {"cached": tree is not None, "v4_roots": tree_v4, "v6_roots": tree_v6},
+        "ipam_tree": {
+            "cached": tree is not None,
+            "v4_roots": tree_v4,
+            "v6_roots": tree_v6,
+            "source_counts": source_counts,
+        },
         "dnac": {"devices_cached": len(devices), "sites_cached": len(sites), "sitemap_entries": len(sitemap)},
         "aci_nodes_cached": len(aci_nodes.get("imdata", [])),
         "panorama": {
