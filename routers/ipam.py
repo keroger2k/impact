@@ -71,6 +71,72 @@ async def get_ipam_tree(session: SessionEntry = Depends(require_auth)):
         return JSONResponse(status_code=404, content={"message": "No IPAM data found. Please run refresh."})
     return tree_data
 
+@router.get("/debug")
+async def debug_ipam_sources(session: SessionEntry = Depends(require_auth)):
+    """
+    Run a quick per-source discovery and report exactly what was found,
+    what was excluded, and why. Does NOT rebuild the ipam_tree cache.
+    """
+    import netaddr
+    from utils.ipam_engine import IPAMEngine, EXCLUDED_RANGES, HA_PATTERNS, PRIVATE_RANGES
+    from cache import cache
+
+    loop = asyncio.get_event_loop()
+    engine = IPAMEngine()
+
+    report = {}
+    for source in ["aci", "dnac", "panorama", "nexus", "ise"]:
+        before = len(engine.subnets)
+        try:
+            method = {
+                "aci": engine._discover_aci,
+                "dnac": engine._discover_dnac,
+                "panorama": engine._discover_panorama,
+                "nexus": engine._discover_nexus,
+                "ise": engine._discover_ise,
+            }[source]
+            await method(session, loop)
+        except Exception as e:
+            report[source] = {"error": str(e), "found": 0, "samples": []}
+            continue
+
+        new_subnets = engine.subnets[before:]
+        report[source] = {
+            "found": len(new_subnets),
+            "samples": [
+                {"cidr": s.cidr, "device": s.device, "site": s.site, "display_name": s.display_name}
+                for s in new_subnets[:10]
+            ],
+        }
+
+    # Also report raw cache state
+    pan_ifaces = cache.get("pan_interfaces") or []
+    nex_ifaces = cache.get("nexus_interfaces") or []
+
+    pan_summary = []
+    for dev in pan_ifaces[:3]:
+        for iface in dev.get("interfaces", [])[:3]:
+            pan_summary.append({
+                "hostname": dev.get("hostname"),
+                "iface": iface.get("name"),
+                "ipv4": iface.get("ipv4"),
+                "has_prefix": "/" in (iface.get("ipv4") or ""),
+            })
+
+    nex_summary = [
+        {"hostname": i.get("hostname"), "iface": i.get("interface_name"), "ipv4": i.get("ipv4_address")}
+        for i in nex_ifaces[:10]
+    ]
+
+    return {
+        "discovery": report,
+        "raw_pan_interfaces_sample": pan_summary,
+        "raw_nexus_interfaces_sample": nex_summary,
+        "pan_interfaces_total": len(pan_ifaces),
+        "nexus_interfaces_total": len(nex_ifaces),
+    }
+
+
 @router.get("/export")
 async def export_ipam_csv(session: SessionEntry = Depends(require_auth)):
     tree_data = cache.get("ipam_tree")
