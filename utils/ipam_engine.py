@@ -205,12 +205,23 @@ class IPAMEngine:
                 device_map = {"dev1": {"hostname": "BOS-SW-01", "site": "BOS"}}
             else:
                 dnac = auth_module.get_dnac_for_session(session)
-                # Build device map for metadata
-                devices = await loop.run_in_executor(None, dnac_client_mod.get_all_devices, dnac)
-                site_cache = await loop.run_in_executor(None, dnac_client_mod.get_site_cache, dnac)
-                site_map = await loop.run_in_executor(None, dnac_client_mod.build_device_site_map, dnac, site_cache)
+                # Use cached data when available — only hit the API if cache is cold
+                devices = cache.get("devices")
+                if devices is None:
+                    logger.info("IPAM: devices cache cold, fetching from Catalyst Center")
+                    devices = await loop.run_in_executor(None, dnac_client_mod.get_all_devices, dnac)
 
-                for d in devices:
+                site_cache = cache.get("sites")
+                if site_cache is None:
+                    logger.info("IPAM: sites cache cold, fetching from Catalyst Center")
+                    site_cache = await loop.run_in_executor(None, dnac_client_mod.get_site_cache, dnac)
+
+                site_map = cache.get("device_site_map")
+                if site_map is None:
+                    logger.info("IPAM: device_site_map cache cold, building now")
+                    site_map = await loop.run_in_executor(None, dnac_client_mod.build_device_site_map, dnac, site_cache or [])
+
+                for d in (devices or []):
                     d_id = d.get('instanceUuid')
                     if d_id:
                         device_map[d_id] = {
@@ -350,10 +361,15 @@ class IPAMEngine:
 
     async def _discover_panorama(self, session, loop):
         try:
-            key = auth_module.get_panorama_key_for_session(session)
-            if not key: return
-
-            devices = await loop.run_in_executor(None, pan_client_mod.fetch_firewall_interfaces, key)
+            # Use cached firewall interfaces when available
+            devices = cache.get("pan_interfaces")
+            if devices is None:
+                logger.info("IPAM: pan_interfaces cache cold, fetching from Panorama")
+                key = auth_module.get_panorama_key_for_session(session)
+                if not key: return
+                devices = await loop.run_in_executor(None, pan_client_mod.fetch_firewall_interfaces, key)
+            if not devices:
+                return
             for dev in devices:
                 dg = dev.get('device_group', 'Unknown')
                 # Panorama Site = Device Group split by / (SiteHierarchy)
