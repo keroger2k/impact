@@ -106,30 +106,32 @@ def _count_cached(key: str) -> int:
 
 
 def _get_system_status(system: dict) -> dict:
-    warm_keys = 0
-    total_keys = len(system["keys"])
-    set_at = None
+    # Status is driven by the primary key — the one that represents whether
+    # the system is actually usable. Secondary keys may be missing if the user
+    # hasn't visited every sub-page yet (e.g. ACI faults, ISE authz profiles).
+    primary_info = cache.cache_info(system["count_key"])
+    primary_warm = primary_info is not None and not primary_info["is_expired"]
 
+    any_warm = False
+    set_at = primary_info["set_at"] if primary_info else None
     for key in system["keys"]:
         info = cache.cache_info(key)
         if info and not info["is_expired"]:
-            warm_keys += 1
+            any_warm = True
             if set_at is None:
                 set_at = info["set_at"]
 
     count = _count_cached(system["count_key"])
 
-    if warm_keys == 0:
-        status = "empty"
-    elif warm_keys == total_keys:
+    if primary_warm:
         status = "warm"
-    else:
+    elif any_warm:
         status = "partial"
+    else:
+        status = "empty"
 
     return {
         **system,
-        "warm_keys": warm_keys,
-        "total_keys": total_keys,
         "count": count,
         "status": status,
         "set_at": _fmt_time(set_at),
