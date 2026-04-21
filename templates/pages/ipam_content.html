@@ -31,10 +31,11 @@
   <div class="row mb-4">
     <div class="col-md-6">
         <div class="position-relative">
+            <label for="ipam-filter" class="visually-hidden">Filter IPAM</label>
             <span class="position-absolute top-50 start-0 translate-middle-y ps-3 text-muted">
                 <i class="ph ph-magnifying-glass"></i>
             </span>
-            <input type="text" id="ipam-filter" class="form-control ps-5" placeholder="Filter by CIDR, Site, or Device..." onkeyup="filterIPAMTree()">
+            <input type="text" id="ipam-filter" class="form-control ps-5" placeholder="Filter by CIDR, Site, or Device...">
         </div>
     </div>
   </div>
@@ -133,6 +134,12 @@
         container.appendChild(v4Card);
         container.appendChild(v6Card);
     }
+
+    let _filterDebounce;
+    document.getElementById('ipam-filter').addEventListener('input', () => {
+        clearTimeout(_filterDebounce);
+        _filterDebounce = setTimeout(filterIPAMTree, 250);
+    });
 
     function filterIPAMTree() {
         if (!currentIPAMData) return;
@@ -303,7 +310,7 @@
         searchBtn.innerHTML = '<i class="ph ph-magnifying-glass"></i>';
         searchBtn.onclick = (e) => {
             e.stopPropagation();
-            htmx.ajax('GET', '/config-search?q=' + encodeURIComponent(node.cidr), { target: '#main-content', pushUrl: true });
+            htmx.ajax('GET', '/config-search?q=' + encodeURIComponent(node.cidr), { target: '#content', pushUrl: true });
         };
 
         // Link to IP Lookup for this CIDR
@@ -313,7 +320,7 @@
         lookupBtn.innerHTML = '<i class="ph ph-map-pin"></i>';
         lookupBtn.onclick = (e) => {
             e.stopPropagation();
-            htmx.ajax('GET', '/ip-lookup?q=' + encodeURIComponent(node.cidr), { target: '#main-content', pushUrl: true });
+            htmx.ajax('GET', '/ip-lookup?q=' + encodeURIComponent(node.cidr), { target: '#content', pushUrl: true });
         };
 
         actions.appendChild(searchBtn);

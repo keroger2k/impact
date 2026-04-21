@@ -222,7 +222,7 @@
             <span style="margin-left: 8px;">${this.escapeHtml(log.message)}</span>
           </div>
         `;
-      }).reverse().join('');
+      }).join('');
 
       const content = `
         <div style="

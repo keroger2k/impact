@@ -27,7 +27,8 @@
       <div class="card mb-4 shadow-md border-0 animate-fade-in">
         <div class="card-header"><span class="font-weight-bold" style="color: var(--sidebar-bg)">BGP Troubleshooting</span></div>
         <div class="card-body p-4">
-          <form hx-post="/api/routing/bgp/summary" hx-target="#bgp-results" hx-indicator="#bgp-loading">
+          <form hx-post="/api/routing/bgp/summary" hx-target="#bgp-results" hx-indicator="#bgp-loading"
+                hx-on:htmx:response-error="document.getElementById('bgp-results').innerHTML = '<div class=\'alert alert-danger mt-3\'>Failed to load BGP data. Please check device connectivity.</div>'">
             <div class="row g-3">
               <div class="col-md-8">
                 <label class="form-label font-weight-bold small text-uppercase letter-spacing-05" style="color: var(--text-muted)">Device IP Address</label>
@@ -51,7 +52,8 @@
       <div class="card mb-4 shadow-md border-0 animate-fade-in">
         <div class="card-header"><span class="font-weight-bold" style="color: var(--sidebar-bg)">EIGRP Troubleshooting</span></div>
         <div class="card-body p-4">
-          <form hx-post="/api/routing/eigrp/topology" hx-target="#eigrp-results" hx-indicator="#eigrp-loading">
+          <form hx-post="/api/routing/eigrp/topology" hx-target="#eigrp-results" hx-indicator="#eigrp-loading"
+                hx-on:htmx:response-error="document.getElementById('eigrp-results').innerHTML = '<div class=\'alert alert-danger mt-3\'>Failed to load EIGRP data. Please check device connectivity.</div>'">
             <div class="row g-3">
               <div class="col-md-8">
                 <label class="form-label font-weight-bold small text-uppercase letter-spacing-05" style="color: var(--text-muted)">Device IP Address</label>
@@ -75,7 +77,8 @@
        <div class="card mb-4 shadow-md border-0 animate-fade-in">
         <div class="card-header"><span class="font-weight-bold" style="color: var(--sidebar-bg)">OSPF Troubleshooting</span></div>
         <div class="card-body p-4">
-          <form hx-post="/api/routing/ospf/neighbors" hx-target="#ospf-results" hx-indicator="#ospf-loading">
+          <form hx-post="/api/routing/ospf/neighbors" hx-target="#ospf-results" hx-indicator="#ospf-loading"
+                hx-on:htmx:response-error="document.getElementById('ospf-results').innerHTML = '<div class=\'alert alert-danger mt-3\'>Failed to load OSPF data. Please check device connectivity.</div>'">
             <div class="row g-3">
               <div class="col-md-8">
                 <label class="form-label font-weight-bold small text-uppercase letter-spacing-05" style="color: var(--text-muted)">Device IP Address</label>

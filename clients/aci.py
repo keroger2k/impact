@@ -129,31 +129,46 @@ class ACIClient:
                 return None
 
         url = f"{self.url}/{path.lstrip('/')}"
-        start_time = time.time()
-        try:
-            response = self.session.get(url, verify=False, timeout=15)
-            duration = int((time.time() - start_time) * 1000)
-            logger.info(f"ACI GET {path}", extra={
-                "target": "ACI",
-                "action": action,
-                "status": response.status_code,
-                "duration_ms": duration
-            })
 
-            response.raise_for_status()
-            data = response.json()
-            logger.debug(f"ACI response body: {data}", extra={"payload": data})
-            return data
-        except Exception as e:
-            duration = int((time.time() - start_time) * 1000)
-            status = getattr(e.response, 'status_code', 500) if hasattr(e, 'response') else 500
-            logger.error(f"ACI GET {path} failed: {e}", extra={
-                "target": "ACI",
-                "action": action,
-                "status": status,
-                "duration_ms": duration
-            })
-            return None
+        def _do_get():
+            start_time = time.time()
+            try:
+                response = self.session.get(url, verify=False, timeout=15)
+                duration = int((time.time() - start_time) * 1000)
+                logger.info(f"ACI GET {path}", extra={
+                    "target": "ACI",
+                    "action": action,
+                    "status": response.status_code,
+                    "duration_ms": duration
+                })
+
+                if response.status_code in (401, 403):
+                    return response, None
+
+                response.raise_for_status()
+                data = response.json()
+                logger.debug(f"ACI response body: {data}", extra={"payload": data})
+                return response, data
+            except Exception as e:
+                duration = int((time.time() - start_time) * 1000)
+                status = getattr(e.response, 'status_code', 500) if hasattr(e, 'response') else 500
+                logger.error(f"ACI GET {path} failed: {e}", extra={
+                    "target": "ACI",
+                    "action": action,
+                    "status": status,
+                    "duration_ms": duration
+                })
+                return getattr(e, 'response', None), None
+
+        resp, data = _do_get()
+        if resp is not None and resp.status_code in (401, 403):
+            logger.info("ACI token expired, retrying after login...")
+            if self.login():
+                resp, data = _do_get()
+            else:
+                logger.error("ACI login failed during token refresh retry")
+
+        return data
 
     def get_fabric_nodes(self):
         """List all fabricNode objects."""

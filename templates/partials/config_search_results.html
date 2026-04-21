@@ -50,7 +50,11 @@
           const title = document.getElementById('rawDataModalLabel');
           const content = document.getElementById('rawDataContent');
 
-          title.innerHTML = `<i class=" ph ph-file-code me-2"></i>Full Configuration: ${hostname}`;
+          title.textContent = '';
+          const icon = document.createElement('i');
+          icon.className = 'ph ph-file-code me-2';
+          title.appendChild(icon);
+          title.appendChild(document.createTextNode(`Full Configuration: ${hostname}`));
           content.textContent = "Loading configuration...";
           modal.show();
 

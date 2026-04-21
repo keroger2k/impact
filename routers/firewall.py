@@ -65,7 +65,7 @@ async def list_device_groups(request: Request, session: SessionEntry = Depends(r
     if request.headers.get("HX-Request"):
         from templates_module import templates
         return templates.TemplateResponse(request, "partials/firewall_device_groups.html", {"items": dgs})
-    return {"items": dgs}
+    return {"items": dgs, "total": len(dgs)}
 
 @router.post("/lookup")
 async def policy_lookup(req: PolicyLookupRequest, session: SessionEntry = Depends(require_auth)):
@@ -78,6 +78,11 @@ async def policy_lookup(req: PolicyLookupRequest, session: SessionEntry = Depend
     key  = _get_key(session)
     loop = asyncio.get_event_loop()
     all_dgs = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_device_groups", lambda: pc.get_device_groups(key), PAN_TTL)
+
+    if req.device_groups:
+        invalid = [dg for dg in req.device_groups if dg not in all_dgs]
+        if invalid:
+            raise HTTPException(400, f"Unknown device groups: {invalid}")
 
     addr_data = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_addr", lambda: pc.get_address_objects_and_groups(key, all_dgs), PAN_TTL)
     objects, groups = addr_data
@@ -202,7 +207,7 @@ async def list_managed_devices(request: Request, session: SessionEntry = Depends
     if request.headers.get("HX-Request"):
         from templates_module import templates
         return templates.TemplateResponse(request, "partials/firewall_devices.html", {"items": cached})
-    return {"items": cached}
+    return {"items": cached, "total": len(cached)}
 
 @router.get("/interfaces/search", response_class=HTMLResponse)
 async def search_firewall_interfaces_ui(request: Request, ip: str = Query(...), session: SessionEntry = Depends(require_auth)):
@@ -233,15 +238,18 @@ async def list_panorama_templates_ui(request: Request, session: SessionEntry = D
 
 @router.get("/policies/{device_group}")
 async def get_device_group_policies(request: Request, device_group: str, session: SessionEntry = Depends(require_auth)):
-    from dev import DEV_MODE, MOCK_FIREWALL_RULES
+    from dev import DEV_MODE, MOCK_FIREWALL_RULES, MOCK_DEVICE_GROUPS
+
+    key  = _get_key(session)
+    loop = asyncio.get_event_loop()
+    all_dgs = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_device_groups", lambda: pc.get_device_groups(key), PAN_TTL)
+
+    if device_group not in all_dgs and device_group != "shared":
+        raise HTTPException(400, f"Unknown device group: {device_group}")
 
     if DEV_MODE:
         rules = [r for r in MOCK_FIREWALL_RULES if r.get("device_group") == device_group or r.get("device_group") == "shared"]
     else:
-        key  = _get_key(session)
-        loop = asyncio.get_event_loop()
-        all_dgs = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_device_groups", lambda: pc.get_device_groups(key), PAN_TTL)
-
         def _build_rules():
             all_rules = pc.get_all_security_rules(key, all_dgs)
             by_dg: dict[str, list] = {}
@@ -259,4 +267,4 @@ async def get_device_group_policies(request: Request, device_group: str, session
             "device_group": device_group,
             "items": rules
         })
-    return {"device_group": device_group, "items": rules}
+    return {"items": rules, "total": len(rules), "device_group": device_group}

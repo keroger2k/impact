@@ -7,6 +7,13 @@
     <button class="btn btn-sm btn-outline-light" onclick="this.closest('.card').remove()">Close</button>
   </div>
   <div class="card-body p-0">
+    {% if not correlations and not output %}
+    <div class="p-4 text-center">
+      <i class="ph ph-warning-circle ph-3x text-muted mb-3"></i>
+      <h6 class="text-muted">No data available</h6>
+      <p class="small text-muted mb-0">No results returned from the device.</p>
+    </div>
+    {% else %}
     <div class="p-3 bg-light border-bottom">
       <h6 class="text-uppercase text-navy fw-bold mb-3 small letter-spacing-1">Next-Hop Inventory Correlation</h6>
       {% if correlations %}
@@ -41,5 +48,6 @@
        <div class="px-3 py-2 border-bottom border-secondary small text-info opacity-50 fw-bold uppercase">Raw SSH Output</div>
        <pre class="p-3 mb-0 text-info" style="max-height: 400px; overflow: auto; font-family: 'SF Mono', monospace; font-size: 12px; line-height: 1.5;">{{ output }}</pre>
     </div>
+    {% endif %}
   </div>
 </div>

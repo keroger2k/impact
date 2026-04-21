@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -13,6 +14,13 @@ from cache import cache
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+ACI_DN_RE = re.compile(r'^[\w\-./\[\]:,]+$')
+
+
+def _validate_dn(dn: str):
+    if not dn or not ACI_DN_RE.match(dn):
+        raise HTTPException(400, f"Invalid DN format: {dn!r}")
 
 from cache import TTL_ACI_STATUS as ACI_TTL
 
@@ -164,6 +172,7 @@ async def list_l3outs(request: Request, session: SessionEntry = Depends(require_
 
 @router.get("/l3outs/detail")
 async def get_l3out_detail(request: Request, dn: str, session: SessionEntry = Depends(require_auth)):
+    _validate_dn(dn)
     aci = _get_aci(session)
     loop = asyncio.get_event_loop()
     detail_raw_orig = await loop.run_in_executor(None, run_with_context(aci.get_l3out_details), dn)
@@ -197,7 +206,7 @@ async def get_l3out_detail(request: Request, dn: str, session: SessionEntry = De
             "l": processed,
             "raw_json": detail_raw
         })
-    return {"item": processed, "raw": detail_raw}
+    return processed
 
 # ── BGP Troubleshooting ────────────────────────────────────────────────────────
 
@@ -267,6 +276,8 @@ async def list_bgp_peers(request: Request, session: SessionEntry = Depends(requi
 
 @router.get("/bgp/routes")
 async def get_bgp_routes(request: Request, node_id: str = None, dn: str = None, session: SessionEntry = Depends(require_auth)):
+    if dn:
+        _validate_dn(dn)
     aci = _get_aci(session)
     loop = asyncio.get_event_loop()
     target = dn or node_id
@@ -349,6 +360,7 @@ async def list_epgs(request: Request, session: SessionEntry = Depends(require_au
 
 @router.get("/traffic/epg-health")
 async def get_epg_health(request: Request, dn: str, session: SessionEntry = Depends(require_auth)):
+    _validate_dn(dn)
     aci = _get_aci(session)
     loop = asyncio.get_event_loop()
     data_raw_orig = await loop.run_in_executor(None, run_with_context(aci.get_epg_stats), dn)
@@ -375,7 +387,7 @@ async def get_epg_health(request: Request, dn: str, session: SessionEntry = Depe
             "e": processed,
             "raw_json": data_raw
         })
-    return {"item": processed, "raw": data_raw}
+    return processed
 
 @router.get("/health/summary")
 async def get_health_summary(session: SessionEntry = Depends(require_auth)):
@@ -433,6 +445,7 @@ async def list_faults(request: Request, severity: Optional[str] = None, session:
 
 @router.get("/bgp/peer-routes")
 async def get_bgp_peer_routes(request: Request, dn: str, direction: str = "in", session: SessionEntry = Depends(require_auth)):
+    _validate_dn(dn)
     aci = _get_aci(session)
     loop = asyncio.get_event_loop()
     routes_raw_orig = await loop.run_in_executor(None, run_with_context(aci.get_bgp_adj_rib), dn, direction)

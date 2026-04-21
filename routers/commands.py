@@ -7,14 +7,23 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from auth import SessionEntry, require_auth
 
+SSH_TIMEOUT = 30
+SSH_MAX_WORKERS = 10
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+ALLOWED_PREFIXES = {
+    "show ", "display ", "get ", "ping ", "traceroute ",
+    "tracert ", "sh ", "who ", "pwd ", "dir ",
+}
+DISALLOWED_CHARS = {";", "&", "|", "`", "$", "(", ")", "{", "}", ">", "<"}
 
 PLATFORM_MAP = [
     ("N9K", "cisco_nxos"), ("N7K", "cisco_nxos"), ("N5K", "cisco_nxos"), ("N3K", "cisco_nxos"),
@@ -82,14 +91,25 @@ class CommandRequest(BaseModel):
     devices:              list[dict]   # [{ip, hostname, platform}]
     command:              str
     device_type_override: Optional[str] = None
-    max_workers:          int = 10
-    timeout:              int = 30
+    max_workers:          int = SSH_MAX_WORKERS
+    timeout:              int = SSH_TIMEOUT
 
 
 @router.post("/run")
 async def run_command(req: CommandRequest, session: SessionEntry = Depends(require_auth)):
     """Execute a command on multiple devices. Streams SSE progress."""
     username, password = session.username, session.password
+
+    cmd_lower = req.command.strip().lower()
+    if not any(cmd_lower.startswith(p) for p in ALLOWED_PREFIXES):
+        raise HTTPException(400, "Only read-only show/display commands are permitted")
+
+    if any(c in req.command for c in DISALLOWED_CHARS):
+        raise HTTPException(400, "Command contains disallowed characters")
+
+    # Log each command execution
+    for dev in req.devices:
+        logger.info(f"User {session.username} executing command on {dev.get('ip')}: {req.command}")
 
     async def generate():
         total = len(req.devices)

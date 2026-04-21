@@ -15,6 +15,9 @@ import auth as auth_module
 import clients.dnac as dc
 from auth import SessionEntry, require_auth
 
+DISCOVERY_POLL_INTERVAL = 10
+DISCOVERY_MAX_RETRIES = 60
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
