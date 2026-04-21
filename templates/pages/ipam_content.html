@@ -9,6 +9,9 @@
         <button class="btn btn-outline px-3" onclick="expandAllNodes(true)" title="Expand All"><i class="ph ph-folders"></i></button>
         <button class="btn btn-outline px-3" onclick="expandAllNodes(false)" title="Collapse All"><i class="ph ph-folder"></i></button>
       </div>
+      <button class="btn btn-outline" onclick="runIpamDebug()">
+        <i class="ph ph-bug me-1"></i> Debug Sources
+      </button>
       <div class="dropdown">
         <button class="btn btn-outline dropdown-toggle" type="button" data-bs-toggle="dropdown">
           <i class="ph ph-arrows-clockwise me-1"></i> Refresh Discovery
@@ -40,6 +43,18 @@
     </div>
   </div>
 
+  <div id="ipam-debug-panel" class="d-none mb-4">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header d-flex justify-content-between align-items-center py-2">
+        <span class="fw-bold small">IPAM Source Diagnostics</span>
+        <button class="btn btn-xs btn-outline" onclick="document.getElementById('ipam-debug-panel').classList.add('d-none')">Close</button>
+      </div>
+      <div id="ipam-debug-content" class="card-body p-3 font-monospace small" style="max-height:400px;overflow-y:auto">
+        <span class="text-muted">Loading...</span>
+      </div>
+    </div>
+  </div>
+
   <div id="ipam-refresh-overlay" class="d-none">
     <div class="card shadow-md border-0 mb-4 bg-white">
         <div class="card-body">
@@ -67,6 +82,65 @@
 </div>
 
 <script>
+    async function runIpamDebug() {
+        const panel = document.getElementById('ipam-debug-panel');
+        const content = document.getElementById('ipam-debug-content');
+        panel.classList.remove('d-none');
+        content.innerHTML = '<span class="text-muted">Running diagnostics...</span>';
+
+        try {
+            const hxHeaders = JSON.parse(document.body.getAttribute('hx-headers') || '{}');
+            const res = await fetch('/api/ipam/debug', { headers: hxHeaders });
+            const data = await res.json();
+
+            let html = '';
+
+            // Per-source discovery results
+            html += '<div class="fw-bold mb-2">Discovery Results (what engine found):</div>';
+            for (const [src, info] of Object.entries(data.discovery)) {
+                const cls = info.error ? 'text-danger' : info.found === 0 ? 'text-warning' : 'text-success';
+                html += `<div class="${cls} mb-1">▸ <strong>${src.toUpperCase()}</strong>: `;
+                if (info.error) {
+                    html += `ERROR — ${info.error}`;
+                } else {
+                    html += `${info.found} subnets`;
+                    if (info.samples?.length) {
+                        html += '<div class="ms-3 text-muted">' +
+                            info.samples.map(s => `${s.cidr} (${s.device} / ${s.site})`).join('<br>') +
+                            '</div>';
+                    }
+                }
+                html += '</div>';
+            }
+
+            // Panorama raw cache
+            html += `<div class="fw-bold mt-3 mb-2">Raw pan_interfaces cache (${data.pan_interfaces_total} total devices):</div>`;
+            if (data.raw_pan_interfaces_sample.length === 0) {
+                html += '<div class="text-danger">pan_interfaces cache is EMPTY — Firewall Interfaces not cached yet</div>';
+            } else {
+                for (const e of data.raw_pan_interfaces_sample) {
+                    const cls = e.has_prefix ? 'text-success' : 'text-warning';
+                    html += `<div class="${cls}">  ${e.hostname} / ${e.iface}: ${e.ipv4 || 'no IP'} ${e.has_prefix ? '✓' : '⚠ no prefix'}</div>`;
+                }
+            }
+
+            // Nexus raw cache
+            html += `<div class="fw-bold mt-3 mb-2">Raw nexus_interfaces cache (${data.nexus_interfaces_total} total interfaces):</div>`;
+            if (data.raw_nexus_interfaces_sample.length === 0) {
+                html += '<div class="text-danger">nexus_interfaces cache is EMPTY — run Nexus SSH collection first</div>';
+            } else {
+                for (const e of data.raw_nexus_interfaces_sample) {
+                    const cls = e.ipv4 && e.ipv4 !== 'N/A' ? 'text-success' : 'text-warning';
+                    html += `<div class="${cls}">  ${e.hostname} / ${e.iface}: ${e.ipv4 || 'N/A'}</div>`;
+                }
+            }
+
+            content.innerHTML = html;
+        } catch (e) {
+            content.innerHTML = `<span class="text-danger">Debug request failed: ${e}</span>`;
+        }
+    }
+
     function onIpamLoadError(event) {
         if (event.detail.xhr.status === 404) {
             document.getElementById('ipam-results').innerHTML = `
