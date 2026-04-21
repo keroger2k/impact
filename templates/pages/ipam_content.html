@@ -55,7 +55,9 @@
     </div>
   </div>
 
-  <div id="ipam-results" hx-get="/api/ipam/tree" hx-trigger="load" hx-target="this" class="table-container shadow-md">
+  <div id="ipam-results" hx-get="/api/ipam/tree" hx-trigger="load" hx-target="this"
+       hx-on:htmx:response-error="onIpamLoadError(event)"
+       class="table-container shadow-md">
     <!-- Tree will be rendered here by JS -->
     <div class="text-center my-5 py-5">
         <i class="ph ph-network ph-3x text-light mb-3" style="font-size: 3rem; opacity: 0.2"></i>
@@ -65,6 +67,18 @@
 </div>
 
 <script>
+    function onIpamLoadError(event) {
+        if (event.detail.xhr.status === 404) {
+            document.getElementById('ipam-results').innerHTML = `
+                <div class="text-center py-5">
+                    <div class="spinner-border text-primary mb-3" style="width:2.5rem;height:2.5rem"></div>
+                    <h6 class="font-weight-bold mb-1">Building IPAM Cache</h6>
+                    <p class="text-muted small mb-0">IPAM data is not cached yet — rebuilding automatically.<br>This may take a minute.</p>
+                </div>`;
+            runRefresh();
+        }
+    }
+
     function runRefresh(source = null) {
         const overlay = document.getElementById('ipam-refresh-overlay');
         const log = document.getElementById('ipam-refresh-log');
@@ -112,6 +126,7 @@
 
     document.body.addEventListener('htmx:afterOnLoad', function(evt) {
         if (evt.detail.target.id === 'ipam-results') {
+            if (evt.detail.xhr.status !== 200) return;
             try {
                 const data = JSON.parse(evt.detail.xhr.responseText);
                 renderIPAMTree(data);

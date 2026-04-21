@@ -87,6 +87,31 @@
         <span class="nav-icon"><i class="ph ph-database"></i></span> <span class="nav-text">Cache Management</span>
       </a>
     </div>
+
+    <!-- Cache Health Widget -->
+    <div class="cache-health-panel">
+      <div class="cache-health-toggle"
+           data-bs-toggle="collapse"
+           data-bs-target="#cache-health-body"
+           aria-expanded="false"
+           aria-controls="cache-health-body">
+        <i class="ph ph-database" style="font-size:14px"></i>
+        <span class="nav-text" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;font-weight:600">Cache Health</span>
+        <span id="cache-overall-dot" class="cache-dot cache-dot-loading ms-auto"></span>
+        <i class="ph ph-caret-down" style="font-size:11px;margin-left:4px;transition:transform .2s" id="cache-panel-caret"></i>
+      </div>
+      <div class="collapse" id="cache-health-body">
+        <div id="cache-health-content"
+             hx-get="/api/cache/widget"
+             hx-trigger="load, every 30s"
+             hx-swap="innerHTML">
+          <div class="cache-status-row text-muted">
+            <span class="cache-dot cache-dot-loading"></span>
+            <span style="font-size:12px">Loading...</span>
+          </div>
+        </div>
+      </div>
+    </div>
   </nav>
 
   <!-- ── Main ────────────────────────────────────────────── -->
@@ -208,6 +233,20 @@
     content.textContent = JSON.stringify(rawData, null, 2);
     modal.show();
   }
+
+  // Cache health panel caret rotation
+  document.addEventListener('show.bs.collapse', function(e) {
+    if (e.target.id === 'cache-health-body') {
+      const caret = document.getElementById('cache-panel-caret');
+      if (caret) caret.style.transform = 'rotate(180deg)';
+    }
+  });
+  document.addEventListener('hide.bs.collapse', function(e) {
+    if (e.target.id === 'cache-health-body') {
+      const caret = document.getElementById('cache-panel-caret');
+      if (caret) caret.style.transform = '';
+    }
+  });
 
   function copyRawData() {
     const content = document.getElementById('rawDataContent').textContent;
