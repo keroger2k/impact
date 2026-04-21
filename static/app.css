@@ -273,6 +273,10 @@ body {
   overflow: hidden;
 }
 
+.sticky-header {
+  overflow-y: auto;
+}
+
 .table thead th {
   background: #F8FAFC;
   padding: 12px 24px;
