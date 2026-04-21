@@ -9,6 +9,7 @@ Run:  uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 import logging
 import asyncio
+import os
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -58,9 +59,13 @@ app = FastAPI(
     redoc_url="/api/redoc",
 )
 
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "").split(",") if os.getenv("CORS_ORIGINS") else ["*"]
+if CORS_ORIGINS == ["*"]:
+    logging.warning("CORS_ORIGINS not set, defaulting to ['*']")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -95,7 +100,7 @@ app.include_router(pages.router)
 
 # ── Dev mode info ─────────────────────────────────────────────────────────────
 @app.get("/api/dev-mode")
-async def dev_mode_info():
+async def dev_mode_info(session: SessionEntry = Depends(require_auth)):
     from dev import DEV_MODE, DEV_TOKEN, DEV_USER
     if not DEV_MODE:
         return {"enabled": False}
@@ -351,7 +356,7 @@ async def status(session: SessionEntry = Depends(require_auth)):
     import asyncio
     loop = asyncio.get_event_loop()
 
-    async def check_dnac():
+    async def _check_dnac_inner():
         try:
             dnac = auth_module.get_dnac_for_session(session)
             result = await loop.run_in_executor(
@@ -363,7 +368,7 @@ async def status(session: SessionEntry = Depends(require_auth)):
         except Exception as e:
             return {"ok": False, "detail": str(e)[:80]}
 
-    async def check_ise():
+    async def _check_ise_inner():
         try:
             # Check cache for status first to avoid redundant API calls every 60s
             from cache import cache, TTL_STATUS
@@ -380,7 +385,7 @@ async def status(session: SessionEntry = Depends(require_auth)):
         except Exception as e:
             return {"ok": False, "detail": str(e)[:80]}
 
-    async def check_panorama():
+    async def _check_panorama_inner():
         try:
             from cache import cache, TTL_STATUS
             cached_status = cache.get("status_pan_live")
@@ -396,7 +401,7 @@ async def status(session: SessionEntry = Depends(require_auth)):
         except Exception as e:
             return {"ok": False, "detail": str(e)[:80]}
 
-    async def check_aci():
+    async def _check_aci_inner():
         try:
             from cache import cache, TTL_STATUS
             cached_status = cache.get("status_aci")
@@ -414,6 +419,31 @@ async def status(session: SessionEntry = Depends(require_auth)):
             return res
         except Exception as e:
             return {"ok": False, "detail": str(e)[:80]}
+
+
+    async def check_dnac():
+        try:
+            return await asyncio.wait_for(_check_dnac_inner(), timeout=10)
+        except asyncio.TimeoutError:
+            return {"ok": False, "detail": "Timeout"}
+
+    async def check_ise():
+        try:
+            return await asyncio.wait_for(_check_ise_inner(), timeout=10)
+        except asyncio.TimeoutError:
+            return {"ok": False, "detail": "Timeout"}
+
+    async def check_panorama():
+        try:
+            return await asyncio.wait_for(_check_panorama_inner(), timeout=10)
+        except asyncio.TimeoutError:
+            return {"ok": False, "detail": "Timeout"}
+
+    async def check_aci():
+        try:
+            return await asyncio.wait_for(_check_aci_inner(), timeout=10)
+        except asyncio.TimeoutError:
+            return {"ok": False, "detail": "Timeout"}
 
     dnac_r, ise_r, pan_r, aci_r = await asyncio.gather(check_dnac(), check_ise(), check_panorama(), check_aci())
     return {"dnac": dnac_r, "ise": ise_r, "panorama": pan_r, "aci": aci_r}

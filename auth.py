@@ -218,7 +218,8 @@ def require_auth(
         raise HTTPException(401, "Session expired or invalid — please log in again")
 
     # Sliding window expiration: extend session on every authenticated request
-    session.expires_at = time.monotonic() + SESSION_TTL
+    with _store_lock:
+        session.expires_at = time.monotonic() + SESSION_TTL
     return session
 
 

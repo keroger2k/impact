@@ -36,6 +36,50 @@
 </div>
 
 <script>
+function triggerIpamCacheRefresh() {
+  const resultsEl = document.getElementById('cache-results');
+  if (resultsEl) {
+    resultsEl.innerHTML = `
+      <div class="alert alert-info d-flex align-items-center gap-2 mb-0">
+        <div class="spinner spinner-sm flex-shrink-0" style="width:1.1rem;height:1.1rem;border-width:2px"></div>
+        <span>Running IPAM discovery — this may take a minute...</span>
+      </div>`;
+  }
+  const es = new EventSource('/api/ipam/refresh');
+  const cleanup = () => { es.close(); };
+  window.addEventListener('hashchange', cleanup, { once: true });
+  window.addEventListener('popstate', cleanup, { once: true });
+
+  es.onmessage = function(ev) {
+    let data;
+    try { data = JSON.parse(ev.data); } catch { return; }
+    if (resultsEl) {
+      let card = resultsEl.querySelector('.log-card');
+      if (!card) {
+        resultsEl.innerHTML = `<div class="card p-3 log-card"><div class="fw-bold small mb-2">IPAM Discovery Progress</div><div class="log-container" style="max-height:200px;overflow-y:auto"></div></div>`;
+        card = resultsEl.querySelector('.log-card');
+      }
+      const container = card.querySelector('.log-container');
+      const line = document.createElement('div');
+      line.className = 'small ' + (data.type === 'error' ? 'text-danger' : data.type === 'complete' ? 'text-success' : 'text-muted');
+      line.textContent = data.message;
+      container.appendChild(line);
+      while (container.children.length > 200) container.removeChild(container.firstChild);
+      container.scrollTop = container.scrollHeight;
+    }
+    if (data.type === 'complete') {
+      es.close();
+      htmx.ajax('GET', '/api/cache/status', {target: '#cache-cards-container', swap: 'innerHTML'});
+    }
+  };
+  es.onerror = function() {
+    es.close();
+    if (resultsEl) {
+      resultsEl.innerHTML = `<div class="alert alert-danger mb-0"><strong>Error:</strong> IPAM refresh failed. Check server logs.</div>`;
+    }
+  };
+}
+
 function triggerNexusCacheRefresh() {
   const resultsEl = document.getElementById('cache-results');
 
@@ -55,24 +99,37 @@ function triggerNexusCacheRefresh() {
   }
 
   const logs = [];
-  const es = new EventSource('/api/nexus/refresh?token=' + encodeURIComponent(token));
+  const es = new EventSource('/api/nexus/refresh');
+  const cleanup = () => { es.close(); };
+  window.addEventListener('hashchange', cleanup, { once: true });
+  window.addEventListener('popstate', cleanup, { once: true });
 
   es.onmessage = function(ev) {
     let data;
     try { data = JSON.parse(ev.data); } catch { return; }
 
     if (data.type === 'log') {
-      logs.push(data);
       if (resultsEl) {
-        const logLines = logs.map(l => {
-          const cls = l.level === 'error' ? 'text-danger' : l.level === 'success' ? 'text-success' : 'text-muted';
-          return `<div class="small ${cls}">${l.message}</div>`;
-        }).join('');
-        resultsEl.innerHTML = `
-          <div class="card p-3">
-            <div class="fw-bold small mb-2">Nexus Collection Progress</div>
-            <div style="max-height:200px;overflow-y:auto">${logLines}</div>
-          </div>`;
+        let card = resultsEl.querySelector('.log-card');
+        if (!card) {
+          resultsEl.innerHTML = `
+            <div class="card p-3 log-card">
+              <div class="fw-bold small mb-2">Nexus Collection Progress</div>
+              <div class="log-container" style="max-height:200px;overflow-y:auto"></div>
+            </div>`;
+          card = resultsEl.querySelector('.log-card');
+        }
+        const container = card.querySelector('.log-container');
+        const line = document.createElement('div');
+        line.className = 'small ' + (data.level === 'error' ? 'text-danger' : data.level === 'success' ? 'text-success' : 'text-muted');
+        line.textContent = data.message;
+        container.appendChild(line);
+
+        const MAX_LOG_LINES = 200;
+        while (container.children.length > MAX_LOG_LINES) {
+          container.removeChild(container.firstChild);
+        }
+        container.scrollTop = container.scrollHeight;
       }
     } else if (data.type === 'complete') {
       es.close();

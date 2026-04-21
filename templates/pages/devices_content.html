@@ -11,6 +11,7 @@
         </div>
         <div class="d-flex gap-2">
           <div class="position-relative">
+            <label for="dev-table-filter" class="visually-hidden">Filter devices</label>
             <span class="position-absolute top-50 start-0 translate-middle-y ps-3 text-muted" style="font-size: 0.9rem">
               <i class="ph ph-magnifying-glass"></i>
             </span>
@@ -84,14 +85,12 @@
 </div>
 
 <script>
-  if (typeof ALL_DEVICES === 'undefined') {
-    var ALL_DEVICES = [];
-    var FILTERED_DEVICES = [];
-    var CURRENT_PAGE = 1;
-    var PAGE_SIZE = 40;
-    var SORT_COL = 'hostname';
-    var SORT_DIR = 1;
-  }
+  let ALL_DEVICES = [];
+  let FILTERED_DEVICES = [];
+  let CURRENT_PAGE = 1;
+  let PAGE_SIZE = 40;
+  let SORT_COL = 'hostname';
+  let SORT_DIR = 1;
 
   async function loadInitialDevices() {
     const loader = document.getElementById('dev-master-loading');
@@ -149,7 +148,7 @@
         <td class="mono small text-muted">${d.managementIpAddress}</td>
         <td class="small text-muted">${d.platformId}</td>
         <td>
-           <span class="status-pip ${d.reachabilityStatus === 'Reachable' ? 'online' : 'offline'}" title="${d.reachabilityStatus}"></span>
+           <span class="status-pip ${d.reachabilityStatus === \'Reachable\' ? \'online\' : \'offline\'}" aria-label="${d.reachabilityStatus}" title="${d.reachabilityStatus}"></span>
         </td>
         <td class="text-end">
             <i class="ph ph-caret-right text-light small"></i>
@@ -202,7 +201,10 @@
     loader.classList.remove('d-none');
 
     const token = '{{ token }}';
-    const eventSource = new EventSource('/api/nexus/refresh?token=' + token);
+    const eventSource = new EventSource('/api/nexus/refresh');
+    const cleanup = () => { eventSource.close(); };
+    window.addEventListener('hashchange', cleanup, { once: true });
+    window.addEventListener('popstate', cleanup, { once: true });
 
     eventSource.onmessage = function(event) {
         const data = JSON.parse(event.data);

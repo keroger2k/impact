@@ -10,6 +10,7 @@ OpenAPI base: https://{host}/api/v1/{resource}
 
 import logging
 import os
+import threading
 import time
 from urllib.parse import urlencode
 
@@ -495,6 +496,7 @@ def _mnt_get(path: str) -> dict:
 
 
 
+def get_active_session(ise, mac: str) -> dict:
     """
     Fetch active RADIUS/TACACS session details from the ISE MNT REST API.
     This is the source of authentication attributes shown in ISE Context Visibility
@@ -528,13 +530,15 @@ def _mnt_get(path: str) -> dict:
 
 # Convenience alias for FastAPI routers
 _ise_client = None
+_ise_client_lock = threading.Lock()
 
 def get_client():
     """Return the shared service-account ISE client (used for cache warming)."""
     global _ise_client
-    if _ise_client is None:
-        _ise_client = create_client()
-    return _ise_client
+    with _ise_client_lock:
+        if _ise_client is None:
+            _ise_client = create_client()
+        return _ise_client
 
 
 def create_user_client(username: str, password: str) -> IdentityServicesEngineAPI:

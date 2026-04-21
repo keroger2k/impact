@@ -27,7 +27,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logger = logging.getLogger(__name__)
 
 # Module-level API key cache (survives the session, re-keyed if host changes)
-_key_cache: dict[str, str] = {}
+_key_cache: dict[str, tuple[str, float]] = {}  # (key, expires_at)
+KEY_TTL = 23 * 3600
 
 BASE_XPATH = "/config/devices/entry[@name='localhost.localdomain']"
 
@@ -75,21 +76,35 @@ def get_api_key() -> str | None:
         return None
 
     cache_key = f"{host}:{user}"
+    now = time.time()
     if cache_key in _key_cache:
-        return _key_cache[cache_key]
+        key, exp = _key_cache[cache_key]
+        if now < exp:
+            return key
 
     key = _keygen(host, user, pwd)
     if key:
-        _key_cache[cache_key] = key
+        _key_cache[cache_key] = (key, now + KEY_TTL)
     return key
 
 
 def get_user_api_key(username: str, password: str) -> str | None:
-    """Generate a Panorama API key for a specific user (not globally cached)."""
+    """Generate a Panorama API key for a specific user. Cached at module level for TTL."""
     host = os.getenv("PANORAMA_HOST")
     if not host:
         return None
-    return _keygen(host, username, password)
+
+    cache_key = f"{host}:{username}"
+    now = time.time()
+    if cache_key in _key_cache:
+        key, exp = _key_cache[cache_key]
+        if now < exp:
+            return key
+
+    key = _keygen(host, username, password)
+    if key:
+        _key_cache[cache_key] = (key, now + KEY_TTL)
+    return key
 
 
 def _config_get(xpath: str, api_key: str) -> ET.Element | None:
@@ -731,17 +746,17 @@ def get_managed_devices(api_key: str) -> list[dict]:
     Fetch the list of managed firewalls from Panorama.
     Returns a list of dicts with keys: serial, hostname, model, ip_address, device_group.
     """
-    print("\n" + "="*60)
-    print("GET_MANAGED_DEVICES CALLED")  # Simple print that always shows
-    print("="*60 + "\n")
+    logger.debug("\n" + "="*60)
+    logger.debug("GET_MANAGED_DEVICES CALLED")  # Simple print that always shows
+    logger.debug("="*60 + "\n")
     
     devices = []
     try:
-        print("[DEVICES] Calling Panorama op command: <show><devices><all/></devices></show>")
+        logger.debug("[DEVICES] Calling Panorama op command: <show><devices><all/></devices></show>")
         result = _op("<show><devices><all/></devices></show>", api_key)
         
         if result is None:
-            print("[DEVICES] ERROR: result is None from _op()")
+            logger.error("[DEVICES] ERROR: result is None from _op()")
             logger.warning("No result from Panorama devices op command")
             return devices
         
@@ -763,24 +778,24 @@ def get_managed_devices(api_key: str) -> list[dict]:
         entries = []
         for xpath in possible_paths:
             entries = result.findall(xpath)
-            print(f"[DEVICES] XPath '{xpath}' found {len(entries)} entries")
+            logger.debug(f"[DEVICES] XPath '{xpath}' found {len(entries)} entries")
             logger.debug(f"XPath '{xpath}' found {len(entries)} entries")
             if entries:
-                print(f"[DEVICES] ✓ SUCCESS: Found {len(entries)} devices using xpath: {xpath}")
+                logger.info(f"[DEVICES] ✓ SUCCESS: Found {len(entries)} devices using xpath: {xpath}")
                 logger.info(f"✓ Found {len(entries)} device(s) using xpath: {xpath}")
                 break
         
         if not entries:
             # Try to list all descendants to understand the structure
             all_descendants = list(result.iter())
-            print(f"[DEVICES] FAILED: No entries found. Total XML descendants: {len(all_descendants)}")
-            print(f"[DEVICES] Descendant tag names: {set(e.tag for e in all_descendants)}")
+            logger.error(f"[DEVICES] FAILED: No entries found. Total XML descendants: {len(all_descendants)}")
+            logger.debug(f"[DEVICES] Descendant tag names: {set(e.tag for e in all_descendants)}")
             logger.warning(f"No device entries found using any XPath. Total descendants in XML: {len(all_descendants)}")
             logger.warning(f"Descendant tags: {set(e.tag for e in all_descendants)}")
             logger.warning(f"Full XML (first 3000 chars): {xml_str[:3000]}")
             return devices
         
-        print(f"[DEVICES] Processing {len(entries)} device entries...")
+        logger.info(f"[DEVICES] Processing {len(entries)} device entries...")
         for entry in entries:
             serial = entry.get("name", "")
             if not serial:
@@ -793,7 +808,7 @@ def get_managed_devices(api_key: str) -> list[dict]:
             model = entry.findtext("model") or ""
             
             if not hostname and not model:
-                print(f"[DEVICES] SKIPPING '{serial}' - no hostname or model (likely subsystem entry)")
+                logger.debug(f"[DEVICES] SKIPPING '{serial}' - no hostname or model (likely subsystem entry)")
                 continue
             
             # Debug: print all available fields
@@ -801,7 +816,7 @@ def get_managed_devices(api_key: str) -> list[dict]:
             ha_state_val = entry.findtext("ha-state") or ""
             ha_enabled_val = entry.findtext("ha-enabled") or ""
             
-            print(f"[DEVICES] Serial: {serial}, DG field: '{device_group_val}', HA-state: '{ha_state_val}', HA-enabled: '{ha_enabled_val}'")
+            logger.debug(f"[DEVICES] Serial: {serial}, DG field: '{device_group_val}', HA-state: '{ha_state_val}', HA-enabled: '{ha_enabled_val}'")
             
             device_info = {
                 "serial":        serial,
@@ -814,19 +829,19 @@ def get_managed_devices(api_key: str) -> list[dict]:
                 "ha_enabled":    ha_enabled_val == "yes",
             }
             devices.append(device_info)
-            print(f"[DEVICES] Added: {serial} ({model}) - Hostname: {hostname} - HA: {device_info.get('ha_state', 'N/A')}")
+            logger.info(f"[DEVICES] Added: {serial} ({model}) - Hostname: {hostname} - HA: {device_info.get('ha_state', 'N/A')}")
             logger.debug(f"Added device: {serial} ({device_info.get('model', 'unknown')})")
         
         # Sort by hostname, then by model
         devices.sort(key=lambda d: (d.get("hostname", "").lower(), d.get("model", "")))
-        print(f"[DEVICES] Sorted {len(devices)} devices alphabetically\n")
+        logger.debug(f"[DEVICES] Sorted {len(devices)} devices alphabetically\n")
         
-        print(f"[DEVICES] SUCCESS: Fetched {len(devices)} managed devices\n")
+        logger.info(f"[DEVICES] SUCCESS: Fetched {len(devices)} managed devices\n")
         logger.info(f"✓ Fetched {len(devices)} managed device(s) from Panorama")
     except Exception as e:
-        print(f"[DEVICES] EXCEPTION: {e}")
+        logger.error(f"[DEVICES] EXCEPTION: {e}")
         import traceback
-        print(traceback.format_exc())
+        logger.debug(traceback.format_exc())
         logger.error(f"Failed to fetch managed devices: {e}", exc_info=True)
     
     return devices
@@ -950,19 +965,19 @@ def get_device_to_group_mapping(api_key: str, device_groups: list[str]) -> dict[
     Build a mapping of device serial -> device group by querying each device group.
     Returns {serial: device_group_name}.
     """
-    print("\n[MAPPING] Building device-to-device-group mapping...")
+    logger.info("\n[MAPPING] Building device-to-device-group mapping...")
     mapping = {}
     
     dg_base = f"{BASE_XPATH}/device-group"
     for dg in device_groups:
-        print(f"[MAPPING] Querying device group: {dg}")
+        logger.debug(f"[MAPPING] Querying device group: {dg}")
         try:
             # Query the devices entry for this device group
             xpath = f"{dg_base}/entry[@name='{dg}']/devices"
             result = _config_get(xpath, api_key)
             
             if result is None:
-                print(f"[MAPPING]   No devices in {dg}")
+                logger.debug(f"[MAPPING]   No devices in {dg}")
                 continue
             
             # Parse device entries
@@ -970,18 +985,18 @@ def get_device_to_group_mapping(api_key: str, device_groups: list[str]) -> dict[
             if not entries:
                 entries = result.findall("entry")
             
-            print(f"[MAPPING]   Found {len(entries)} device entries in {dg}")
+            logger.debug(f"[MAPPING]   Found {len(entries)} device entries in {dg}")
             
             for entry in entries:
                 serial = entry.get("name", "")
                 if serial:
                     mapping[serial] = dg
-                    print(f"[MAPPING]   - {serial} → {dg}")
+                    logger.debug(f"[MAPPING]   - {serial} → {dg}")
         except Exception as e:
-            print(f"[MAPPING]   Error querying {dg}: {e}")
+            logger.debug(f"[MAPPING]   Error querying {dg}: {e}")
             logger.debug(f"Error querying device group {dg}: {e}")
     
-    print(f"[MAPPING] Complete: {len(mapping)} device(s) mapped to device groups\n")
+    logger.debug(f"[MAPPING] Complete: {len(mapping)} device(s) mapped to device groups\n")
     return mapping
 
 
@@ -990,7 +1005,7 @@ def get_device_vsys(api_key: str, device_serial: str) -> list[str]:
     Fetch all virtual systems (vsys) for a specific managed device.
     Returns a list of vsys names (e.g., ['vsys1', 'vsys2', ...]).
     """
-    print(f"[VSYS] Fetching vsys for device: {device_serial}")
+    logger.debug(f"[VSYS] Fetching vsys for device: {device_serial}")
     vsys_list = []
     
     try:
@@ -999,7 +1014,7 @@ def get_device_vsys(api_key: str, device_serial: str) -> list[str]:
         result = _config_get(xpath, api_key)
         
         if result is None:
-            print(f"[VSYS] No vsys info found for {device_serial}")
+            logger.debug(f"[VSYS] No vsys info found for {device_serial}")
             return vsys_list
         
         # Parse vsys entries
@@ -1007,23 +1022,23 @@ def get_device_vsys(api_key: str, device_serial: str) -> list[str]:
         if not entries:
             entries = result.findall("entry")
         
-        print(f"[VSYS] Found {len(entries)} vsys entries")
+        logger.debug(f"[VSYS] Found {len(entries)} vsys entries")
         
         for entry in entries:
             vsys_name = entry.get("name", "")
             if vsys_name:
                 vsys_list.append(vsys_name)
-                print(f"[VSYS]   - {vsys_name}")
+                logger.debug(f"[VSYS]   - {vsys_name}")
     except Exception as e:
-        print(f"[VSYS] Error fetching vsys: {e}")
+        logger.debug(f"[VSYS] Error fetching vsys: {e}")
         logger.debug(f"Error fetching vsys for device {device_serial}: {e}")
     
     # If no vsys found, assume vsys1 (default)
     if not vsys_list:
-        print(f"[VSYS] No vsys found, assuming default vsys1")
+        logger.debug(f"[VSYS] No vsys found, assuming default vsys1")
         vsys_list = ["vsys1"]
     
-    print(f"[VSYS] Available vsys: {vsys_list}\n")
+    logger.debug(f"[VSYS] Available vsys: {vsys_list}\n")
     return vsys_list
 
 
@@ -1045,43 +1060,43 @@ def get_device_vsys_policies(
       3. vsys post-rules
       4. Device shared post-rules
     """
-    print(f"[VSYS-POLICIES] Fetching {vsys_name} policies for device {device_serial}")
+    logger.debug(f"[VSYS-POLICIES] Fetching {vsys_name} policies for device {device_serial}")
     
     all_rules = []
     
     # Device shared pre-rules (applies to all vsys on this device)
-    print(f"[VSYS-POLICIES]   Querying device shared pre-rules...")
+    logger.debug(f"[VSYS-POLICIES]   Querying device shared pre-rules...")
     r = _config_get(f"/config/devices/entry[@name='{device_serial}']/pre-rulebase/security/rules", api_key)
     shared_pre = _parse_rules(_unwrap(r, "rules"), "shared", "pre")
     all_rules.extend(shared_pre)
-    print(f"[VSYS-POLICIES]     Found {len(shared_pre)} rules")
+    logger.debug(f"[VSYS-POLICIES]     Found {len(shared_pre)} rules")
 
     # vsys pre-rules
-    print(f"[VSYS-POLICIES]   Querying {vsys_name} pre-rules...")
+    logger.debug(f"[VSYS-POLICIES]   Querying {vsys_name} pre-rules...")
     r = _config_get(f"/config/devices/entry[@name='{device_serial}']/vsys/entry[@name='{vsys_name}']/pre-rulebase/security/rules", api_key)
     vsys_pre = _parse_rules(_unwrap(r, "rules"), vsys_name, "pre")
     all_rules.extend(vsys_pre)
-    print(f"[VSYS-POLICIES]     Found {len(vsys_pre)} rules")
+    logger.debug(f"[VSYS-POLICIES]     Found {len(vsys_pre)} rules")
 
     # vsys post-rules
-    print(f"[VSYS-POLICIES]   Querying {vsys_name} post-rules...")
+    logger.debug(f"[VSYS-POLICIES]   Querying {vsys_name} post-rules...")
     r = _config_get(f"/config/devices/entry[@name='{device_serial}']/vsys/entry[@name='{vsys_name}']/post-rulebase/security/rules", api_key)
     vsys_post = _parse_rules(_unwrap(r, "rules"), vsys_name, "post")
     all_rules.extend(vsys_post)
-    print(f"[VSYS-POLICIES]     Found {len(vsys_post)} rules")
+    logger.debug(f"[VSYS-POLICIES]     Found {len(vsys_post)} rules")
 
     # Device shared post-rules (applies to all vsys on this device)
-    print(f"[VSYS-POLICIES]   Querying device shared post-rules...")
+    logger.debug(f"[VSYS-POLICIES]   Querying device shared post-rules...")
     r = _config_get(f"/config/devices/entry[@name='{device_serial}']/post-rulebase/security/rules", api_key)
     shared_post = _parse_rules(_unwrap(r, "rules"), "shared", "post")
     all_rules.extend(shared_post)
-    print(f"[VSYS-POLICIES]     Found {len(shared_post)} rules")
+    logger.debug(f"[VSYS-POLICIES]     Found {len(shared_post)} rules")
 
     # Add rule numbers for correlation with device UI
     for idx, rule in enumerate(all_rules, 1):
         rule["rule_number"] = idx
 
-    print(f"[VSYS-POLICIES] SUCCESS: Fetched {len(all_rules)} total policies\n")
+    logger.info(f"[VSYS-POLICIES] SUCCESS: Fetched {len(all_rules)} total policies\n")
     return all_rules
 
 
@@ -1132,8 +1147,6 @@ def find_matching_rules(
             if not first_recorded:
                 first_recorded = True
             matches.append(r)
-
-    return matches
 
     return matches
 

@@ -30,10 +30,17 @@
             <label for="password" class="form-label font-weight-bold small text-muted text-uppercase mb-2" style="letter-spacing: 0.05em">Password</label>
             <input name="password" id="password" class="form-control" type="password" placeholder="Enter your password" autocomplete="current-password" required>
           </div>
-          <button type="submit" class="btn btn-primary w-100 py-3 font-weight-bold mt-2">Sign In</button>
+          <button type="submit" id="signin-btn" class="btn btn-primary w-100 py-3 font-weight-bold mt-2">Sign In</button>
         </form>
       </div>
     </div>
   </div>
+<script>
+  document.querySelector('form').addEventListener('submit', function() {
+    const btn = document.getElementById('signin-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Authenticating...';
+  });
+</script>
 </body>
 </html>

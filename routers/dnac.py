@@ -16,6 +16,10 @@ from auth import SessionEntry, require_auth
 from cache import cache, TTL_DEVICES, TTL_SITES
 from logger_config import run_with_context
 
+DEVICE_PAGE_LIMIT = 500
+DEVICE_PAGE_MAX = 5000
+CONFIG_SEARCH_WORKERS = 20
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
@@ -54,7 +58,7 @@ async def list_devices(
     role:         Optional[str] = None,
     reachability: Optional[str] = None,
     site:         Optional[str] = None,
-    limit:        int = Query(500, le=5000),
+    limit:        int = Query(DEVICE_PAGE_LIMIT, le=DEVICE_PAGE_MAX),
     offset:       int = Query(0, ge=0),
     session:      SessionEntry = Depends(require_auth),
 ):
@@ -201,7 +205,8 @@ async def get_device_detail_partial(
         dnac = _get_dnac(session)
         try:
             device = await loop.run_in_executor(None, run_with_context(dc.get_device_detail), dnac, device_id)
-        except:
+        except Exception as e:
+            logger.error(f"Device detail lookup failed for {device_id}: {e}")
             raise HTTPException(404, "Device not found")
 
     if not device:
@@ -625,7 +630,7 @@ async def config_search(req: ConfigSearchRequest, session: SessionEntry = Depend
             "blocks": blocks[:50],
         }
 
-    with ThreadPoolExecutor(max_workers=20) as executor:
+    with ThreadPoolExecutor(max_workers=CONFIG_SEARCH_WORKERS) as executor:
         futures_done = list(executor.map(fetch_and_search, all_filtered))
 
     results = [r for r in futures_done if r is not None]

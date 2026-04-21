@@ -47,7 +47,12 @@ export function dlText(text, filename) {
   URL.revokeObjectURL(a.href);
 }
 
+let _modalDebounce = false;
 export function showModal(title, bodyHtml, wide = false) {
+  if (_modalDebounce) return;
+  _modalDebounce = true;
+  setTimeout(() => { _modalDebounce = false; }, 100);
+
   document.getElementById('modal-container')?.remove();
   const el = document.createElement('div');
   el.id    = 'modal-container';

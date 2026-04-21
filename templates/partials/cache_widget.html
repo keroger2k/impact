@@ -1,0 +1,39 @@
+{% set empty_count = systems | selectattr('status', 'equalto', 'empty') | list | length %}
+{% set partial_count = systems | selectattr('status', 'equalto', 'partial') | list | length %}
+{% if empty_count > 0 %}
+  {% set overall = 'empty' %}
+{% elif partial_count > 0 %}
+  {% set overall = 'partial' %}
+{% else %}
+  {% set overall = 'warm' %}
+{% endif %}
+
+<script>
+  (function() {
+    const dot = document.getElementById('cache-overall-dot');
+    if (dot) {
+      dot.className = 'cache-dot cache-dot-{{ overall }}';
+    }
+  })();
+</script>
+
+{% for s in systems %}
+<div class="cache-status-row" title="{{ s.warm_keys }}/{{ s.total_keys }} keys cached · Updated {{ s.age }}">
+  <span class="cache-dot cache-dot-{{ s.status }}"></span>
+  <span class="cache-widget-label">{{ s.label }}</span>
+  <span class="cache-widget-count ms-auto">
+    {% if s.status == 'empty' %}
+      <span class="text-danger" style="font-size:10px">empty</span>
+    {% elif s.count > 0 %}
+      {{ "{:,}".format(s.count) }}
+    {% else %}
+      <span class="text-warning" style="font-size:10px">partial</span>
+    {% endif %}
+  </span>
+</div>
+{% endfor %}
+<div class="px-4 pt-2 pb-1">
+  <a class="cache-mgmt-link" hx-get="/cache-mgmt" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+    <i class="ph ph-arrow-square-out me-1"></i> Manage Cache
+  </a>
+</div>

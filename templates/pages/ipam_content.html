@@ -9,6 +9,9 @@
         <button class="btn btn-outline px-3" onclick="expandAllNodes(true)" title="Expand All"><i class="ph ph-folders"></i></button>
         <button class="btn btn-outline px-3" onclick="expandAllNodes(false)" title="Collapse All"><i class="ph ph-folder"></i></button>
       </div>
+      <button class="btn btn-outline" onclick="runIpamDebug()">
+        <i class="ph ph-bug me-1"></i> Debug Sources
+      </button>
       <div class="dropdown">
         <button class="btn btn-outline dropdown-toggle" type="button" data-bs-toggle="dropdown">
           <i class="ph ph-arrows-clockwise me-1"></i> Refresh Discovery
@@ -31,11 +34,24 @@
   <div class="row mb-4">
     <div class="col-md-6">
         <div class="position-relative">
+            <label for="ipam-filter" class="visually-hidden">Filter IPAM</label>
             <span class="position-absolute top-50 start-0 translate-middle-y ps-3 text-muted">
                 <i class="ph ph-magnifying-glass"></i>
             </span>
-            <input type="text" id="ipam-filter" class="form-control ps-5" placeholder="Filter by CIDR, Site, or Device..." onkeyup="filterIPAMTree()">
+            <input type="text" id="ipam-filter" class="form-control ps-5" placeholder="Filter by CIDR, Site, or Device...">
         </div>
+    </div>
+  </div>
+
+  <div id="ipam-debug-panel" class="d-none mb-4">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header d-flex justify-content-between align-items-center py-2">
+        <span class="fw-bold small">IPAM Source Diagnostics</span>
+        <button class="btn btn-xs btn-outline" onclick="document.getElementById('ipam-debug-panel').classList.add('d-none')">Close</button>
+      </div>
+      <div id="ipam-debug-content" class="card-body p-3 font-monospace small" style="max-height:400px;overflow-y:auto">
+        <span class="text-muted">Loading...</span>
+      </div>
     </div>
   </div>
 
@@ -54,7 +70,9 @@
     </div>
   </div>
 
-  <div id="ipam-results" hx-get="/api/ipam/tree" hx-trigger="load" hx-target="this" class="table-container shadow-md">
+  <div id="ipam-results" hx-get="/api/ipam/tree" hx-trigger="load" hx-target="this"
+       hx-on:htmx:response-error="onIpamLoadError(event)"
+       class="table-container shadow-md">
     <!-- Tree will be rendered here by JS -->
     <div class="text-center my-5 py-5">
         <i class="ph ph-network ph-3x text-light mb-3" style="font-size: 3rem; opacity: 0.2"></i>
@@ -64,6 +82,73 @@
 </div>
 
 <script>
+    async function runIpamDebug() {
+        const panel = document.getElementById('ipam-debug-panel');
+        const content = document.getElementById('ipam-debug-content');
+        panel.classList.remove('d-none');
+        content.innerHTML = '<span class="text-muted">Running diagnostics...</span>';
+
+        try {
+            const hxHeaders = JSON.parse(document.body.getAttribute('hx-headers') || '{}');
+            const res = await fetch('/api/ipam/debug', { headers: hxHeaders });
+            const data = await res.json();
+
+            let html = '';
+
+            // Cache summary
+            const tree = data.ipam_tree;
+            const dn = data.dnac;
+            html += `<div class="fw-bold mb-2">Cache State:</div>`;
+            html += `<div class="${tree.cached ? 'text-success' : 'text-danger'}">▸ IPAM Tree: ${tree.cached ? `cached (${tree.v4_roots} v4 roots, ${tree.v6_roots} v6 roots)` : 'NOT CACHED'}</div>`;
+            html += `<div class="text-info">▸ DNAC: ${dn.devices_cached} devices, ${dn.sites_cached} sites, ${dn.sitemap_entries} site-map entries</div>`;
+            html += `<div class="text-info">▸ ACI Nodes: ${data.aci_nodes_cached} cached</div>`;
+
+            // Panorama
+            const pan = data.panorama;
+            html += `<div class="fw-bold mt-3 mb-1">Panorama (pan_interfaces cache — ${pan.devices_in_cache} devices):</div>`;
+            if (pan.devices_in_cache === 0) {
+                html += '<div class="text-danger">⚠ pan_interfaces cache is EMPTY — go to Cache Management and refresh Firewall Interfaces first</div>';
+            } else {
+                html += `<div class="${pan.interfaces_with_prefix > 0 ? 'text-success' : 'text-danger'}">  ${pan.interfaces_with_prefix} interfaces WITH prefix (usable by IPAM)</div>`;
+                html += `<div class="${pan.interfaces_without_prefix > 0 ? 'text-warning' : 'text-muted'}">  ${pan.interfaces_without_prefix} interfaces WITHOUT prefix (skipped — no CIDR)</div>`;
+                for (const e of pan.sample) {
+                    const cls = e.has_prefix ? 'text-success' : 'text-warning';
+                    html += `<div class="${cls} ms-2">  ${e.hostname} / ${e.iface}: ${e.ipv4} ${e.has_prefix ? '✓' : '⚠ no /prefix'}</div>`;
+                }
+            }
+
+            // Nexus
+            const nex = data.nexus;
+            html += `<div class="fw-bold mt-3 mb-1">Nexus (nexus_interfaces cache — ${nex.interfaces_in_cache} interfaces):</div>`;
+            if (nex.interfaces_in_cache === 0) {
+                html += '<div class="text-danger">⚠ nexus_interfaces cache is EMPTY — run Nexus SSH collection in Cache Management first</div>';
+            } else {
+                html += `<div class="${nex.interfaces_with_ip > 0 ? 'text-success' : 'text-danger'}">  ${nex.interfaces_with_ip} interfaces with IP (usable by IPAM)</div>`;
+                html += `<div class="${nex.interfaces_na > 0 ? 'text-warning' : 'text-muted'}">  ${nex.interfaces_na} interfaces with N/A (skipped)</div>`;
+                for (const e of nex.sample) {
+                    const cls = e.ipv4 && e.ipv4 !== 'N/A' ? 'text-success' : 'text-warning';
+                    html += `<div class="${cls} ms-2">  ${e.hostname} / ${e.iface}: ${e.ipv4}</div>`;
+                }
+            }
+
+            content.innerHTML = html;
+        } catch (e) {
+            content.innerHTML = `<span class="text-danger">Debug request failed: ${e}</span>`;
+        }
+    }
+
+    function onIpamLoadError(event) {
+        if (event.detail.xhr.status === 404) {
+            document.getElementById('ipam-results').innerHTML = `
+                <div class="text-center py-5">
+                    <div class="spinner-border text-primary mb-3" style="width:2.5rem;height:2.5rem"></div>
+                    <h6 class="font-weight-bold mb-1">Building IPAM Cache</h6>
+                    <p class="text-muted small mb-0">IPAM data is not cached yet — rebuilding automatically.<br>This may take a minute.</p>
+                </div>`;
+            runRefresh();
+        }
+    }
+
     function runRefresh(source = null) {
         const overlay = document.getElementById('ipam-refresh-overlay');
         const log = document.getElementById('ipam-refresh-log');
@@ -111,6 +196,7 @@
 
     document.body.addEventListener('htmx:afterOnLoad', function(evt) {
         if (evt.detail.target.id === 'ipam-results') {
+            if (evt.detail.xhr.status !== 200) return;
             try {
                 const data = JSON.parse(evt.detail.xhr.responseText);
                 renderIPAMTree(data);
@@ -133,6 +219,12 @@
         container.appendChild(v4Card);
         container.appendChild(v6Card);
     }
+
+    let _filterDebounce;
+    document.getElementById('ipam-filter').addEventListener('input', () => {
+        clearTimeout(_filterDebounce);
+        _filterDebounce = setTimeout(filterIPAMTree, 250);
+    });
 
     function filterIPAMTree() {
         if (!currentIPAMData) return;
@@ -303,7 +395,7 @@
         searchBtn.innerHTML = '<i class="ph ph-magnifying-glass"></i>';
         searchBtn.onclick = (e) => {
             e.stopPropagation();
-            htmx.ajax('GET', '/config-search?q=' + encodeURIComponent(node.cidr), { target: '#main-content', pushUrl: true });
+            htmx.ajax('GET', '/config-search?q=' + encodeURIComponent(node.cidr), { target: '#content', pushUrl: true });
         };
 
         // Link to IP Lookup for this CIDR
@@ -313,7 +405,7 @@
         lookupBtn.innerHTML = '<i class="ph ph-map-pin"></i>';
         lookupBtn.onclick = (e) => {
             e.stopPropagation();
-            htmx.ajax('GET', '/ip-lookup?q=' + encodeURIComponent(node.cidr), { target: '#main-content', pushUrl: true });
+            htmx.ajax('GET', '/ip-lookup?q=' + encodeURIComponent(node.cidr), { target: '#content', pushUrl: true });
         };
 
         actions.appendChild(searchBtn);

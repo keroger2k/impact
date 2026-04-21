@@ -1,16 +1,16 @@
 <div class="health-item">
-  <span class="status-pip {% if dnac and dnac.ok %}online{% else %}offline{% endif %}"></span>
+  <span class="status-pip {% if dnac and dnac.ok %}online{% else %}offline{% endif %}" aria-label="{% if dnac and dnac.ok %}Online{% else %}Offline{% endif %}"></span>
   <span>DNAC: <span class="text-main">{{ dnac.detail if dnac else 'Loading...' }}</span></span>
 </div>
 <div class="health-item">
-  <span class="status-pip {% if ise and ise.ok %}online{% else %}offline{% endif %}"></span>
+  <span class="status-pip {% if ise and ise.ok %}online{% else %}offline{% endif %}" aria-label="{% if ise and ise.ok %}Online{% else %}Offline{% endif %}"></span>
   <span>ISE: <span class="text-main">{{ ise.detail if ise else 'Loading...' }}</span></span>
 </div>
 <div class="health-item">
-  <span class="status-pip {% if panorama and panorama.ok %}online{% else %}offline{% endif %}"></span>
+  <span class="status-pip {% if panorama and panorama.ok %}online{% else %}offline{% endif %}" aria-label="{% if panorama and panorama.ok %}Online{% else %}Offline{% endif %}"></span>
   <span>Panorama: <span class="text-main">{{ panorama.detail if panorama else 'Loading...' }}</span></span>
 </div>
 <div class="health-item">
-  <span class="status-pip {% if aci and aci.ok %}online{% else %}offline{% endif %}"></span>
+  <span class="status-pip {% if aci and aci.ok %}online{% else %}offline{% endif %}" aria-label="{% if aci and aci.ok %}Online{% else %}Offline{% endif %}"></span>
   <span>ACI: <span class="text-main">{{ aci.detail if aci else 'Loading...' }}</span></span>
 </div>

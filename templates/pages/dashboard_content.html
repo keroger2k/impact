@@ -3,10 +3,10 @@
     <div class="kpi-label">Systems Status</div>
     <div class="kpi-value" style="color: var(--sidebar-bg)">{{ systems_online }}/4</div>
     <div class="kpi-sub d-flex align-items-center gap-2 mt-2">
-      <span class="status-pip {% if dnac.ok %}online{% else %}offline{% endif %}"></span> DNAC
-      <span class="status-pip {% if ise.ok %}online{% else %}offline{% endif %}"></span> ISE
-      <span class="status-pip {% if panorama.ok %}online{% else %}offline{% endif %}"></span> Pan
-      <span class="status-pip {% if aci.ok %}online{% else %}offline{% endif %}"></span> ACI
+      <span class="status-pip {% if dnac.ok %}online{% else %}offline{% endif %}" aria-label="{% if dnac.ok %}Online{% else %}Offline{% endif %}"></span> DNAC
+      <span class="status-pip {% if ise.ok %}online{% else %}offline{% endif %}" aria-label="{% if ise.ok %}Online{% else %}Offline{% endif %}"></span> ISE
+      <span class="status-pip {% if panorama.ok %}online{% else %}offline{% endif %}" aria-label="{% if panorama.ok %}Online{% else %}Offline{% endif %}"></span> Pan
+      <span class="status-pip {% if aci.ok %}online{% else %}offline{% endif %}" aria-label="{% if aci.ok %}Online{% else %}Offline{% endif %}"></span> ACI
     </div>
   </div>
   <div class="kpi-card">

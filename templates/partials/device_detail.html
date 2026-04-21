@@ -10,7 +10,7 @@
           <div class="small opacity-75">{{ d.managementIpAddress }}</div>
         </div>
       </div>
-      <div class="status-pip {% if d.reachabilityStatus == 'Reachable' %}online{% else %}offline{% endif %}" title="{{ d.reachabilityStatus }}"></div>
+      <div class="status-pip {% if d.reachabilityStatus == 'Reachable' %}online{% else %}offline{% endif %}" aria-label="{% if d.reachabilityStatus == 'Reachable' %}Online{% else %}Offline{% endif %}" title="{{ d.reachabilityStatus }}"></div>
     </div>
 
     <div class="nav nav-pills gap-2" id="device-tabs">
