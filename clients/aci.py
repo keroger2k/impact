@@ -267,8 +267,9 @@ class ACIClient:
         return resp
 
 def connectivity_check(client: ACIClient) -> bool:
-    """Lightweight call to verify APIC is reachable."""
+    """Verify APIC is reachable using the existing session token."""
     try:
-        return client.login()
+        resp = client.get("api/node/class/fabricPod.json?rsp-subtree-include=count")
+        return resp is not None
     except Exception:
         return False

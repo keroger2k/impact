@@ -240,8 +240,18 @@ async def get_device_group_policies(request: Request, device_group: str, session
     else:
         key  = _get_key(session)
         loop = asyncio.get_event_loop()
-        # Fetching pre-rules and post-rules for this DG
-        rules = await loop.run_in_executor(None, run_with_context(pc.get_all_security_rules), key, [device_group])
+        all_dgs = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_device_groups", lambda: pc.get_device_groups(key), PAN_TTL)
+
+        def _build_rules():
+            all_rules = pc.get_all_security_rules(key, all_dgs)
+            by_dg: dict[str, list] = {}
+            for rule in all_rules:
+                dg = rule.get("device_group", "shared")
+                by_dg.setdefault(dg, []).append(rule)
+            return {"dg_order": all_dgs, "by_dg": by_dg}
+
+        rules_cache = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_rules", _build_rules, PAN_TTL)
+        rules = _flatten_rules(rules_cache, [device_group])
 
     if request.headers.get("HX-Request"):
         from templates_module import templates

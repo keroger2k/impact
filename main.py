@@ -113,12 +113,70 @@ async def warm_cache(session: SessionEntry = Depends(require_auth)):
     import clients.ise as ic
     import clients.panorama as pc
     from cache import cache, TTL_DEVICES, TTL_SITES
+    from routers.firewall import PAN_TTL
     from dev import DEV_MODE, MOCK_DEVICES
 
     # Generate a single correlation ID for the entire warm cycle
     warm_cid = f"warm-{uuid.uuid4().hex[:8]}"
     set_correlation_id(warm_cid)
     logger.info(f"Starting post-login cache warm cycle", extra={"action": "CACHE_WARM_START"})
+
+    async def _background_warm_ise(ise_client):
+        loop = asyncio.get_event_loop()
+        from cache import TTL_ISE_POLICIES
+        key_loaders = [
+            ("ise_nads",               lambda: ic.get_network_devices(ise_client, "")),
+            ("ise_nad_groups",         lambda: ic.get_network_device_groups(ise_client)),
+            ("ise_endpoint_groups",    lambda: ic.get_endpoint_groups(ise_client)),
+            ("ise_identity_groups",    lambda: ic.get_identity_groups(ise_client)),
+            ("ise_users",              lambda: ic.get_internal_users(ise_client, "")),
+            ("ise_sgts",               lambda: ic.get_sgts(ise_client)),
+            ("ise_sgacls",             lambda: ic.get_sgacls(ise_client)),
+            ("ise_egress_matrix",      lambda: ic.get_egress_matrix(ise_client)),
+            ("ise_policy_sets",        lambda: ic.get_policy_sets(ise_client)),
+            ("ise_authz_profiles",     lambda: ic.get_authz_profiles(ise_client)),
+            ("ise_allowed_protocols",  lambda: ic.get_allowed_protocols(ise_client)),
+            ("ise_profiling_policies", lambda: ic.get_profiling_policies(ise_client)),
+            ("ise_deployment_nodes",   lambda: ic.get_deployment_nodes(ise_client)),
+        ]
+        for key, loader in key_loaders:
+            if cache.get(key) is None:
+                try:
+                    await loop.run_in_executor(None, run_with_context(cache.get_or_set), key, loader, TTL_ISE_POLICIES)
+                except Exception as e:
+                    logger.warning(f"Background ISE warm failed for {key}: {e}")
+
+    async def _background_warm_panorama(pan_key):
+        loop = asyncio.get_event_loop()
+        try:
+            all_dgs = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_device_groups", lambda: pc.get_device_groups(pan_key), PAN_TTL)
+            await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_managed_devices", lambda: pc.get_managed_devices(pan_key), PAN_TTL)
+            await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_addr", lambda: pc.get_address_objects_and_groups(pan_key, all_dgs), PAN_TTL)
+            await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_svc", lambda: pc.get_services(pan_key, all_dgs), PAN_TTL)
+
+            def _build_rules():
+                all_rules = pc.get_all_security_rules(pan_key, all_dgs)
+                by_dg: dict[str, list] = {}
+                for rule in all_rules:
+                    dg = rule.get("device_group", "shared")
+                    by_dg.setdefault(dg, []).append(rule)
+                return {"dg_order": all_dgs, "by_dg": by_dg}
+
+            await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_rules", _build_rules, PAN_TTL)
+        except Exception as e:
+            logger.warning(f"Background Panorama warm failed: {e}")
+
+    async def _background_warm_ipam():
+        try:
+            from utils.ipam_engine import IPAMEngine
+            loop = asyncio.get_event_loop()
+            engine = IPAMEngine()
+            await engine.discover_all(session, loop, sources=None, yield_progress=None)
+            engine.build_tree()
+            cache.set("ipam_tree", engine.get_tree(), ttl=3600 * 24)
+            logger.info("Background IPAM warm complete")
+        except Exception as e:
+            logger.warning(f"Background IPAM warm failed: {e}")
 
     async def generate():
         set_correlation_id(warm_cid) # Re-set in the generator for safety in async streaming
@@ -207,8 +265,13 @@ async def warm_cache(session: SessionEntry = Depends(require_auth)):
                 yield emit({"step": "sitemap", "status": "error",
                             "message": f"Site map failed: {str(e)[:80]}"})
 
+        # Fire IPAM warm in background — depends on devices/sites being cached
+        if cache.get("ipam_tree") is None:
+            asyncio.create_task(_background_warm_ipam())
+
         # ── ISE ────────────────────────────────────────────────────────────────
         yield emit({"step": "ise", "status": "loading", "message": "Connecting to Cisco ISE…"})
+        ise = None
         try:
             ise = auth_module.get_ise_for_session(session)
             ok  = await loop.run_in_executor(None, run_with_context(ic.connectivity_check, ise))
@@ -217,16 +280,25 @@ async def warm_cache(session: SessionEntry = Depends(require_auth)):
         except Exception as e:
             yield emit({"step": "ise", "status": "error", "message": f"ISE: {str(e)[:80]}"})
 
+        # Fire ISE stable-list warm in background
+        if ise is not None:
+            asyncio.create_task(_background_warm_ise(ise))
+
         # ── Panorama ───────────────────────────────────────────────────────────
         yield emit({"step": "panorama", "status": "loading", "message": "Connecting to Panorama…"})
+        pan_key = None
         try:
-            key      = auth_module.get_panorama_key_for_session(session)
-            ok, detail = await loop.run_in_executor(None, run_with_context(pc.connectivity_check_with_key, key))
+            pan_key  = auth_module.get_panorama_key_for_session(session)
+            ok, detail = await loop.run_in_executor(None, run_with_context(pc.connectivity_check_with_key, pan_key))
             yield emit({"step": "panorama", "status": "done" if ok else "error",
                         "message": detail if ok else f"Panorama: {detail}"})
         except Exception as e:
             yield emit({"step": "panorama", "status": "error",
                         "message": f"Panorama: {str(e)[:80]}"})
+
+        # Fire Panorama data warm in background
+        if pan_key is not None:
+            asyncio.create_task(_background_warm_panorama(pan_key))
 
         # ── ACI ────────────────────────────────────────────────────────────────
         yield emit({"step": "aci", "status": "loading", "message": "Connecting to Cisco ACI…"})
@@ -326,15 +398,20 @@ async def status(session: SessionEntry = Depends(require_auth)):
 
     async def check_aci():
         try:
+            from cache import cache, TTL_STATUS
+            cached_status = cache.get("status_aci")
+            if cached_status is not None:
+                return cached_status
             from routers.aci import _get_processed_nodes
             aci_client = auth_module.get_aci_for_session(session)
-            # Use cached node data directly. This avoids redundant ACI logins
-            # and API calls during every sidebar poll (every 60s).
             processed, _ = await _get_processed_nodes(aci_client, loop)
             if processed:
                 up = len([n for n in processed if n.get('status') == 'active'])
-                return {"ok": True, "detail": f"{up}/{len(processed)} Nodes"}
-            return {"ok": False, "detail": "No nodes found"}
+                res = {"ok": True, "detail": f"{up}/{len(processed)} Nodes"}
+            else:
+                res = {"ok": False, "detail": "No nodes found"}
+            cache.set("status_aci", res, TTL_STATUS)
+            return res
         except Exception as e:
             return {"ok": False, "detail": str(e)[:80]}
 
