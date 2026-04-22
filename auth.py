@@ -79,7 +79,7 @@ def validate_ldap(username: str, password: str) -> bool:
     from dev import DEV_MODE
     if DEV_MODE: return True
     ldap_url = os.getenv("AD_LDAP_URL", "")
-    if not ldap_url or not ldap_url.startswith("ldaps://"):
+    if not ldap_url or not ldap_url.lower().startswith("ldaps://"):
         logger.error("AD_LDAP_URL must use ldaps:// protocol for security")
         return False
     try:
