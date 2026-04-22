@@ -303,19 +303,19 @@ MOCK_ACI_L3OUTS = [
 MOCK_ACI_BGP_PEERS = [
     {"bgpPeerEntry": {"attributes": {"addr": "10.255.0.1", "operSt": "established", "type": "ebgp", "dn": "topology/pod-1/node-101/sys/bgp/inst/dom-default/peer-[10.255.0.1]/ent-[10.255.0.1]"}}},
     {"bgpPeerEntry": {"attributes": {"addr": "10.255.0.2", "operSt": "established", "type": "ebgp", "dn": "topology/pod-1/node-102/sys/bgp/inst/dom-default/peer-[10.255.0.2]/ent-[10.255.0.2]"}}},
-    {"bgpPeerEntry": {"attributes": {"addr": "10.238.94.139", "operSt": "established", "type": "ebgp", "dn": "topology/pod-1/node-134/sys/bgp/inst/dom-TSA-HQ:TSA-HQ-VRF/peer-[10.238.94.139/32]/ent-[10.238.94.139]"}}},
+    {"bgpPeerEntry": {"attributes": {"addr": "192.0.2.139", "operSt": "established", "type": "ebgp", "dn": "topology/pod-1/node-134/sys/bgp/inst/dom-TSA-HQ:TSA-HQ-VRF/peer-[192.0.2.139/32]/ent-[192.0.2.139]"}}},
 ]
 
 MOCK_ACI_BGP_PEER_CFG = [
     {"bgpPeerP": {"attributes": {"addr": "10.255.0.1", "dn": "uni/tn-COMMON/out-L3OUT-CORE/lnodep-BorderLeafs/rspeerToProfile/bgpPeerP-[10.255.0.1]", "descr": "Core Router 1"}}},
     {"bgpPeerP": {"attributes": {"addr": "10.255.0.2", "dn": "uni/tn-COMMON/out-L3OUT-CORE/lnodep-BorderLeafs/rspeerToProfile/bgpPeerP-[10.255.0.2]", "descr": "Core Router 2"}}},
-    {"bgpPeerP": {"attributes": {"addr": "10.238.94.139", "dn": "uni/tn-TSA-HQ/out-HQL3Out/lnodep-HQ-BorderLeafs/rspeerToProfile/bgpPeerP-[10.238.94.139]", "descr": "HQ Firewall"}}},
+    {"bgpPeerP": {"attributes": {"addr": "192.0.2.139", "dn": "uni/tn-TSA-HQ/out-HQL3Out/lnodep-HQ-BorderLeafs/rspeerToProfile/bgpPeerP-[192.0.2.139]", "descr": "HQ Firewall"}}},
 ]
 
 MOCK_ACI_SUBNETS = [
     {"l3extSubnet": {"attributes": {"ip": "10.0.0.0/8", "scope": "export-rtctrl", "dn": "uni/tn-COMMON/out-L3OUT-CORE/lnodep-CORE/lifp-CORE/subnet-[10.0.0.0/8]"}}},
     {"l3extSubnet": {"attributes": {"ip": "172.16.0.0/12", "scope": "export-rtctrl", "dn": "uni/tn-PROD/out-L3OUT-FIREWALL/lnodep-FW/lifp-FW/subnet-[172.16.0.0/12]"}}},
-    {"fvSubnet": {"attributes": {"ip": "10.10.10.1/24", "dn": "uni/tn-TSA-HQ/BD-Users/subnet-[10.10.10.1/24]", "descr": "User Access"}}},
+    {"fvSubnet": {"attributes": {"ip": "192.0.2.1/24", "dn": "uni/tn-TSA-HQ/BD-Users/subnet-[192.0.2.1/24]", "descr": "User Access"}}},
     {"fvSubnet": {"attributes": {"ip": "fc00:10::1/64", "dn": "uni/tn-TSA-HQ/BD-Users/subnet-[fc00:10::1/64]", "descr": "User Access IPv6"}}},
     # Add a conflict: This exactly matches a DNAC pool in TSA-BOS-T1 (10.20.0.0/16) but has different site
     {"fvSubnet": {"attributes": {"ip": "10.20.0.0/16", "dn": "uni/tn-CONFLICT-TENANT/BD-Conflict/subnet-[10.20.0.0/16]", "descr": "Conflict Subnet"}}},
@@ -330,7 +330,7 @@ MOCK_ACI_BGP_DOMS = [
     {"bgpRoute": {"attributes": {"dn": "topology/pod-1/node-149/sys/bgp/inst/dom-default/af-ipv4-ucast/rt-[10.1.1.0/24]", "prefix": "10.1.1.0/24", "nextHop": "192.168.1.1", "origin": "igp", "asPath": "65001"}}},
     {"bgpRoute": {"attributes": {"dn": "topology/pod-1/node-149/sys/bgp/inst/dom-default/af-ipv4-ucast/rt-[172.16.10.0/24]", "prefix": "172.16.10.0/24", "nextHop": "192.168.1.2", "origin": "ebgp", "asPath": "65002 65100"}}},
     {"bgpBdpRoute": {"attributes": {"dn": "topology/pod-1/node-149/sys/bgp/inst/dom-PRODUCTION:PROD_VRF/af-ipv4-ucast/rt-[10.200.10.0/24]", "pfx": "10.200.10.0/24", "nh": "10.200.10.1", "origin": "igp", "asPath": ""}}},
-    {"bgpEvpnRoute": {"attributes": {"dn": "topology/pod-1/node-149/sys/bgp/inst/dom-overlay-1/af-evpn/rt-[[2]:[0]:[0]:[48]:[00:50:56:00:00:01]:[32]:[10.1.1.1]]", "prefix": "10.1.1.1/32", "nextHop": "192.168.255.10", "origin": "igp", "asPath": ""}}}
+    {"bgpEvpnRoute": {"attributes": {"dn": "topology/pod-1/node-149/sys/bgp/inst/dom-overlay-1/af-evpn/rt-[[2]:[0]:[0]:[48]:[00:50:56:00:00:01]:[32]:[192.0.2.101]]", "prefix": "192.0.2.101/32", "nextHop": "192.168.255.10", "origin": "igp", "asPath": ""}}}
 ]
 
 MOCK_ACI_BGP_RIB_IN = [
@@ -360,7 +360,7 @@ MOCK_ACI_BGP_ADJ_RIB_OUT = [
         "flags": "advertised", "localPref": "100", "med": "0", "community": ""
     }}},
     {"bgpAdjRibOut": {"attributes": {
-        "dn": "topology/pod-1/node-134/sys/bgp/inst/dom-TSA-HQ:TSA-HQ-VRF/peer-[10.238.94.139/32]/ent-[10.238.94.139]/adj-rib-out-post/rt-[192.168.10.0/24]",
+        "dn": "topology/pod-1/node-134/sys/bgp/inst/dom-TSA-HQ:TSA-HQ-VRF/peer-[192.0.2.139/32]/ent-[192.0.2.139]/adj-rib-out-post/rt-[192.168.10.0/24]",
         "prefix": "192.168.10.0/24", "nextHop": "0.0.0.0", "asPath": "", "origin": "igp",
         "flags": "advertised", "localPref": "100", "med": "0", "community": ""
     }}},
@@ -378,8 +378,8 @@ MOCK_ACI_BGP_ADJ_RIB_IN = [
         "flags": "valid,best", "localPref": "100", "med": "0", "community": ""
     }}},
     {"bgpAdjRibIn": {"attributes": {
-        "dn": "topology/pod-1/node-134/sys/bgp/inst/dom-TSA-HQ:TSA-HQ-VRF/peer-[10.238.94.139/32]/ent-[10.238.94.139]/adj-rib-in-post/rt-[8.8.8.0/24]",
-        "prefix": "8.8.8.0/24", "nextHop": "10.238.94.139", "asPath": "65200 65300", "origin": "egp",
+        "dn": "topology/pod-1/node-134/sys/bgp/inst/dom-TSA-HQ:TSA-HQ-VRF/peer-[192.0.2.139/32]/ent-[192.0.2.139]/adj-rib-in-post/rt-[8.8.8.0/24]",
+        "prefix": "8.8.8.0/24", "nextHop": "192.0.2.139", "asPath": "65200 65300", "origin": "egp",
         "flags": "valid,best", "localPref": "100", "med": "0", "community": ""
     }}},
     {"bgpAdjRibIn": {"attributes": {

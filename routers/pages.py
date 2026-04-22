@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Request, Depends, Form
+import os
+from fastapi import APIRouter, Request, Depends, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from templates_module import templates
 import auth as auth_module
@@ -18,7 +19,7 @@ async def get_current_user_from_cookie(request: Request):
 
 @router.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, error: str = None):
-    return templates.TemplateResponse(request, "login.html", {"error": error})
+    return templates.TemplateResponse(request, "login.html", {"error": error, "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true"})
 
 @router.post("/login")
 async def login_submit(request: Request, username: str = Form(...), password: str = Form(...)):
@@ -30,6 +31,10 @@ async def login_submit(request: Request, username: str = Form(...), password: st
     response = RedirectResponse(url="/dashboard", status_code=303)
     response.set_cookie(key="impact_token", value=token)
     response.set_cookie(key="impact_user", value=username)
+
+    from utils.csrf import set_csrf_cookie
+    set_csrf_cookie(response)
+
     return response
 
 @router.get("/")
@@ -52,8 +57,8 @@ async def dashboard(request: Request, user: SessionEntry = Depends(get_current_u
     issues = await loop.run_in_executor(None, run_with_context(dc.get_recent_issues), dnac)
 
     # Status check is live
-    from main import status
-    current_status = await status(user)
+    from utils.system_status import get_system_status
+    current_status = await get_system_status(user)
 
     # Fetch ACI health and faults for dashboard if ACI is online
     aci_health = None
@@ -68,9 +73,10 @@ async def dashboard(request: Request, user: SessionEntry = Depends(get_current_u
             logger.warning(f"Failed to fetch ACI dashboard data: {e}")
 
     context = {
+        "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
+        "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
         "active_page": "dashboard",
         "username": user.username,
-        "token": request.cookies.get("impact_token"),
         "stats": stats,
         "issues": issues,
         "aci_health": aci_health,
@@ -86,9 +92,10 @@ async def dashboard(request: Request, user: SessionEntry = Depends(get_current_u
 async def devices_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
     if not user: return RedirectResponse(url="/login")
     context = {
+        "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
+        "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
         "active_page": "devices",
         "username": user.username,
-        "token": request.cookies.get("impact_token")
     }
     if request.headers.get("HX-Request"):
         return templates.TemplateResponse(request, "pages/devices_content.html", context)
@@ -98,9 +105,10 @@ async def devices_page(request: Request, user: SessionEntry = Depends(get_curren
 async def bgp_dashboard_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
     if not user: return RedirectResponse(url="/login")
     context = {
+        "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
+        "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
         "active_page": "routing",
         "username": user.username,
-        "token": request.cookies.get("impact_token")
     }
     if request.headers.get("HX-Request"):
         return templates.TemplateResponse(request, "pages/routing_content.html", context)
@@ -110,9 +118,10 @@ async def bgp_dashboard_page(request: Request, user: SessionEntry = Depends(get_
 async def path_trace_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
     if not user: return RedirectResponse(url="/login")
     context = {
+        "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
+        "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
         "active_page": "path-trace",
         "username": user.username,
-        "token": request.cookies.get("impact_token")
     }
     if request.headers.get("HX-Request"):
         return templates.TemplateResponse(request, "pages/path_trace_content.html", context)
@@ -121,7 +130,12 @@ async def path_trace_page(request: Request, user: SessionEntry = Depends(get_cur
 @router.get("/ise", response_class=HTMLResponse)
 async def ise_page_render(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
     if not user: return RedirectResponse(url="/login")
-    context = {"active_page": "ise", "username": user.username, "token": request.cookies.get("impact_token")}
+    context = {
+        "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
+        "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
+        "active_page": "ise",
+        "username": user.username
+    }
     if request.headers.get("HX-Request"):
         return templates.TemplateResponse(request, "pages/ise_content.html", context)
     return templates.TemplateResponse(request, "ise.html", context)
@@ -129,7 +143,12 @@ async def ise_page_render(request: Request, user: SessionEntry = Depends(get_cur
 @router.get("/firewall", response_class=HTMLResponse)
 async def firewall_page_render(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
     if not user: return RedirectResponse(url="/login")
-    context = {"active_page": "firewall", "username": user.username, "token": request.cookies.get("impact_token")}
+    context = {
+        "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
+        "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
+        "active_page": "firewall",
+        "username": user.username
+    }
     if request.headers.get("HX-Request"):
         return templates.TemplateResponse(request, "pages/firewall_content.html", context)
     return templates.TemplateResponse(request, "firewall.html", context)
@@ -137,7 +156,12 @@ async def firewall_page_render(request: Request, user: SessionEntry = Depends(ge
 @router.get("/aci", response_class=HTMLResponse)
 async def aci_page_render(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
     if not user: return RedirectResponse(url="/login")
-    context = {"active_page": "aci", "username": user.username, "token": request.cookies.get("impact_token")}
+    context = {
+        "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
+        "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
+        "active_page": "aci",
+        "username": user.username
+    }
     if request.headers.get("HX-Request"):
         return templates.TemplateResponse(request, "pages/aci_content.html", context)
     return templates.TemplateResponse(request, "aci.html", context)
@@ -145,10 +169,13 @@ async def aci_page_render(request: Request, user: SessionEntry = Depends(get_cur
 @router.get("/command-runner", response_class=HTMLResponse)
 async def command_runner_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
     if not user: return RedirectResponse(url="/login")
+    if os.getenv("COMMANDS_ENABLED", "false").lower() != "true":
+        raise HTTPException(403, "Command execution is disabled")
     context = {
+        "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
+        "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
         "active_page": "command-runner",
         "username": user.username,
-        "token": request.cookies.get("impact_token")
     }
     if request.headers.get("HX-Request"):
         return templates.TemplateResponse(request, "pages/command_runner_content.html", context)
@@ -158,9 +185,10 @@ async def command_runner_page(request: Request, user: SessionEntry = Depends(get
 async def import_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
     if not user: return RedirectResponse(url="/login")
     context = {
+        "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
+        "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
         "active_page": "import",
         "username": user.username,
-        "token": request.cookies.get("impact_token")
     }
     if request.headers.get("HX-Request"):
         return templates.TemplateResponse(request, "pages/import_content.html", context)
@@ -169,7 +197,12 @@ async def import_page(request: Request, user: SessionEntry = Depends(get_current
 @router.get("/config-search", response_class=HTMLResponse)
 async def config_search_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
     if not user: return RedirectResponse(url="/login")
-    context = {"active_page": "config-search", "username": user.username, "token": request.cookies.get("impact_token")}
+    context = {
+        "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
+        "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
+        "active_page": "config-search",
+        "username": user.username
+    }
     if request.headers.get("HX-Request"):
         return templates.TemplateResponse(request, "pages/config_search_content.html", context)
     return templates.TemplateResponse(request, "config_search.html", context)
@@ -177,7 +210,12 @@ async def config_search_page(request: Request, user: SessionEntry = Depends(get_
 @router.get("/ip-lookup", response_class=HTMLResponse)
 async def ip_lookup_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
     if not user: return RedirectResponse(url="/login")
-    context = {"active_page": "ip-lookup", "username": user.username, "token": request.cookies.get("impact_token")}
+    context = {
+        "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
+        "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
+        "active_page": "ip-lookup",
+        "username": user.username
+    }
     if request.headers.get("HX-Request"):
         return templates.TemplateResponse(request, "pages/ip_lookup_content.html", context)
     return templates.TemplateResponse(request, "ip_lookup.html", context)
@@ -185,7 +223,12 @@ async def ip_lookup_page(request: Request, user: SessionEntry = Depends(get_curr
 @router.get("/ipam", response_class=HTMLResponse)
 async def ipam_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
     if not user: return RedirectResponse(url="/login")
-    context = {"active_page": "ipam", "username": user.username, "token": request.cookies.get("impact_token")}
+    context = {
+        "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
+        "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
+        "active_page": "ipam",
+        "username": user.username
+    }
     if request.headers.get("HX-Request"):
         return templates.TemplateResponse(request, "pages/ipam_content.html", context)
     return templates.TemplateResponse(request, "ipam.html", context)
@@ -193,7 +236,12 @@ async def ipam_page(request: Request, user: SessionEntry = Depends(get_current_u
 @router.get("/cache-mgmt", response_class=HTMLResponse)
 async def cache_mgmt_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
     if not user: return RedirectResponse(url="/login")
-    context = {"active_page": "cache-mgmt", "username": user.username, "token": request.cookies.get("impact_token")}
+    context = {
+        "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
+        "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
+        "active_page": "cache-mgmt",
+        "username": user.username
+    }
     if request.headers.get("HX-Request"):
         return templates.TemplateResponse(request, "pages/cache_management_content.html", context)
     return templates.TemplateResponse(request, "cache_management.html", context)

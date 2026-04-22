@@ -1,0 +1,11 @@
+{"timestamp": "2026-04-21T22:14:02.476428", "level": "WARNING", "logger": "root", "message": "IMPACT_ALLOWED_ORIGINS not set, CORS will deny all cross-origin requests", "correlation_id": "N/A"}
+{"timestamp": "2026-04-21T22:14:02.600524", "level": "DEBUG", "logger": "asyncio", "message": "Using selector: EpollSelector", "correlation_id": "N/A"}
+{"timestamp": "2026-04-21T22:14:02.606962", "level": "INFO", "logger": "httpx", "message": "HTTP Request: GET http://testserver/api/docs \"HTTP/1.1 404 Not Found\"", "correlation_id": "N/A"}
+{"timestamp": "2026-04-21T22:14:02.609809", "level": "DEBUG", "logger": "asyncio", "message": "Using selector: EpollSelector", "correlation_id": "N/A"}
+{"timestamp": "2026-04-21T22:14:02.612910", "level": "INFO", "logger": "httpx", "message": "HTTP Request: POST http://testserver/api/auth/logout \"HTTP/1.1 403 Forbidden\"", "correlation_id": "N/A"}
+{"timestamp": "2026-04-21T22:14:02.615259", "level": "DEBUG", "logger": "asyncio", "message": "Using selector: EpollSelector", "correlation_id": "N/A"}
+{"timestamp": "2026-04-21T22:14:02.620154", "level": "INFO", "logger": "httpx", "message": "HTTP Request: GET http://testserver/command-runner \"HTTP/1.1 307 Temporary Redirect\"", "correlation_id": "N/A"}
+{"timestamp": "2026-04-21T22:14:54.217530", "level": "WARNING", "logger": "root", "message": "IMPACT_ALLOWED_ORIGINS not set, CORS will deny all cross-origin requests", "correlation_id": "N/A"}
+{"timestamp": "2026-04-21T22:14:54.332934", "level": "INFO", "logger": "main", "message": "DEV_MODE enabled \u2014 mock data loaded, LDAP bypassed.", "correlation_id": "startup-405716d0"}
+{"timestamp": "2026-04-21T22:14:54.333265", "level": "INFO", "logger": "main", "message": "IMPACT II starting up.", "correlation_id": "startup-405716d0"}
+{"timestamp": "2026-04-22T01:45:10.467420", "level": "INFO", "logger": "main", "message": "IMPACT II shutting down.", "correlation_id": "startup-405716d0"}

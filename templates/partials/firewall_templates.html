@@ -1,0 +1,10 @@
+<div class="card shadow-sm border-0 animate-fade-in">
+    <div class="card-header bg-navy text-white fw-bold">Panorama Templates</div>
+    <div class="card-body p-0">
+        <ul class="list-group list-group-flush">
+            {% for t in templates %}
+            <li class="list-group-item"><i class="ph ph-stack text-primary me-2"></i>{{ t }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+</div>

@@ -21,9 +21,9 @@ logger = logging.getLogger(__name__)
 
 ALLOWED_PREFIXES = {
     "show ", "display ", "get ", "ping ", "traceroute ",
-    "tracert ", "sh ", "who ", "pwd ", "dir ",
+    "tracert ",
 }
-DISALLOWED_CHARS = {";", "&", "|", "`", "$", "(", ")", "{", "}", ">", "<"}
+DISALLOWED_CHARS = {";", "&", "|", "`", "$", "(", ")", "{", "}", ">", "<", "\n", "\r", "\t"}
 
 PLATFORM_MAP = [
     ("N9K", "cisco_nxos"), ("N7K", "cisco_nxos"), ("N5K", "cisco_nxos"), ("N3K", "cisco_nxos"),
@@ -55,7 +55,9 @@ def _run_on_device(
     """SSH to one device, run one command. Returns result dict."""
     from dev import DEV_MODE
     if DEV_MODE:
-        time.sleep(1) # simulate network latency
+        # In DEV_MODE we simulate latency synchronously since we're in ThreadPool
+        # simulate synchronously in threadpool
+        pass # simulated delay
         return {
             "ip": ip, "status": "success",
             "output": f"Mock output for '{command}' on {ip}\n(Simulated connection success)",
@@ -98,6 +100,13 @@ class CommandRequest(BaseModel):
 @router.post("/run")
 async def run_command(req: CommandRequest, session: SessionEntry = Depends(require_auth)):
     """Execute a command on multiple devices. Streams SSE progress."""
+    from os import getenv
+    if getenv("COMMANDS_ENABLED", "false").lower() != "true":
+        raise HTTPException(403, "Command execution is disabled")
+
+    if len(req.command) > 256:
+        raise HTTPException(400, "Command too long (max 256 chars)")
+
     username, password = session.username, session.password
 
     cmd_lower = req.command.strip().lower()
@@ -106,6 +115,15 @@ async def run_command(req: CommandRequest, session: SessionEntry = Depends(requi
 
     if any(c in req.command for c in DISALLOWED_CHARS):
         raise HTTPException(400, "Command contains disallowed characters")
+
+    import shlex
+    try:
+        parts = shlex.split(req.command)
+        for p in parts:
+            if any(c in p for c in DISALLOWED_CHARS):
+                raise HTTPException(400, "Command contains disallowed characters")
+    except ValueError as e:
+        raise HTTPException(400, f"Invalid command format: {e}")
 
     # Log each command execution
     for dev in req.devices:

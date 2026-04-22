@@ -146,24 +146,14 @@ async def list_firewall_interfaces(request: Request, session: SessionEntry = Dep
     from cache import TTL_PAN_INTERFACES
     from dev import DEV_MODE
     if DEV_MODE:
-        # Generate some mock interfaces with mixed cases to test the new robust parser
         devices = [
             {
                 "hostname": "FW-EAST-01",
                 "serial": "SN001",
                 "device": {"hostname": "FW-EAST-01"},
                 "interfaces": [
-                    {"name": "Ethernet1/1", "ipv4": "10.100.1.1/24", "zone": "untrust"},
-                    {"name": "Ethernet1/2", "ipv4": "10.100.2.1/24", "zone": "trust"}
-                ]
-            },
-            {
-                "hostname": "FW-WEST-01",
-                "serial": "SN002",
-                "device": {"hostname": "FW-WEST-01"},
-                "interfaces": [
-                    {"name": "ethernet1/1", "ipv4": "10.200.1.1/24", "zone": "untrust"},
-                    {"name": "ethernet1/2", "ipv4": "10.200.2.1/24", "zone": "trust"}
+                    {"name": "Ethernet1/1", "ipv4": "192.0.2.1/24", "zone": "untrust"},
+                    {"name": "Ethernet1/2", "ipv4": "192.0.2.2/24", "zone": "trust"}
                 ]
             }
         ]
@@ -225,20 +215,12 @@ async def search_firewall_interfaces_ui(request: Request, ip: str = Query(...), 
 @router.get("/templates", response_class=HTMLResponse)
 async def list_panorama_templates_ui(request: Request, session: SessionEntry = Depends(require_auth)):
     templates_list = ["Standard-Branch-Template", "HQ-DataCenter-Template", "Remote-VPN-Template"]
-    return HTMLResponse(f"""
-        <div class="card shadow-sm border-0 animate-fade-in">
-            <div class="card-header bg-navy text-white fw-bold">Panorama Templates</div>
-            <div class="card-body p-0">
-                <ul class="list-group list-group-flush">
-                    {"".join(f'<li class="list-group-item"><i class="fas fa-layer-group text-primary me-2"></i>{t}</li>' for t in templates_list)}
-                </ul>
-            </div>
-        </div>
-    """)
+    from templates_module import templates
+    return templates.TemplateResponse(request, "partials/firewall_templates.html", {"templates": templates_list})
 
 @router.get("/policies/{device_group}")
 async def get_device_group_policies(request: Request, device_group: str, session: SessionEntry = Depends(require_auth)):
-    from dev import DEV_MODE, MOCK_FIREWALL_RULES, MOCK_DEVICE_GROUPS
+    from dev import DEV_MODE, MOCK_FIREWALL_RULES
 
     key  = _get_key(session)
     loop = asyncio.get_event_loop()

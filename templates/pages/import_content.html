@@ -83,9 +83,15 @@
     log.classList.remove('d-none');
     log.innerHTML = '>> Initializing tagging session for ' + tagName + '...<br>';
 
+    const csrfToken = document.cookie.split('; ').find(row => row.startsWith('csrf_token='));
+    const csrfHeader = csrfToken ? csrfToken.split('=')[1] : '';
+
     fetch('/api/dnac/tag-devices', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer {{ token }}' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': csrfHeader
+      },
       body: JSON.stringify({ tag_name: tagName, ips: ips })
     }).then(response => {
        const reader = response.body.getReader();
@@ -122,9 +128,15 @@
     results.innerHTML = '';
     status.textContent = 'Status: Initializing...';
 
+    const csrfToken = document.cookie.split('; ').find(row => row.startsWith('csrf_token='));
+    const csrfHeader = csrfToken ? csrfToken.split('=')[1] : '';
+
     fetch('/api/import/run', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer {{ token }}' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': csrfHeader
+      },
       body: JSON.stringify(payload)
     }).then(response => {
        const reader = response.body.getReader();

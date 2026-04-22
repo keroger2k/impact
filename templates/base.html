@@ -9,7 +9,7 @@
   <link rel="stylesheet" type="text/css" href="/static/phosphor/style.css">
   <script src="/static/js/htmx.min.js"></script>
 </head>
-<body hx-headers='{"Authorization": "Bearer {{ token }}"}'>
+<body>
 <div id="app">
 
   <!-- ── Sidebar ─────────────────────────────────────────── -->
@@ -71,10 +71,12 @@
          hx-get="/ip-lookup" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
         <span class="nav-icon"><i class="ph ph-map-pin"></i></span> <span class="nav-text">IP Lookup</span>
       </a>
+      {% if commands_enabled %}
       <a class="nav-item {% if active_page == 'command-runner' %}active{% endif %}"
          hx-get="/command-runner" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
         <span class="nav-icon"><i class="ph ph-terminal-window"></i></span> <span class="nav-text">Command Runner</span>
       </a>
+      {% endif %}
 
       <!-- System Admin -->
       <div class="sidebar-section-label">System Admin</div>
@@ -124,10 +126,10 @@
       <div id="topbar-actions">
         <span style="font-size:13px;color:var(--text-muted);margin-right:12px">👤 {{ username }}</span>
         <button class="btn btn-outline btn-xs"
-                hx-post="/api/dnac/cache/refresh"
+                hx-post="/api/cache/refresh/clear_all"
                 hx-swap="none"
                 hx-on::after-request="if(event.detail.successful) { alert('Full application cache has been cleared.'); window.location.reload(); }">
-          <i class="ph ph-arrows-clockwise"></i> Refresh Cache
+          <i class="ph ph-trash"></i> Clear Application Cache
         </button>
         <button class="btn btn-outline btn-xs" onclick="logout()">
           <i class="ph ph-sign-out"></i> Sign Out
@@ -174,6 +176,7 @@
 </div>
 
 <script src="/static/bootstrap/js/bootstrap.bundle.min.js"></script>
+<script src="/static/js/debug-console.js"></script>
 <script>
   function toggleSidebar() {
     const sidebar = document.getElementById('sidebar');
@@ -201,10 +204,8 @@
   }
 
   function logout() {
-    fetch('/api/auth/logout', { method: 'POST', headers: {'Authorization': 'Bearer {{ token }}'} })
+    fetch('/api/auth/logout', { method: 'POST' })
       .then(() => {
-        localStorage.removeItem('impact_token');
-        localStorage.removeItem('impact_user');
         window.location.href = '/login';
       });
   }
@@ -254,6 +255,14 @@
         alert('Copied to clipboard!');
     });
   }
+
+  // CSRF support for HTMX
+  document.body.addEventListener('htmx:configRequest', function(evt) {
+    const csrfToken = document.cookie.split('; ').find(row => row.startsWith('csrf_token='));
+    if (csrfToken) {
+      evt.detail.headers['X-CSRF-Token'] = csrfToken.split('=')[1];
+    }
+  });
 
   // Handle HTMX navigation highlighting
   document.body.addEventListener('htmx:afterOnLoad', function(evt) {

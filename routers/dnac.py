@@ -1,3 +1,4 @@
+import ipaddress
 import json
 import asyncio
 import logging
@@ -277,9 +278,8 @@ async def ip_lookup_handler(ip: str, session: SessionEntry = Depends(require_aut
     Find what interface and device owns an IP address.
     Searches both Catalyst Center (DNAC) and the Palo Alto interface inventory.
     """
-    import ipaddress as _ip
     try:
-        _ip.ip_address(ip)
+        ipaddress.ip_address(ip)
     except ValueError:
         raise HTTPException(400, f"'{ip}' is not a valid IP address")
 
@@ -305,8 +305,7 @@ async def ip_lookup_handler(ip: str, session: SessionEntry = Depends(require_aut
             mask   = iface.get("ipv4Mask")
             if addr and mask:
                 try:
-                    import ipaddress as _ip2
-                    net    = _ip2.ip_network(f"{addr}/{mask}", strict=False)
+                    net    = ipaddress.ip_network(f"{addr}/{mask}", strict=False)
                     subnet = f"{net}  (/{net.prefixlen})"
                 except ValueError:
                     subnet = mask
@@ -350,7 +349,6 @@ async def ip_lookup_handler(ip: str, session: SessionEntry = Depends(require_aut
     from routers.nexus import get_cached_nexus_interfaces
     nexus_ifaces = get_cached_nexus_interfaces()
     nexus_hits = []
-    import ipaddress as _ip
     for iface in nexus_ifaces:
         iface_ip_raw = iface.get("ipv4_address")
         if iface_ip_raw and iface_ip_raw != "N/A":
@@ -410,8 +408,12 @@ async def dnac_cache_info():
 
 @router.post("/cache/refresh")
 async def refresh_cache():
-    cache.clear()
-    return {"status": "refreshed"}
+    # Legacy endpoint — use /api/cache/refresh/devices or similar
+    # Scoped to DNAC only
+    cache.invalidate_prefix("devices")
+    cache.invalidate_prefix("sites")
+    cache.invalidate_prefix("device_site_map")
+    return {"status": "DNAC Cache invalidated"}
 
 
 # ── Tag devices ───────────────────────────────────────────────────────────────
@@ -667,9 +669,8 @@ async def config_search_ui(
     )
     results = await config_search(req, session)
     from templates_module import templates
-    token = request.cookies.get("impact_token") or request.headers.get("Authorization", "").replace("Bearer ", "")
     return templates.TemplateResponse(request, "partials/config_search_results.html", {
-        "results": results, "search_string": search_string, "token": token
+        "results": results, "search_string": search_string
     })
 
 
@@ -729,9 +730,5 @@ async def device_select_partial(request: Request, session: SessionEntry = Depend
     loop = asyncio.get_event_loop()
     dnac = _get_dnac(session)
     devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "devices", lambda: dc.get_all_devices(dnac), TTL_DEVICES)
-    html = '<select id="device-multi-select" class="form-select" multiple style="height: 150px;">'
-    for d in sorted(devices, key=lambda x: x.get("hostname", "") or ""):
-        data_json = json.dumps({"ip": d.get("managementIpAddress"), "hostname": d.get("hostname"), "platform": d.get("platformId")})
-        html += f'<option value="{d.get("id")}" data-device=\'{data_json}\'>{d.get("hostname")} ({d.get("managementIpAddress")})</option>'
-    html += '</select>'
-    return HTMLResponse(html)
+    from templates_module import templates
+    return templates.TemplateResponse(request, "partials/device_select.html", {"devices": devices})

@@ -26,6 +26,10 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger(__name__)
 
+class PanoramaAPIError(Exception):
+    """Domain-specific error for Panorama API failures."""
+    pass
+
 # Module-level API key cache (survives the session, re-keyed if host changes)
 _key_cache: dict[str, tuple[str, float]] = {}  # (key, expires_at)
 KEY_TTL = 23 * 3600
@@ -37,16 +41,16 @@ BASE_XPATH = "/config/devices/entry[@name='localhost.localdomain']"
 # CONNECTION & RAW CALLS
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _keygen(host: str, user: str, pwd: str) -> str | None:
+def _keygen(host: str, user: str, pwd: str) -> str:
     """Exchange credentials for a Panorama API key."""
-    if not host: return None
+    if not host: raise PanoramaAPIError("Host not provided")
     start_time = time.time()
     try:
         host_clean = host.strip().split('/')[0]
-        resp = requests.get(
+        resp = requests.post(
             f"https://{host_clean}/api/",
-            params={"type": "keygen", "user": user, "password": pwd},
-            verify=False,
+            data={"type": "keygen", "user": user, "password": pwd},
+            verify=os.getenv("IMPACT_VERIFY_SSL", "true").lower() == "true",
             timeout=15,
         )
         duration = int((time.time() - start_time) * 1000)
@@ -60,20 +64,20 @@ def _keygen(host: str, user: str, pwd: str) -> str | None:
         key_el = root.find(".//key")
         if key_el is not None and key_el.text:
             return key_el.text
-        logger.warning(f"Panorama keygen failed: {resp.text[:200]}")
+        raise PanoramaAPIError(f"Keygen failed: {resp.text[:200]}")
     except Exception as e:
-        logger.warning(f"Panorama keygen error: {e}")
-    return None
+        if isinstance(e, PanoramaAPIError): raise e
+        raise PanoramaAPIError(f"Keygen error: {e}")
 
 
-def get_api_key() -> str | None:
+def get_api_key() -> str:
     """Generate and cache a Panorama API key from shared env credentials."""
     host = os.getenv("PANORAMA_HOST")
     user = os.getenv("DOMAIN_USERNAME")
     pwd  = os.getenv("DOMAIN_PASSWORD")
 
     if not all([host, user, pwd]):
-        return None
+        raise PanoramaAPIError("Missing Panorama credentials in environment")
 
     cache_key = f"{host}:{user}"
     now = time.time()
@@ -88,11 +92,11 @@ def get_api_key() -> str | None:
     return key
 
 
-def get_user_api_key(username: str, password: str) -> str | None:
+def get_user_api_key(username: str, password: str) -> str:
     """Generate a Panorama API key for a specific user. Cached at module level for TTL."""
     host = os.getenv("PANORAMA_HOST")
     if not host:
-        return None
+        raise PanoramaAPIError("PANORAMA_HOST not set")
 
     cache_key = f"{host}:{username}"
     now = time.time()
@@ -107,13 +111,12 @@ def get_user_api_key(username: str, password: str) -> str | None:
     return key
 
 
-def _config_get(xpath: str, api_key: str) -> ET.Element | None:
-    """Panorama config GET — returns the <result> element or None."""
+def _config_get(xpath: str, api_key: str) -> ET.Element:
+    """Panorama config GET — returns the <result> element or raises PanoramaAPIError."""
     host = os.getenv("PANORAMA_HOST")
-    if not host: return None
+    if not host: raise PanoramaAPIError("PANORAMA_HOST not set")
     start_time = time.time()
     try:
-        # Sanitize host to prevent Error #4 (idna codec empty label)
         host_clean = host.strip().split('/')[0]
         resp = requests.get(
             f"https://{host_clean}/api/",
@@ -123,7 +126,7 @@ def _config_get(xpath: str, api_key: str) -> ET.Element | None:
                 "xpath":  xpath,
                 "key":    api_key,
             },
-            verify=False,
+            verify=os.getenv("IMPACT_VERIFY_SSL", "true").lower() == "true",
             timeout=30,
         )
         duration = int((time.time() - start_time) * 1000)
@@ -133,29 +136,29 @@ def _config_get(xpath: str, api_key: str) -> ET.Element | None:
             "status": resp.status_code,
             "duration_ms": duration
         })
-        logger.debug(f"Panorama response: {resp.text}", extra={"payload": resp.text})
         root   = ET.fromstring(resp.text)
         status = root.get("status", "")
         if status != "success":
-            logger.warning(f"Panorama config GET failed ({status}): {xpath}")
-            return None
-        return root.find("result")
+            raise PanoramaAPIError(f"Config GET failed ({status}): {xpath}")
+        res = root.find("result")
+        if res is None: raise PanoramaAPIError(f"No result in response for {xpath}")
+        return res
     except Exception as e:
-        logger.warning(f"Panorama config GET error ({xpath}): {e}")
-        return None
+        if isinstance(e, PanoramaAPIError): raise e
+        raise PanoramaAPIError(f"Config GET error ({xpath}): {e}")
 
 
-def _op(cmd: str, api_key: str) -> ET.Element | None:
-    """Panorama op command — returns the <result> element or None."""
+def _op(cmd: str, api_key: str) -> ET.Element:
+    """Panorama op command — returns the <result> element or raises PanoramaAPIError."""
     host = os.getenv("PANORAMA_HOST")
-    if not host: return None
+    if not host: raise PanoramaAPIError("PANORAMA_HOST not set")
     start_time = time.time()
     try:
         host_clean = host.strip().split('/')[0]
         resp = requests.get(
             f"https://{host_clean}/api/",
             params={"type": "op", "cmd": cmd, "key": api_key},
-            verify=False,
+            verify=os.getenv("IMPACT_VERIFY_SSL", "true").lower() == "true",
             timeout=30,
         )
         duration = int((time.time() - start_time) * 1000)
@@ -165,16 +168,19 @@ def _op(cmd: str, api_key: str) -> ET.Element | None:
             "status": resp.status_code,
             "duration_ms": duration
         })
-        logger.debug(f"Panorama response: {resp.text}", extra={"payload": resp.text})
         root = ET.fromstring(resp.text)
-        return root.find("result")
+        if root.get("status") != "success":
+             raise PanoramaAPIError(f"OP failed: {cmd}")
+        res = root.find("result")
+        if res is None: raise PanoramaAPIError(f"No result in response for {cmd}")
+        return res
     except Exception as e:
-        logger.warning(f"Panorama op error: {e}")
-        return None
+        if isinstance(e, PanoramaAPIError): raise e
+        raise PanoramaAPIError(f"OP error ({cmd}): {e}")
 
 
 def _op_targeted(cmd: str, api_key: str, target: str) -> ET.Element | None:
-    """Like _op but targets a specific managed firewall by serial number."""
+    """Like _op but targets a specific managed firewall by serial number. Returns None if unreachable."""
     host = os.getenv("PANORAMA_HOST")
     if not host: return None
     try:
@@ -182,1044 +188,14 @@ def _op_targeted(cmd: str, api_key: str, target: str) -> ET.Element | None:
         resp = requests.get(
             f"https://{host_clean}/api/",
             params={"type": "op", "cmd": cmd, "key": api_key, "target": target},
-            verify=False,
+            verify=os.getenv("IMPACT_VERIFY_SSL", "true").lower() == "true",
             timeout=20,
         )
         if not resp.text or not resp.text.strip():
             return None
         root = ET.fromstring(resp.text)
         if root.attrib.get("status") == "error":
-            msg = root.findtext(".//msg/line") or root.findtext(".//msg") or "unknown error"
-            logger.debug(f"Targeted op skipped ({target}): {msg}")
             return None
         return root.find("result")
-    except Exception as e:
-        logger.warning(f"Panorama targeted op error ({target}): {e}")
+    except Exception:
         return None
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# FIREWALL INTERFACE INVENTORY
-# ──────────────────────────────────────────────────────────────────────────────
-
-def fetch_firewall_interfaces(api_key: str) -> list[dict]:
-    """
-    Fetch all managed firewall interface IP addresses from Panorama.
-
-    For each connected managed device, collects:
-      - Device metadata: serial, hostname, model, management_ip, device_group,
-        os_version, ha_state, ha_enabled
-      - Per-interface: name, ipv4 (with prefix), ipv6 list
-
-    Skips disconnected/unreachable devices gracefully.
-    Returns a list of device dicts ordered by hostname.
-    """
-    try:
-        result = _op("<show><devices><all/></devices></show>", api_key)
-    except Exception as e:
-        logger.error(f"Failed to fetch Panorama devices: {e}")
-        return []
-
-    if result is None:
-        logger.warning("fetch_firewall_interfaces: no result from Panorama device list")
-        return []
-
-    entries = result.findall(".//entry")
-    if not entries:
-        entries = result.findall("./entry")
-
-    processed_serials: set[str] = set()
-    devices: list[dict] = []
-
-    for dev in entries:
-        serial   = dev.get("name", "") or dev.findtext("serial", "")
-        hostname = dev.findtext("hostname", "")
-
-        if not serial or not hostname:
-            continue
-        if serial in processed_serials:
-            continue
-
-        # Skip pseudo-entries (no model means it's a sub-system entry)
-        model = dev.findtext("model", "")
-        if not model and not hostname:
-            continue
-
-        mgmt_ip      = dev.findtext("ip-address", "")
-        device_group = dev.findtext("device-group", "") or "N/A"
-        os_version   = dev.findtext("os-version", "")
-        ha_state     = dev.findtext("ha-state", "")
-        ha_enabled   = dev.findtext("ha-enabled", "") == "yes"
-
-        # Seed iface_map with management interface from device list
-        iface_map: dict[str, dict] = {}
-        _SKIP_VALUES = {"", "unknown", "none", "n/a", "0.0.0.0", "::", "::/0"}
-
-        if mgmt_ip and mgmt_ip.lower() not in _SKIP_VALUES:
-            iface_map["management"] = {"name": "management", "ipv4": mgmt_ip, "ipv6": []}
-
-        mgmt_v6 = (dev.findtext("ipv6-address") or "").strip()
-        if mgmt_v6 and mgmt_v6.lower() not in _SKIP_VALUES:
-            iface_map.setdefault("management", {"name": "management", "ipv4": "", "ipv6": []})
-            iface_map["management"]["ipv6"].append(mgmt_v6)
-
-        # Fetch detailed interface info from the device itself
-        iface_result = _op_targeted(
-            "<show><interface>all</interface></show>", api_key, serial
-        )
-        if iface_result is not None:
-            for entry in iface_result.findall(".//entry"):
-                name = entry.findtext("name")
-                if not name:
-                    continue
-                iface_map.setdefault(name, {"name": name, "ipv4": "", "ipv6": [], "zone": ""})
-
-                # IPv4
-                v4 = (entry.findtext("ip") or "").strip()
-                if v4 and v4.lower() not in _SKIP_VALUES:
-                    iface_map[name]["ipv4"] = v4  # may include /prefix
-
-                # IPv6 — handles <addr6>, <ipv6>, <ipv6ll> with nested member/entry
-                for tag in ("addr6", "ipv6", "ipv6ll"):
-                    node = entry.find(tag)
-                    if node is None:
-                        continue
-                    sub_nodes = node.findall(".//member") + node.findall(".//entry")
-                    if sub_nodes:
-                        for sub in sub_nodes:
-                            val = (sub.text or sub.get("name") or "").strip()
-                            if val and val.lower() not in _SKIP_VALUES:
-                                if val not in iface_map[name]["ipv6"]:
-                                    iface_map[name]["ipv6"].append(val)
-                    elif node.text:
-                        val = node.text.strip()
-                        if val.lower() not in _SKIP_VALUES and val not in iface_map[name]["ipv6"]:
-                            iface_map[name]["ipv6"].append(val)
-
-        # Fetch zone information to map interfaces to zones.
-        # Try <show><zone></show> first.
-        # For multi-vsys, this might need to be run per-vsys, but usually Panorama
-        # targeted op returns the aggregate or vsys1.
-        zone_result = _op_targeted("<show><zone></show>", api_key, serial)
-        if zone_result is not None:
-            # We use a case-insensitive map for interface lookups to be safe
-            iface_keys_lower = {k.lower(): k for k in iface_map.keys()}
-
-            for entry in zone_result.findall(".//entry"):
-                zone_name = entry.get("name") or entry.findtext("name")
-                if not zone_name:
-                    continue
-
-                # Search for interface members using multiple common XPaths
-                # Some versions use <interface><member>..., others just <member>...
-                # We also look for <vsys><entry><interface><member>... for multi-vsys responses
-                iface_nodes = (
-                    entry.findall(".//interface/member") +
-                    entry.findall("./member") +
-                    entry.findall(".//vsys/entry/interface/member")
-                )
-
-                for iface_node in iface_nodes:
-                    iface_name_raw = (iface_node.text or "").strip()
-                    if not iface_name_raw:
-                        continue
-
-                    # Case-insensitive match against our collected interfaces
-                    if iface_name_raw.lower() in iface_keys_lower:
-                        actual_key = iface_keys_lower[iface_name_raw.lower()]
-                        iface_map[actual_key]["zone"] = zone_name
-                        logger.debug(f"Mapped {actual_key} to zone {zone_name} on {hostname}")
-
-        # Only include devices that have at least one IP
-        interfaces = [v for v in iface_map.values() if v["ipv4"] or v["ipv6"]]
-        if not interfaces:
-            continue
-
-        devices.append({
-            "serial":       serial,
-            "hostname":     hostname,
-            "model":        model,
-            "management_ip": mgmt_ip,
-            "device_group": device_group,
-            "os_version":   os_version,
-            "ha_state":     ha_state,
-            "ha_enabled":   ha_enabled,
-            "interfaces":   interfaces,
-        })
-        processed_serials.add(serial)
-        logger.info(f"fetch_firewall_interfaces: {hostname} ({serial}) — {len(interfaces)} interfaces")
-
-    devices.sort(key=lambda d: d["hostname"].lower())
-    logger.info(f"fetch_firewall_interfaces: collected {len(devices)} devices")
-    return devices
-
-
-def search_firewall_interfaces(ip: str, devices: list[dict]) -> list[dict]:
-    """
-    Search the interface inventory for a matching IP address.
-    Strips any /prefix from stored interface IPs before comparing.
-    Returns a list of match dicts: {device, interface_name, ipv4, ipv6}.
-    """
-    import ipaddress as _ipa
-    try:
-        query = _ipa.ip_address(ip)
-    except ValueError:
-        return []
-
-    matches = []
-    for dev in devices:
-        for iface in dev.get("interfaces", []):
-            raw_v4 = iface.get("ipv4", "")
-            bare_v4 = raw_v4.split("/")[0].strip()
-            if bare_v4:
-                try:
-                    if _ipa.ip_address(bare_v4) == query:
-                        matches.append({"device": dev, "interface": iface})
-                        continue
-                except ValueError:
-                    pass
-
-            for raw_v6 in iface.get("ipv6", []):
-                bare_v6 = raw_v6.split("/")[0].strip()
-                try:
-                    if _ipa.ip_address(bare_v6) == query:
-                        matches.append({"device": dev, "interface": iface})
-                        break
-                except ValueError:
-                    pass
-
-    return matches
-
-
-def connectivity_check() -> tuple[bool, str]:
-    """Return (ok, detail_string). Lightweight auth + version check."""
-    key = get_api_key()
-    if not key:
-        return False, "Cannot obtain API key — check PANORAMA_HOST/USERNAME/PASSWORD"
-    return connectivity_check_with_key(key)
-
-
-def connectivity_check_with_key(key: str) -> tuple[bool, str]:
-    """Version check using an already-obtained API key."""
-    result = _op("<show><system><info></info></system></show>", key)
-    if result is not None:
-        hostname = result.findtext(".//hostname", "Unknown")
-        version  = result.findtext(".//sw-version", "Unknown")
-        model    = result.findtext(".//model", "")
-        return True, f"{hostname}  ·  {model}  ·  PAN-OS {version}"
-    return False, "API key valid but op command failed"
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# DEVICE GROUPS
-# ──────────────────────────────────────────────────────────────────────────────
-
-def get_device_groups(api_key: str) -> list[str]:
-    """Return a list of all device group names from Panorama."""
-    result = _config_get(f"{BASE_XPATH}/device-group", api_key)
-    if result is None:
-        return []
-    # Response shape: <result><device-group><entry name="...">
-    # Must search device-group/entry, NOT just entry
-    entries = result.findall("device-group/entry")
-    if not entries:
-        # Some Panorama versions return entries directly under result
-        entries = result.findall("entry")
-    return sorted(e.get("name", "") for e in entries if e.get("name"))
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# ADDRESS OBJECTS & GROUPS
-# ──────────────────────────────────────────────────────────────────────────────
-
-def _unwrap(result, tag):
-    """Unwrap Panorama's extra nesting: <result><tag><entry...> -> parent of <entry>."""
-    if result is None:
-        return None
-    if result.find("entry") is not None:
-        return result
-    child = result.find(tag)
-    return child if child is not None else result
-
-
-def _parse_address_entries(parent):
-    """Parse <address><entry name=\'...\'><ip-netmask>...</ip-netmask></entry> blocks."""
-    result = {}
-    if parent is None:
-        return result
-    for entry in parent.findall("entry"):
-        name = entry.get("name", "")
-        ips  = []
-        for tag in ("ip-netmask", "ip-range", "fqdn", "ip-wildcard"):
-            val = entry.findtext(tag)
-            if val:
-                ips.append(val.strip())
-        result[name] = ips
-    return result
-
-
-
-def _parse_group_entries(parent: ET.Element | None) -> dict[str, list[str]]:
-    """Parse <address-group> entries into {group_name: [member_names]}."""
-    result = {}
-    if parent is None:
-        return result
-    for entry in parent.findall("entry"):
-        name    = entry.get("name", "")
-        members = [m.text for m in entry.findall(".//static/member") if m.text]
-        result[name] = members
-    return result
-
-
-def get_address_objects_and_groups(
-    api_key: str,
-    device_groups: list[str],
-) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
-    """
-    Return (address_objects, address_groups) merged from:
-      - /config/shared/address
-      - /config/shared/address-group
-      - each device group's address and address-group
-
-    address_objects: {name: [ip_string, ...]}
-    address_groups:  {name: [member_name, ...]}
-    """
-    objects: dict[str, list[str]] = {}
-    groups:  dict[str, list[str]] = {}
-
-    # Shared level
-    r = _config_get("/config/shared/address", api_key)
-    objects.update(_parse_address_entries(_unwrap(r, "address")))
-    r = _config_get("/config/shared/address-group", api_key)
-    groups.update(_parse_group_entries(_unwrap(r, "address-group")))
-
-    # Per device-group level
-    dg_base = f"{BASE_XPATH}/device-group"
-    for dg in device_groups:
-        r = _config_get(f"{dg_base}/entry[@name='{dg}']/address", api_key)
-        objects.update(_parse_address_entries(_unwrap(r, "address")))
-        r = _config_get(f"{dg_base}/entry[@name='{dg}']/address-group", api_key)
-        groups.update(_parse_group_entries(_unwrap(r, "address-group")))
-
-    return objects, groups
-
-
-def resolve_name(
-    name: str,
-    objects: dict[str, list[str]],
-    groups:  dict[str, list[str]],
-    visited: set | None = None,
-) -> list[str]:
-    """
-    Recursively expand an address object name or group name to IP strings.
-    Prevents infinite loops via the visited set.
-    """
-    if visited is None:
-        visited = set()
-    if name in visited:
-        return []
-    visited.add(name)
-
-    if name in objects:
-        return list(objects[name])
-    if name in groups:
-        result = []
-        for member in groups[name]:
-            result.extend(resolve_name(member, objects, groups, visited))
-        return result
-    return []
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# SERVICE OBJECTS
-# ──────────────────────────────────────────────────────────────────────────────
-
-# Built-in service names Panorama treats as special
-_BUILTIN_SERVICES = {
-    "any":                 [("any", "any")],
-    "application-default": [("any", "any")],   # can't resolve without app context
-    "service-http":        [("tcp", "80")],
-    "service-https":       [("tcp", "443")],
-}
-
-
-def _parse_service_entries(parent: ET.Element | None) -> dict[str, list[tuple[str, str]]]:
-    """
-    Parse <service> entries into {name: [(protocol, port_str), ...]}.
-    port_str may be a single port "443", a range "8080-8090", or
-    a comma-separated list "80,443,8080".
-    """
-    result = {}
-    if parent is None:
-        return result
-    for entry in parent.findall("entry"):
-        name  = entry.get("name", "")
-        ports = []
-        for proto in ("tcp", "udp"):
-            port_el = entry.find(f"protocol/{proto}/port")
-            if port_el is not None and port_el.text:
-                ports.append((proto, port_el.text.strip()))
-        if ports:
-            result[name] = ports
-    return result
-
-
-def _parse_service_group_entries(parent: ET.Element | None) -> dict[str, list[str]]:
-    """Parse <service-group> entries into {name: [member_name, ...]}."""
-    result = {}
-    if parent is None:
-        return result
-    for entry in parent.findall("entry"):
-        name    = entry.get("name", "")
-        members = [m.text for m in entry.findall(".//members/member") if m.text]
-        result[name] = members
-    return result
-
-
-def get_services(
-    api_key:       str,
-    device_groups: list[str],
-) -> tuple[dict[str, list[tuple[str, str]]], dict[str, list[str]]]:
-    """
-    Return (service_objects, service_groups) merged from shared + device groups.
-    service_objects: {name: [(protocol, port_str), ...]}
-    service_groups:  {name: [member_name, ...]}
-    """
-    objects: dict[str, list[tuple[str, str]]] = dict(_BUILTIN_SERVICES)
-    groups:  dict[str, list[str]]             = {}
-
-    r = _config_get("/config/shared/service", api_key)
-    objects.update(_parse_service_entries(_unwrap(r, "service")))
-    r = _config_get("/config/shared/service-group", api_key)
-    groups.update(_parse_service_group_entries(_unwrap(r, "service-group")))
-
-    dg_base = f"{BASE_XPATH}/device-group"
-    for dg in device_groups:
-        r = _config_get(f"{dg_base}/entry[@name='{dg}']/service", api_key)
-        objects.update(_parse_service_entries(_unwrap(r, "service")))
-        r = _config_get(f"{dg_base}/entry[@name='{dg}']/service-group", api_key)
-        groups.update(_parse_service_group_entries(_unwrap(r, "service-group")))
-
-    return objects, groups
-
-
-def resolve_service(
-    name:    str,
-    svc_obj: dict[str, list[tuple[str, str]]],
-    svc_grp: dict[str, list[str]],
-    visited: set | None = None,
-) -> list[tuple[str, str]]:
-    """
-    Recursively expand a service name to [(protocol, port_str), ...].
-    Returns [("any","any")] for 'any' / 'application-default'.
-    """
-    if visited is None:
-        visited = set()
-    if name in visited:
-        return []
-    visited.add(name)
-
-    if name in svc_obj:
-        return list(svc_obj[name])
-    if name in svc_grp:
-        result = []
-        for member in svc_grp[name]:
-            result.extend(resolve_service(member, svc_obj, svc_grp, visited))
-        return result
-    return []
-
-
-def _port_in_portstr(query_port: int, port_str: str) -> bool:
-    """
-    Check if query_port is covered by port_str.
-    port_str may be: "443", "8080-8090", "80,443,8080-8090"
-    """
-    for segment in port_str.split(","):
-        segment = segment.strip()
-        if "-" in segment:
-            try:
-                lo, hi = segment.split("-", 1)
-                if int(lo) <= query_port <= int(hi):
-                    return True
-            except ValueError:
-                pass
-        else:
-            try:
-                if int(segment) == query_port:
-                    return True
-            except ValueError:
-                pass
-    return False
-
-
-def service_matches(
-    query_proto: str,          # "tcp", "udp", or "any"
-    query_port:  int | None,   # None means "any port"
-    service_names: list[str],
-    svc_obj: dict[str, list[tuple[str, str]]],
-    svc_grp: dict[str, list[str]],
-) -> bool:
-    """
-    Return True if the query proto/port is covered by any service in service_names.
-    'any' and 'application-default' always match.
-    If query_port is None (user left it blank) we skip port filtering entirely.
-    """
-    # No port filter requested — skip service matching
-    if query_port is None:
-        return True
-
-    if not service_names or "any" in service_names or "application-default" in service_names:
-        return True
-
-    for svc_name in service_names:
-        for (proto, port_str) in resolve_service(svc_name, svc_obj, svc_grp):
-            # Protocol check
-            if proto != "any" and query_proto != "any" and proto != query_proto:
-                continue
-            # Port check
-            if port_str == "any" or query_port is None:
-                return True
-            if _port_in_portstr(query_port, port_str):
-                return True
-
-    return False
-
-def _ip_in_value(query_ip: str, value: str) -> bool:
-    """
-    Check whether query_ip falls within a Panorama address value.
-    Supports: ip-netmask (10.0.0.0/8), ip-range (10.1.1.1-10.1.1.50),
-              exact IP, FQDN (skip — can't resolve at audit time).
-    """
-    value = value.strip()
-    if not value:
-        return False
-    try:
-        ip = ipaddress.ip_address(query_ip)
-        if "/" in value:
-            return ip in ipaddress.ip_network(value, strict=False)
-        if "-" in value:
-            parts = value.split("-", 1)
-            if len(parts) == 2:
-                lo = ipaddress.ip_address(parts[0].strip())
-                hi = ipaddress.ip_address(parts[1].strip())
-                return lo <= ip <= hi
-        # Exact IP
-        return ip == ipaddress.ip_address(value)
-    except ValueError:
-        return False  # FQDN or wildcard — skip
-
-
-def ip_matches_address_list(
-    query_ip: str,
-    address_names: list[str],
-    objects: dict[str, list[str]],
-    groups:  dict[str, list[str]],
-    negate:  bool = False,
-) -> bool:
-    """
-    Return True if query_ip is covered by any name in address_names.
-    'any' always matches. Handles negation flag.
-    """
-    if not address_names or "any" in address_names:
-        matched = True
-    else:
-        matched = False
-        for name in address_names:
-            values = resolve_name(name, objects, groups)
-            if any(_ip_in_value(query_ip, v) for v in values):
-                matched = True
-                break
-
-    return (not matched) if negate else matched
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# SECURITY RULES
-# ──────────────────────────────────────────────────────────────────────────────
-
-def _members(entry: ET.Element, tag: str) -> list[str]:
-    return [m.text for m in entry.findall(f".//{tag}/member") if m.text]
-
-
-def get_managed_devices(api_key: str) -> list[dict]:
-    """
-    Fetch the list of managed firewalls from Panorama.
-    Returns a list of dicts with keys: serial, hostname, model, ip_address, device_group.
-    """
-    logger.debug("\n" + "="*60)
-    logger.debug("GET_MANAGED_DEVICES CALLED")  # Simple print that always shows
-    logger.debug("="*60 + "\n")
-    
-    devices = []
-    try:
-        logger.debug("[DEVICES] Calling Panorama op command: <show><devices><all/></devices></show>")
-        result = _op("<show><devices><all/></devices></show>", api_key)
-        
-        if result is None:
-            logger.error("[DEVICES] ERROR: result is None from _op()")
-            logger.warning("No result from Panorama devices op command")
-            return devices
-        
-        # Log the entire XML structure for debugging
-        xml_str = ET.tostring(result, encoding='unicode')
-        # print(f"[DEVICES] XML Response (first 2000 chars):\n{xml_str[:2000]}\n")
-        logger.debug(f"Panorama op response (first 2000 chars): {xml_str[:2000]}")
-        logger.info(f"Result tag: {result.tag}, children tags: {[child.tag for child in result]}")
-        
-        # Try multiple XPath patterns (Panorama versions vary)
-        possible_paths = [
-            ".//entry",             # Try generic first
-            ".//device/entry",      # Most common nested structure
-            "./device/entry",       # Without leading dots
-            "devices/entry",        # Alternative nesting
-            "./entry",              # Direct children
-        ]
-        
-        entries = []
-        for xpath in possible_paths:
-            entries = result.findall(xpath)
-            logger.debug(f"[DEVICES] XPath '{xpath}' found {len(entries)} entries")
-            logger.debug(f"XPath '{xpath}' found {len(entries)} entries")
-            if entries:
-                logger.info(f"[DEVICES] ✓ SUCCESS: Found {len(entries)} devices using xpath: {xpath}")
-                logger.info(f"✓ Found {len(entries)} device(s) using xpath: {xpath}")
-                break
-        
-        if not entries:
-            # Try to list all descendants to understand the structure
-            all_descendants = list(result.iter())
-            logger.error(f"[DEVICES] FAILED: No entries found. Total XML descendants: {len(all_descendants)}")
-            logger.debug(f"[DEVICES] Descendant tag names: {set(e.tag for e in all_descendants)}")
-            logger.warning(f"No device entries found using any XPath. Total descendants in XML: {len(all_descendants)}")
-            logger.warning(f"Descendant tags: {set(e.tag for e in all_descendants)}")
-            logger.warning(f"Full XML (first 3000 chars): {xml_str[:3000]}")
-            return devices
-        
-        logger.info(f"[DEVICES] Processing {len(entries)} device entries...")
-        for entry in entries:
-            serial = entry.get("name", "")
-            if not serial:
-                logger.debug(f"Skipping entry with no 'name' attribute: {ET.tostring(entry, encoding='unicode')[:200]}")
-                continue
-            
-            # Filter to only actual device entries (must have hostname or model)
-            # Skip subsystem entries like vm_series, dlp, vsys1, openconfig, etc
-            hostname = entry.findtext("hostname") or ""
-            model = entry.findtext("model") or ""
-            
-            if not hostname and not model:
-                logger.debug(f"[DEVICES] SKIPPING '{serial}' - no hostname or model (likely subsystem entry)")
-                continue
-            
-            # Debug: print all available fields
-            device_group_val = entry.findtext("device-group") or ""
-            ha_state_val = entry.findtext("ha-state") or ""
-            ha_enabled_val = entry.findtext("ha-enabled") or ""
-            
-            logger.debug(f"[DEVICES] Serial: {serial}, DG field: '{device_group_val}', HA-state: '{ha_state_val}', HA-enabled: '{ha_enabled_val}'")
-            
-            device_info = {
-                "serial":        serial,
-                "hostname":      hostname,
-                "model":         model,
-                "ip_address":    entry.findtext("ip-address") or "",
-                "device_group":  device_group_val or "N/A",
-                "os_version":    entry.findtext("os-version") or "",
-                "ha_state":      ha_state_val,
-                "ha_enabled":    ha_enabled_val == "yes",
-            }
-            devices.append(device_info)
-            logger.info(f"[DEVICES] Added: {serial} ({model}) - Hostname: {hostname} - HA: {device_info.get('ha_state', 'N/A')}")
-            logger.debug(f"Added device: {serial} ({device_info.get('model', 'unknown')})")
-        
-        # Sort by hostname, then by model
-        devices.sort(key=lambda d: (d.get("hostname", "").lower(), d.get("model", "")))
-        logger.debug(f"[DEVICES] Sorted {len(devices)} devices alphabetically\n")
-        
-        logger.info(f"[DEVICES] SUCCESS: Fetched {len(devices)} managed devices\n")
-        logger.info(f"✓ Fetched {len(devices)} managed device(s) from Panorama")
-    except Exception as e:
-        logger.error(f"[DEVICES] EXCEPTION: {e}")
-        import traceback
-        logger.debug(traceback.format_exc())
-        logger.error(f"Failed to fetch managed devices: {e}", exc_info=True)
-    
-    return devices
-
-
-def _parse_rules(
-    parent:       ET.Element | None,
-    device_group: str,
-    rulebase:     str,
-) -> list[dict]:
-    """Parse a <rules> element into a list of rule dicts with all available fields."""
-    if parent is None:
-        return []
-    rules = []
-    for entry in parent.findall("entry"):
-        name = entry.get("name", "unnamed")
-        rules.append({
-            # Identifiers
-            "device_group": device_group,
-            "rulebase":     rulebase,
-            "name":         name,
-            
-            # Action & Control
-            "action":       entry.findtext("action") or "allow",
-            "disabled":     entry.findtext("disabled") == "yes",
-            
-            # Source
-            "source":          _members(entry, "source"),
-            "source_negate":   entry.findtext("negate-source") == "yes",
-            "from_zones":      _members(entry, "from"),
-            "source_user":     _members(entry, "source-user"),
-            "source_user_negate": entry.findtext("negate-source-user") == "yes",
-            
-            # Destination
-            "destination":     _members(entry, "destination"),
-            "dest_negate":     entry.findtext("negate-destination") == "yes",
-            "to_zones":        _members(entry, "to"),
-            
-            # What
-            "application":     _members(entry, "application"),
-            "service":         _members(entry, "service"),
-            "category":        _members(entry, "category"),
-            
-            # Source/Dest Device (for HIP matching)
-            "source_device":   _members(entry, "source-device"),
-            "source_device_negate": entry.findtext("negate-source-device") == "yes",
-            "destination_device": _members(entry, "destination-device"),
-            "destination_device_negate": entry.findtext("negate-destination-device") == "yes",
-            
-            # Security Controls & Logging
-            "profile_group":   entry.findtext(".//profile-setting/group/member") or "",
-            "hip_profiles":    _members(entry, ".//hip-profiles/member") if entry.find(".//hip-profiles") is not None else [],
-            "log_start":       entry.findtext("log-start") == "yes",
-            "log_end":         entry.findtext("log-end") == "yes",
-            "log_setting":     entry.findtext("log-setting") or "",
-            
-            # Schedule, QoS, etc
-            "schedule":        entry.findtext("schedule") or "",
-            "qos_type":        entry.findtext(".//qos/type") or "",
-            "qos_marking":     entry.findtext(".//qos/marking") or "",
-            
-            # Metadata
-            "description":     entry.findtext("description") or "",
-            "tag":             _members(entry, "tag"),
-        })
-    return rules
-
-
-def get_all_security_rules(
-    api_key:       str,
-    device_groups: list[str],
-    progress_cb=None,
-) -> list[dict]:
-    """
-    Fetch all security rules in policy evaluation order:
-      1. Shared pre-rules
-      2. Per-device-group pre-rules (in order)
-      3. Per-device-group post-rules (in order)
-      4. Shared post-rules
-
-    progress_cb(step, total, message) — optional progress callback.
-    """
-    all_rules = []
-    total     = 2 + len(device_groups) * 2   # shared pre/post + dg pre/post
-    step      = 0
-
-    def _progress(msg):
-        nonlocal step
-        step += 1
-        if progress_cb:
-            progress_cb(step, total, msg)
-
-    # Shared pre
-    r = _config_get(f"{BASE_XPATH}/pre-rulebase/security/rules", api_key)
-    all_rules.extend(_parse_rules(_unwrap(r, "rules"), "shared", "pre"))
-    _progress("Shared pre-rules")
-
-    # Per device-group pre
-    dg_base = f"{BASE_XPATH}/device-group"
-    for dg in device_groups:
-        r = _config_get(f"{dg_base}/entry[@name='{dg}']/pre-rulebase/security/rules", api_key)
-        all_rules.extend(_parse_rules(_unwrap(r, "rules"), dg, "pre"))
-        _progress(f"{dg} pre-rules")
-
-    # Per device-group post
-    for dg in device_groups:
-        r = _config_get(f"{dg_base}/entry[@name='{dg}']/post-rulebase/security/rules", api_key)
-        all_rules.extend(_parse_rules(_unwrap(r, "rules"), dg, "post"))
-        _progress(f"{dg} post-rules")
-
-    # Shared post
-    r = _config_get(f"{BASE_XPATH}/post-rulebase/security/rules", api_key)
-    all_rules.extend(_parse_rules(_unwrap(r, "rules"), "shared", "post"))
-    _progress("Shared post-rules")
-
-    return all_rules
-
-
-def get_device_to_group_mapping(api_key: str, device_groups: list[str]) -> dict[str, str]:
-    """
-    Build a mapping of device serial -> device group by querying each device group.
-    Returns {serial: device_group_name}.
-    """
-    logger.info("\n[MAPPING] Building device-to-device-group mapping...")
-    mapping = {}
-    
-    dg_base = f"{BASE_XPATH}/device-group"
-    for dg in device_groups:
-        logger.debug(f"[MAPPING] Querying device group: {dg}")
-        try:
-            # Query the devices entry for this device group
-            xpath = f"{dg_base}/entry[@name='{dg}']/devices"
-            result = _config_get(xpath, api_key)
-            
-            if result is None:
-                logger.debug(f"[MAPPING]   No devices in {dg}")
-                continue
-            
-            # Parse device entries
-            entries = result.findall(".//entry")
-            if not entries:
-                entries = result.findall("entry")
-            
-            logger.debug(f"[MAPPING]   Found {len(entries)} device entries in {dg}")
-            
-            for entry in entries:
-                serial = entry.get("name", "")
-                if serial:
-                    mapping[serial] = dg
-                    logger.debug(f"[MAPPING]   - {serial} → {dg}")
-        except Exception as e:
-            logger.debug(f"[MAPPING]   Error querying {dg}: {e}")
-            logger.debug(f"Error querying device group {dg}: {e}")
-    
-    logger.debug(f"[MAPPING] Complete: {len(mapping)} device(s) mapped to device groups\n")
-    return mapping
-
-
-def get_device_vsys(api_key: str, device_serial: str) -> list[str]:
-    """
-    Fetch all virtual systems (vsys) for a specific managed device.
-    Returns a list of vsys names (e.g., ['vsys1', 'vsys2', ...]).
-    """
-    logger.debug(f"[VSYS] Fetching vsys for device: {device_serial}")
-    vsys_list = []
-    
-    try:
-        # Query vsys entries for this device
-        xpath = f"/config/devices/entry[@name='{device_serial}']/vsys"
-        result = _config_get(xpath, api_key)
-        
-        if result is None:
-            logger.debug(f"[VSYS] No vsys info found for {device_serial}")
-            return vsys_list
-        
-        # Parse vsys entries
-        entries = result.findall(".//entry")
-        if not entries:
-            entries = result.findall("entry")
-        
-        logger.debug(f"[VSYS] Found {len(entries)} vsys entries")
-        
-        for entry in entries:
-            vsys_name = entry.get("name", "")
-            if vsys_name:
-                vsys_list.append(vsys_name)
-                logger.debug(f"[VSYS]   - {vsys_name}")
-    except Exception as e:
-        logger.debug(f"[VSYS] Error fetching vsys: {e}")
-        logger.debug(f"Error fetching vsys for device {device_serial}: {e}")
-    
-    # If no vsys found, assume vsys1 (default)
-    if not vsys_list:
-        logger.debug(f"[VSYS] No vsys found, assuming default vsys1")
-        vsys_list = ["vsys1"]
-    
-    logger.debug(f"[VSYS] Available vsys: {vsys_list}\n")
-    return vsys_list
-
-
-def get_device_vsys_policies(
-    api_key:        str,
-    device_serial:  str,
-    vsys_name:      str,
-    device_groups:  list[str] = None,  # No longer needed, kept for backward compat
-    progress_cb=None,
-) -> list[dict]:
-    """
-    Fetch security policies for a specific vsys on a managed device.
-    Queries device directly—no need to query device groups.
-    Rules returned with rule numbers for easy correlation with device UI.
-    
-    Rules are returned in evaluation order:
-      1. Device shared pre-rules
-      2. vsys pre-rules
-      3. vsys post-rules
-      4. Device shared post-rules
-    """
-    logger.debug(f"[VSYS-POLICIES] Fetching {vsys_name} policies for device {device_serial}")
-    
-    all_rules = []
-    
-    # Device shared pre-rules (applies to all vsys on this device)
-    logger.debug(f"[VSYS-POLICIES]   Querying device shared pre-rules...")
-    r = _config_get(f"/config/devices/entry[@name='{device_serial}']/pre-rulebase/security/rules", api_key)
-    shared_pre = _parse_rules(_unwrap(r, "rules"), "shared", "pre")
-    all_rules.extend(shared_pre)
-    logger.debug(f"[VSYS-POLICIES]     Found {len(shared_pre)} rules")
-
-    # vsys pre-rules
-    logger.debug(f"[VSYS-POLICIES]   Querying {vsys_name} pre-rules...")
-    r = _config_get(f"/config/devices/entry[@name='{device_serial}']/vsys/entry[@name='{vsys_name}']/pre-rulebase/security/rules", api_key)
-    vsys_pre = _parse_rules(_unwrap(r, "rules"), vsys_name, "pre")
-    all_rules.extend(vsys_pre)
-    logger.debug(f"[VSYS-POLICIES]     Found {len(vsys_pre)} rules")
-
-    # vsys post-rules
-    logger.debug(f"[VSYS-POLICIES]   Querying {vsys_name} post-rules...")
-    r = _config_get(f"/config/devices/entry[@name='{device_serial}']/vsys/entry[@name='{vsys_name}']/post-rulebase/security/rules", api_key)
-    vsys_post = _parse_rules(_unwrap(r, "rules"), vsys_name, "post")
-    all_rules.extend(vsys_post)
-    logger.debug(f"[VSYS-POLICIES]     Found {len(vsys_post)} rules")
-
-    # Device shared post-rules (applies to all vsys on this device)
-    logger.debug(f"[VSYS-POLICIES]   Querying device shared post-rules...")
-    r = _config_get(f"/config/devices/entry[@name='{device_serial}']/post-rulebase/security/rules", api_key)
-    shared_post = _parse_rules(_unwrap(r, "rules"), "shared", "post")
-    all_rules.extend(shared_post)
-    logger.debug(f"[VSYS-POLICIES]     Found {len(shared_post)} rules")
-
-    # Add rule numbers for correlation with device UI
-    for idx, rule in enumerate(all_rules, 1):
-        rule["rule_number"] = idx
-
-    logger.info(f"[VSYS-POLICIES] SUCCESS: Fetched {len(all_rules)} total policies\n")
-    return all_rules
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# POLICY LOOKUP
-# ──────────────────────────────────────────────────────────────────────────────
-
-def find_matching_rules(
-    src_ip:      str,
-    dst_ip:      str,
-    rules:       list[dict],
-    objects:     dict[str, list[str]],
-    groups:      dict[str, list[str]],
-    svc_obj:     dict[str, list[tuple[str, str]]] | None = None,
-    svc_grp:     dict[str, list[str]]             | None = None,
-    dst_port:    int | None = None,      # None = skip port filtering
-    proto:       str        = "any",     # "tcp", "udp", or "any"
-    include_disabled: bool  = False,
-) -> list[dict]:
-    """
-    Walk rules in policy-evaluation order and return those that match
-    src_ip, dst_ip, and (optionally) dst_port/proto.
-    Marks the first matching enabled rule as 'first_match'.
-    """
-    if svc_obj is None:
-        svc_obj = dict(_BUILTIN_SERVICES)
-    if svc_grp is None:
-        svc_grp = {}
-
-    matches        = []
-    first_recorded = False
-
-    for rule in rules:
-        if rule.get("disabled") and not include_disabled:
-            continue
-
-        src_ok = ip_matches_address_list(
-            src_ip, rule["source"], objects, groups, rule.get("source_negate", False)
-        )
-        dst_ok = ip_matches_address_list(
-            dst_ip, rule["destination"], objects, groups, rule.get("dest_negate", False)
-        )
-        svc_ok = service_matches(proto, dst_port, rule["service"], svc_obj, svc_grp)
-
-        if src_ok and dst_ok and svc_ok:
-            r = dict(rule)
-            r["first_match"] = not first_recorded
-            if not first_recorded:
-                first_recorded = True
-            matches.append(r)
-
-    return matches
-
-
-def run_diagnostics(api_key: str) -> dict[str, str]:
-    """
-    Probe several XPath and op command variations and return raw XML/text
-    for each so the caller can inspect what Panorama actually returns.
-    This is used to tune XPaths for a specific Panorama installation.
-    """
-    host    = os.getenv("PANORAMA_HOST")
-    results = {}
-
-    def raw_get(xpath: str) -> str:
-        try:
-            resp = requests.get(
-                f"https://{host}/api/",
-                params={"type": "config", "action": "get",
-                        "xpath": xpath, "key": api_key},
-                verify=False, timeout=20,
-            )
-            return resp.text[:3000]
-        except Exception as e:
-            return f"ERROR: {e}"
-
-    def raw_op(cmd: str) -> str:
-        try:
-            resp = requests.get(
-                f"https://{host}/api/",
-                params={"type": "op", "cmd": cmd, "key": api_key},
-                verify=False, timeout=20,
-            )
-            return resp.text[:3000]
-        except Exception as e:
-            return f"ERROR: {e}"
-
-    # System info
-    results["op: show system info"] = raw_op("<show><system><info/></system></show>")
-
-    # Try to find device groups via several XPaths
-    results["/config/devices/entry[@name='localhost.localdomain']/device-group"] = \
-        raw_get("/config/devices/entry[@name='localhost.localdomain']/device-group")
-
-    # Explicit device-group names from the above
-    try:
-        import xml.etree.ElementTree as _ET2
-        xml_text = results["/config/devices/entry[@name='localhost.localdomain']/device-group"]
-        root = _ET2.fromstring(xml_text)
-        names = [e.get("name") for e in root.findall(".//device-group/entry") if e.get("name")]
-        if not names:
-            names = [e.get("name") for e in root.findall(".//entry") if e.get("name")]
-        results["[device group names found]"] = ", ".join(names) if names else "(none)"
-    except Exception as e:
-        results["[device group names found]"] = f"parse error: {e}"
-
-    results["/config/devices"] = raw_get("/config/devices")
-
-    # Shared address objects
-    results["/config/shared/address"] = raw_get("/config/shared/address")
-
-    # Shared pre/post rulebases
-    results["/config/shared/pre-rulebase/security/rules"] = \
-        raw_get("/config/shared/pre-rulebase/security/rules")
-
-    results["/config/shared/post-rulebase/security/rules"] = \
-        raw_get("/config/shared/post-rulebase/security/rules")
-
-    # Top-level config structure
-    results["/config"] = raw_get("/config")
-
-    return results
-
-# Convenience alias for FastAPI routers
-def get_client() -> str | None:
-    """Return the Panorama API key (equivalent to 'client' for this API)."""
-    return get_api_key()

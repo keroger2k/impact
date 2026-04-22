@@ -58,8 +58,11 @@
           content.textContent = "Loading configuration...";
           modal.show();
 
+          const csrfToken = document.cookie.split('; ').find(row => row.startsWith('csrf_token='));
+          const csrfHeader = csrfToken ? csrfToken.split('=')[1] : '';
           fetch(`/api/dnac/devices/${deviceId}/config`, {
-            headers: { 'Authorization': 'Bearer {{ token }}' }
+            headers: { 'X-CSRF-Token': csrfHeader },
+            headers: { }
           })
           .then(res => res.json())
           .then(data => {

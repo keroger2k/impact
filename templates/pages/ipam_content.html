@@ -90,7 +90,9 @@
 
         try {
             const hxHeaders = JSON.parse(document.body.getAttribute('hx-headers') || '{}');
-            const res = await fetch('/api/ipam/debug', { headers: hxHeaders });
+            const csrfToken = document.cookie.split('; ').find(row => row.startsWith('csrf_token='));
+            const csrfHeader = csrfToken ? csrfToken.split('=')[1] : '';
+            const res = await fetch('/api/ipam/debug', { headers: { ...hxHeaders, 'X-CSRF-Token': csrfHeader } });
             const data = await res.json();
 
             let html = '';
@@ -158,7 +160,7 @@
         let url = '/api/ipam/refresh';
         if (source) url += `?sources=${source}`;
 
-        const eventSource = new EventSource(url);
+        const eventSource = new EventSource(url, { withCredentials: true });
 
         eventSource.onmessage = function(event) {
             const data = JSON.parse(event.data);

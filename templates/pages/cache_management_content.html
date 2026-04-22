@@ -8,7 +8,7 @@
             <p class="mb-0 opacity-75">Inspect and refresh application cache objects across all systems.</p>
           </div>
           <button class="btn btn-outline-light"
-                  hx-post="/api/dnac/cache/refresh"
+                  hx-post="/api/cache/refresh/clear_all"
                   hx-swap="none"
                   hx-on::after-request="if(event.detail.successful) { alert('Full application cache (memory + disk) has been cleared.'); window.location.reload(); }">
             <i class=" ph ph-trash me-2"></i> Clear All Cache
@@ -45,7 +45,7 @@ function triggerIpamCacheRefresh() {
         <span>Running IPAM discovery — this may take a minute...</span>
       </div>`;
   }
-  const es = new EventSource('/api/ipam/refresh');
+  const es = new EventSource('/api/ipam/refresh', { withCredentials: true });
   const cleanup = () => { es.close(); };
   window.addEventListener('hashchange', cleanup, { once: true });
   window.addEventListener('popstate', cleanup, { once: true });
@@ -83,13 +83,6 @@ function triggerIpamCacheRefresh() {
 function triggerNexusCacheRefresh() {
   const resultsEl = document.getElementById('cache-results');
 
-  // Extract token from the hx-headers attribute set on <body> by base.html
-  let token = '';
-  try {
-    const hxHeaders = JSON.parse(document.body.getAttribute('hx-headers') || '{}');
-    token = (hxHeaders['Authorization'] || '').replace('Bearer ', '');
-  } catch (e) {}
-
   if (resultsEl) {
     resultsEl.innerHTML = `
       <div class="alert alert-info d-flex align-items-center gap-2 mb-0">
@@ -99,7 +92,7 @@ function triggerNexusCacheRefresh() {
   }
 
   const logs = [];
-  const es = new EventSource('/api/nexus/refresh');
+  const es = new EventSource('/api/nexus/refresh', { withCredentials: true });
   const cleanup = () => { es.close(); };
   window.addEventListener('hashchange', cleanup, { once: true });
   window.addEventListener('popstate', cleanup, { once: true });

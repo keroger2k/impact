@@ -5,6 +5,7 @@ import asyncio
 from auth import require_auth, SessionEntry
 from routers.commands import _run_on_device, guess_device_type
 from utils.routing import correlate_next_hops
+from cache import cache
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -35,7 +36,7 @@ Neighbor        V           AS MsgRcvd MsgSent   TblVer  InQ OutQ Up/Down  State
 
     loop = asyncio.get_event_loop()
     # Auto-detect device type or default to ios
-    devices = __import__("cache").cache.get("devices") or []
+    devices = cache.get("devices") or []
     device = next((d for d in devices if d.get("managementIpAddress") == ip), {})
     dtype = guess_device_type(device.get("platformId", ""))
 
@@ -94,7 +95,7 @@ P 10.30.0.0/16, 1 successors, FD is 3328
         })
 
     loop = asyncio.get_event_loop()
-    devices = __import__("cache").cache.get("devices") or []
+    devices = cache.get("devices") or []
     device = next((d for d in devices if d.get("managementIpAddress") == ip), {})
     dtype = guess_device_type(device.get("platformId", ""))
 
@@ -144,7 +145,7 @@ async def ospf_neighbors(
         })
 
     loop = asyncio.get_event_loop()
-    devices = __import__("cache").cache.get("devices") or []
+    devices = cache.get("devices") or []
     device = next((d for d in devices if d.get("managementIpAddress") == ip), {})
     dtype = guess_device_type(device.get("platformId", ""))
 

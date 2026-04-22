@@ -231,7 +231,6 @@ class NXOSCollector(BaseCollector):
                     "duration_ms": duration
                 })
                 self._save_raw(config, "show_running_config")
-                logger.debug(f"Nexus Config: {config}", extra={"payload": config})
             except Exception as exc:
                 duration = int((time.time() - start_time) * 1000)
                 logger.error("[%s] 'show running-config' failed: %s", self.hostname, exc, extra={
