@@ -68,6 +68,7 @@ async def list_devices(
     dnac = _get_dnac(session)
 
     devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "devices", lambda: dc.get_all_devices(dnac), TTL_DEVICES)
+    devices = devices or []
 
     filtered = devices
     if hostname:
@@ -85,7 +86,9 @@ async def list_devices(
             filtered = [d for d in filtered if d.get("reachabilityStatus") != "Reachable"]
 
     sites = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "sites", lambda: dc.get_site_cache(dnac), TTL_SITES)
+    sites = sites or []
     dev_site_map = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "device_site_map", lambda: dc.build_device_site_map(dnac, sites), TTL_SITES)
+    dev_site_map = dev_site_map or {}
 
     if site:
         filtered = [d for d in filtered if site.lower() in (dev_site_map.get(d.get("id")) or "").lower()]
@@ -140,6 +143,7 @@ async def device_stats(session: SessionEntry = Depends(require_auth)):
     loop    = asyncio.get_event_loop()
     dnac    = _get_dnac(session)
     devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "devices", lambda: dc.get_all_devices(dnac), TTL_DEVICES)
+    devices = devices or []
 
     from routers.nexus import get_cached_nexus_inventory
     nexus_devices = get_cached_nexus_inventory()
@@ -523,6 +527,7 @@ async def config_search(req: ConfigSearchRequest, session: SessionEntry = Depend
     loop    = asyncio.get_event_loop()
     dnac    = _get_dnac(session)
     devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "devices", lambda: dc.get_all_devices(dnac), TTL_DEVICES)
+    devices = devices or []
 
     filtered = devices
     q = lambda field, val: val and val.lower() in ((field or "").lower())
@@ -730,5 +735,6 @@ async def device_select_partial(request: Request, session: SessionEntry = Depend
     loop = asyncio.get_event_loop()
     dnac = _get_dnac(session)
     devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "devices", lambda: dc.get_all_devices(dnac), TTL_DEVICES)
+    devices = devices or []
     from templates_module import templates
     return templates.TemplateResponse(request, "partials/device_select.html", {"devices": devices})

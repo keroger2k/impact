@@ -31,17 +31,19 @@ class IPAMNode:
         self.device = ""
         self.logical_container = ""
         self.children_nodes: List['IPAMNode'] = []
-        self.conflicts = []
+        self.conflicts: List[str] = []
+        self.overlaps: List[str] = []
 
     def to_dict(self) -> Dict:
         return {
-            "cidr": self.cidr,
-            "source": self.source,
-            "display_name": self.display_name,
-            "site": self.site,
-            "device": self.device,
-            "logical_container": self.logical_container,
-            "conflicts": self.conflicts,
+            "cidr": self.cidr or "",
+            "source": self.source or "Unknown",
+            "display_name": self.display_name or "",
+            "site": self.site or "Unknown",
+            "device": self.device or "",
+            "logical_container": self.logical_container or "",
+            "conflicts": self.conflicts or [],
+            "overlaps": self.overlaps or [],
             "children": []
         }
 
@@ -118,8 +120,11 @@ class IPAMEngine:
             # Use cached devices/sites if available
             from cache import cache, TTL_DEVICES, TTL_SITES
             devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "devices", lambda: dc.get_all_devices(dnac), TTL_DEVICES)
+            devices = devices or []
             sites = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "sites", lambda: dc.get_site_cache(dnac), TTL_SITES)
+            sites = sites or []
             dev_site_map = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "device_site_map", lambda: dc.build_device_site_map(dnac, sites), TTL_SITES)
+            dev_site_map = dev_site_map or {}
 
             for dev in devices:
                 ip = dev.get('managementIpAddress')
@@ -211,11 +216,9 @@ class IPAMEngine:
                     # Check for conflicts
                     existing = unique_nets[s.cidr]
                     if existing.site != s.site and s.site != "Unknown":
-                        existing.conflicts.append({
-                            "type": "Site Conflict",
-                            "source": s.source,
-                            "val": s.site
-                        })
+                        existing.conflicts.append(
+                            f"Site Conflict: {s.source} reports site '{s.site}'"
+                        )
 
         # 2. Sort by prefix length (broadest first)
         v4_nets = sorted([n for n in unique_nets.values() if n.version == 4],

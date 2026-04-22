@@ -233,8 +233,8 @@
         const query = document.getElementById('ipam-filter').value.toLowerCase();
 
         const filteredData = {
-            ipv4: filterNodes(currentIPAMData.ipv4, query),
-            ipv6: filterNodes(currentIPAMData.ipv6, query)
+            ipv4: filterNodes(currentIPAMData.ipv4 || [], query),
+            ipv6: filterNodes(currentIPAMData.ipv6 || [], query)
         };
 
         const container = document.getElementById('ipam-results');
@@ -244,14 +244,15 @@
     }
 
     function filterNodes(nodes, query) {
+        if (!Array.isArray(nodes)) return [];
         if (!query) return nodes;
         return nodes.map(n => {
-            const matchSelf = n.cidr.toLowerCase().includes(query) ||
-                             n.site.toLowerCase().includes(query) ||
-                             n.device.toLowerCase().includes(query) ||
-                             n.display_name.toLowerCase().includes(query);
+            const matchSelf = (n.cidr || '').toLowerCase().includes(query) ||
+                             (n.site || '').toLowerCase().includes(query) ||
+                             (n.device || '').toLowerCase().includes(query) ||
+                             (n.display_name || '').toLowerCase().includes(query);
 
-            const filteredChildren = filterNodes(n.children, query);
+            const filteredChildren = filterNodes(n.children || [], query);
             if (matchSelf || filteredChildren.length > 0) {
                 return { ...n, children: filteredChildren, _match: true };
             }
@@ -359,11 +360,13 @@
             </div>
         `;
 
-        if (node.conflicts.length > 0) {
-            info.innerHTML += `<div class="text-danger small mt-1 font-weight-bold">⚠️ ${node.conflicts.join('<br>⚠️ ')}</div>`;
+        const conflicts = Array.isArray(node.conflicts) ? node.conflicts : [];
+        const overlaps = Array.isArray(node.overlaps) ? node.overlaps : [];
+        if (conflicts.length > 0) {
+            info.innerHTML += `<div class="text-danger small mt-1 font-weight-bold">⚠️ ${conflicts.join('<br>⚠️ ')}</div>`;
         }
-        if (node.overlaps.length > 0) {
-            info.innerHTML += `<div class="text-warning small mt-1">📝 ${node.overlaps.join('<br>📝 ')}</div>`;
+        if (overlaps.length > 0) {
+            info.innerHTML += `<div class="text-warning small mt-1">📝 ${overlaps.join('<br>📝 ')}</div>`;
         }
 
         left.appendChild(toggle);

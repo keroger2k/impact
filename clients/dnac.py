@@ -88,6 +88,9 @@ def get_all_devices(dnac) -> list[dict]:
                 "status": 500,
                 "duration_ms": duration
             })
+            # If first page failed, propagate so cache.get_or_set doesn't cache an empty list for 24h.
+            if not devices:
+                raise
             break
     return devices
 
