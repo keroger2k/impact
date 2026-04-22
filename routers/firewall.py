@@ -62,6 +62,8 @@ async def list_device_groups(request: Request, session: SessionEntry = Depends(r
     loop = asyncio.get_event_loop()
     dgs = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_device_groups", lambda: pc.get_device_groups(key), PAN_TTL)
 
+    if dgs is None: dgs = []
+
     if request.headers.get("HX-Request"):
         from templates_module import templates
         return templates.TemplateResponse(request, "partials/firewall_device_groups.html", {"items": dgs})
@@ -79,16 +81,18 @@ async def policy_lookup(req: PolicyLookupRequest, session: SessionEntry = Depend
     loop = asyncio.get_event_loop()
     all_dgs = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_device_groups", lambda: pc.get_device_groups(key), PAN_TTL)
 
+    if all_dgs is None: all_dgs = []
+
     if req.device_groups:
         invalid = [dg for dg in req.device_groups if dg not in all_dgs]
         if invalid:
             raise HTTPException(400, f"Unknown device groups: {invalid}")
 
     addr_data = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_addr", lambda: pc.get_address_objects_and_groups(key, all_dgs), PAN_TTL)
-    objects, groups = addr_data
+    objects, groups = addr_data if addr_data else ({}, {})
 
     svc_data = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_svc", lambda: pc.get_services(key, all_dgs), PAN_TTL)
-    svc_obj, svc_grp = svc_data
+    svc_obj, svc_grp = svc_data if svc_data else ({}, {})
 
     def load_rules():
         all_rules = pc.get_all_security_rules(key, all_dgs)
@@ -99,6 +103,8 @@ async def policy_lookup(req: PolicyLookupRequest, session: SessionEntry = Depend
         return {"dg_order": all_dgs, "by_dg": by_dg}
 
     rules_cache = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_rules", load_rules, PAN_TTL)
+    if not rules_cache: rules_cache = {"dg_order": [], "by_dg": {}}
+
     target_dgs = req.device_groups or None
     rules = _flatten_rules(rules_cache, target_dgs)
     matches = pc.find_matching_rules(
@@ -146,24 +152,14 @@ async def list_firewall_interfaces(request: Request, session: SessionEntry = Dep
     from cache import TTL_PAN_INTERFACES
     from dev import DEV_MODE
     if DEV_MODE:
-        # Generate some mock interfaces with mixed cases to test the new robust parser
         devices = [
             {
                 "hostname": "FW-EAST-01",
                 "serial": "SN001",
                 "device": {"hostname": "FW-EAST-01"},
                 "interfaces": [
-                    {"name": "Ethernet1/1", "ipv4": "10.100.1.1/24", "zone": "untrust"},
-                    {"name": "Ethernet1/2", "ipv4": "10.100.2.1/24", "zone": "trust"}
-                ]
-            },
-            {
-                "hostname": "FW-WEST-01",
-                "serial": "SN002",
-                "device": {"hostname": "FW-WEST-01"},
-                "interfaces": [
-                    {"name": "ethernet1/1", "ipv4": "10.200.1.1/24", "zone": "untrust"},
-                    {"name": "ethernet1/2", "ipv4": "10.200.2.1/24", "zone": "trust"}
+                    {"name": "Ethernet1/1", "ipv4": "192.0.2.1/24", "zone": "untrust"},
+                    {"name": "Ethernet1/2", "ipv4": "192.0.2.2/24", "zone": "trust"}
                 ]
             }
         ]
@@ -204,6 +200,9 @@ async def list_managed_devices(request: Request, session: SessionEntry = Depends
     key  = _get_key(session)
     loop = asyncio.get_event_loop()
     cached = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_managed_devices", lambda: pc.get_managed_devices(key), PAN_TTL)
+
+    if cached is None: cached = []
+
     if request.headers.get("HX-Request"):
         from templates_module import templates
         return templates.TemplateResponse(request, "partials/firewall_devices.html", {"items": cached})
@@ -225,24 +224,18 @@ async def search_firewall_interfaces_ui(request: Request, ip: str = Query(...), 
 @router.get("/templates", response_class=HTMLResponse)
 async def list_panorama_templates_ui(request: Request, session: SessionEntry = Depends(require_auth)):
     templates_list = ["Standard-Branch-Template", "HQ-DataCenter-Template", "Remote-VPN-Template"]
-    return HTMLResponse(f"""
-        <div class="card shadow-sm border-0 animate-fade-in">
-            <div class="card-header bg-navy text-white fw-bold">Panorama Templates</div>
-            <div class="card-body p-0">
-                <ul class="list-group list-group-flush">
-                    {"".join(f'<li class="list-group-item"><i class="fas fa-layer-group text-primary me-2"></i>{t}</li>' for t in templates_list)}
-                </ul>
-            </div>
-        </div>
-    """)
+    from templates_module import templates
+    return templates.TemplateResponse(request, "partials/firewall_templates.html", {"templates": templates_list})
 
 @router.get("/policies/{device_group}")
 async def get_device_group_policies(request: Request, device_group: str, session: SessionEntry = Depends(require_auth)):
-    from dev import DEV_MODE, MOCK_FIREWALL_RULES, MOCK_DEVICE_GROUPS
+    from dev import DEV_MODE, MOCK_FIREWALL_RULES
 
     key  = _get_key(session)
     loop = asyncio.get_event_loop()
     all_dgs = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_device_groups", lambda: pc.get_device_groups(key), PAN_TTL)
+
+    if all_dgs is None: all_dgs = []
 
     if device_group not in all_dgs and device_group != "shared":
         raise HTTPException(400, f"Unknown device group: {device_group}")
@@ -259,6 +252,7 @@ async def get_device_group_policies(request: Request, device_group: str, session
             return {"dg_order": all_dgs, "by_dg": by_dg}
 
         rules_cache = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_rules", _build_rules, PAN_TTL)
+        if not rules_cache: rules_cache = {"dg_order": [], "by_dg": {}}
         rules = _flatten_rules(rules_cache, [device_group])
 
     if request.headers.get("HX-Request"):

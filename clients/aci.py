@@ -64,7 +64,7 @@ class ACIClient:
 
         start_time = time.time()
         try:
-            response = self.session.post(login_url, json=payload, verify=False, timeout=10)
+            response = self.session.post(login_url, json=payload, verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true", timeout=10)
             duration = int((time.time() - start_time) * 1000)
             logger.info(f"ACI Login: {formatted_user}", extra={
                 "target": "ACI",
@@ -133,7 +133,7 @@ class ACIClient:
         def _do_get():
             start_time = time.time()
             try:
-                response = self.session.get(url, verify=False, timeout=15)
+                response = self.session.get(url, verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true", timeout=15)
                 duration = int((time.time() - start_time) * 1000)
                 logger.info(f"ACI GET {path}", extra={
                     "target": "ACI",

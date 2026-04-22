@@ -25,7 +25,7 @@ def _make_client(username: str, password: str) -> api.DNACenterAPI:
         username=username,
         password=password,
         version=os.getenv("DNA_CENTER_VERSION", "2.3.7.6"),
-        verify=False,
+        verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
     )
     adapter = HTTPAdapter(pool_connections=_POOL_SIZE, pool_maxsize=_POOL_SIZE)
     session = client.custom_caller._session._req_session
@@ -88,6 +88,9 @@ def get_all_devices(dnac) -> list[dict]:
                 "status": 500,
                 "duration_ms": duration
             })
+            # If first page failed, propagate so cache.get_or_set doesn't cache an empty list for 24h.
+            if not devices:
+                raise
             break
     return devices
 

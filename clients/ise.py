@@ -44,7 +44,7 @@ def create_client() -> IdentityServicesEngineAPI:
         uses_api_gateway = True,
         base_url         = f"https://{host}",
         version          = ISE_SDK_VERSION,
-        verify           = False,
+        verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
         debug            = False,
         uses_csrf_token  = False,
     )
@@ -461,17 +461,21 @@ def _xml_to_dict(xml_text: str) -> dict:
     return result
 
 
-def _mnt_get(path: str) -> dict:
+def _mnt_get(path: str, session=None) -> dict:
     """
     Direct HTTP call to ISE MNT REST API with XML Accept header.
     Bypasses the SDK because the SDK assumes JSON and the MNT API only speaks XML.
     Returns a flat dict of attributes, or {} on any error.
     """
-    from urllib.parse import urljoin
-
-    host     = os.getenv("ISE_HOST")
-    username = os.getenv("DOMAIN_USERNAME")
-    password = os.getenv("DOMAIN_PASSWORD")
+    host = os.getenv("ISE_HOST")
+    if session:
+        username = session.username
+        password = session.password
+    else:
+        # No service account fallback for per-session auditing
+        logger.error(f"ISE credentials not bound to this session — re-login required. Path: {path}")
+        from fastapi import HTTPException
+        raise HTTPException(status_code=502, detail="ISE credentials not bound to this session — re-login required.")
 
     if not all([host, username, password]):
         return {}
@@ -481,7 +485,7 @@ def _mnt_get(path: str) -> dict:
         resp = _requests.get(
             url,
             auth    = (username, password),
-            verify  = False,
+            verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
             headers = {"Accept": "application/xml"},
             timeout = 15,
         )
@@ -490,6 +494,7 @@ def _mnt_get(path: str) -> dict:
         logger.warning(f"MNT {path}: HTTP {resp.status_code}")
         return {}
     except Exception as e:
+        if isinstance(e, HTTPException): raise e
         logger.warning(f"MNT direct request {path}: {e}")
         return {}
 
@@ -552,7 +557,7 @@ def create_user_client(username: str, password: str) -> IdentityServicesEngineAP
         uses_api_gateway = True,
         base_url         = f"https://{host}",
         version          = ISE_SDK_VERSION,
-        verify           = False,
+        verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
         debug            = False,
         uses_csrf_token  = False,
     )

@@ -3,34 +3,29 @@
    ============================================================ */
 
 export const Auth = {
-  token()    { return localStorage.getItem('impact_token'); },
-  username() { return localStorage.getItem('impact_user'); },
-  save(token, username) {
-    localStorage.setItem('impact_token', token);
-    localStorage.setItem('impact_user', username);
-  },
-  clear() {
-    localStorage.removeItem('impact_token');
-    localStorage.removeItem('impact_user');
+  username() {
+    const match = document.cookie.match(/impact_user=([^;]+)/);
+    return match ? decodeURIComponent(match[1]) : null;
   },
   headers() {
-    const t = this.token();
-    return t ? { 'Authorization': `Bearer ${t}` } : {};
+    const csrfToken = document.cookie.split('; ').find(row => row.startsWith('csrf_token='));
+    const headers = {};
+    if (csrfToken) {
+      headers['X-CSRF-Token'] = csrfToken.split('=')[1];
+    }
+    return headers;
   },
 };
 
 export const API = {
   _handle401() {
-    Auth.clear();
     if (!window._bootstrapping) {
       window.dispatchEvent(new CustomEvent('impact:logout'));
     }
   },
   async get(path) {
     try {
-      console.log('[API] GET', path);
       const r = await fetch(`/api${path}`, { headers: Auth.headers() });
-      console.log('[API] GET response status:', r.status);
       if (r.status === 401) { this._handle401(); throw new Error('Not authenticated'); }
       if (!r.ok) { 
         let errorMsg = r.statusText || 'Unknown error';
@@ -40,14 +35,10 @@ export const API = {
         } catch {
           errorMsg = 'HTTP ' + r.status + ': ' + r.statusText;
         }
-        console.error('[API] GET error:', errorMsg);
         throw new Error(errorMsg); 
       }
-      const json = await r.json();
-      console.log('[API] GET response body:', json);
-      return json;
+      return await r.json();
     } catch (err) {
-      console.error('[API] GET caught error:', err.message || err);
       throw new Error(err.message || 'API request failed');
     }
   },
@@ -61,32 +52,46 @@ export const API = {
     if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || r.statusText); }
     return r.json();
   },
-  stream(path, body, onEvent, onDone) {
+  stream(path, body, onEvent, onDone, signal) {
     fetch(`/api${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...Auth.headers() },
       body: JSON.stringify(body),
+      signal: signal
     }).then(async r => {
       if (r.status === 401) { this._handle401(); if (onDone) onDone(); return; }
+      if (!r.body) return;
       const reader = r.body.getReader();
       const dec    = new TextDecoder();
       let buf      = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += dec.decode(value, { stream: true });
-        const lines = buf.split('\n');
-        buf = lines.pop();
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try { onEvent(JSON.parse(line.slice(6))); } catch {}
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const lines = buf.split('\n');
+          buf = lines.pop();
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try { onEvent(JSON.parse(line.slice(6))); } catch {}
+            }
           }
         }
+      } catch (e) {
+          if (e.name === 'AbortError') {
+              console.log('Stream aborted');
+          } else {
+              throw e;
+          }
+      } finally {
+          reader.releaseLock();
       }
       if (onDone) onDone();
     }).catch(err => {
-      onEvent({ type: 'error', message: err.message });
-      if (onDone) onDone();
+      if (err.name !== 'AbortError') {
+          onEvent({ type: 'error', message: err.message });
+          if (onDone) onDone();
+      }
     });
   },
 };

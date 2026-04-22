@@ -93,8 +93,10 @@
   {% endif %}
   {% endfor %}
 </div>
+{% endif %}
 
 <div class="row g-4 mt-1 animate-fade-in" style="animation-delay: 200ms;">
+  {% if aci_health %}
   <div class="col-md-4">
     <div class="card shadow-md h-100">
       <div class="card-header flex-between">
@@ -126,12 +128,10 @@
       </div>
     </div>
   </div>
-  <div class="col-md-8">
+  {% endif %}
+
+  <div class="{% if aci_health %}col-md-8{% else %}col-md-12{% endif %}">
     <div class="card shadow-md h-100">
-{% else %}
-  <div class="col-md-12">
-    <div class="card shadow-md h-100">
-{% endif %}
        <div class="card-header flex-between">
         <div class="d-flex align-items-center gap-2">
             <i class="ph ph-activity text-primary"></i>

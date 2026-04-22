@@ -108,12 +108,15 @@
       timeout: 60
     };
 
+    const csrfToken = document.cookie.split('; ').find(row => row.startsWith('csrf_token='));
+    const csrfHeader = csrfToken ? csrfToken.split('=')[1] : '';
+
     fetch('/api/commands/run', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': 'Bearer {{ token }}'
-      },
+        'X-CSRF-Token': csrfHeader
+        },
       body: JSON.stringify(payload)
     }).then(response => {
        const reader = response.body.getReader();

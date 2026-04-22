@@ -98,7 +98,7 @@
 
     try {
       const res = await fetch('/api/dnac/devices?limit=5000', {
-        headers: { 'Authorization': 'Bearer {{ token }}' }
+        headers: { }
       });
       const data = await res.json();
       ALL_DEVICES = data.items || [];
@@ -200,8 +200,8 @@
     const loader = document.getElementById('dev-master-loading');
     loader.classList.remove('d-none');
 
-    const token = '{{ token }}';
-    const eventSource = new EventSource('/api/nexus/refresh');
+
+    const eventSource = new EventSource('/api/nexus/refresh', { withCredentials: true });
     const cleanup = () => { eventSource.close(); };
     window.addEventListener('hashchange', cleanup, { once: true });
     window.addEventListener('popstate', cleanup, { once: true });

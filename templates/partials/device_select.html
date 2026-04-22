@@ -1,0 +1,8 @@
+<select id="device-multi-select" class="form-select" multiple style="height: 150px;">
+  {% for d in devices|sort(attribute='hostname') %}
+    {% set device_data = {"ip": d.managementIpAddress, "hostname": d.hostname, "platform": d.platformId} %}
+    <option value="{{ d.id }}" data-device='{{ device_data|tojson }}'>
+      {{ d.hostname }} ({{ d.managementIpAddress }})
+    </option>
+  {% endfor %}
+</select>

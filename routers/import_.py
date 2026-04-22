@@ -43,11 +43,17 @@ def _get_credentials(dnac, cli_user: str, snmp_user: str) -> list:
     return cli_ids + snmp_ids
 
 
-def _wait_for_discovery(dnac, task_id: str, max_tries: int, interval: int, log_fn) -> str | None:
+async def _wait_for_discovery(dnac, task_id: str, max_tries: int, interval: int, log_fn) -> str | None:
     discovery_id = None
     for attempt in range(max_tries):
         try:
-            task     = dnac.task.get_task_by_id(task_id=task_id)
+            # We call the SDK synchronously since we are in a generator that can await
+            # but wait_for_discovery was being called inside do_discovery in an executor.
+            # I'll refactor this to be cleaner.
+            import asyncio
+            loop = asyncio.get_event_loop()
+            task = await loop.run_in_executor(None, lambda: dnac.task.get_task_by_id(task_id=task_id))
+
             progress = task.response.progress
             is_error = getattr(task.response, "isError", False)
             if is_error:
@@ -58,7 +64,7 @@ def _wait_for_discovery(dnac, task_id: str, max_tries: int, interval: int, log_f
                 discovery_id = progress
                 log_fn({"type": "log", "level": "info", "message": f"Discovery ID {discovery_id} obtained"})
             if discovery_id:
-                disc   = dnac.discovery.get_discovery_by_id(id=discovery_id)
+                disc = await loop.run_in_executor(None, lambda: dnac.discovery.get_discovery_by_id(id=discovery_id))
                 status = disc.response.get("discoveryCondition")
                 if status == "Complete":
                     log_fn({"type": "log", "level": "success", "message": f"Discovery {discovery_id} complete"})
@@ -67,10 +73,10 @@ def _wait_for_discovery(dnac, task_id: str, max_tries: int, interval: int, log_f
                     log_fn({"type": "log", "level": "error", "message": f"Discovery ended: {status}"})
                     return None
             log_fn({"type": "log", "level": "info", "message": f"Polling attempt {attempt + 1}/{max_tries}"})
-            time.sleep(interval)
+            await asyncio.sleep(interval)
         except Exception as e:
             log_fn({"type": "log", "level": "error", "message": f"Poll error: {e}"})
-            time.sleep(interval)
+            await asyncio.sleep(interval)
     return None
 
 
@@ -107,84 +113,119 @@ async def run_import(req: ImportRequest, session: SessionEntry = Depends(require
             results = []
             total   = len(req.entries)
 
-            for idx, entry in enumerate(req.entries):
-                site_id, site_name = dc.find_best_site_match(sites, entry.site_code)
-                progress_pct       = round((idx / total) * 100)
+            # We use a semaphore to limit concurrency
+            sem = asyncio.Semaphore(5)
 
-                if not site_id:
-                    yield emit({"type": "progress", "done": idx + 1, "total": total, "pct": progress_pct})
-                    yield emit({"type": "log", "level": "warn",
-                                "message": f"{entry.ip}: site '{entry.site_code}' not found — skipping"})
-                    results.append({"ip": entry.ip, "site": entry.site_code, "outcome": "site_not_found"})
-                    continue
+            async def process_entry(idx, entry):
+                async with sem:
+                    site_id, site_name = dc.find_best_site_match(sites, entry.site_code)
+                    progress_pct = round((idx / total) * 100)
 
-                if entry.ip in existing:
-                    yield emit({"type": "progress", "done": idx + 1, "total": total, "pct": progress_pct})
+                    if not site_id:
+                        yield emit({"type": "progress", "done": idx + 1, "total": total, "pct": progress_pct})
+                        yield emit({"type": "log", "level": "warn",
+                                    "message": f"{entry.ip}: site '{entry.site_code}' not found — skipping"})
+                        results.append({"ip": entry.ip, "site": entry.site_code, "outcome": "site_not_found"})
+                        return
+
+                    if entry.ip in existing:
+                        yield emit({"type": "progress", "done": idx + 1, "total": total, "pct": progress_pct})
+                        yield emit({"type": "log", "level": "info",
+                                    "message": f"{entry.ip}: already in inventory — skipping"})
+                        results.append({"ip": entry.ip, "site": site_name, "outcome": "skipped_exists"})
+                        return
+
                     yield emit({"type": "log", "level": "info",
-                                "message": f"{entry.ip}: already in inventory — skipping"})
-                    results.append({"ip": entry.ip, "site": site_name, "outcome": "skipped_exists"})
-                    continue
+                                "message": f"{entry.ip}: initiating discovery (site: {site_name})"})
 
-                yield emit({"type": "log", "level": "info",
-                            "message": f"{entry.ip}: initiating discovery (site: {site_name})"})
-
-                def do_discovery(ip=entry.ip, site_id=site_id, site_name=site_name):
                     events = []
+                    outcome = "failed"
                     try:
-                        disc_name = f"Auto-{ip.replace('.', '-')}-{uuid.uuid4().hex[:4]}"
-                        job       = dnac.discovery.start_discovery(
-                            name=disc_name, ipAddressList=ip,
+                        disc_name = f"Auto-{entry.ip.replace('.', '-')}-{uuid.uuid4().hex[:4]}"
+                        job = await loop.run_in_executor(None, lambda: dnac.discovery.start_discovery(
+                            name=disc_name, ipAddressList=entry.ip,
                             discoveryType="Single", globalCredentialIdList=cred_ids,
                             protocolOrder="ssh",
-                        )
-                        discovery_id = _wait_for_discovery(
+                        ))
+
+                        discovery_id = await _wait_for_discovery(
                             dnac, job.response.taskId,
                             req.max_retries, req.poll_interval,
                             lambda e: events.append(e),
                         )
-                        if not discovery_id:
-                            return None, "discovery_failed", events
 
-                        res   = dnac.discovery.get_discovered_network_devices_by_discovery_id(id=discovery_id)
-                        items = res.response if hasattr(res, "response") else []
-                        assign_list = []
-                        for dev in (items or []):
-                            m_ip        = dev.get("managementIpAddress")
-                            reachability = dev.get("reachabilityStatus")
-                            hostname    = dev.get("hostname", "Unknown")
-                            events.append({"type": "log", "level": "info",
-                                           "message": f"  [{hostname}] {m_ip} — {reachability}"})
-                            if m_ip and reachability == "Success":
-                                assign_list.append({"ip": m_ip})
+                        if discovery_id:
+                            res = await loop.run_in_executor(None, lambda: dnac.discovery.get_discovered_network_devices_by_discovery_id(id=discovery_id))
+                            items = res.response if hasattr(res, "response") else []
+                            assign_list = []
+                            for dev in (items or []):
+                                m_ip = dev.get("managementIpAddress")
+                                reachability = dev.get("reachabilityStatus")
+                                hostname = dev.get("hostname", "Unknown")
+                                events.append({"type": "log", "level": "info",
+                                               "message": f"  [{hostname}] {m_ip} — {reachability}"})
+                                if m_ip and reachability == "Success":
+                                    assign_list.append({"ip": m_ip})
 
-                        if assign_list:
-                            dnac.sites.assign_devices_to_site(site_id=site_id, device=assign_list)
-                            return ip, "discovered", events
+                            if assign_list:
+                                await loop.run_in_executor(None, lambda: dnac.sites.assign_devices_to_site(site_id=site_id, device=assign_list))
+                                outcome = "discovered"
+                            else:
+                                outcome = "no_reachable_devices"
                         else:
-                            return None, "no_reachable_devices", events
+                            outcome = "discovery_failed"
 
                     except Exception as e:
-                        events.append({"type": "log", "level": "error", "message": f"{ip}: {e}"})
-                        return None, f"error: {str(e)[:80]}", events
+                        events.append({"type": "log", "level": "error", "message": f"{entry.ip}: {e}"})
+                        outcome = f"error: {str(e)[:80]}"
 
-                result_ip, outcome, sub_events = await loop.run_in_executor(None, do_discovery)
+                    for ev in events:
+                        yield emit(ev)
 
-                for ev in sub_events:
-                    yield emit(ev)
+                    yield emit({"type": "progress", "done": idx + 1, "total": total, "pct": progress_pct})
 
-                yield emit({"type": "progress", "done": idx + 1, "total": total, "pct": progress_pct})
+                    if outcome == "discovered":
+                        existing.add(entry.ip)
+                        yield emit({"type": "log", "level": "success",
+                                    "message": f"{entry.ip}: assigned to {site_name}"})
+                    else:
+                        yield emit({"type": "log", "level": "warn",
+                                    "message": f"{entry.ip}: outcome = {outcome}"})
 
-                if outcome == "discovered":
-                    existing.add(entry.ip)
-                    yield emit({"type": "log", "level": "success",
-                                "message": f"{entry.ip}: assigned to {site_name}"})
-                else:
-                    yield emit({"type": "log", "level": "warn",
-                                "message": f"{entry.ip}: outcome = {outcome}"})
+                    results.append({"ip": entry.ip, "site": site_name, "outcome": outcome})
 
-                results.append({"ip": entry.ip, "site": site_name, "outcome": outcome})
+            # Run all entries and yield results as they come
+            # Because this is a generator, we'll process them one by one but with semaphore concurrency
+            # for the actual IO-bound tasks if we were using gather.
+            # But wait, to keep order and serial progress in logs, we'll just loop.
+            # The requirement was "Run discoveries for multiple devices concurrently with a bounded asyncio.Semaphore (e.g. 5)."
+            # Let's use asyncio.gather to actually run them concurrently.
 
-            # Summary
+            # Since we need to yield from the generator, we can't easily gather and yield at the same time
+            # without a queue or similar.
+            queue = asyncio.Queue()
+            sentinel = object()
+
+            async def worker(idx, entry):
+                async for msg in process_entry(idx, entry):
+                    await queue.put(msg)
+                await queue.put(sentinel)
+
+            tasks = [asyncio.create_task(worker(i, e)) for i, e in enumerate(req.entries)]
+
+            async def drain_queue():
+                finished = 0
+                while finished < len(tasks):
+                    msg = await queue.get()
+                    if msg is sentinel:
+                        finished += 1
+                    else:
+                        yield msg
+
+            async for msg in drain_queue():
+                yield msg
+
+            # Final summary
             discovered = sum(1 for r in results if r["outcome"] == "discovered")
             skipped    = sum(1 for r in results if r["outcome"] == "skipped_exists")
             failed     = sum(1 for r in results if r["outcome"] not in ("discovered", "skipped_exists", "site_not_found"))

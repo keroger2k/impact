@@ -13,7 +13,8 @@ correlation_id_ctx = ContextVar("correlation_id", default=None)
 
 SENSITIVE_KEYS = {
     "password", "token", "secret", "auth_key", "pwd",
-    "auth-token", "x-api-key", "community", "cookie"
+    "auth-token", "x-api-key", "community", "cookie",
+    "api_key", "bearer", "authorization", "apikey", "refresh_token"
 }
 
 # Regex to find key=value or key:value patterns in strings, where key is in SENSITIVE_KEYS

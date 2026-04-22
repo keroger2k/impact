@@ -10,7 +10,8 @@
         <form id="import-form">
           <div class="mb-4">
             <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Device List (CSV Format)</label>
-            <textarea id="import-csv" class="form-control" rows="10" placeholder="TSA-DCA-HQ,10.10.1.1\nTSA-LAX-T1,10.30.1.1"></textarea>
+            <textarea id="import-csv" class="form-control" rows="10" placeholder="TSA-DCA-HQ,10.10.1.1
+TSA-LAX-T1,10.30.1.1"></textarea>
           </div>
           <button type="button" onclick="startCsvImport()" class="btn btn-primary w-100 py-3 fw-bold shadow-sm">
             <i class=" ph ph-cloud-arrow-up me-1"></i> Start Import Process
@@ -36,7 +37,8 @@
           </div>
           <div class="mb-4">
             <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Device IPs</label>
-            <textarea id="tag-ips" class="form-control" rows="5" placeholder="10.10.1.1\n10.30.1.1" required></textarea>
+            <textarea id="tag-ips" class="form-control" rows="5" placeholder="10.10.1.1
+10.30.1.1" required></textarea>
           </div>
           <button type="button" onclick="startTagging()" class="btn btn-primary w-100 py-3 fw-bold shadow-sm">
             <i class=" ph ph-tag me-1"></i> Apply Tags
@@ -83,9 +85,15 @@
     log.classList.remove('d-none');
     log.innerHTML = '>> Initializing tagging session for ' + tagName + '...<br>';
 
+    const csrfToken = document.cookie.split('; ').find(row => row.startsWith('csrf_token='));
+    const csrfHeader = csrfToken ? csrfToken.split('=')[1] : '';
+
     fetch('/api/dnac/tag-devices', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer {{ token }}' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': csrfHeader
+      },
       body: JSON.stringify({ tag_name: tagName, ips: ips })
     }).then(response => {
        const reader = response.body.getReader();
@@ -122,9 +130,15 @@
     results.innerHTML = '';
     status.textContent = 'Status: Initializing...';
 
+    const csrfToken = document.cookie.split('; ').find(row => row.startsWith('csrf_token='));
+    const csrfHeader = csrfToken ? csrfToken.split('=')[1] : '';
+
     fetch('/api/import/run', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer {{ token }}' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': csrfHeader
+      },
       body: JSON.stringify(payload)
     }).then(response => {
        const reader = response.body.getReader();

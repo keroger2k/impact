@@ -36,7 +36,7 @@ def main():
         resp = requests.get(
             f"https://{host_clean}/api/",
             params={"type": "op", "cmd": cmd, "key": key, "target": serial},
-            verify=False,
+            verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
             timeout=20,
         )
 

@@ -384,6 +384,10 @@ async def refresh_specific_cache(category: str, session: SessionEntry = Depends(
         cache.invalidate("ipam_tree")
         msg = "IPAM cache cleared. Use the Collect button to rebuild the tree."
 
+    elif category == "clear_all":
+        cache.clear()
+        msg = "Full application cache has been cleared."
+
     else:
         msg = f"{category.replace('_', ' ').title()} cache cleared."
 

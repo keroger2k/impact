@@ -4,6 +4,8 @@
 
 import { API } from './api.js';
 
+let activeAbortController = null;
+
 export const Router = {
   current: null,
   routes:  {},
@@ -17,7 +19,19 @@ export const Router = {
       const hash = window.location.hash.slice(2) || 'dashboard';
       this.render(hash);
     };
-    window.addEventListener('hashchange', handle);
+    window.addEventListener('hashchange', () => {
+        if (activeAbortController) {
+            activeAbortController.abort();
+            activeAbortController = null;
+        }
+        handle();
+    });
+    window.addEventListener('popstate', () => {
+        if (activeAbortController) {
+            activeAbortController.abort();
+            activeAbortController = null;
+        }
+    });
     handle();
   },
 
@@ -47,6 +61,12 @@ export const Router = {
     this.current = page;
     fn(content);
   },
+
+  getSignal() {
+      if (activeAbortController) activeAbortController.abort();
+      activeAbortController = new AbortController();
+      return activeAbortController.signal;
+  }
 };
 
 export function toggleSidebar() {
@@ -77,17 +97,4 @@ export async function loadStatus() {
     upd('st-ise',  'st-ise-txt',  s.ise);
     upd('st-pan',  'st-pan-txt',  s.panorama);
   } catch {}
-}
-
-export async function refreshCache() {
-  const page = Router.current;
-  const map  = {
-    devices:   ['/dnac/cache/refresh'],
-    ise:       ['/ise/cache/refresh'],
-    firewall:  ['/firewall/cache/refresh'],
-    reports:   ['/dnac/cache/refresh'],
-  };
-  const urls = map[page] || ['/dnac/cache/refresh', '/ise/cache/refresh', '/firewall/cache/refresh'];
-  await Promise.allSettled(urls.map(u => API.post(u, {})));
-  if (page) Router.render(page);
 }
