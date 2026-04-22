@@ -179,6 +179,27 @@ def _op(cmd: str, api_key: str) -> ET.Element:
         raise PanoramaAPIError(f"OP error ({cmd}): {e}")
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# CONNECTIVITY CHECK
+# ──────────────────────────────────────────────────────────────────────────────
+
+def connectivity_check_with_key(api_key: str) -> tuple[bool, str]:
+    """Lightweight call — verify Panorama is reachable with the given key."""
+    try:
+        _op("<show><system><info></info></system></show>", api_key)
+        return True, "Connected"
+    except Exception as e:
+        return False, str(e)[:80]
+
+
+def connectivity_check() -> tuple[bool, str]:
+    """No-args check — mints a key from env credentials and verifies reachability."""
+    try:
+        return connectivity_check_with_key(get_api_key())
+    except Exception as e:
+        return False, str(e)[:80]
+
+
 def _op_targeted(cmd: str, api_key: str, target: str) -> ET.Element | None:
     """Like _op but targets a specific managed firewall by serial number. Returns None if unreachable."""
     host = os.getenv("PANORAMA_HOST")
