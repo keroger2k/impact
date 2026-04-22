@@ -204,28 +204,26 @@ async def run_import(req: ImportRequest, session: SessionEntry = Depends(require
             # Since we need to yield from the generator, we can't easily gather and yield at the same time
             # without a queue or similar.
             queue = asyncio.Queue()
+            sentinel = object()
 
             async def worker(idx, entry):
                 async for msg in process_entry(idx, entry):
                     await queue.put(msg)
+                await queue.put(sentinel)
 
             tasks = [asyncio.create_task(worker(i, e)) for i, e in enumerate(req.entries)]
 
-            # Helper to check if all tasks are done
-            done_count = 0
-            while done_count < len(tasks):
-                msg = await queue.get()
+            async def drain_queue():
+                finished = 0
+                while finished < len(tasks):
+                    msg = await queue.get()
+                    if msg is sentinel:
+                        finished += 1
+                    else:
+                        yield msg
+
+            async for msg in drain_queue():
                 yield msg
-                # If it's a progress or log message, we keep going.
-                # We need to know when a device is fully done.
-                # Actually, we can just check tasks directly.
-                done_count = sum(1 for t in tasks if t.done())
-                # If there are still items in the queue, keep draining it.
-                while not queue.empty():
-                    yield await queue.get()
-                    done_count = sum(1 for t in tasks if t.done())
-                if done_count < len(tasks):
-                    await asyncio.sleep(0.1)
 
             # Final summary
             discovered = sum(1 for r in results if r["outcome"] == "discovered")

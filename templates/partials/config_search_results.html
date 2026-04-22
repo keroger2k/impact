@@ -61,8 +61,7 @@
           const csrfToken = document.cookie.split('; ').find(row => row.startsWith('csrf_token='));
           const csrfHeader = csrfToken ? csrfToken.split('=')[1] : '';
           fetch(`/api/dnac/devices/${deviceId}/config`, {
-            headers: { 'X-CSRF-Token': csrfHeader },
-            headers: { }
+            headers: { 'X-CSRF-Token': csrfHeader }
           })
           .then(res => res.json())
           .then(data => {
