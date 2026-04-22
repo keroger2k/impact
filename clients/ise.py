@@ -44,7 +44,7 @@ def create_client() -> IdentityServicesEngineAPI:
         uses_api_gateway = True,
         base_url         = f"https://{host}",
         version          = ISE_SDK_VERSION,
-        verify=os.getenv("IMPACT_VERIFY_SSL", "true").lower() == "true",
+        verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
         debug            = False,
         uses_csrf_token  = False,
     )
@@ -485,7 +485,7 @@ def _mnt_get(path: str, session=None) -> dict:
         resp = _requests.get(
             url,
             auth    = (username, password),
-            verify=os.getenv("IMPACT_VERIFY_SSL", "true").lower() == "true",
+            verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
             headers = {"Accept": "application/xml"},
             timeout = 15,
         )
@@ -557,7 +557,7 @@ def create_user_client(username: str, password: str) -> IdentityServicesEngineAP
         uses_api_gateway = True,
         base_url         = f"https://{host}",
         version          = ISE_SDK_VERSION,
-        verify=os.getenv("IMPACT_VERIFY_SSL", "true").lower() == "true",
+        verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
         debug            = False,
         uses_csrf_token  = False,
     )

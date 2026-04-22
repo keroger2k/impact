@@ -41,7 +41,7 @@ def _keygen(host: str, user: str, pwd: str) -> str:
         resp = requests.post(
             f"https://{host_clean}/api/",
             data={"type": "keygen", "user": user, "password": pwd},
-            verify=os.getenv("IMPACT_VERIFY_SSL", "true").lower() == "true",
+            verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
             timeout=15,
         )
         duration = int((time.time() - start_time) * 1000)
@@ -117,7 +117,7 @@ def _config_get(xpath: str, api_key: str) -> ET.Element:
                 "xpath":  xpath,
                 "key":    api_key,
             },
-            verify=os.getenv("IMPACT_VERIFY_SSL", "true").lower() == "true",
+            verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
             timeout=30,
         )
         duration = int((time.time() - start_time) * 1000)
@@ -149,7 +149,7 @@ def _op(cmd: str, api_key: str) -> ET.Element:
         resp = requests.get(
             f"https://{host_clean}/api/",
             params={"type": "op", "cmd": cmd, "key": api_key},
-            verify=os.getenv("IMPACT_VERIFY_SSL", "true").lower() == "true",
+            verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
             timeout=30,
         )
         duration = int((time.time() - start_time) * 1000)
@@ -179,7 +179,7 @@ def _op_targeted(cmd: str, api_key: str, target: str) -> ET.Element | None:
         resp = requests.get(
             f"https://{host_clean}/api/",
             params={"type": "op", "cmd": cmd, "key": api_key, "target": target},
-            verify=os.getenv("IMPACT_VERIFY_SSL", "true").lower() == "true",
+            verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
             timeout=20,
         )
         if not resp.text or not resp.text.strip():
@@ -931,7 +931,7 @@ def run_diagnostics(api_key: str) -> dict[str, str]:
             resp = requests.get(
                 f"https://{host}/api/",
                 params={"type": "config", "action": "get", "xpath": xpath, "key": api_key},
-                verify=os.getenv("IMPACT_VERIFY_SSL", "true").lower() == "true", timeout=20,
+                verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true", timeout=20,
             )
             return resp.text[:3000]
         except Exception as e:
@@ -942,7 +942,7 @@ def run_diagnostics(api_key: str) -> dict[str, str]:
             resp = requests.get(
                 f"https://{host}/api/",
                 params={"type": "op", "cmd": cmd, "key": api_key},
-                verify=os.getenv("IMPACT_VERIFY_SSL", "true").lower() == "true", timeout=20,
+                verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true", timeout=20,
             )
             return resp.text[:3000]
         except Exception as e:
