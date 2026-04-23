@@ -85,23 +85,31 @@
 </div>
 
 <script>
-  let ALL_DEVICES = [];
-  let FILTERED_DEVICES = [];
-  let CURRENT_PAGE = 1;
-  let PAGE_SIZE = 40;
-  let SORT_COL = 'hostname';
-  let SORT_DIR = 1;
+  var ALL_DEVICES = {{ initial_devices | tojson | safe }};
+  var FILTERED_DEVICES = [...ALL_DEVICES];
+  var CURRENT_PAGE = 1;
+  var PAGE_SIZE = 40;
+  var SORT_COL = 'hostname';
+  var SORT_DIR = 1;
 
   async function loadInitialDevices() {
+    if (Array.isArray(ALL_DEVICES) && ALL_DEVICES.length > 0) {
+        document.getElementById('dev-count-badge').textContent = ALL_DEVICES.length;
+        renderTable();
+        return;
+    }
+
     const loader = document.getElementById('dev-master-loading');
     loader.classList.remove('d-none');
 
     try {
       const res = await fetch('/api/dnac/devices?limit=5000', {
-        headers: { }
+        headers: { 'Accept': 'application/json' }
       });
       const data = await res.json();
-      ALL_DEVICES = data.items || [];
+
+      // Handle both flat list and wrapped object for robustness
+      ALL_DEVICES = Array.isArray(data) ? data : (data.items || []);
       FILTERED_DEVICES = [...ALL_DEVICES];
 
       document.getElementById('dev-count-badge').textContent = ALL_DEVICES.length;
@@ -148,7 +156,7 @@
         <td class="mono small text-muted">${d.managementIpAddress}</td>
         <td class="small text-muted">${d.platformId}</td>
         <td>
-           <span class="status-pip ${d.reachabilityStatus === \'Reachable\' ? \'online\' : \'offline\'}" aria-label="${d.reachabilityStatus}" title="${d.reachabilityStatus}"></span>
+           <span class="status-pip ${d.reachabilityStatus === 'Reachable' ? 'online' : 'offline'}" aria-label="${d.reachabilityStatus}" title="${d.reachabilityStatus}"></span>
         </td>
         <td class="text-end">
             <i class="ph ph-caret-right text-light small"></i>

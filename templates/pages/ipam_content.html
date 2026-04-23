@@ -70,8 +70,11 @@
     </div>
   </div>
 
-  <div id="ipam-results" hx-get="/api/ipam/tree" hx-trigger="load" hx-target="this"
+  <div id="ipam-results"
+       {% if not initial_ipam_tree %}
+       hx-get="/api/ipam/tree" hx-trigger="load" hx-target="this"
        hx-on:htmx:response-error="onIpamLoadError(event)"
+       {% endif %}
        class="table-container shadow-md">
     <!-- Tree will be rendered here by JS -->
     <div class="text-center my-5 py-5">
@@ -208,9 +211,10 @@
         }
     });
 
-    let currentIPAMData = null;
+    var currentIPAMData = {{ initial_ipam_tree | tojson | safe if initial_ipam_tree else 'null' }};
 
     function renderIPAMTree(data) {
+        if (!data) return;
         currentIPAMData = data;
         const container = document.getElementById('ipam-results');
         container.innerHTML = '';
@@ -222,7 +226,12 @@
         container.appendChild(v6Card);
     }
 
-    let _filterDebounce;
+    // If we have initial data from backend, render it immediately
+    if (currentIPAMData) {
+        renderIPAMTree(currentIPAMData);
+    }
+
+    var _filterDebounce;
     document.getElementById('ipam-filter').addEventListener('input', () => {
         clearTimeout(_filterDebounce);
         _filterDebounce = setTimeout(filterIPAMTree, 250);

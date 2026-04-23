@@ -262,6 +262,24 @@ class ACIClient:
         path = f"api/node/mo/{_quote_dn(dn)}.json?rsp-subtree-include=health"
         return self.get(path, action="FETCH_ACI_HEALTH")
 
+    def get_all_subnets(self):
+        """Fetch both Bridge Domain subnets (fvSubnet) and L3Out subnets (l3extSubnet)."""
+        fv_subnets = self.get("api/node/class/fvSubnet.json")
+        l3_subnets = self.get("api/node/class/l3extSubnet.json")
+
+        all_subnets = []
+        if fv_subnets and 'imdata' in fv_subnets:
+            for item in fv_subnets['imdata']:
+                if 'fvSubnet' in item:
+                    all_subnets.append(item['fvSubnet']['attributes'])
+
+        if l3_subnets and 'imdata' in l3_subnets:
+            for item in l3_subnets['imdata']:
+                if 'l3extSubnet' in item:
+                    all_subnets.append(item['l3extSubnet']['attributes'])
+
+        return all_subnets
+
     def get_overall_health(self):
         """Fetch overall system health score."""
         return self.get_health_score("topology/health")
