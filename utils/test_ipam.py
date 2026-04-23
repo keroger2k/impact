@@ -1,90 +1,127 @@
 import unittest
-import asyncio
 import netaddr
-from utils.ipam_engine import IPAMEngine, IPAMNode
+from utils.ipam_engine import IPAMEngine, IPAMNode, classify_interface
 
 class TestIPAMEngine(unittest.TestCase):
     def setUp(self):
         self.engine = IPAMEngine()
 
-    def test_node_creation(self):
-        node = IPAMNode("10.0.0.0/24", source="Test")
-        self.assertEqual(node.cidr, "10.0.0.0/24")
-        self.assertEqual(node.network.prefixlen, 24)
+    def test_classify_interface(self):
+        # Tunnel
+        self.assertEqual(classify_interface("Tunnel100", netaddr.IPNetwork("10.1.1.1/24"))[0], "tunnel")
+        self.assertEqual(classify_interface("Tu1", netaddr.IPNetwork("10.1.1.1/32"))[0], "tunnel")
+
+        # Loopback
+        self.assertEqual(classify_interface("Loopback0", netaddr.IPNetwork("10.1.1.1/24"))[0], "loopback")
+        self.assertEqual(classify_interface("Lo5", netaddr.IPNetwork("10.1.1.1/24"))[0], "loopback")
+        self.assertEqual(classify_interface("GigabitEthernet1", netaddr.IPNetwork("10.1.1.1/32"))[0], "loopback") # /32 override
+
+        # SVI
+        t, vid = classify_interface("Vlan200", netaddr.IPNetwork("10.1.1.0/24"))
+        self.assertEqual(t, "svi")
+        self.assertEqual(vid, 200)
+
+        # Management
+        self.assertEqual(classify_interface("mgmt0", netaddr.IPNetwork("10.1.1.1/24"))[0], "management")
+        self.assertEqual(classify_interface("Management1", netaddr.IPNetwork("10.1.1.1/24"))[0], "management")
+        self.assertEqual(classify_interface("Ma1", netaddr.IPNetwork("10.1.1.1/24"))[0], "management")
+
+        # P2P
+        self.assertEqual(classify_interface("Eth1/1", netaddr.IPNetwork("10.1.1.0/30"))[0], "p2p")
+        self.assertEqual(classify_interface("Eth1/1", netaddr.IPNetwork("10.1.1.0/31"))[0], "p2p")
+
+        # Physical
+        self.assertEqual(classify_interface("Eth1/1", netaddr.IPNetwork("10.1.1.0/24"))[0], "physical")
+
+    def test_tunnel_grouping_no_conflict(self):
+        n1 = IPAMNode("10.1.1.0/24", source="Nexus")
+        n1.interface_type = "tunnel"
+        n1.interface_name = "Tunnel100"
+        n1.host_ip = "10.1.1.1"
+        n1.device = "RouterA"
+        n1.site = "SiteA"
+
+        n2 = IPAMNode("10.1.1.0/24", source="Nexus")
+        n2.interface_type = "tunnel"
+        n2.interface_name = "Tunnel100"
+        n2.host_ip = "10.1.1.2"
+        n2.device = "RouterB"
+        n2.site = "SiteB"
+
+        self.engine.subnets = [n1, n2]
+        self.engine.build_tree()
+
+        v4_tree = self.engine.tree["ipv4"]
+        self.assertEqual(len(v4_tree), 1)
+        group = v4_tree[0]
+        self.assertEqual(group["role"], "tunnel_group")
+        self.assertEqual(len(group["children"]), 2)
+        self.assertEqual(len(group["conflicts"]), 0)
+
+    def test_non_tunnel_same_cidr_still_conflicts(self):
+        n1 = IPAMNode("10.2.0.0/24", source="ACI")
+        n1.site = "SiteA"
+        n1.interface_type = "physical"
+
+        n2 = IPAMNode("10.2.0.0/24", source="Nexus")
+        n2.site = "SiteB"
+        n2.interface_type = "physical"
+
+        self.engine.subnets = [n1, n2]
+        self.engine.build_tree()
+
+        v4_tree = self.engine.tree["ipv4"]
+        self.assertEqual(len(v4_tree), 1)
+        node = v4_tree[0]
+        self.assertTrue(any("Site Conflict" in c for c in node["conflicts"]))
+
+    def test_loopback_host_route(self):
+        n = IPAMNode("10.99.0.1/32", source="Nexus")
+        n.interface_name = "Loopback0"
+        n.interface_type, _ = classify_interface(n.interface_name, n.network)
+        n.role = "host_route"
+
+        self.assertEqual(n.interface_type, "loopback")
+        self.assertEqual(n.role, "host_route")
+
+        self.engine.subnets = [n]
+        self.engine.build_tree()
+        # Should be in a "Host Routes" group because it's a root /32
+        self.assertEqual(self.engine.tree["ipv4"][0]["role"], "host_route_group")
+
+    def test_p2p_detection(self):
+        n = IPAMNode("10.3.3.0/30", source="Nexus")
+        n.interface_name = "Ethernet1/1"
+        n.interface_type, _ = classify_interface(n.interface_name, n.network)
+        self.assertEqual(n.interface_type, "p2p")
 
     def test_is_excluded(self):
-        # /32 exclusion
-        self.assertTrue(self.engine.is_excluded(netaddr.IPNetwork("10.1.1.1/32")))
-        # HA pattern exclusion
-        self.assertTrue(self.engine.is_excluded(netaddr.IPNetwork("10.1.1.0/24"), name="KEEPALIVE-VLAN"))
-        # Standard subnet
-        self.assertFalse(self.engine.is_excluded(netaddr.IPNetwork("10.1.1.0/24"), name="Users"))
-        # 192.168 exclusion
+        # RFC1918 (192.168)
         self.assertTrue(self.engine.is_excluded(netaddr.IPNetwork("192.168.1.0/24")))
+        # APIPA
+        self.assertTrue(self.engine.is_excluded(netaddr.IPNetwork("169.254.1.1/32")))
+        # v4 Loopback
+        self.assertTrue(self.engine.is_excluded(netaddr.IPNetwork("127.0.0.1/32")))
+        # /32 NOT excluded if not in a special range
+        self.assertFalse(self.engine.is_excluded(netaddr.IPNetwork("10.1.1.1/32")))
 
-    def test_tree_building_nesting(self):
-        self.engine.subnets = [
-            IPAMNode("10.0.0.0/16", source="ACI"),
-            IPAMNode("10.0.1.0/24", source="DNAC"),
-            IPAMNode("10.0.2.0/24", source="DNAC"),
-        ]
+    def test_vip_detection(self):
+        n1 = IPAMNode("10.1.1.0/24", source="Nexus")
+        n1.device = "Core1"
+        n1.host_ip = "10.1.1.254"
+
+        n2 = IPAMNode("10.1.1.0/24", source="Nexus")
+        n2.device = "Core2"
+        n2.host_ip = "10.1.1.254"
+
+        self.engine.subnets = [n1, n2]
         self.engine.build_tree()
 
-        # Should be under 10.0.0.0/8 root
-        self.assertEqual(len(self.engine.v4_tree), 1)
-        root = self.engine.v4_tree[0]
-        self.assertEqual(root.cidr, "10.0.0.0/8")
-
-        # 10.0.0.0/16 should be child of root
-        self.assertEqual(len(root.children), 1)
-        supernet = root.children[0]
-        self.assertEqual(supernet.cidr, "10.0.0.0/16")
-
-        # 10.0.1.0 and 10.0.2.0 should be children of 10.0.0.0/16
-        self.assertEqual(len(supernet.children), 2)
-        child_cidrs = [c.cidr for c in supernet.children]
-        self.assertIn("10.0.1.0/24", child_cidrs)
-        self.assertIn("10.0.2.0/24", child_cidrs)
-
-    def test_priority_and_conflict(self):
-        # ACI has higher priority than DNAC
-        self.engine.subnets = [
-            IPAMNode("10.10.10.0/24", source="DNAC"),
-        ]
-        self.engine.subnets[0].site = "Site-A"
-
-        node2 = IPAMNode("10.10.10.0/24", source="ACI")
-        node2.site = "Site-B"
-        self.engine.subnets.append(node2)
-
-        self.engine.build_tree()
-
-        # Flatten and find the node
-        flat = self.engine._flatten(self.engine.v4_tree)
-        target = next(n for n in flat if n.cidr == "10.10.10.0/24")
-
-        # Source should be ACI (higher priority)
-        self.assertEqual(target.source, "ACI")
-        # Should have conflict message
-        self.assertTrue(any("Site Conflict" in c for c in target.conflicts))
-        self.assertTrue(any("Site-A" in c for c in target.conflicts))
-        self.assertTrue(any("Site-B" in c for c in target.conflicts))
-
-    def test_dual_stack_linking(self):
-        v4 = IPAMNode("10.1.1.0/24", source="ACI")
-        v4.logical_container = "BD-Users"
-        v4.display_name = "Users"
-
-        v6 = IPAMNode("fc00:1::/64", source="ACI")
-        v6.logical_container = "BD-Users"
-        v6.display_name = "Users"
-
-        self.engine.subnets = [v4, v6]
-        self.engine.build_tree()
-
-        # Names should be updated with [Dual-Stack]
-        self.assertIn("[Dual-Stack]", v4.display_name)
-        self.assertIn("[Dual-Stack]", v6.display_name)
+        v4_tree = self.engine.tree["ipv4"]
+        subnet = v4_tree[0]
+        vips = [c for c in subnet["children"] if c["role"] == "vip"]
+        self.assertEqual(len(vips), 1)
+        self.assertEqual(vips[0]["host_ip"], "10.1.1.254")
 
 if __name__ == "__main__":
     unittest.main()

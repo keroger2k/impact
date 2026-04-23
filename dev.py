@@ -419,7 +419,8 @@ MOCK_IPAM_TREE = {
         {
             "cidr": "10.0.0.0/8",
             "display_name": "Internal Network",
-            "type": "Supernet",
+            "role": "subnet",
+            "interface_type": "physical",
             "site": "Global",
             "device": "N/A",
             "source": "Aggregated",
@@ -429,7 +430,8 @@ MOCK_IPAM_TREE = {
                 {
                     "cidr": "10.10.0.0/16",
                     "display_name": "DCA Data Center",
-                    "type": "Group",
+                    "role": "subnet",
+                    "interface_type": "physical",
                     "site": "TSA-DCA-HQ",
                     "device": "N/A",
                     "source": "DNAC",
@@ -439,13 +441,44 @@ MOCK_IPAM_TREE = {
                         {
                             "cidr": "10.10.1.0/24",
                             "display_name": "User Access",
-                            "type": "Subnet",
+                            "role": "subnet",
+                            "interface_type": "physical",
                             "site": "TSA-DCA-HQ",
                             "device": "SW-DCA-HQ-01",
                             "source": "DNAC",
                             "conflicts": [],
                             "overlaps": [],
                             "children": []
+                        },
+                        {
+                            "cidr": "10.10.100.0/24",
+                            "display_name": "Tunnel Network (2 endpoints)",
+                            "role": "tunnel_group",
+                            "interface_type": "tunnel",
+                            "site": "TSA-DCA-HQ",
+                            "source": "Nexus",
+                            "children": [
+                                {
+                                    "cidr": "10.10.100.0/24",
+                                    "host_ip": "10.10.100.1",
+                                    "display_name": "Tunnel100",
+                                    "role": "endpoint",
+                                    "interface_type": "tunnel",
+                                    "site": "TSA-DCA-HQ",
+                                    "device": "CORE-DCA-01",
+                                    "source": "Nexus"
+                                },
+                                {
+                                    "cidr": "10.10.100.0/24",
+                                    "host_ip": "10.10.100.2",
+                                    "display_name": "Tunnel100",
+                                    "role": "endpoint",
+                                    "interface_type": "tunnel",
+                                    "site": "TSA-BOS-HQ",
+                                    "device": "CORE-BOS-01",
+                                    "source": "Nexus"
+                                }
+                            ]
                         }
                     ]
                 }
@@ -456,7 +489,8 @@ MOCK_IPAM_TREE = {
         {
             "cidr": "fc00::/7",
             "display_name": "Unique Local Address",
-            "type": "Supernet",
+            "role": "subnet",
+            "interface_type": "physical",
             "site": "Global",
             "device": "N/A",
             "source": "Aggregated",
