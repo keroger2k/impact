@@ -4,6 +4,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from templates_module import templates
 import auth as auth_module
 from auth import SessionEntry, verify_ldap_or_mock
+from cache import IPAM_TREE_CACHE_KEY
 from logger_config import run_with_context
 import logging
 
@@ -229,7 +230,7 @@ async def ip_lookup_page(request: Request, user: SessionEntry = Depends(get_curr
 async def ipam_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
     if not user: return RedirectResponse(url="/login")
     from cache import cache
-    ipam_tree = cache.get("ipam_tree")
+    ipam_tree = cache.get(IPAM_TREE_CACHE_KEY)
 
     context = {
         "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",

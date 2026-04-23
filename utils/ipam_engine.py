@@ -4,7 +4,7 @@ import json
 import asyncio
 from typing import List, Dict, Any, Optional, Set, Tuple
 import netaddr
-from cache import cache
+from cache import cache, IPAM_TREE_CACHE_KEY
 import auth as auth_module
 import clients.aci as aci_client_mod
 

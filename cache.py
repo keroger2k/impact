@@ -25,6 +25,8 @@ TTL_ACI_STATUS     = 900     # 15 minutes
 TTL_STATUS         = 300     # 5 minutes
 TTL_PAN_INTERFACES = 172800  # 48 hours
 
+IPAM_TREE_CACHE_KEY = "ipam_tree_v2" # Versioned to force cache bust
+
 CACHE_DIR = Path(__file__).parent / "data" / "cache" / "diskcache"
 
 class AppCache:

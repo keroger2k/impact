@@ -442,7 +442,8 @@ MOCK_IPAM_TREE = {
                             "cidr": "10.10.1.0/24",
                             "display_name": "User Access",
                             "role": "subnet",
-                            "interface_type": "physical",
+                            "interface_type": "svi",
+                            "vlan_id": 200,
                             "site": "TSA-DCA-HQ",
                             "device": "SW-DCA-HQ-01",
                             "source": "DNAC",
@@ -505,7 +506,7 @@ MOCK_IPAM_TREE = {
 
 def seed_cache(cache) -> None:
     """Pre-populate the in-memory cache with mock data for all UI-facing endpoints."""
-    from cache import TTL_DEVICES, TTL_SITES
+    from cache import TTL_DEVICES, TTL_SITES, IPAM_TREE_CACHE_KEY
     LONG = 86400 * 365  # 1 year — mock data never expires
 
     # DNAC
@@ -566,7 +567,7 @@ def seed_cache(cache) -> None:
     cache.set("status_aci", {"ok": True, "detail": "Connected (mock)"}, LONG)
 
     # IPAM
-    cache.set("ipam_tree", MOCK_IPAM_TREE, LONG)
+    cache.set(IPAM_TREE_CACHE_KEY, MOCK_IPAM_TREE, LONG)
 
     # Nexus
     cache.set("nexus_inventory", MOCK_NEXUS_DEVICES, LONG)

@@ -278,20 +278,23 @@
     }
 
     function ipToLong(ip) {
-        if (ip.includes(':')) return null; // IPv6 not implemented here for containment
         const parts = ip.split('.');
         if (parts.length !== 4) return null;
         return ((+parts[0]) << 24) + ((+parts[1]) << 16) + ((+parts[2]) << 8) + (+parts[3]) >>> 0;
     }
 
     function isIpInCidr(ip, cidr) {
+        if (ip.includes(':') || cidr.includes(':')) {
+            // Basic IPv6 substring match as fallback for containment
+            return cidr.includes(ip);
+        }
         if (!cidr.includes('/')) return false;
         const [range, bits] = cidr.split('/');
-        const mask = ~( (1 << (32 - bits)) - 1 );
+        const mask = bits == 0 ? 0 : ~( (1 << (32 - bits)) - 1 );
         return (ipToLong(ip) & mask) === (ipToLong(range) & mask);
     }
 
-    function filterNodes(nodes, query) {
+    function filterNodes(nodes, query, forceMatchChildren = false) {
         if (!Array.isArray(nodes)) return [];
         if (!query) return nodes;
 
@@ -302,6 +305,7 @@
             for (const [key, values] of Object.entries(scoped)) {
                 let fieldVal = '';
                 if (key === 'type') fieldVal = n.interface_type || '';
+                else if (key === 'vlan') fieldVal = String(n.vlan_id || '');
                 else fieldVal = String(n[key] || '');
 
                 const fieldMatch = values.some(v => fieldVal.toLowerCase().includes(v));
@@ -313,7 +317,7 @@
 
             let selfMatchesFree = true;
             if (freeText) {
-                const isIp = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(freeText);
+                const isIp = /^[0-9a-fA-F:\.]+$/.test(freeText) && (freeText.includes('.') || freeText.includes(':'));
                 if (isIp) {
                     selfMatchesFree = isIpInCidr(freeText, n.cidr || '');
                 } else {
@@ -325,8 +329,9 @@
                 }
             }
 
-            const isMatch = selfMatchesScoped && selfMatchesFree;
-            const filteredChildren = filterNodes(n.children || [], query);
+            const isMatch = (selfMatchesScoped && selfMatchesFree) || forceMatchChildren;
+            // If parent matches, all descendants should be included (forceMatchChildren = true)
+            const filteredChildren = filterNodes(n.children || [], query, isMatch);
 
             if (isMatch || filteredChildren.length > 0) {
                 return {

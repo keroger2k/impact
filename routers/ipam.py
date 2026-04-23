@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from auth import SessionEntry, require_auth
 from utils.ipam_engine import IPAMEngine
 from utils.ipam_export import generate_solarwinds_csv
-from cache import cache
+from cache import cache, IPAM_TREE_CACHE_KEY
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -31,7 +31,7 @@ async def refresh_ipam(
         yield emit(f"Starting discovery for sources: {actual_sources or 'ALL'}")
 
         # Load existing subnets if we are doing a partial refresh
-        existing_tree = cache.get("ipam_tree")
+        existing_tree = cache.get(IPAM_TREE_CACHE_KEY)
         if sources and existing_tree:
              # This is a bit complex since we store the tree, not flat subnets.
              # For now, if partial refresh is requested, we still rebuild the whole tree
@@ -61,7 +61,7 @@ async def refresh_ipam(
         engine.build_tree()
 
         tree_data = engine.get_tree()
-        cache.set("ipam_tree", tree_data, ttl=3600*24)
+        cache.set(IPAM_TREE_CACHE_KEY, tree_data, ttl=3600*24)
 
         yield emit("Discovery complete!", type="complete")
 
@@ -69,7 +69,7 @@ async def refresh_ipam(
 
 @router.get("/tree")
 async def get_ipam_tree(session: SessionEntry = Depends(require_auth)):
-    tree_data = cache.get("ipam_tree")
+    tree_data = cache.get(IPAM_TREE_CACHE_KEY)
     if not tree_data:
         return JSONResponse(status_code=404, content={"message": "No IPAM data found. Please run refresh."})
     return tree_data
@@ -123,7 +123,7 @@ async def debug_ipam_sources(session: SessionEntry = Depends(require_auth)):
     aci_nodes = cache.get("aci_nodes") or {"imdata": []}
 
     # ── ipam_tree ────────────────────────────────────────────────────────────
-    tree = cache.get("ipam_tree")
+    tree = cache.get(IPAM_TREE_CACHE_KEY)
     tree_v4 = len(tree.get("ipv4", [])) if tree else 0
     tree_v6 = len(tree.get("ipv6", [])) if tree else 0
 
@@ -164,7 +164,7 @@ async def debug_ipam_sources(session: SessionEntry = Depends(require_auth)):
 
 @router.get("/export")
 async def export_ipam_csv(session: SessionEntry = Depends(require_auth)):
-    tree_data = cache.get("ipam_tree")
+    tree_data = cache.get(IPAM_TREE_CACHE_KEY)
     if not tree_data:
         return JSONResponse(status_code=404, content={"message": "No IPAM data found. Please run refresh."})
 
