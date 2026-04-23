@@ -23,7 +23,7 @@ ALLOWED_PREFIXES = {
     "show ", "display ", "get ", "ping ", "traceroute ",
     "tracert ",
 }
-DISALLOWED_CHARS = {";", "&", "|", "`", "$", "(", ")", "{", "}", ">", "<", "\n", "\r", "\t"}
+DISALLOWED_CHARS = {";", "&", "`", "$", "(", ")", "{", "}", ">", "<", "\n", "\r", "\t"}
 
 PLATFORM_MAP = [
     ("N9K", "cisco_nxos"), ("N7K", "cisco_nxos"), ("N5K", "cisco_nxos"), ("N3K", "cisco_nxos"),
