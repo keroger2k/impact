@@ -85,14 +85,20 @@
 </div>
 
 <script>
-  let ALL_DEVICES = [];
-  let FILTERED_DEVICES = [];
+  let ALL_DEVICES = {{ initial_devices | tojson | safe }};
+  let FILTERED_DEVICES = [...ALL_DEVICES];
   let CURRENT_PAGE = 1;
   let PAGE_SIZE = 40;
   let SORT_COL = 'hostname';
   let SORT_DIR = 1;
 
   async function loadInitialDevices() {
+    if (Array.isArray(ALL_DEVICES) && ALL_DEVICES.length > 0) {
+        document.getElementById('dev-count-badge').textContent = ALL_DEVICES.length;
+        renderTable();
+        return;
+    }
+
     const loader = document.getElementById('dev-master-loading');
     loader.classList.remove('d-none');
 

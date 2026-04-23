@@ -91,11 +91,16 @@ async def dashboard(request: Request, user: SessionEntry = Depends(get_current_u
 @router.get("/devices", response_class=HTMLResponse)
 async def devices_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
     if not user: return RedirectResponse(url="/login")
+    from routers.dnac import get_devices_data
+    devices_resp = await get_devices_data(session=user, limit=5000)
+    devices = devices_resp.get("items", [])
+
     context = {
         "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
         "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
         "active_page": "devices",
         "username": user.username,
+        "initial_devices": devices
     }
     if request.headers.get("HX-Request"):
         return templates.TemplateResponse(request, "pages/devices_content.html", context)
@@ -223,11 +228,15 @@ async def ip_lookup_page(request: Request, user: SessionEntry = Depends(get_curr
 @router.get("/ipam", response_class=HTMLResponse)
 async def ipam_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
     if not user: return RedirectResponse(url="/login")
+    from cache import cache
+    ipam_tree = cache.get("ipam_tree")
+
     context = {
         "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
         "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
         "active_page": "ipam",
-        "username": user.username
+        "username": user.username,
+        "initial_ipam_tree": ipam_tree
     }
     if request.headers.get("HX-Request"):
         return templates.TemplateResponse(request, "pages/ipam_content.html", context)

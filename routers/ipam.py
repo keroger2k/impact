@@ -19,9 +19,7 @@ async def refresh_ipam(
     session: SessionEntry = Depends(require_auth)
 ):
     # Ensure sources is a list if it's a Query object
-    actual_sources = sources
-    if hasattr(sources, "default"):
-        actual_sources = None
+    actual_sources = sources.default if hasattr(sources, "default") else sources
 
     async def generate():
         def emit(msg: str, type: str = "log"):

@@ -50,20 +50,18 @@ def _enrich(d: dict) -> dict:
 
 # ── Devices ────────────────────────────────────────────────────────────────────
 
-@router.get("/devices")
-async def list_devices(
-    request:      Request,
+async def get_devices_data(
+    session:      SessionEntry,
     hostname:     Optional[str] = None,
     ip:           Optional[str] = None,
     platform:     Optional[str] = None,
     role:         Optional[str] = None,
     reachability: Optional[str] = None,
     site:         Optional[str] = None,
-    limit:        int = Query(DEVICE_PAGE_LIMIT, le=DEVICE_PAGE_MAX),
-    offset:       int = Query(0, ge=0),
-    session:      SessionEntry = Depends(require_auth),
+    limit:        int = DEVICE_PAGE_LIMIT,
+    offset:       int = 0,
 ):
-    """Return filtered device list from cache."""
+    """Core logic to fetch and filter devices from cache."""
     loop = asyncio.get_event_loop()
     dnac = _get_dnac(session)
 
@@ -129,12 +127,45 @@ async def list_devices(
             enriched = _enrich(d)
             enriched["siteName"] = dev_site_map.get(d.get("id"))
             paged.append(enriched)
+
+    return {"total": total, "offset": offset, "limit": limit, "items": paged}
+
+
+@router.get("/devices")
+async def list_devices(
+    request:      Request,
+    hostname:     Optional[str] = None,
+    ip:           Optional[str] = None,
+    platform:     Optional[str] = None,
+    role:         Optional[str] = None,
+    reachability: Optional[str] = None,
+    site:         Optional[str] = None,
+    limit:        int = Query(DEVICE_PAGE_LIMIT, le=DEVICE_PAGE_MAX),
+    offset:       int = Query(0, ge=0),
+    session:      SessionEntry = Depends(require_auth),
+):
+    """Return filtered device list from cache."""
+    # Convert Query objects to actual values if called manually
+    q_limit = limit.default if hasattr(limit, "default") else limit
+    q_offset = offset.default if hasattr(offset, "default") else offset
+
+    data = await get_devices_data(
+        session=session,
+        hostname=hostname,
+        ip=ip,
+        platform=platform,
+        role=role,
+        reachability=reachability,
+        site=site,
+        limit=q_limit,
+        offset=q_offset
+    )
     
     if request.headers.get("HX-Request"):
         from templates_module import templates
-        return templates.TemplateResponse(request, "partials/devices_list.html", {"total": total, "items": paged})
+        return templates.TemplateResponse(request, "partials/devices_list.html", data)
 
-    return {"total": total, "offset": offset, "limit": limit, "items": paged}
+    return data
 
 
 @router.get("/devices/stats")
