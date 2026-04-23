@@ -19,7 +19,7 @@ CACHE_SYSTEMS = [
         "id": "dnac",
         "label": "DNAC",
         "icon": "ph-network",
-        "keys": ["devices", "sites", "device_site_map"],
+        "keys": ["devices", "sites", "device_site_map", "dnac_interfaces"],
         "count_key": "devices",
         "refresh_url": "/api/cache/refresh/devices",
         "sse": False,
@@ -280,6 +280,7 @@ async def get_cache_status(request: Request, session: SessionEntry = Depends(req
         _get_card_info("devices",            "DNAC Inventory",        "ph ph-network",         "primary",   "/api/cache/refresh/devices"),
         _get_card_info("sites",              "DNAC Sites",            "ph ph-map-pin",          "primary",   "/api/cache/refresh/sites"),
         _get_card_info("device_site_map",    "DNAC Device-Site Map",  "ph ph-map-trifold",      "primary",   "/api/cache/refresh/sites"),
+        _get_card_info("dnac_interfaces",    "DNAC Interfaces",       "ph ph-plugs-connected",  "primary",   "/api/cache/refresh/dnac_interfaces"),
         _get_card_info("ipam_tree",          "IPAM Tree",             "ph ph-tree-structure",   "info",      None,                             sse=True, sse_fn="triggerIpamCacheRefresh()"),
         _get_card_info("ise_nads",           "ISE NADs",              "ph ph-shield-check",     "success",   "/api/cache/refresh/ise"),
         _get_card_info("ise_users",          "ISE Users",             "ph ph-users",            "success",   "/api/cache/refresh/ise"),
@@ -309,6 +310,7 @@ _KEY_TO_CATEGORY = {
     "devices": "devices",
     "sites": "sites",
     "device_site_map": "sites",
+    "dnac_interfaces": "dnac_interfaces",
     "ipam_tree": "ipam",
     "ise_nads": "ise", "ise_nad_groups": "ise", "ise_endpoint_groups": "ise",
     "ise_identity_groups": "ise", "ise_users": "ise", "ise_sgts": "ise",
@@ -343,6 +345,24 @@ async def refresh_specific_cache(category: str, session: SessionEntry = Depends(
         # IPAM does not depend on site hierarchy — do not invalidate ipam_tree here
         asyncio.create_task(_refetch_dnac(session, include_devices=False, include_sites=True))
         msg = "DNAC Sites is being refreshed in the background."
+
+    elif category == "dnac_interfaces":
+        from logger_config import run_with_context
+        import clients.dnac as dc
+        import auth as auth_module
+        from cache import TTL_DNAC_INTERFACES
+        cache.invalidate("dnac_interfaces")
+        cache.invalidate("ipam_tree")  # IPAM tree derives from dnac_interfaces
+        async def _refetch_dnac_ifaces():
+            try:
+                loop = asyncio.get_event_loop()
+                dnac = auth_module.get_dnac_for_session(session)
+                await loop.run_in_executor(None, run_with_context(cache.get_or_set), "dnac_interfaces", lambda: dc.get_all_interfaces(dnac), TTL_DNAC_INTERFACES)
+                logger.info("Cache refresh: DNAC interfaces re-fetch complete")
+            except Exception as e:
+                logger.warning(f"DNAC interfaces re-fetch failed: {e}")
+        asyncio.create_task(_refetch_dnac_ifaces())
+        msg = "DNAC Interfaces are being refreshed in the background."
 
     elif category in ("nexus", "nexus_inventory", "nexus_interfaces"):
         cache.invalidate("nexus_inventory")

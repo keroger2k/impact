@@ -74,6 +74,54 @@ for _si, (_site, _subnet) in enumerate(_SITES):
 
 MOCK_SITES = [{"id": _uid(f"site-{s}"), "name": s} for s, _ in _SITES]
 
+# ── Mock DNAC interfaces ──────────────────────────────────────────────────────
+# Shape matches what clients.dnac.get_all_interfaces() returns. DNAC is the
+# primary source for loopbacks/tunnels/SVIs on Catalyst devices, so the mocks
+# here are what exercise that path in IPAM.
+MOCK_DNAC_INTERFACES: list[dict] = []
+
+# Pick the first CORE device per site — those get a rich interface set.
+_CORE_PRIMARY: dict = {}
+for _d in MOCK_DEVICES:
+    if _d.get("role") == "CORE":
+        _site = MOCK_DEVICE_SITE_MAP.get(_d["id"])
+        if _site and _site not in _CORE_PRIMARY:
+            _CORE_PRIMARY[_site] = _d
+
+_SITE_OCTET = {"TSA-DCA-HQ": 10, "TSA-BOS-T1": 20, "TSA-LAX-T1": 30, "TSA-ORD-T1": 40, "TSA-JFK-T1": 50}
+
+def _dnac_iface(dev_id, host, port, addr, mask, vlan=None, desc=""):
+    MOCK_DNAC_INTERFACES.append({
+        "deviceId": dev_id, "deviceName": host,
+        "portName": port, "ipv4Address": addr, "ipv4Mask": mask,
+        "macAddress": "00:00:00:00:00:00", "vlanId": vlan,
+        "description": desc, "adminStatus": "UP", "status": "up", "speed": "1000000",
+    })
+
+for _i, (_site, _d) in enumerate(_CORE_PRIMARY.items()):
+    _n = _i + 1  # 1..5
+    _id = _d["id"]
+    _host = _d["hostname"]
+    _octet = _SITE_OCTET.get(_site, 99)
+
+    # Management
+    _dnac_iface(_id, _host, "mgmt0", _d["managementIpAddress"], "255.255.255.0", desc="Management")
+    # Transit uplink — per-site /24
+    _dnac_iface(_id, _host, "GigabitEthernet1/0/1", f"10.{_octet}.100.1", "255.255.255.0", desc="Uplink")
+    # Loopback0 — unique /32 per CORE device (5 hosts collapse into a host-route group)
+    _dnac_iface(_id, _host, "Loopback0", f"10.99.100.{_n}", "255.255.255.255", desc="Router ID")
+    # Per-site SVI
+    _dnac_iface(_id, _host, "Vlan10", f"10.{_octet}.10.1", "255.255.255.0", vlan="10", desc="Users VLAN")
+    # Tunnel10 — DMVPN-style hub/spoke: all CORE devices share 10.99.3.0/24 so
+    # IPAM should render a single tunnel_group with 5 endpoints.
+    _dnac_iface(_id, _host, "Tunnel10", f"10.99.3.{_n}", "255.255.255.0", desc=f"DMVPN endpoint {_n}")
+
+# Point-to-point transit: Tunnel20 pairs CORE-DCA (idx 1) and CORE-BOS (idx 2) on a /30
+_pair = list(_CORE_PRIMARY.values())[:2]
+if len(_pair) == 2:
+    _dnac_iface(_pair[0]["id"], _pair[0]["hostname"], "Tunnel20", "10.99.4.1", "255.255.255.252", desc="P2P to BOS")
+    _dnac_iface(_pair[1]["id"], _pair[1]["hostname"], "Tunnel20", "10.99.4.2", "255.255.255.252", desc="P2P to DCA")
+
 MOCK_NEXUS_DEVICES = [
     {
         "id": f"nexus_N9K-DCA-{i+1:02d}",
@@ -585,9 +633,9 @@ MOCK_IPAM_TREE = {
 def _build_ipam_tree_from_mocks() -> dict:
     """Run the live IPAM engine against the seeded mock source caches.
 
-    The engine's nexus/panorama discoverers are declared async but perform no
-    awaits — they iterate over the cache synchronously — so we drive them on a
-    fresh event loop without interfering with the FastAPI loop.
+    DNAC discovery uses ``loop.run_in_executor`` internally so we need a real
+    event loop. Session is None because the loaders are never invoked — the
+    caches are already populated by seed_cache.
     """
     import asyncio
     from utils.ipam_engine import IPAMEngine
@@ -595,6 +643,7 @@ def _build_ipam_tree_from_mocks() -> dict:
     engine = IPAMEngine()
     loop = asyncio.new_event_loop()
     try:
+        loop.run_until_complete(engine._discover_dnac(None, loop))
         loop.run_until_complete(engine._discover_nexus(None, None))
         loop.run_until_complete(engine._discover_panorama(None, None))
     finally:
@@ -612,6 +661,7 @@ def seed_cache(cache) -> None:
     cache.set("devices",         MOCK_DEVICES,          TTL_DEVICES)
     cache.set("sites",           MOCK_SITES,            TTL_SITES)
     cache.set("device_site_map", MOCK_DEVICE_SITE_MAP,  TTL_SITES)
+    cache.set("dnac_interfaces", MOCK_DNAC_INTERFACES,  LONG)
 
     # DNAC status
     cache.set("status_dnac",     {"ok": True, "detail": f"{len(MOCK_DEVICES):,} devices (mock)"}, LONG)

@@ -24,8 +24,9 @@ TTL_ISE_POLICIES   = 3600    # 1 hour
 TTL_ACI_STATUS     = 900     # 15 minutes
 TTL_STATUS         = 300     # 5 minutes
 TTL_PAN_INTERFACES = 172800  # 48 hours
+TTL_DNAC_INTERFACES = 14400  # 4 hours
 
-IPAM_TREE_CACHE_KEY = "ipam_tree_v2" # Versioned to force cache bust
+IPAM_TREE_CACHE_KEY = "ipam_tree_v3" # Bumped — DNAC now contributes full interfaces (was v2)
 
 CACHE_DIR = Path(__file__).parent / "data" / "cache" / "diskcache"
 

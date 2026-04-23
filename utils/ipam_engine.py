@@ -179,42 +179,91 @@ class IPAMEngine:
             logger.error(f"ACI discovery failed: {e}")
 
     async def _discover_dnac(self, session, loop):
-        # TODO(ipam): DNAC path uses management IPs only and hardcodes /24.
-        # The real fix is to call dnac.get_all_interfaces() per device and extract
-        # actual prefix lengths + roles. Out of scope for tunnel-aware / search
-        # work — do not bundle.
+        """DNAC primary source: full interface inventory (loopbacks, tunnels,
+        SVIs, physical, mgmt) with real prefix lengths from ipv4Address/ipv4Mask.
+        Falls back to a management /24 approximation for devices that have no
+        interface entries."""
         try:
-            dnac = auth_module.get_dnac_for_session(session)
+            dnac = auth_module.get_dnac_for_session(session) if session else None
             import clients.dnac as dc
 
-            # Use cached devices/sites if available
-            from cache import cache, TTL_DEVICES, TTL_SITES
-            devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "devices", lambda: dc.get_all_devices(dnac), TTL_DEVICES)
-            devices = devices or []
-            sites = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "sites", lambda: dc.get_site_cache(dnac), TTL_SITES)
-            sites = sites or []
-            dev_site_map = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "device_site_map", lambda: dc.build_device_site_map(dnac, sites), TTL_SITES)
-            dev_site_map = dev_site_map or {}
+            from cache import cache, TTL_DEVICES, TTL_SITES, TTL_DNAC_INTERFACES
 
-            for dev in devices:
-                ip = dev.get('managementIpAddress')
-                if not ip: continue
+            def _loader_or_empty(loader):
+                return (lambda: loader()) if dnac else (lambda: None)
 
-                site = dev_site_map.get(dev.get('id'), "Unknown")
+            devices = await loop.run_in_executor(
+                None, run_with_context(cache.get_or_set),
+                "devices", _loader_or_empty(lambda: dc.get_all_devices(dnac)), TTL_DEVICES
+            ) or []
+            sites = await loop.run_in_executor(
+                None, run_with_context(cache.get_or_set),
+                "sites", _loader_or_empty(lambda: dc.get_site_cache(dnac)), TTL_SITES
+            ) or []
+            dev_site_map = await loop.run_in_executor(
+                None, run_with_context(cache.get_or_set),
+                "device_site_map", _loader_or_empty(lambda: dc.build_device_site_map(dnac, sites)), TTL_SITES
+            ) or {}
+            interfaces = await loop.run_in_executor(
+                None, run_with_context(cache.get_or_set),
+                "dnac_interfaces", _loader_or_empty(lambda: dc.get_all_interfaces(dnac)), TTL_DNAC_INTERFACES
+            ) or []
+
+            id_to_dev = {d.get('id'): d for d in devices if d.get('id')}
+            devices_with_iface: Set[str] = set()
+
+            for iface in interfaces:
+                addr = iface.get('ipv4Address')
+                mask = iface.get('ipv4Mask')
+                if not addr or not mask:
+                    continue
+                port_name = iface.get('portName') or ''
+                desc = iface.get('description') or ''
                 try:
-                    # Assume management is /24 if not specified for tree building
-                    net = netaddr.IPNetwork(f"{ip}/24")
-                    if self.is_excluded(net): continue
+                    net = netaddr.IPNetwork(f"{addr}/{mask}")
+                except Exception:
+                    continue
+                if self.is_excluded(net, port_name, desc):
+                    continue
 
+                dev_id = iface.get('deviceId')
+                dev = id_to_dev.get(dev_id) or {}
+                devices_with_iface.add(dev_id)
+                hostname = dev.get('hostname') or iface.get('deviceName') or 'Unknown'
+
+                node = IPAMNode(str(net.cidr), source="DNAC")
+                node.display_name = port_name or hostname
+                node.site = dev_site_map.get(dev_id, "Unknown")
+                node.device = hostname
+                node.host_ip = str(net.ip)
+                node.interface_name = port_name
+                node.interface_type, node.vlan_id = classify_interface(port_name, net)
+                if node.interface_type == "loopback":
+                    node.role = "host_route"
+
+                self.subnets.append(node)
+
+            # Fallback: device has a management IP but no interface entry came
+            # back for it — keep the /24 management approximation so the device
+            # still appears in IPAM.
+            for dev in devices:
+                dev_id = dev.get('id')
+                if dev_id in devices_with_iface:
+                    continue
+                ip = dev.get('managementIpAddress')
+                if not ip:
+                    continue
+                try:
+                    net = netaddr.IPNetwork(f"{ip}/24")
+                    if self.is_excluded(net):
+                        continue
                     node = IPAMNode(str(net.cidr), source="DNAC")
                     node.display_name = dev.get('hostname', 'Unknown')
-                    node.site = site
+                    node.site = dev_site_map.get(dev_id, "Unknown")
                     node.device = dev.get('hostname')
-
                     node.host_ip = ip
                     node.interface_type = "management"
                     node.role = "host_route"
-
                     self.subnets.append(node)
                 except Exception:
                     continue
