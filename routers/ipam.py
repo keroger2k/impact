@@ -18,6 +18,11 @@ async def refresh_ipam(
     sources: Optional[List[str]] = Query(None),
     session: SessionEntry = Depends(require_auth)
 ):
+    # Ensure sources is a list if it's a Query object
+    actual_sources = sources
+    if hasattr(sources, "default"):
+        actual_sources = None
+
     async def generate():
         def emit(msg: str, type: str = "log"):
             return f"data: {json.dumps({'type': type, 'message': msg})}\n\n"
@@ -25,7 +30,7 @@ async def refresh_ipam(
         engine = IPAMEngine()
         loop = asyncio.get_event_loop()
 
-        yield emit(f"Starting discovery for sources: {sources or 'ALL'}")
+        yield emit(f"Starting discovery for sources: {actual_sources or 'ALL'}")
 
         # Load existing subnets if we are doing a partial refresh
         existing_tree = cache.get("ipam_tree")
@@ -43,7 +48,7 @@ async def refresh_ipam(
             await progress_queue.put(msg)
 
         # Run discovery in background
-        discovery_task = asyncio.create_task(engine.discover_all(session, loop, sources=sources, yield_progress=progress_callback))
+        discovery_task = asyncio.create_task(engine.discover_all(session, loop, sources=actual_sources, yield_progress=progress_callback))
 
         while not discovery_task.done() or not progress_queue.empty():
             try:

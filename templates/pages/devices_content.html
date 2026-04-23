@@ -98,10 +98,12 @@
 
     try {
       const res = await fetch('/api/dnac/devices?limit=5000', {
-        headers: { }
+        headers: { 'Accept': 'application/json' }
       });
       const data = await res.json();
-      ALL_DEVICES = data.items || [];
+
+      // Handle both flat list and wrapped object for robustness
+      ALL_DEVICES = Array.isArray(data) ? data : (data.items || []);
       FILTERED_DEVICES = [...ALL_DEVICES];
 
       document.getElementById('dev-count-badge').textContent = ALL_DEVICES.length;
