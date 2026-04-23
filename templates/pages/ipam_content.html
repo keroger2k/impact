@@ -40,6 +40,9 @@
             </span>
             <input type="text" id="ipam-filter" class="form-control ps-5" placeholder="Filter by CIDR, Site, or Device...">
         </div>
+        <div class="mt-2 text-muted small ms-1">
+            <i class="ph ph-info me-1"></i> Examples: 10.5.3.27 | site:ATL | device:core1 | type:tunnel | vlan:200
+        </div>
     </div>
   </div>
 
@@ -252,18 +255,91 @@
         container.appendChild(createTreeCard("Global IPv6 Space (ULA & Public)", filteredData.ipv6));
     }
 
-    function filterNodes(nodes, query) {
+    function parseQuery(query) {
+        const tokens = query.split(/\s+/);
+        const scoped = {};
+        const freeTextTokens = [];
+
+        tokens.forEach(t => {
+            if (t.includes(':')) {
+                const [key, val] = t.split(':');
+                if (['site', 'device', 'source', 'type', 'vlan', 'cidr'].includes(key)) {
+                    if (!scoped[key]) scoped[key] = [];
+                    scoped[key].push(val.toLowerCase());
+                } else {
+                    freeTextTokens.push(t.toLowerCase());
+                }
+            } else if (t) {
+                freeTextTokens.push(t.toLowerCase());
+            }
+        });
+
+        return { scoped, freeText: freeTextTokens.join(' ') };
+    }
+
+    function ipToLong(ip) {
+        const parts = ip.split('.');
+        if (parts.length !== 4) return null;
+        return ((+parts[0]) << 24) + ((+parts[1]) << 16) + ((+parts[2]) << 8) + (+parts[3]) >>> 0;
+    }
+
+    function isIpInCidr(ip, cidr) {
+        if (ip.includes(':') || cidr.includes(':')) {
+            // Basic IPv6 substring match as fallback for containment
+            return cidr.includes(ip);
+        }
+        if (!cidr.includes('/')) return false;
+        const [range, bits] = cidr.split('/');
+        const mask = bits == 0 ? 0 : ~( (1 << (32 - bits)) - 1 );
+        return (ipToLong(ip) & mask) === (ipToLong(range) & mask);
+    }
+
+    function filterNodes(nodes, query, forceMatchChildren = false) {
         if (!Array.isArray(nodes)) return [];
         if (!query) return nodes;
-        return nodes.map(n => {
-            const matchSelf = (n.cidr || '').toLowerCase().includes(query) ||
-                             (n.site || '').toLowerCase().includes(query) ||
-                             (n.device || '').toLowerCase().includes(query) ||
-                             (n.display_name || '').toLowerCase().includes(query);
 
-            const filteredChildren = filterNodes(n.children || [], query);
-            if (matchSelf || filteredChildren.length > 0) {
-                return { ...n, children: filteredChildren, _match: true };
+        const { scoped, freeText } = parseQuery(query);
+
+        return nodes.map(n => {
+            let selfMatchesScoped = true;
+            for (const [key, values] of Object.entries(scoped)) {
+                let fieldVal = '';
+                if (key === 'type') fieldVal = n.interface_type || '';
+                else if (key === 'vlan') fieldVal = String(n.vlan_id || '');
+                else fieldVal = String(n[key] || '');
+
+                const fieldMatch = values.some(v => fieldVal.toLowerCase().includes(v));
+                if (!fieldMatch) {
+                    selfMatchesScoped = false;
+                    break;
+                }
+            }
+
+            let selfMatchesFree = true;
+            if (freeText) {
+                const isIp = /^[0-9a-fA-F:\.]+$/.test(freeText) && (freeText.includes('.') || freeText.includes(':'));
+                if (isIp) {
+                    selfMatchesFree = isIpInCidr(freeText, n.cidr || '');
+                } else {
+                    selfMatchesFree = (n.cidr || '').toLowerCase().includes(freeText) ||
+                                      (n.site || '').toLowerCase().includes(freeText) ||
+                                      (n.device || '').toLowerCase().includes(freeText) ||
+                                      (n.display_name || '').toLowerCase().includes(freeText) ||
+                                      (n.interface_name || '').toLowerCase().includes(freeText);
+                }
+            }
+
+            const isMatch = (selfMatchesScoped && selfMatchesFree) || forceMatchChildren;
+            // If parent matches, all descendants should be included (forceMatchChildren = true)
+            const filteredChildren = filterNodes(n.children || [], query, isMatch);
+
+            if (isMatch || filteredChildren.length > 0) {
+                return {
+                    ...n,
+                    children: filteredChildren,
+                    _match: isMatch,
+                    _is_ancestor: !isMatch && filteredChildren.length > 0
+                };
             }
             return null;
         }).filter(n => n !== null);
@@ -314,6 +390,9 @@
     function createNodeElement(node, depth = 0) {
         const item = document.createElement('div');
         item.className = 'ipam-node-item';
+        if (node._is_ancestor) {
+            item.style.opacity = '0.55';
+        }
 
         const content = document.createElement('div');
         content.className = 'd-flex align-items-center justify-content-between py-3 px-4 cursor-pointer border-bottom hover-bg';
@@ -352,7 +431,11 @@
 
         const icon = document.createElement('span');
         icon.className = 'me-1';
-        if (node.type === 'Group' || node.type === 'Supernet') {
+        if (node.role === 'tunnel_group') {
+            icon.innerHTML = '<i class="ph ph-circle-nodes text-indigo"></i>';
+        } else if (node.role === 'loopback_group' || node.role === 'host_route_group') {
+            icon.innerHTML = '<i class="ph ph-folders text-muted"></i>';
+        } else if (node.type === 'Group' || node.type === 'Supernet') {
             icon.innerHTML = '<i class="ph ph-folder text-muted"></i>';
         } else {
             icon.innerHTML = '<i class="ph ph-hash text-muted" style="font-size: 0.85rem"></i>';
@@ -362,10 +445,16 @@
         let labelClass = "badge badge-muted ms-2";
         let labelText = node.display_name || 'System-Generated';
 
+        let cidrText = `<span class="font-weight-bold" style="color: var(--sidebar-bg)">${node.cidr}</span>`;
+        if (node.role === 'endpoint' && node.host_ip) {
+            cidrText = `<span class="font-weight-bold" style="color: var(--sidebar-bg)">${node.host_ip}</span> <span class="text-muted small">(${node.cidr})</span>`;
+        }
+
         info.innerHTML = `
             <div class="d-flex align-items-center">
-                <span class="font-weight-bold" style="color: var(--sidebar-bg)">${node.cidr}</span>
+                ${cidrText}
                 <span class="${labelClass}">${labelText}</span>
+                ${node.role === 'tunnel_group' ? `<span class="badge bg-indigo-soft text-indigo ms-2">${node.children.length} endpoints</span>` : ''}
             </div>
         `;
 
@@ -392,6 +481,20 @@
 
         if (node.device && node.device !== 'Unknown' && node.device !== '' && node.device !== 'N/A') {
             right.innerHTML += `<span class="badge badge-muted">${node.device}</span>`;
+        }
+
+        if (node.interface_type && node.interface_type !== 'unknown') {
+            const colors = {
+                tunnel: 'indigo',
+                loopback: 'gray',
+                svi: 'teal',
+                vip: 'amber',
+                p2p: 'slate',
+                management: 'purple',
+                physical: 'secondary'
+            };
+            const color = colors[node.interface_type] || 'secondary';
+            right.innerHTML += `<span class="badge bg-${color}-soft text-${color} text-capitalize">${node.interface_type}</span>`;
         }
 
         if (node.source && node.source !== 'Unknown') {
@@ -432,10 +535,11 @@
 
         if (node.children && node.children.length > 0) {
             const subNodes = document.createElement('div');
-            const show = node._match ? '' : 'd-none';
+            const shouldExpand = node._match || node._is_ancestor;
+            const show = shouldExpand ? '' : 'd-none';
             subNodes.className = `sub-nodes ${show}`;
 
-            if (node._match) {
+            if (shouldExpand) {
                 setTimeout(() => {
                     const icon = item.querySelector('.toggle-icon i');
                     if (icon) icon.className = 'ph ph-caret-down';

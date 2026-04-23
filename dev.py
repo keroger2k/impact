@@ -74,6 +74,54 @@ for _si, (_site, _subnet) in enumerate(_SITES):
 
 MOCK_SITES = [{"id": _uid(f"site-{s}"), "name": s} for s, _ in _SITES]
 
+# ── Mock DNAC interfaces ──────────────────────────────────────────────────────
+# Shape matches what clients.dnac.get_all_interfaces() returns. DNAC is the
+# primary source for loopbacks/tunnels/SVIs on Catalyst devices, so the mocks
+# here are what exercise that path in IPAM.
+MOCK_DNAC_INTERFACES: list[dict] = []
+
+# Pick the first CORE device per site — those get a rich interface set.
+_CORE_PRIMARY: dict = {}
+for _d in MOCK_DEVICES:
+    if _d.get("role") == "CORE":
+        _site = MOCK_DEVICE_SITE_MAP.get(_d["id"])
+        if _site and _site not in _CORE_PRIMARY:
+            _CORE_PRIMARY[_site] = _d
+
+_SITE_OCTET = {"TSA-DCA-HQ": 10, "TSA-BOS-T1": 20, "TSA-LAX-T1": 30, "TSA-ORD-T1": 40, "TSA-JFK-T1": 50}
+
+def _dnac_iface(dev_id, host, port, addr, mask, vlan=None, desc=""):
+    MOCK_DNAC_INTERFACES.append({
+        "deviceId": dev_id, "deviceName": host,
+        "portName": port, "ipv4Address": addr, "ipv4Mask": mask,
+        "macAddress": "00:00:00:00:00:00", "vlanId": vlan,
+        "description": desc, "adminStatus": "UP", "status": "up", "speed": "1000000",
+    })
+
+for _i, (_site, _d) in enumerate(_CORE_PRIMARY.items()):
+    _n = _i + 1  # 1..5
+    _id = _d["id"]
+    _host = _d["hostname"]
+    _octet = _SITE_OCTET.get(_site, 99)
+
+    # Management
+    _dnac_iface(_id, _host, "mgmt0", _d["managementIpAddress"], "255.255.255.0", desc="Management")
+    # Transit uplink — per-site /24
+    _dnac_iface(_id, _host, "GigabitEthernet1/0/1", f"10.{_octet}.100.1", "255.255.255.0", desc="Uplink")
+    # Loopback0 — unique /32 per CORE device (5 hosts collapse into a host-route group)
+    _dnac_iface(_id, _host, "Loopback0", f"10.99.100.{_n}", "255.255.255.255", desc="Router ID")
+    # Per-site SVI
+    _dnac_iface(_id, _host, "Vlan10", f"10.{_octet}.10.1", "255.255.255.0", vlan="10", desc="Users VLAN")
+    # Tunnel10 — DMVPN-style hub/spoke: all CORE devices share 10.99.3.0/24 so
+    # IPAM should render a single tunnel_group with 5 endpoints.
+    _dnac_iface(_id, _host, "Tunnel10", f"10.99.3.{_n}", "255.255.255.0", desc=f"DMVPN endpoint {_n}")
+
+# Point-to-point transit: Tunnel20 pairs CORE-DCA (idx 1) and CORE-BOS (idx 2) on a /30
+_pair = list(_CORE_PRIMARY.values())[:2]
+if len(_pair) == 2:
+    _dnac_iface(_pair[0]["id"], _pair[0]["hostname"], "Tunnel20", "10.99.4.1", "255.255.255.252", desc="P2P to BOS")
+    _dnac_iface(_pair[1]["id"], _pair[1]["hostname"], "Tunnel20", "10.99.4.2", "255.255.255.252", desc="P2P to DCA")
+
 MOCK_NEXUS_DEVICES = [
     {
         "id": f"nexus_N9K-DCA-{i+1:02d}",
@@ -91,18 +139,56 @@ MOCK_NEXUS_DEVICES = [
 ]
 
 MOCK_NEXUS_INTERFACES = []
-for dev in MOCK_NEXUS_DEVICES:
+for _idx, _dev in enumerate(MOCK_NEXUS_DEVICES):
+    _hostname = _dev["hostname"]
+    _device_ip = _dev["managementIpAddress"]
+    _n = _idx + 1  # 1..10
+    _mac = f"00:50:56:00:00:{_n:02x}"
+
+    # Physical uplink — per-device /24 in site transit space
     MOCK_NEXUS_INTERFACES.append({
-        "hostname": dev["hostname"],
-        "device_ip": dev["managementIpAddress"],
-        "platform": "nxos",
+        "hostname": _hostname, "device_ip": _device_ip, "platform": "nxos",
         "interface_name": "Ethernet1/1",
-        "ipv4_address": f"10.60.{MOCK_NEXUS_DEVICES.index(dev)+1}.1/24",
-        "vlans": [10, 20],
-        "zone": "trust",
-        "mac_address": f"00:50:56:00:00:{MOCK_NEXUS_DEVICES.index(dev)+1:02x}",
-        "error": None
+        "ipv4_address": f"10.60.{_n}.1/24",
+        "vlans": [10, 20], "zone": "trust", "mac_address": _mac, "error": None,
     })
+
+    # Loopback0 — unique /32 per device. With 10 devices this exercises the
+    # "collapse 3+ loopbacks" behavior in the IPAM tree.
+    MOCK_NEXUS_INTERFACES.append({
+        "hostname": _hostname, "device_ip": _device_ip, "platform": "nxos",
+        "interface_name": "loopback0",
+        "ipv4_address": f"10.99.10.{_n}/32",
+        "vlans": [], "zone": "", "mac_address": _mac, "error": None,
+    })
+
+    # SVIs on first 4 devices — per-device Vlan in the 10.70.x.0/24 space
+    if _n <= 4:
+        MOCK_NEXUS_INTERFACES.append({
+            "hostname": _hostname, "device_ip": _device_ip, "platform": "nxos",
+            "interface_name": f"Vlan{200 + _n}",
+            "ipv4_address": f"10.70.{_n}.1/24",
+            "vlans": [200 + _n], "zone": "trust", "mac_address": _mac, "error": None,
+        })
+
+    # Tunnel100 — DMVPN-style hub/spoke: devices 1..4 all share 10.99.0.0/24
+    # so they get collapsed into one tunnel_group with 4 endpoints.
+    if _n <= 4:
+        MOCK_NEXUS_INTERFACES.append({
+            "hostname": _hostname, "device_ip": _device_ip, "platform": "nxos",
+            "interface_name": "Tunnel100",
+            "ipv4_address": f"10.99.0.{_n}/24",
+            "vlans": [], "zone": "vpn", "mac_address": _mac, "error": None,
+        })
+
+    # Tunnel200 — point-to-point /30 between devices 5 and 6 (2-endpoint group)
+    if _n in (5, 6):
+        MOCK_NEXUS_INTERFACES.append({
+            "hostname": _hostname, "device_ip": _device_ip, "platform": "nxos",
+            "interface_name": "Tunnel200",
+            "ipv4_address": f"10.99.1.{_n - 4}/30",
+            "vlans": [], "zone": "vpn", "mac_address": _mac, "error": None,
+        })
 
 MOCK_USERS = [
     {"id": _uid("user-admin"), "name": "admin", "description": "Network Administrator", "enabled": True, "passwordPolicy": "Strong"},
@@ -287,6 +373,46 @@ MOCK_SERVICES: list[dict] = [
     {"name": "SVC-DNS",    "protocol": "udp", "port": "53",   "device_group": "shared"},
 ]
 
+# Paired firewall interface inventory (matches the shape produced by
+# clients.panorama.fetch_firewall_interfaces). tunnel.10 is configured on both
+# firewalls in the same /24, so IPAM should render a 2-endpoint tunnel_group.
+MOCK_PAN_INTERFACES: list[dict] = [
+    {
+        "serial":        "014101000001",
+        "hostname":      "FW-DCA-01",
+        "model":         "PA-3220",
+        "management_ip": "10.10.250.1",
+        "device_group":  "DG-TSA-East",
+        "os_version":    "10.1.5",
+        "ha_state":      "active",
+        "ha_enabled":    True,
+        "interfaces": [
+            {"name": "management",  "ipv4": "10.10.250.1/24", "ipv6": [], "zone": "mgmt"},
+            {"name": "ethernet1/1", "ipv4": "10.80.1.1/24",   "ipv6": [], "zone": "trust"},
+            {"name": "ethernet1/2", "ipv4": "10.80.2.1/30",   "ipv6": [], "zone": "untrust"},
+            {"name": "loopback.1",  "ipv4": "10.99.20.1/32",  "ipv6": [], "zone": "loopback"},
+            {"name": "tunnel.10",   "ipv4": "10.99.5.1/24",   "ipv6": [], "zone": "vpn"},
+        ],
+    },
+    {
+        "serial":        "014101000002",
+        "hostname":      "FW-BOS-01",
+        "model":         "PA-3220",
+        "management_ip": "10.20.250.1",
+        "device_group":  "DG-TSA-West",
+        "os_version":    "10.1.5",
+        "ha_state":      "active",
+        "ha_enabled":    True,
+        "interfaces": [
+            {"name": "management",  "ipv4": "10.20.250.1/24", "ipv6": [], "zone": "mgmt"},
+            {"name": "ethernet1/1", "ipv4": "10.80.3.1/24",   "ipv6": [], "zone": "trust"},
+            {"name": "loopback.1",  "ipv4": "10.99.20.2/32",  "ipv6": [], "zone": "loopback"},
+            # Pairs with FW-DCA-01 tunnel.10 → should group in IPAM
+            {"name": "tunnel.10",   "ipv4": "10.99.5.2/24",   "ipv6": [], "zone": "vpn"},
+        ],
+    },
+]
+
 # ── Mock ACI data ─────────────────────────────────────────────────────────────
 
 MOCK_ACI_NODES = [
@@ -419,7 +545,8 @@ MOCK_IPAM_TREE = {
         {
             "cidr": "10.0.0.0/8",
             "display_name": "Internal Network",
-            "type": "Supernet",
+            "role": "subnet",
+            "interface_type": "physical",
             "site": "Global",
             "device": "N/A",
             "source": "Aggregated",
@@ -429,7 +556,8 @@ MOCK_IPAM_TREE = {
                 {
                     "cidr": "10.10.0.0/16",
                     "display_name": "DCA Data Center",
-                    "type": "Group",
+                    "role": "subnet",
+                    "interface_type": "physical",
                     "site": "TSA-DCA-HQ",
                     "device": "N/A",
                     "source": "DNAC",
@@ -439,13 +567,45 @@ MOCK_IPAM_TREE = {
                         {
                             "cidr": "10.10.1.0/24",
                             "display_name": "User Access",
-                            "type": "Subnet",
+                            "role": "subnet",
+                            "interface_type": "svi",
+                            "vlan_id": 200,
                             "site": "TSA-DCA-HQ",
                             "device": "SW-DCA-HQ-01",
                             "source": "DNAC",
                             "conflicts": [],
                             "overlaps": [],
                             "children": []
+                        },
+                        {
+                            "cidr": "10.10.100.0/24",
+                            "display_name": "Tunnel Network (2 endpoints)",
+                            "role": "tunnel_group",
+                            "interface_type": "tunnel",
+                            "site": "TSA-DCA-HQ",
+                            "source": "Nexus",
+                            "children": [
+                                {
+                                    "cidr": "10.10.100.0/24",
+                                    "host_ip": "10.10.100.1",
+                                    "display_name": "Tunnel100",
+                                    "role": "endpoint",
+                                    "interface_type": "tunnel",
+                                    "site": "TSA-DCA-HQ",
+                                    "device": "CORE-DCA-01",
+                                    "source": "Nexus"
+                                },
+                                {
+                                    "cidr": "10.10.100.0/24",
+                                    "host_ip": "10.10.100.2",
+                                    "display_name": "Tunnel100",
+                                    "role": "endpoint",
+                                    "interface_type": "tunnel",
+                                    "site": "TSA-BOS-HQ",
+                                    "device": "CORE-BOS-01",
+                                    "source": "Nexus"
+                                }
+                            ]
                         }
                     ]
                 }
@@ -456,7 +616,8 @@ MOCK_IPAM_TREE = {
         {
             "cidr": "fc00::/7",
             "display_name": "Unique Local Address",
-            "type": "Supernet",
+            "role": "subnet",
+            "interface_type": "physical",
             "site": "Global",
             "device": "N/A",
             "source": "Aggregated",
@@ -469,15 +630,38 @@ MOCK_IPAM_TREE = {
 
 # ── Cache seeding ─────────────────────────────────────────────────────────────
 
+def _build_ipam_tree_from_mocks() -> dict:
+    """Run the live IPAM engine against the seeded mock source caches.
+
+    DNAC discovery uses ``loop.run_in_executor`` internally so we need a real
+    event loop. Session is None because the loaders are never invoked — the
+    caches are already populated by seed_cache.
+    """
+    import asyncio
+    from utils.ipam_engine import IPAMEngine
+
+    engine = IPAMEngine()
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(engine._discover_dnac(None, loop))
+        loop.run_until_complete(engine._discover_nexus(None, None))
+        loop.run_until_complete(engine._discover_panorama(None, None))
+    finally:
+        loop.close()
+    engine.build_tree()
+    return engine.get_tree()
+
+
 def seed_cache(cache) -> None:
     """Pre-populate the in-memory cache with mock data for all UI-facing endpoints."""
-    from cache import TTL_DEVICES, TTL_SITES
+    from cache import TTL_DEVICES, TTL_SITES, IPAM_TREE_CACHE_KEY
     LONG = 86400 * 365  # 1 year — mock data never expires
 
     # DNAC
     cache.set("devices",         MOCK_DEVICES,          TTL_DEVICES)
     cache.set("sites",           MOCK_SITES,            TTL_SITES)
     cache.set("device_site_map", MOCK_DEVICE_SITE_MAP,  TTL_SITES)
+    cache.set("dnac_interfaces", MOCK_DNAC_INTERFACES,  LONG)
 
     # DNAC status
     cache.set("status_dnac",     {"ok": True, "detail": f"{len(MOCK_DEVICES):,} devices (mock)"}, LONG)
@@ -509,6 +693,7 @@ def seed_cache(cache) -> None:
     cache.set("pan_device_groups",   MOCK_DEVICE_GROUPS,    LONG)
     cache.set("pan_address_objects", MOCK_ADDRESS_OBJECTS,  LONG)
     cache.set("pan_services",        MOCK_SERVICES,         LONG)
+    cache.set("pan_interfaces",      MOCK_PAN_INTERFACES,   LONG)
 
     # Panorama status
     cache.set("status_panorama", {"ok": True, "detail": "Connected (mock)"}, LONG)
@@ -531,12 +716,17 @@ def seed_cache(cache) -> None:
     cache.set("aci_health_pods",    {"imdata": MOCK_ACI_HEALTH_PODS},    LONG)
     cache.set("status_aci", {"ok": True, "detail": "Connected (mock)"}, LONG)
 
-    # IPAM
-    cache.set("ipam_tree", MOCK_IPAM_TREE, LONG)
-
-    # Nexus
+    # Nexus (seed source caches BEFORE computing the IPAM tree below)
     cache.set("nexus_inventory", MOCK_NEXUS_DEVICES, LONG)
     cache.set("nexus_interfaces", MOCK_NEXUS_INTERFACES, LONG)
+
+    # IPAM — compute the tree from the same source caches the live engine
+    # consumes, so initial render matches what Refresh Discovery would produce.
+    # Falls back to the static MOCK_IPAM_TREE if the engine can't run.
+    try:
+        cache.set(IPAM_TREE_CACHE_KEY, _build_ipam_tree_from_mocks(), LONG)
+    except Exception:
+        cache.set(IPAM_TREE_CACHE_KEY, MOCK_IPAM_TREE, LONG)
 
     for dev in MOCK_NEXUS_DEVICES:
         cache.set(f"config:nexus:{dev['hostname']}", MOCK_CONFIGS[dev['id']], LONG)
