@@ -96,14 +96,71 @@ class TestIPAMEngine(unittest.TestCase):
         self.assertEqual(n.interface_type, "p2p")
 
     def test_is_excluded(self):
-        # RFC1918 (192.168)
-        self.assertTrue(self.engine.is_excluded(netaddr.IPNetwork("192.168.1.0/24")))
+        # 192.168/16 is NOT excluded — it's legitimate RFC1918 space in use here
+        self.assertFalse(self.engine.is_excluded(netaddr.IPNetwork("192.168.1.0/24")))
         # APIPA
         self.assertTrue(self.engine.is_excluded(netaddr.IPNetwork("169.254.1.1/32")))
         # v4 Loopback
         self.assertTrue(self.engine.is_excluded(netaddr.IPNetwork("127.0.0.1/32")))
         # /32 NOT excluded if not in a special range
         self.assertFalse(self.engine.is_excluded(netaddr.IPNetwork("10.1.1.1/32")))
+
+    def test_singleton_tunnel_preserved_when_cidr_collides_with_non_tunnel(self):
+        # Regression: a lone tunnel endpoint at a CIDR already occupied by a
+        # non-tunnel subnet (e.g. DNAC's hardcoded /24 mgmt subnet) used to be
+        # silently dropped. It should nest under the existing subnet instead.
+        mgmt = IPAMNode("10.1.1.0/24", source="DNAC")
+        mgmt.interface_type = "management"
+        mgmt.site = "SiteA"
+        mgmt.device = "CORE-A"
+
+        tun = IPAMNode("10.1.1.0/24", source="Nexus")
+        tun.interface_type = "tunnel"
+        tun.interface_name = "Tunnel10"
+        tun.host_ip = "10.1.1.100"
+        tun.device = "CORE-A"
+        tun.site = "SiteA"
+
+        self.engine.subnets = [mgmt, tun]
+        self.engine.build_tree()
+
+        v4 = self.engine.tree["ipv4"]
+        self.assertEqual(len(v4), 1)
+        self.assertEqual(v4[0]["interface_type"], "management")
+        # The tunnel must still be reachable, as a child endpoint
+        tunnel_children = [c for c in v4[0]["children"] if c.get("interface_type") == "tunnel"]
+        self.assertEqual(len(tunnel_children), 1)
+        self.assertEqual(tunnel_children[0]["role"], "endpoint")
+        self.assertEqual(tunnel_children[0]["interface_name"], "Tunnel10")
+
+    def test_tunnel_group_preserved_when_cidr_collides_with_non_tunnel(self):
+        # 2+ tunnel endpoints colliding with a non-tunnel at the same CIDR
+        # should nest the tunnel_group under the existing subnet, not overwrite it.
+        mgmt = IPAMNode("10.2.2.0/24", source="DNAC")
+        mgmt.interface_type = "management"
+        mgmt.site = "SiteA"
+
+        n1 = IPAMNode("10.2.2.0/24", source="Nexus")
+        n1.interface_type = "tunnel"
+        n1.interface_name = "Tunnel42"
+        n1.host_ip = "10.2.2.1"
+        n1.device = "RouterA"
+
+        n2 = IPAMNode("10.2.2.0/24", source="Nexus")
+        n2.interface_type = "tunnel"
+        n2.interface_name = "Tunnel42"
+        n2.host_ip = "10.2.2.2"
+        n2.device = "RouterB"
+
+        self.engine.subnets = [mgmt, n1, n2]
+        self.engine.build_tree()
+
+        v4 = self.engine.tree["ipv4"]
+        self.assertEqual(len(v4), 1)
+        self.assertEqual(v4[0]["interface_type"], "management")
+        groups = [c for c in v4[0]["children"] if c.get("role") == "tunnel_group"]
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(len(groups[0]["children"]), 2)
 
     def test_vip_detection(self):
         n1 = IPAMNode("10.1.1.0/24", source="Nexus")

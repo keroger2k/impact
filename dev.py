@@ -91,18 +91,56 @@ MOCK_NEXUS_DEVICES = [
 ]
 
 MOCK_NEXUS_INTERFACES = []
-for dev in MOCK_NEXUS_DEVICES:
+for _idx, _dev in enumerate(MOCK_NEXUS_DEVICES):
+    _hostname = _dev["hostname"]
+    _device_ip = _dev["managementIpAddress"]
+    _n = _idx + 1  # 1..10
+    _mac = f"00:50:56:00:00:{_n:02x}"
+
+    # Physical uplink — per-device /24 in site transit space
     MOCK_NEXUS_INTERFACES.append({
-        "hostname": dev["hostname"],
-        "device_ip": dev["managementIpAddress"],
-        "platform": "nxos",
+        "hostname": _hostname, "device_ip": _device_ip, "platform": "nxos",
         "interface_name": "Ethernet1/1",
-        "ipv4_address": f"10.60.{MOCK_NEXUS_DEVICES.index(dev)+1}.1/24",
-        "vlans": [10, 20],
-        "zone": "trust",
-        "mac_address": f"00:50:56:00:00:{MOCK_NEXUS_DEVICES.index(dev)+1:02x}",
-        "error": None
+        "ipv4_address": f"10.60.{_n}.1/24",
+        "vlans": [10, 20], "zone": "trust", "mac_address": _mac, "error": None,
     })
+
+    # Loopback0 — unique /32 per device. With 10 devices this exercises the
+    # "collapse 3+ loopbacks" behavior in the IPAM tree.
+    MOCK_NEXUS_INTERFACES.append({
+        "hostname": _hostname, "device_ip": _device_ip, "platform": "nxos",
+        "interface_name": "loopback0",
+        "ipv4_address": f"10.99.10.{_n}/32",
+        "vlans": [], "zone": "", "mac_address": _mac, "error": None,
+    })
+
+    # SVIs on first 4 devices — per-device Vlan in the 10.70.x.0/24 space
+    if _n <= 4:
+        MOCK_NEXUS_INTERFACES.append({
+            "hostname": _hostname, "device_ip": _device_ip, "platform": "nxos",
+            "interface_name": f"Vlan{200 + _n}",
+            "ipv4_address": f"10.70.{_n}.1/24",
+            "vlans": [200 + _n], "zone": "trust", "mac_address": _mac, "error": None,
+        })
+
+    # Tunnel100 — DMVPN-style hub/spoke: devices 1..4 all share 10.99.0.0/24
+    # so they get collapsed into one tunnel_group with 4 endpoints.
+    if _n <= 4:
+        MOCK_NEXUS_INTERFACES.append({
+            "hostname": _hostname, "device_ip": _device_ip, "platform": "nxos",
+            "interface_name": "Tunnel100",
+            "ipv4_address": f"10.99.0.{_n}/24",
+            "vlans": [], "zone": "vpn", "mac_address": _mac, "error": None,
+        })
+
+    # Tunnel200 — point-to-point /30 between devices 5 and 6 (2-endpoint group)
+    if _n in (5, 6):
+        MOCK_NEXUS_INTERFACES.append({
+            "hostname": _hostname, "device_ip": _device_ip, "platform": "nxos",
+            "interface_name": "Tunnel200",
+            "ipv4_address": f"10.99.1.{_n - 4}/30",
+            "vlans": [], "zone": "vpn", "mac_address": _mac, "error": None,
+        })
 
 MOCK_USERS = [
     {"id": _uid("user-admin"), "name": "admin", "description": "Network Administrator", "enabled": True, "passwordPolicy": "Strong"},
@@ -285,6 +323,46 @@ MOCK_SERVICES: list[dict] = [
     {"name": "SVC-SSH",    "protocol": "tcp", "port": "22",   "device_group": "shared"},
     {"name": "SVC-RDP",    "protocol": "tcp", "port": "3389", "device_group": "shared"},
     {"name": "SVC-DNS",    "protocol": "udp", "port": "53",   "device_group": "shared"},
+]
+
+# Paired firewall interface inventory (matches the shape produced by
+# clients.panorama.fetch_firewall_interfaces). tunnel.10 is configured on both
+# firewalls in the same /24, so IPAM should render a 2-endpoint tunnel_group.
+MOCK_PAN_INTERFACES: list[dict] = [
+    {
+        "serial":        "014101000001",
+        "hostname":      "FW-DCA-01",
+        "model":         "PA-3220",
+        "management_ip": "10.10.250.1",
+        "device_group":  "DG-TSA-East",
+        "os_version":    "10.1.5",
+        "ha_state":      "active",
+        "ha_enabled":    True,
+        "interfaces": [
+            {"name": "management",  "ipv4": "10.10.250.1/24", "ipv6": [], "zone": "mgmt"},
+            {"name": "ethernet1/1", "ipv4": "10.80.1.1/24",   "ipv6": [], "zone": "trust"},
+            {"name": "ethernet1/2", "ipv4": "10.80.2.1/30",   "ipv6": [], "zone": "untrust"},
+            {"name": "loopback.1",  "ipv4": "10.99.20.1/32",  "ipv6": [], "zone": "loopback"},
+            {"name": "tunnel.10",   "ipv4": "10.99.5.1/24",   "ipv6": [], "zone": "vpn"},
+        ],
+    },
+    {
+        "serial":        "014101000002",
+        "hostname":      "FW-BOS-01",
+        "model":         "PA-3220",
+        "management_ip": "10.20.250.1",
+        "device_group":  "DG-TSA-West",
+        "os_version":    "10.1.5",
+        "ha_state":      "active",
+        "ha_enabled":    True,
+        "interfaces": [
+            {"name": "management",  "ipv4": "10.20.250.1/24", "ipv6": [], "zone": "mgmt"},
+            {"name": "ethernet1/1", "ipv4": "10.80.3.1/24",   "ipv6": [], "zone": "trust"},
+            {"name": "loopback.1",  "ipv4": "10.99.20.2/32",  "ipv6": [], "zone": "loopback"},
+            # Pairs with FW-DCA-01 tunnel.10 → should group in IPAM
+            {"name": "tunnel.10",   "ipv4": "10.99.5.2/24",   "ipv6": [], "zone": "vpn"},
+        ],
+    },
 ]
 
 # ── Mock ACI data ─────────────────────────────────────────────────────────────
@@ -504,6 +582,27 @@ MOCK_IPAM_TREE = {
 
 # ── Cache seeding ─────────────────────────────────────────────────────────────
 
+def _build_ipam_tree_from_mocks() -> dict:
+    """Run the live IPAM engine against the seeded mock source caches.
+
+    The engine's nexus/panorama discoverers are declared async but perform no
+    awaits — they iterate over the cache synchronously — so we drive them on a
+    fresh event loop without interfering with the FastAPI loop.
+    """
+    import asyncio
+    from utils.ipam_engine import IPAMEngine
+
+    engine = IPAMEngine()
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(engine._discover_nexus(None, None))
+        loop.run_until_complete(engine._discover_panorama(None, None))
+    finally:
+        loop.close()
+    engine.build_tree()
+    return engine.get_tree()
+
+
 def seed_cache(cache) -> None:
     """Pre-populate the in-memory cache with mock data for all UI-facing endpoints."""
     from cache import TTL_DEVICES, TTL_SITES, IPAM_TREE_CACHE_KEY
@@ -544,6 +643,7 @@ def seed_cache(cache) -> None:
     cache.set("pan_device_groups",   MOCK_DEVICE_GROUPS,    LONG)
     cache.set("pan_address_objects", MOCK_ADDRESS_OBJECTS,  LONG)
     cache.set("pan_services",        MOCK_SERVICES,         LONG)
+    cache.set("pan_interfaces",      MOCK_PAN_INTERFACES,   LONG)
 
     # Panorama status
     cache.set("status_panorama", {"ok": True, "detail": "Connected (mock)"}, LONG)
@@ -566,12 +666,17 @@ def seed_cache(cache) -> None:
     cache.set("aci_health_pods",    {"imdata": MOCK_ACI_HEALTH_PODS},    LONG)
     cache.set("status_aci", {"ok": True, "detail": "Connected (mock)"}, LONG)
 
-    # IPAM
-    cache.set(IPAM_TREE_CACHE_KEY, MOCK_IPAM_TREE, LONG)
-
-    # Nexus
+    # Nexus (seed source caches BEFORE computing the IPAM tree below)
     cache.set("nexus_inventory", MOCK_NEXUS_DEVICES, LONG)
     cache.set("nexus_interfaces", MOCK_NEXUS_INTERFACES, LONG)
+
+    # IPAM — compute the tree from the same source caches the live engine
+    # consumes, so initial render matches what Refresh Discovery would produce.
+    # Falls back to the static MOCK_IPAM_TREE if the engine can't run.
+    try:
+        cache.set(IPAM_TREE_CACHE_KEY, _build_ipam_tree_from_mocks(), LONG)
+    except Exception:
+        cache.set(IPAM_TREE_CACHE_KEY, MOCK_IPAM_TREE, LONG)
 
     for dev in MOCK_NEXUS_DEVICES:
         cache.set(f"config:nexus:{dev['hostname']}", MOCK_CONFIGS[dev['id']], LONG)

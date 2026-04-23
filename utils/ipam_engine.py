@@ -10,13 +10,14 @@ import clients.aci as aci_client_mod
 
 logger = logging.getLogger(__name__)
 
-# Well-known non-allocation ranges to exclude from IPAM tree
+# Well-known non-allocation ranges to exclude from IPAM tree.
+# 192.168.0.0/16 is NOT excluded — it's legitimate RFC1918 space in active use
+# across this network (tunnels, loopbacks, SVIs, physical links).
 EXCLUDED_RANGES = [
-    netaddr.IPNetwork("192.168.0.0/16"),       # Management (Legacy)
     netaddr.IPNetwork("169.254.0.0/16"),     # APIPA
-    netaddr.IPNetwork("127.0.0.0/8"),       # v4 Loopback
-    netaddr.IPNetwork("0.0.0.0/8"),         # This-network
-    netaddr.IPNetwork("224.0.0.0/4"),       # v4 Multicast
+    netaddr.IPNetwork("127.0.0.0/8"),        # v4 Loopback
+    netaddr.IPNetwork("0.0.0.0/8"),          # This-network
+    netaddr.IPNetwork("224.0.0.0/4"),        # v4 Multicast
     netaddr.IPNetwork("255.255.255.255/32"), # Broadcast
     netaddr.IPNetwork("::1/128"),            # v6 Loopback
     netaddr.IPNetwork("fe80::/10"),          # v6 Link-local
@@ -350,7 +351,13 @@ class IPAMEngine:
                         parent_node.children_nodes.append(vip_node)
 
         # 4. Tunnel Group Synthesis
+        # When a tunnel CIDR collides with a non-tunnel subnet recorded in
+        # step 2 (common case: DNAC hardcodes every device's mgmt IP to /24,
+        # which may overlap a tunnel /24), preserve BOTH by nesting the tunnel
+        # view under the existing subnet rather than dropping or overwriting.
         for cidr, endpoints in tunnel_endpoints.items():
+            existing = unique_nets.get(cidr)
+
             if len(endpoints) >= 2:
                 source = "multi" if len({e.source for e in endpoints}) > 1 else endpoints[0].source
                 group = IPAMNode(cidr, source=source)
@@ -360,11 +367,17 @@ class IPAMEngine:
                 for e in endpoints:
                     e.role = "endpoint"
                     group.children_nodes.append(e)
-                unique_nets[cidr] = group
+                if existing is None:
+                    unique_nets[cidr] = group
+                else:
+                    existing.children_nodes.append(group)
             elif len(endpoints) == 1:
                 e = endpoints[0]
-                if e.cidr not in unique_nets:
-                    unique_nets[e.cidr] = e
+                if existing is None:
+                    unique_nets[cidr] = e
+                else:
+                    e.role = "endpoint"
+                    existing.children_nodes.append(e)
 
         # 5. Sort and build tree
         v4_nets = sorted([n for n in unique_nets.values() if n.version == 4],
