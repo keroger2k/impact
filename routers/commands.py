@@ -104,21 +104,23 @@ async def run_command(req: CommandRequest, session: SessionEntry = Depends(requi
     if getenv("COMMANDS_ENABLED", "false").lower() != "true":
         raise HTTPException(403, "Command execution is disabled")
 
-    if len(req.command) > 256:
+    command = req.command.strip()
+    req.command = command
+
+    if len(command) > 256:
         raise HTTPException(400, "Command too long (max 256 chars)")
 
     username, password = session.username, session.password
 
-    cmd_lower = req.command.strip().lower()
-    if not any(cmd_lower.startswith(p) for p in ALLOWED_PREFIXES):
+    if not any(command.lower().startswith(p) for p in ALLOWED_PREFIXES):
         raise HTTPException(400, "Only read-only show/display commands are permitted")
 
-    if any(c in req.command for c in DISALLOWED_CHARS):
+    if any(c in command for c in DISALLOWED_CHARS):
         raise HTTPException(400, "Command contains disallowed characters")
 
     import shlex
     try:
-        parts = shlex.split(req.command)
+        parts = shlex.split(command)
         for p in parts:
             if any(c in p for c in DISALLOWED_CHARS):
                 raise HTTPException(400, "Command contains disallowed characters")

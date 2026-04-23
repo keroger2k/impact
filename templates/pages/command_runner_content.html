@@ -118,7 +118,19 @@
         'X-CSRF-Token': csrfHeader
         },
       body: JSON.stringify(payload)
-    }).then(response => {
+    }).then(async response => {
+       if (!response.ok) {
+         let detail = response.statusText;
+         try {
+           const body = await response.json();
+           detail = body.detail || detail;
+         } catch (_) {}
+         const err = document.createElement('div');
+         err.className = 'text-danger fw-bold';
+         err.textContent = `>> Request failed (${response.status}): ${detail}`;
+         output.appendChild(err);
+         return;
+       }
        const reader = response.body.getReader();
        const decoder = new TextDecoder();
 
