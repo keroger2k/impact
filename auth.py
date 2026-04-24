@@ -23,7 +23,7 @@ class SessionEntry:
     expires_at:   float
     dnac_client:  Any = field(default=None, repr=False)
     ise_client:   Any = field(default=None, repr=False)
-    aci_client:   Any = field(default=None, repr=False)
+    aci_clients:  dict[str, Any] = field(default_factory=dict, repr=False)
     panorama_key: str | None = field(default=None, repr=False)
     _lock:        Any = field(default_factory=threading.Lock, repr=False)
 
@@ -124,19 +124,35 @@ def get_panorama_key_for_session(session: SessionEntry) -> str:
         raise HTTPException(503, "Panorama authentication failed")
     return session.panorama_key
 
-def get_aci_for_session(session: SessionEntry):
+def get_aci_for_session(session: SessionEntry, fabric_id: str | None = None):
+    import clients.aci_registry as reg
+    import clients.aci as ac
     from dev import DEV_MODE
+
+    fabrics = reg.list_fabrics()
+    if not fabrics:
+        raise HTTPException(503, "No ACI fabrics configured")
+
+    if fabric_id is None:
+        fabric = fabrics[0]
+        fabric_id = fabric.id
+    else:
+        try:
+            fabric = reg.get_fabric(fabric_id)
+        except KeyError:
+            raise HTTPException(400, f"Unknown fabric: {fabric_id}")
+
     if DEV_MODE:
-        import clients.aci as ac
-        return ac.ACIClient("https://mock-apic", session.username, session.password)
+        return ac.ACIClient(fabric.url or "https://mock-apic", session.username, session.password, fabric.domain, fabric_id=fabric_id)
+
     with session._lock:
-        if session.aci_client is None:
-            import clients.aci as ac
-            url = os.getenv("ACI_URL")
-            domain = os.getenv("ACI_DOMAIN")
-            session.aci_client = ac.ACIClient(url, session.username, session.password, domain)
-            session.aci_client.login()
-    return session.aci_client
+        if fabric_id not in session.aci_clients:
+            client = ac.ACIClient(fabric.url, session.username, session.password, fabric.domain, fabric_id=fabric_id)
+            if not client.login():
+                raise HTTPException(503, f"ACI login failed for {fabric.label}: connection or credential error")
+            session.aci_clients[fabric_id] = client
+
+    return session.aci_clients[fabric_id]
 
 _bearer = HTTPBearer(auto_error=False)
 

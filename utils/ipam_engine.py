@@ -149,34 +149,37 @@ class IPAMEngine:
                     await emit(f"Error discovering {source}: {str(e)[:50]}")
 
     async def _discover_aci(self, session, loop):
-        try:
-            aci_client = auth_module.get_aci_for_session(session)
-            # Fetch BD subnets
-            subnets = await loop.run_in_executor(None, aci_client.get_all_subnets)
-            for s in subnets:
-                ip_cidr = s.get('ip')
-                if not ip_cidr: continue
+        import clients.aci_registry as reg
+        fabrics = reg.list_fabrics()
+        for f in fabrics:
+            try:
+                aci_client = auth_module.get_aci_for_session(session, f.id)
+                # Fetch both BD and L3Out subnets
+                subnets = await loop.run_in_executor(None, aci_client.get_all_subnets)
+                for s in subnets:
+                    ip_cidr = s.get('ip')
+                    if not ip_cidr: continue
 
-                try:
-                    net = netaddr.IPNetwork(ip_cidr)
-                    if self.is_excluded(net): continue
+                    try:
+                        net = netaddr.IPNetwork(ip_cidr)
+                        if self.is_excluded(net): continue
 
-                    node = IPAMNode(str(net.cidr), source="ACI")
-                    node.display_name = s.get('name') or s.get('dn').split('/')[-1]
-                    node.site = "Fabric"
-                    node.logical_container = s.get('dn').split('/')[1] # Tenant
+                        node = IPAMNode(str(net.cidr), source="ACI")
+                        node.display_name = s.get('name') or s.get('dn').split('/')[-1]
+                        node.site = f.label
+                        node.logical_container = s.get('dn').split('/')[1] # Tenant
 
-                    node.interface_name = s.get('name')
-                    node.host_ip = str(net.ip)
-                    node.interface_type, node.vlan_id = classify_interface(node.interface_name, net)
-                    if node.interface_type == "loopback":
-                        node.role = "host_route"
+                        node.interface_name = s.get('name')
+                        node.host_ip = str(net.ip)
+                        node.interface_type, node.vlan_id = classify_interface(node.interface_name, net)
+                        if node.interface_type == "loopback":
+                            node.role = "host_route"
 
-                    self.subnets.append(node)
-                except Exception:
-                    continue
-        except Exception as e:
-            logger.error(f"ACI discovery failed: {e}")
+                        self.subnets.append(node)
+                    except Exception:
+                        continue
+            except Exception as e:
+                logger.error(f"ACI discovery failed for fabric {f.id}: {e}")
 
     async def _discover_dnac(self, session, loop):
         """DNAC primary source: full interface inventory (loopbacks, tunnels,

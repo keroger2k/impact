@@ -114,6 +114,22 @@ class AppCache:
     def clear(self):
         self._cache.clear()
 
+    def cleanup_old_aci_keys(self):
+        """Purge legacy unprefixed ACI cache keys from disk."""
+        legacy_keys = [
+            "aci_nodes", "aci_l3outs", "aci_bgp_peers", "aci_bgp_peer_cfg",
+            "aci_ospf_peers", "aci_epgs", "aci_faults", "aci_subnets",
+            "aci_health_overall", "aci_health_tenants", "aci_health_pods",
+            "aci_bgp_doms_all", "aci_bgp_adj_rib_out", "aci_bgp_adj_rib_in"
+        ]
+        count = 0
+        for k in legacy_keys:
+            if k in self._cache:
+                self._cache.delete(k)
+                count += 1
+        if count > 0:
+            logger.info(f"Cleanup: purged {count} legacy ACI cache keys")
+
     def cache_info(self, key: str) -> dict | None:
         """Return some metadata about a cached key."""
         entry = self._cache.get(key)

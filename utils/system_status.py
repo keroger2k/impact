@@ -20,7 +20,11 @@ async def get_system_status(session: SessionEntry):
     results = {}
     for name, checker in systems:
         try:
-            results[name] = await asyncio.wait_for(checker(session, loop), timeout=10)
+            res = await asyncio.wait_for(checker(session, loop), timeout=10)
+            if name == "aci" and isinstance(res, dict) and any(k.startswith("aci_") for k in res.keys()):
+                results.update(res)
+            else:
+                results[name] = res
         except asyncio.TimeoutError:
             results[name] = {"ok": False, "detail": "Timeout"}
         except Exception as e:
@@ -86,23 +90,59 @@ async def _check_panorama(session, loop):
         return {"ok": False, "detail": str(e)[:80]}
 
 async def _check_aci(session, loop):
+    import clients.aci_registry as reg
+    from routers.aci import _get_processed_nodes
     from dev import DEV_MODE
-    if DEV_MODE: return {"ok": True, "detail": "Connected (mock)"}
 
-    key = "status_aci_live"
-    cached = cache.get(key)
-    if cached: return cached
+    fabrics = reg.list_fabrics()
+    results = {}
 
-    try:
-        from routers.aci import _get_processed_nodes
-        aci_client = get_aci_for_session(session)
-        processed, _ = await _get_processed_nodes(aci_client, loop)
-        if processed:
-            up = len([n for n in processed if n.get('status') == 'active'])
-            res = {"ok": True, "detail": f"{up}/{len(processed)} Nodes"}
-        else:
-            res = {"ok": False, "detail": "No nodes found"}
-        cache.set(key, res, TTL_STATUS)
-        return res
-    except Exception as e:
-        return {"ok": False, "detail": str(e)[:80]}
+    async def _check_single(fabric):
+        fid = fabric.id
+        key = f"status_aci_{fid}_live"
+        cached = cache.get(key)
+        if cached: return fid, cached
+
+        if DEV_MODE:
+            res = {"ok": True, "detail": "Connected (mock)"}
+            cache.set(key, res, TTL_STATUS)
+            return fid, res
+
+        try:
+            aci_client = get_aci_for_session(session, fid)
+            processed, _ = await _get_processed_nodes(aci_client, loop, fid)
+            if processed:
+                up = len([n for n in processed if n.get('status') == 'active'])
+                res = {"ok": True, "detail": f"{up}/{len(processed)} Nodes"}
+            else:
+                res = {"ok": False, "detail": "No nodes found"}
+            cache.set(key, res, TTL_STATUS)
+            return fid, res
+        except Exception as e:
+            res = {"ok": False, "detail": str(e)[:80]}
+            return fid, res
+
+    if not fabrics:
+        return {"ok": False, "detail": "No fabrics configured"}
+
+    tasks = [_check_single(f) for f in fabrics]
+    check_results = await asyncio.gather(*tasks)
+
+    for fid, res in check_results:
+        results[f"aci_{fid}"] = res
+
+    # Requirement: "report per-fabric connectivity with ids like aci_dc1, aci_dc2, aci_dc3"
+    # The caller expects a single dict for 'aci' in the main results, or multiple entries.
+    # We also include a legacy 'aci' key for dashboard templates that expect it.
+    # RULE: 'aci' is green only if every configured fabric is up.
+    if results:
+        all_ok = all(res.get("ok", False) for res in results.values())
+        total = len([k for k in results if k.startswith("aci_")])
+        online = len([k for k in results if k.startswith("aci_") and results[k].get("ok")])
+
+        results["aci"] = {
+            "ok": all_ok,
+            "detail": f"{online}/{total} Fabrics Up" if not all_ok else f"{total} Fabrics Up"
+        }
+
+    return results

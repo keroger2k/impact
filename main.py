@@ -29,6 +29,10 @@ async def lifespan(app: FastAPI):
     set_correlation_id(f"startup-{uuid.uuid4().hex[:8]}")
     if os.getenv("IMPACT_VERIFY_SSL", "false").lower() != "true":
         logger.warning("SSL verification is globally disabled")
+
+    # Purge legacy ACI cache keys
+    cache.cleanup_old_aci_keys()
+
     if DEV_MODE:
         seed_cache(cache)
         create_dev_session()

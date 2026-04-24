@@ -1,0 +1,170 @@
+<div class="card shadow-sm border-0 animate-fade-in">
+    <script id="aci-node-interfaces-raw" type="application/json">{{ raw_json|tojson }}</script>
+    <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <div class="d-flex align-items-center gap-3">
+            <button class="btn btn-xs btn-outline-navy" hx-get="/api/aci/fabric/nodes" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results">
+                <i class="ph ph-arrow-left me-1"></i>Back
+            </button>
+            <span class="fw-bold text-navy">🖥️ Node {{ node_id }} — Ports & Channels</span>
+            <button class="btn btn-xs btn-outline-navy" onclick="showRawData('aci-node-interfaces-raw')">
+                <i class="ph ph-code me-1"></i>Raw
+            </button>
+        </div>
+        <div class="d-flex gap-2">
+            <span class="badge bg-secondary">{{ interfaces|length }} Interfaces</span>
+            <span class="badge bg-info">{{ aggregates|length }} Port-Channels</span>
+        </div>
+    </div>
+
+    <div class="card-body p-3 bg-light border-bottom">
+        <div class="d-flex flex-wrap gap-3 align-items-center">
+            <div class="input-group input-group-sm" style="width: 250px;">
+                <span class="input-group-text"><i class="ph ph-funnel"></i></span>
+                <input type="text" class="form-control" placeholder="Filter ports..." onkeyup="filterNodePorts(this.value)">
+            </div>
+            <div class="form-check form-check-inline small">
+                <input class="form-check-input" type="checkbox" id="filter-up" onchange="togglePortFilter('up', this.checked)">
+                <label class="form-check-label" for="filter-up">Only Up</label>
+            </div>
+            <div class="form-check form-check-inline small">
+                <input class="form-check-input" type="checkbox" id="filter-bundled" onchange="togglePortFilter('bundled', this.checked)">
+                <label class="form-check-label" for="filter-bundled">Only Bundled</label>
+            </div>
+            <div class="form-check form-check-inline small">
+                <input class="form-check-input" type="checkbox" id="filter-vpc" onchange="togglePortFilter('vpc', this.checked)">
+                <label class="form-check-label" for="filter-vpc">Only vPC</label>
+            </div>
+        </div>
+    </div>
+
+    <div class="card-body p-0">
+        <div class="table-responsive" style="max-height: 500px;">
+            <table id="node-ports-table" class="table table-hover align-middle mb-0">
+                <thead class="table-light sticky-top">
+                    <tr>
+                        <th>Interface</th>
+                        <th>Description</th>
+                        <th>Admin</th>
+                        <th>Oper</th>
+                        <th>Speed (A/O)</th>
+                        <th>Duplex</th>
+                        <th>MTU</th>
+                        <th>L2/L3</th>
+                        <th>Channel</th>
+                        <th>LACP</th>
+                        <th>vPC</th>
+                        <th>Last Change</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for i in interfaces %}
+                    <tr class="port-row"
+                        data-up="{{ 'true' if i.operSt == 'up' else 'false' }}"
+                        data-bundled="{{ 'true' if i.channel else 'false' }}"
+                        data-vpc="{{ 'true' if i.vpc else 'false' }}">
+                        <td class="fw-bold text-navy">{{ i.id }}</td>
+                        <td class="small">{{ i.descr }}</td>
+                        <td>
+                            <span class="badge {{ 'bg-success' if i.adminSt == 'up' else 'bg-secondary' }}">{{ i.adminSt }}</span>
+                        </td>
+                        <td>
+                            <span class="badge {{ 'bg-success' if i.operSt == 'up' else ('bg-danger' if i.operSt == 'down' else 'bg-secondary') }}">
+                                {{ i.operSt }}
+                            </span>
+                        </td>
+                        <td class="small">{{ i.adminSpeed }} / {{ i.operSpeed }}</td>
+                        <td class="small">{{ i.operDuplex }}</td>
+                        <td class="small">{{ i.mtu }}</td>
+                        <td class="small">{{ i.layer|upper }} ({{ i.mode }})</td>
+                        <td>
+                            {% if i.channel %}
+                            <a href="#po-{{ i.channel }}" class="badge bg-navy text-decoration-none" onclick="highlightAggregate('{{ i.channel }}')">
+                                {{ i.channel }}
+                            </a>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if i.lacp %}
+                            <span class="badge {{ 'bg-success' if i.lacp == 'active' else 'bg-warning' }}">{{ i.lacp }}</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if i.vpc %}
+                            <span class="badge bg-primary">{{ i.vpc }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="small text-muted">{{ i.last_change }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Aggregates Section -->
+    <div class="card-header bg-white border-top py-3">
+        <span class="fw-bold text-navy"><i class="ph ph-stack me-2"></i>Logical Aggregates (Port-Channels)</span>
+    </div>
+    <div class="card-body p-0">
+        <table class="table table-sm table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>ID</th>
+                    <th>Mode</th>
+                    <th>Status</th>
+                    <th>vPC</th>
+                    <th>Members</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for a in aggregates %}
+                <tr id="po-{{ a.id }}" class="aggregate-row">
+                    <td class="fw-bold">{{ a.id }}</td>
+                    <td><span class="badge bg-light text-dark border">{{ a.pcMode }}</span></td>
+                    <td><span class="badge {{ 'bg-success' if a.operSt == 'up' else 'bg-danger' }}">{{ a.operSt }}</span></td>
+                    <td>
+                        {% if a.vpc %}
+                        <span class="badge bg-primary">{{ a.vpc }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="small">{{ a.members|join(', ') }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    function filterNodePorts(query) {
+        query = query.toLowerCase();
+        document.querySelectorAll('#node-ports-table .port-row').forEach(row => {
+            const text = row.innerText.toLowerCase();
+            row.style.display = text.includes(query) ? '' : 'none';
+        });
+    }
+
+    function togglePortFilter(type, active) {
+        document.querySelectorAll('#node-ports-table .port-row').forEach(row => {
+            const isUp = row.dataset.up === 'true';
+            const isBundled = row.dataset.bundled === 'true';
+            const isVpc = row.dataset.vpc === 'true';
+
+            let show = true;
+            if (document.getElementById('filter-up').checked && !isUp) show = false;
+            if (document.getElementById('filter-bundled').checked && !isBundled) show = false;
+            if (document.getElementById('filter-vpc').checked && !isVpc) show = false;
+
+            row.style.display = show ? '' : 'none';
+        });
+    }
+
+    function highlightAggregate(id) {
+        const row = document.getElementById('po-' + id);
+        if (row) {
+            document.querySelectorAll('.aggregate-row').forEach(r => r.classList.remove('table-warning'));
+            row.classList.add('table-warning');
+            row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }
+</script>

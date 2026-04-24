@@ -14,21 +14,56 @@
             <table class="table table-hover align-middle mb-0">
                 <thead class="table-light">
                     <tr>
+                        {% if l3outs and l3outs[0].fabric_label %}
+                        <th>Fabric</th>
+                        {% endif %}
                         <th>Tenant</th>
                         <th>Name</th>
                         <th>Description</th>
+                        <th>Routes (RX/TX)</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for l in l3outs %}
                     <tr>
+                        {% if l.fabric_label %}
+                        <td class="small">
+                            <a href="javascript:void(0)" class="fw-bold text-navy text-decoration-none" onclick="switchFabric('{{ l.fabric_id }}')">
+                                {{ l.fabric_label }}
+                            </a>
+                        </td>
+                        {% endif %}
                         <td class="fw-bold text-navy">{{ l.tenant }}</td>
                         <td>{{ l.name }}</td>
                         <td class="small text-muted">{{ l.descr }}</td>
                         <td>
-                            <button class="btn btn-outline-primary btn-sm" hx-get="/api/aci/l3outs/detail?dn={{ l.dn | urlencode }}" hx-target="#aci-results" hx-indicator="#aci-loading">
-                                Explore
+                            <div class="btn-group btn-group-xs">
+                                <button class="btn btn-xs btn-outline-primary"
+                                        hx-get="/api/aci/l3outs/routes?dn={{ l.dn|urlencode }}&direction=in"
+                                        hx-vals='js:{fabric: "{{ l.fabric_id if l.fabric_id else "" }}" || window.currentFabric}'
+                                        hx-target="#aci-results"
+                                        hx-indicator="#aci-loading"
+                                        title="Routes Received">
+                                    RX
+                                </button>
+                                <button class="btn btn-xs btn-outline-info"
+                                        hx-get="/api/aci/l3outs/routes?dn={{ l.dn|urlencode }}&direction=out"
+                                        hx-vals='js:{fabric: "{{ l.fabric_id if l.fabric_id else "" }}" || window.currentFabric}'
+                                        hx-target="#aci-results"
+                                        hx-indicator="#aci-loading"
+                                        title="Routes Advertised">
+                                    TX
+                                </button>
+                            </div>
+                        </td>
+                        <td>
+                            <button class="btn btn-xs btn-outline-navy"
+                                    hx-get="/api/aci/l3outs/detail?dn={{ l.dn | urlencode }}"
+                                    hx-vals='js:{fabric: "{{ l.fabric_id if l.fabric_id else "" }}" || window.currentFabric}'
+                                    hx-target="#aci-results"
+                                    hx-indicator="#aci-loading">
+                                <i class="ph ph-info"></i>
                             </button>
                         </td>
                     </tr>

@@ -15,6 +15,9 @@
                 <thead class="table-light">
                     <tr>
                         <th>Node</th>
+                        {% if peers and peers[0].fabric_label %}
+                        <th>Fabric</th>
+                        {% endif %}
                         <th>VRF</th>
                         <th>L3Out</th>
                         <th>Neighbor IP</th>
@@ -29,6 +32,13 @@
                     {% for p in peers %}
                     <tr>
                         <td>{{ p.node }}</td>
+                        {% if p.fabric_label %}
+                        <td class="small">
+                            <a href="javascript:void(0)" class="fw-bold text-navy text-decoration-none" onclick="switchFabric('{{ p.fabric_id }}')">
+                                {{ p.fabric_label }}
+                            </a>
+                        </td>
+                        {% endif %}
                         <td class="small">{{ p.vrf }}</td>
                         <td class="small">{{ p.l3out }}</td>
                         <td class="fw-bold text-navy mono">{{ p.addr }}</td>
@@ -43,16 +53,25 @@
                         </td>
                         <td class="text-center">
                             <div class="btn-group">
-                                <button class="btn btn-outline-primary btn-sm" hx-get="/api/aci/bgp/peer-routes?dn={{ p.dn | urlencode }}&direction=in" hx-target="#aci-results" hx-indicator="#aci-loading">
+                                <button class="btn btn-outline-primary btn-sm"
+                                        hx-get="/api/aci/bgp/peer-routes?dn={{ p.dn | urlencode }}&direction=in"
+                                        hx-vals='js:{fabric: "{{ p.fabric_id if p.fabric_id else "" }}" || window.currentFabric}'
+                                        hx-target="#aci-results" hx-indicator="#aci-loading">
                                     RX
                                 </button>
-                                <button class="btn btn-outline-info btn-sm" hx-get="/api/aci/bgp/peer-routes?dn={{ p.dn | urlencode }}&direction=out" hx-target="#aci-results" hx-indicator="#aci-loading">
+                                <button class="btn btn-outline-info btn-sm"
+                                        hx-get="/api/aci/bgp/peer-routes?dn={{ p.dn | urlencode }}&direction=out"
+                                        hx-vals='js:{fabric: "{{ p.fabric_id if p.fabric_id else "" }}" || window.currentFabric}'
+                                        hx-target="#aci-results" hx-indicator="#aci-loading">
                                     TX
                                 </button>
                             </div>
                         </td>
                         <td>
-                            <button class="btn btn-link btn-sm p-0 text-decoration-none" hx-get="/api/aci/bgp/routes?dn={{ p.base_dn|urlencode }}" hx-target="#aci-results" hx-indicator="#aci-loading">
+                            <button class="btn btn-link btn-sm p-0 text-decoration-none"
+                                    hx-get="/api/aci/bgp/routes?dn={{ p.base_dn|urlencode }}"
+                                    hx-vals='js:{fabric: "{{ p.fabric_id if p.fabric_id else "" }}" || window.currentFabric}'
+                                    hx-target="#aci-results" hx-indicator="#aci-loading">
                                 <i class=" ph ph-list"></i> Node Routes
                             </button>
                         </td>

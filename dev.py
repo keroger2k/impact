@@ -540,6 +540,34 @@ MOCK_ACI_HEALTH_PODS = [
     {"fabricPod": {"attributes": {"id": "1"}, "children": [{"healthInst": {"attributes": {"cur": "92"}}}]}}
 ]
 
+MOCK_ACI_NODE_INTERFACES = [
+    # 2 access ports
+    {"l1PhysIf": {"attributes": {"dn": "topology/pod-1/node-149/sys/phys-[eth1/1]", "id": "eth1/1", "adminSt": "up", "speed": "10G", "mtu": "1500", "layer": "Layer2", "mode": "trunk", "descr": "Web-Server-01"}}},
+    {"ethpmPhysIf": {"attributes": {"dn": "topology/pod-1/node-149/sys/phys-[eth1/1]/phys", "operSt": "up", "operSpeed": "10G", "operDuplex": "full", "lastLinkStChg": "2024-05-20T08:00:00Z"}}},
+    {"l1PhysIf": {"attributes": {"dn": "topology/pod-1/node-149/sys/phys-[eth1/2]", "id": "eth1/2", "adminSt": "up", "speed": "10G", "mtu": "1500", "layer": "Layer2", "mode": "trunk", "descr": "DB-Server-01"}}},
+    {"ethpmPhysIf": {"attributes": {"dn": "topology/pod-1/node-149/sys/phys-[eth1/2]/phys", "operSt": "down", "operSpeed": "inherit", "operDuplex": "auto", "lastLinkStChg": "2024-05-19T20:00:00Z"}}},
+
+    # 2 PC members (Po10)
+    {"l1PhysIf": {"attributes": {"dn": "topology/pod-1/node-149/sys/phys-[eth1/10]", "id": "eth1/10", "adminSt": "up", "speed": "10G", "mtu": "9000", "layer": "Layer2", "mode": "trunk"}}},
+    {"ethpmPhysIf": {"attributes": {"dn": "topology/pod-1/node-149/sys/phys-[eth1/10]/phys", "operSt": "up", "operSpeed": "10G", "operDuplex": "full"}}},
+    {"l1PhysIf": {"attributes": {"dn": "topology/pod-1/node-149/sys/phys-[eth1/11]", "id": "eth1/11", "adminSt": "up", "speed": "10G", "mtu": "9000", "layer": "Layer2", "mode": "trunk"}}},
+    {"ethpmPhysIf": {"attributes": {"dn": "topology/pod-1/node-149/sys/phys-[eth1/11]/phys", "operSt": "up", "operSpeed": "10G", "operDuplex": "full"}}},
+    {"pcAggrIf": {"attributes": {"dn": "topology/pod-1/node-149/sys/aggr-[po10]", "id": "po10", "pcMode": "active", "operSt": "up"}}},
+    {"pcRsMbrIfs": {"attributes": {"dn": "topology/pod-1/node-149/sys/phys-[eth1/10]/rsmbrIfs", "tDn": "topology/pod-1/node-149/sys/aggr-[po10]"}}},
+    {"pcRsMbrIfs": {"attributes": {"dn": "topology/pod-1/node-149/sys/phys-[eth1/11]/rsmbrIfs", "tDn": "topology/pod-1/node-149/sys/aggr-[po10]"}}},
+
+    # 1 standalone uplink
+    {"l1PhysIf": {"attributes": {"dn": "topology/pod-1/node-149/sys/phys-[eth1/48]", "id": "eth1/48", "adminSt": "up", "speed": "40G", "mtu": "9216", "layer": "Layer3", "mode": "routed", "descr": "Uplink-to-Spine"}}},
+    {"ethpmPhysIf": {"attributes": {"dn": "topology/pod-1/node-149/sys/phys-[eth1/48]/phys", "operSt": "up", "operSpeed": "40G", "operDuplex": "full"}}},
+
+    # 1 vPC leg (vPC-100 on Po100)
+    {"l1PhysIf": {"attributes": {"dn": "topology/pod-1/node-149/sys/phys-[eth1/20]", "id": "eth1/20", "adminSt": "up", "speed": "10G", "mtu": "9000", "layer": "Layer2", "mode": "trunk"}}},
+    {"ethpmPhysIf": {"attributes": {"dn": "topology/pod-1/node-149/sys/phys-[eth1/20]/phys", "operSt": "up", "operSpeed": "10G", "operDuplex": "full"}}},
+    {"pcAggrIf": {"attributes": {"dn": "topology/pod-1/node-149/sys/aggr-[po100]", "id": "po100", "pcMode": "active", "operSt": "up"}}},
+    {"pcRsMbrIfs": {"attributes": {"dn": "topology/pod-1/node-149/sys/phys-[eth1/20]/rsmbrIfs", "tDn": "topology/pod-1/node-149/sys/aggr-[po100]"}}},
+    {"vpcRsVpcConf": {"attributes": {"dn": "topology/pod-1/node-149/sys/vpc/inst/dom-1/if-[vpc-100]/rsvpcConf", "tDn": "topology/pod-1/node-149/sys/aggr-[po100]"}}},
+]
+
 MOCK_IPAM_TREE = {
     "ipv4": [
         {

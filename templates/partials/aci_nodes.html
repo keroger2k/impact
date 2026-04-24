@@ -16,6 +16,9 @@
                     <tr>
                         <th>ID</th>
                         <th>Name</th>
+                        {% if nodes and nodes[0].fabric_label %}
+                        <th>Fabric</th>
+                        {% endif %}
                         <th>Role</th>
                         <th>Model</th>
                         <th>Status</th>
@@ -28,6 +31,13 @@
                     <tr>
                         <td class="fw-bold text-navy">{{ n.id }}</td>
                         <td>{{ n.name }}</td>
+                        {% if n.fabric_label %}
+                        <td class="small">
+                             <a href="javascript:void(0)" class="fw-bold text-navy text-decoration-none" onclick="switchFabric('{{ n.fabric_id }}')">
+                                {{ n.fabric_label }}
+                             </a>
+                        </td>
+                        {% endif %}
                         <td>
                             <span class="badge {% if n.role == 'spine' %}bg-primary{% elif n.role == 'leaf' %}bg-info{% else %}bg-secondary{% endif %}">
                                 {{ n.role|upper }}
@@ -48,12 +58,28 @@
                         </td>
                         <td>
                             <div class="d-flex gap-1">
-                                <button class="btn btn-xs btn-outline-navy" hx-get="/api/aci/bgp/routes?dn={{ n.dn|urlencode }}" hx-target="#aci-results" hx-indicator="#aci-loading" title="View Routes">
+                                <button class="btn btn-xs btn-outline-navy"
+                                        hx-get="/api/aci/bgp/routes?dn={{ n.dn|urlencode }}"
+                                        hx-vals='js:{fabric: "{{ n.fabric_id if n.fabric_id else "" }}" || window.currentFabric}'
+                                        hx-target="#aci-results" hx-indicator="#aci-loading" title="View Routes">
                                     <i class="ph ph-navigation-arrow"></i>
                                 </button>
-                                <button class="btn btn-xs btn-outline-navy" hx-get="/api/aci/faults?dn={{ n.dn|urlencode }}" hx-target="#aci-results" hx-indicator="#aci-loading" title="View Faults">
+                                <button class="btn btn-xs btn-outline-navy"
+                                        hx-get="/api/aci/faults?dn={{ n.dn|urlencode }}"
+                                        hx-vals='js:{fabric: "{{ n.fabric_id if n.fabric_id else "" }}" || window.currentFabric}'
+                                        hx-target="#aci-results" hx-indicator="#aci-loading" title="View Faults">
                                     <i class="ph ph-warning"></i>
                                 </button>
+                                {% if n.role == 'leaf' %}
+                                <button class="btn btn-xs btn-outline-navy"
+                                        hx-get="/api/aci/nodes/{{ n.id }}/interfaces"
+                                        hx-vals='js:{fabric: "{{ n.fabric_id if n.fabric_id else "" }}" || window.currentFabric}'
+                                        hx-target="#aci-results"
+                                        hx-indicator="#aci-loading"
+                                        title="Port Detail">
+                                    <i class="ph ph-plugs-connected"></i>
+                                </button>
+                                {% endif %}
                             </div>
                         </td>
                     </tr>

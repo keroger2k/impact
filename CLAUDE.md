@@ -8,6 +8,7 @@ IMPACT II is a **TSA Network Operations Platform** — a unified web dashboard f
 - **Cisco Catalyst Center (DNA Center)** — device inventory, topology, discovery
 - **Cisco ISE** — network access, endpoint management, authentication policies
 - **Palo Alto Panorama** — firewall security policies
+- **Cisco ACI** — multi-fabric SDN (leaf/spine), BGP visibility, port-level detail
 
 ## Commands
 
@@ -35,11 +36,14 @@ The app is structured in three layers:
 - `clients/dnac.py` — wraps `dnacentersdk`; handles pagination, config fetching, IP lookup
 - `clients/ise.py` — wraps `ciscoisesdk`; custom URL-based query builder for ERS + OpenAPI endpoints
 - `clients/panorama.py` — direct XML API via `requests`; generates API keys, parses security policies
+- `clients/aci.py` — direct REST API wrapper for APIC; handles login tokens and tree queries
+- `clients/aci_registry.py` — singleton registry managing multi-fabric configurations from environment variables
 
 **Cache layer** (`cache.py`) is a singleton in-memory TTL cache with disk persistence:
 - `devices` and `sites`: 24-hour TTL, pre-warmed at startup (skipped if valid disk cache exists)
 - `pan_*` keys (Panorama): device groups, rules, address objects, services — 1-hour TTL
 - `ise_*` keys (ISE): all stable list endpoints — 1-hour TTL
+- `aci_{fabric_id}_*` keys (ACI): namespaced by fabric ID (e.g., `aci_dc1_nodes`); 1-hour for static lists, 5-minute for operational data (interfaces, BGP RIB)
 - System status checks (`status_*`): 5-minute TTL, memory-only
 - Persistent keys survive server restarts — written as JSON to `data/cache/` (gitignored)
 - `cache.keys_for_prefix(prefix)` scans both memory and disk; `cache.invalidate_prefix(prefix)` clears both
@@ -48,6 +52,7 @@ The app is structured in three layers:
 - `routers/dnac.py` — 9 endpoints under `/api/dnac/` including `GET /cache/info`
 - `routers/ise.py` — 19 endpoints under `/api/ise/` including `GET /cache/info` and `POST /cache/refresh`
 - `routers/firewall.py` — 4 endpoints under `/api/firewall/` including `GET /cache/info` and `POST /cache/refresh`
+- `routers/aci.py` — 17 endpoints under `/api/aci/` including multi-fabric aggregation (`?fabric=all`), node interface drill-down, and BGP diagnostics
 - `routers/commands.py` — SSH command execution streamed via SSE (`/api/commands/run`)
 - `routers/import_.py` — device discovery workflow streamed via SSE (`/api/import/run`)
 
@@ -75,6 +80,8 @@ See `.env.template`. Required vars:
 - `DNA_CENTER_BASE_URL`, `DNA_CENTER_VERSION` — Catalyst Center
 - `ISE_HOST` — Cisco ISE hostname
 - `PANORAMA_HOST` — Palo Alto Panorama hostname
+- `ACI_FABRICS` — Comma-separated fabric IDs (e.g., `dc1,dc2`)
+- `ACI_{ID}_URL` / `ACI_{ID}_DOMAIN` / `ACI_{ID}_LABEL` — per-fabric settings
 
 ## CLI Mode
 
