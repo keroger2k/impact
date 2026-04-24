@@ -294,85 +294,82 @@ async def get_node_interfaces(
     imdata = raw.get("imdata", [])
 
     # 3. Join Logic
-    phys_ifs = {}     # dn -> attributes
-    pc_ifs = {}       # dn -> attributes + members list
-    member_to_pc = {}   # phys_dn -> pc_dn
-    pc_to_vpc = {}      # pc_dn -> vpc_id
-    lacp_states = {}    # phys_dn -> lacp state (from pcAggrMbrIf)
+    phys_ifs = {}
+    pc_ifs = {}
+    member_to_pc = {}     # phys_dn -> pc_dn
+    pc_to_vpc = {}        # pc_dn -> "vPC-<id>"
+    lacp_states = {}      # phys_dn -> {"state": ..., "mode": ...}
 
     for item in imdata:
         if "l1PhysIf" in item:
             attr = item["l1PhysIf"]["attributes"]
             phys_ifs[attr["dn"]] = {
                 **attr,
-                "operSt": "unknown",
-                "operSpeed": "inherit",
-                "operDuplex": "auto",
-                "lastChange": ""
+                "operSt": "unknown", "operSpeed": "inherit",
+                "operDuplex": "auto", "lastChange": "",
             }
         elif "ethpmPhysIf" in item:
             attr = item["ethpmPhysIf"]["attributes"]
-            # Parent is l1PhysIf
-            parent_dn = "/".join(attr["dn"].split("/")[:-1])
+            parent_dn = attr["dn"].rsplit("/phys", 1)[0]
             if parent_dn in phys_ifs:
                 phys_ifs[parent_dn].update({
-                    "operSt": attr.get("operSt"),
-                    "operSpeed": attr.get("operSpeed"),
+                    "operSt":     attr.get("operSt"),
+                    "operSpeed":  attr.get("operSpeed"),
                     "operDuplex": attr.get("operDuplex"),
-                    "lastChange": attr.get("lastLinkStChg")
+                    "lastChange": attr.get("lastLinkStChg"),
                 })
         elif "pcAggrIf" in item:
             attr = item["pcAggrIf"]["attributes"]
             pc_ifs[attr["dn"]] = {**attr, "vpc": "", "members": []}
         elif "pcRsMbrIfs" in item:
             attr = item["pcRsMbrIfs"]["attributes"]
-            # Parent is l1PhysIf: .../phys-[eth1/1]/rsmbrIfs
-            phys_dn = "/".join(attr["dn"].split("/")[:-1])
-            member_to_pc[phys_dn] = attr.get("tDn")
+            pc_dn = attr["dn"].split("/rsmbrIfs-")[0]
+            phys_dn = attr.get("tDn")
+            if phys_dn:
+                member_to_pc[phys_dn] = pc_dn
         elif "pcAggrMbrIf" in item:
             attr = item["pcAggrMbrIf"]["attributes"]
-            # DN: .../aggr-[po10]/mbr-[eth1/1]
-            mbr_match = re.search(r'/mbr-\[(.*)\]', attr.get("dn", ""))
-            if mbr_match:
-                port_id = mbr_match.group(1)
-                lacp_states[port_id] = attr.get("lacpAggrSt")
+            parent_dn = attr["dn"].rsplit("/aggrmbrif", 1)[0]
+            lacp_states[parent_dn] = {
+                "state": attr.get("channelingSt", ""),
+                "mode":  attr.get("pcMode", ""),
+            }
         elif "vpcRsVpcConf" in item:
             attr = item["vpcRsVpcConf"]["attributes"]
-            # Parent is vpcIf: .../if-[vpc-100]
-            vpc_dn = "/".join(attr["dn"].split("/")[:-1])
-            vpc_seg = vpc_dn.split("/")[-1]
-            vpc_match = re.search(r'if-\[(.*)\]', vpc_seg)
-            vpc_id = vpc_match.group(1).replace("vpc-", "vPC-") if vpc_match else vpc_seg
-            pc_to_vpc[attr["tDn"]] = vpc_id
+            vpc_id = attr.get("parentSKey", "")
+            target_pc = attr.get("tDn")
+            if target_pc and vpc_id:
+                pc_to_vpc[target_pc] = f"vPC-{vpc_id}"
 
-    # Cross-reference members into PCs
+    # Cross-reference members into PCs (for the aggregates table)
     for phys_dn, pc_dn in member_to_pc.items():
-        if pc_dn in pc_ifs:
-            pc_id = phys_ifs[phys_dn]["id"] if phys_dn in phys_ifs else "??"
-            pc_ifs[pc_dn]["members"].append(pc_id)
+        if pc_dn in pc_ifs and phys_dn in phys_ifs:
+            pc_ifs[pc_dn]["members"].append(phys_ifs[phys_dn]["id"])
 
     # 4. Final Normalization
     interfaces = []
     for dn, p in phys_ifs.items():
         target_pc_dn = member_to_pc.get(dn)
         pc_obj = pc_ifs.get(target_pc_dn) if target_pc_dn else None
+        lacp = lacp_states.get(dn, {})
+        descr = p.get("descr") or (pc_obj.get("name") if pc_obj else "") or ""
 
         interfaces.append({
-            "id": p.get("id", "??"),
-            "descr": p.get("descr", ""),
-            "adminSt": p.get("adminSt", "unknown"),
-            "operSt": p.get("operSt", "unknown"),
-            "adminSpeed": p.get("speed", "inherit"),
-            "operSpeed": p.get("operSpeed", "inherit"),
-            "operDuplex": p.get("operDuplex", "auto"),
-            "mtu": p.get("mtu", "inherit"),
-            "layer": p.get("layer", "Layer2"),
-            "mode": p.get("mode", "trunk"),
-            "channel": pc_obj.get("id", "") if pc_obj else "",
-            "lacp": pc_obj.get("pcMode", "") if pc_obj else "",
-            "lacp_state": lacp_states.get(p.get("id"), ""),
-            "vpc": pc_to_vpc.get(target_pc_dn, "") if target_pc_dn else "",
-            "last_change": p.get("lastChange", "")
+            "id":          p.get("id", "??"),
+            "descr":       descr,
+            "adminSt":     p.get("adminSt", "unknown"),
+            "operSt":      p.get("operSt", "unknown"),
+            "adminSpeed":  p.get("speed", "inherit"),
+            "operSpeed":   p.get("operSpeed", "inherit"),
+            "operDuplex":  p.get("operDuplex", "auto"),
+            "mtu":         p.get("mtu", "inherit"),
+            "layer":       p.get("layer", "Layer2"),
+            "mode":        p.get("mode", "trunk"),
+            "channel":     pc_obj.get("id", "") if pc_obj else "",
+            "lacp":        lacp.get("mode", ""),
+            "lacp_state":  lacp.get("state", ""),
+            "vpc":         pc_to_vpc.get(target_pc_dn, "") if target_pc_dn else "",
+            "last_change": p.get("lastChange", ""),
         })
 
     aggregates = []

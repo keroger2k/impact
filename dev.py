@@ -418,6 +418,7 @@ MOCK_PAN_INTERFACES: list[dict] = [
 MOCK_ACI_NODES = [
     {"fabricNode": {"attributes": {"id": "149", "name": "LEAF-149", "model": "N9K-C9348GC-FXP", "role": "leaf", "fabricSt": "active", "dn": "topology/pod-1/node-149"}}},
     {"fabricNode": {"attributes": {"id": "150", "name": "LEAF-150", "model": "N9K-C9348GC-FXP", "role": "leaf", "fabricSt": "active", "dn": "topology/pod-2/node-150"}}},
+    {"fabricNode": {"attributes": {"id": "208", "name": "LEAF-208", "model": "N9K-C9348GC-FXP", "role": "leaf", "fabricSt": "active", "dn": "topology/pod-1/node-208"}}},
 ]
 
 MOCK_ACI_L3OUTS = [
@@ -541,31 +542,33 @@ MOCK_ACI_HEALTH_PODS = [
 ]
 
 MOCK_ACI_NODE_INTERFACES = [
-    # 2 access ports
-    {"l1PhysIf": {"attributes": {"dn": "topology/pod-1/node-149/sys/phys-[eth1/1]", "id": "eth1/1", "adminSt": "up", "speed": "10G", "mtu": "1500", "layer": "Layer2", "mode": "trunk", "descr": "Web-Server-01"}}},
-    {"ethpmPhysIf": {"attributes": {"dn": "topology/pod-1/node-149/sys/phys-[eth1/1]/phys", "operSt": "up", "operSpeed": "10G", "operDuplex": "full", "lastLinkStChg": "2024-05-20T08:00:00Z"}}},
-    {"l1PhysIf": {"attributes": {"dn": "topology/pod-1/node-149/sys/phys-[eth1/2]", "id": "eth1/2", "adminSt": "up", "speed": "10G", "mtu": "1500", "layer": "Layer2", "mode": "trunk", "descr": "DB-Server-01"}}},
-    {"ethpmPhysIf": {"attributes": {"dn": "topology/pod-1/node-149/sys/phys-[eth1/2]/phys", "operSt": "down", "operSpeed": "inherit", "operDuplex": "auto", "lastLinkStChg": "2024-05-19T20:00:00Z"}}},
+    # Node 208 data from bug report
+    {"l1PhysIf": {"attributes": {"dn": "topology/pod-1/node-208/sys/phys-[eth1/31]", "id": "eth1/31", "adminSt": "up", "speed": "25G", "mtu": "9000", "layer": "Layer2", "mode": "trunk", "descr": ""}}},
+    {"ethpmPhysIf": {"attributes": {"dn": "topology/pod-1/node-208/sys/phys-[eth1/31]/phys", "operSt": "down", "operSpeed": "25G", "operDuplex": "full", "lastLinkStChg": "2023-10-27T10:00:00"}}},
+    {"pcAggrIf": {"attributes": {"dn": "topology/pod-1/node-208/sys/aggr-[po10]", "id": "po10", "pcMode": "active", "operSt": "down", "name": "sdczarc803_aggr0_policy_group"}}},
+    {"pcRsMbrIfs": {"attributes": {"dn": "topology/pod-1/node-208/sys/aggr-[po10]/rsmbrIfs-[topology/pod-1/node-208/sys/phys-[eth1/31]]", "tDn": "topology/pod-1/node-208/sys/phys-[eth1/31]"}}},
+    {"pcAggrMbrIf": {"attributes": {"dn": "topology/pod-1/node-208/sys/phys-[eth1/31]/aggrmbrif", "channelingSt": "hot-standby", "pcMode": "active"}}},
+    {"vpcRsVpcConf": {"attributes": {"dn": "topology/pod-1/node-208/sys/vpc/inst/dom-208/if-685/rsvpcConf", "parentSKey": "685", "tDn": "topology/pod-1/node-208/sys/aggr-[po10]"}}},
 
-    # 2 PC members (Po10)
-    {"l1PhysIf": {"attributes": {"dn": "topology/pod-1/node-149/sys/phys-[eth1/10]", "id": "eth1/10", "adminSt": "up", "speed": "10G", "mtu": "9000", "layer": "Layer2", "mode": "trunk"}}},
-    {"ethpmPhysIf": {"attributes": {"dn": "topology/pod-1/node-149/sys/phys-[eth1/10]/phys", "operSt": "up", "operSpeed": "10G", "operDuplex": "full"}}},
-    {"l1PhysIf": {"attributes": {"dn": "topology/pod-1/node-149/sys/phys-[eth1/11]", "id": "eth1/11", "adminSt": "up", "speed": "10G", "mtu": "9000", "layer": "Layer2", "mode": "trunk"}}},
-    {"ethpmPhysIf": {"attributes": {"dn": "topology/pod-1/node-149/sys/phys-[eth1/11]/phys", "operSt": "up", "operSpeed": "10G", "operDuplex": "full"}}},
-    {"pcAggrIf": {"attributes": {"dn": "topology/pod-1/node-149/sys/aggr-[po10]", "id": "po10", "pcMode": "active", "operSt": "up"}}},
-    {"pcRsMbrIfs": {"attributes": {"dn": "topology/pod-1/node-149/sys/phys-[eth1/10]/rsmbrIfs", "tDn": "topology/pod-1/node-149/sys/aggr-[po10]"}}},
-    {"pcRsMbrIfs": {"attributes": {"dn": "topology/pod-1/node-149/sys/phys-[eth1/11]/rsmbrIfs", "tDn": "topology/pod-1/node-149/sys/aggr-[po10]"}}},
+    {"l1PhysIf": {"attributes": {"dn": "topology/pod-1/node-208/sys/phys-[eth1/32]", "id": "eth1/32", "adminSt": "up", "speed": "25G", "mtu": "9000", "layer": "Layer2", "mode": "trunk", "descr": ""}}},
+    {"ethpmPhysIf": {"attributes": {"dn": "topology/pod-1/node-208/sys/phys-[eth1/32]/phys", "operSt": "up", "operSpeed": "25G", "operDuplex": "full"}}},
+    {"pcAggrIf": {"attributes": {"dn": "topology/pod-1/node-208/sys/aggr-[po11]", "id": "po11", "pcMode": "active", "operSt": "up", "name": "sdczarc803_aggr1_policy_group"}}},
+    {"pcRsMbrIfs": {"attributes": {"dn": "topology/pod-1/node-208/sys/aggr-[po11]/rsmbrIfs-[topology/pod-1/node-208/sys/phys-[eth1/32]]", "tDn": "topology/pod-1/node-208/sys/phys-[eth1/32]"}}},
+    {"pcAggrMbrIf": {"attributes": {"dn": "topology/pod-1/node-208/sys/phys-[eth1/32]/aggrmbrif", "channelingSt": "channeling", "pcMode": "active"}}},
+    {"vpcRsVpcConf": {"attributes": {"dn": "topology/pod-1/node-208/sys/vpc/inst/dom-208/if-686/rsvpcConf", "parentSKey": "686", "tDn": "topology/pod-1/node-208/sys/aggr-[po11]"}}},
 
-    # 1 standalone uplink
-    {"l1PhysIf": {"attributes": {"dn": "topology/pod-1/node-149/sys/phys-[eth1/48]", "id": "eth1/48", "adminSt": "up", "speed": "40G", "mtu": "9216", "layer": "Layer3", "mode": "routed", "descr": "Uplink-to-Spine"}}},
-    {"ethpmPhysIf": {"attributes": {"dn": "topology/pod-1/node-149/sys/phys-[eth1/48]/phys", "operSt": "up", "operSpeed": "40G", "operDuplex": "full"}}},
+    {"l1PhysIf": {"attributes": {"dn": "topology/pod-1/node-208/sys/phys-[eth1/27]", "id": "eth1/27", "adminSt": "up", "speed": "10G", "mtu": "9000", "layer": "Layer2", "mode": "trunk", "descr": ""}}},
+    {"ethpmPhysIf": {"attributes": {"dn": "topology/pod-1/node-208/sys/phys-[eth1/27]/phys", "operSt": "up", "operSpeed": "10G", "operDuplex": "full"}}},
+    {"pcAggrIf": {"attributes": {"dn": "topology/pod-1/node-208/sys/aggr-[po8]", "id": "po8", "pcMode": "active", "operSt": "up", "name": "PC8"}}},
+    {"pcRsMbrIfs": {"attributes": {"dn": "topology/pod-1/node-208/sys/aggr-[po8]/rsmbrIfs-[topology/pod-1/node-208/sys/phys-[eth1/27]]", "tDn": "topology/pod-1/node-208/sys/phys-[eth1/27]"}}},
+    {"pcAggrMbrIf": {"attributes": {"dn": "topology/pod-1/node-208/sys/phys-[eth1/27]/aggrmbrif", "channelingSt": "channeling", "pcMode": "active"}}},
+    {"vpcRsVpcConf": {"attributes": {"dn": "topology/pod-1/node-208/sys/vpc/inst/dom-208/if-345/rsvpcConf", "parentSKey": "345", "tDn": "topology/pod-1/node-208/sys/aggr-[po8]"}}},
 
-    # 1 vPC leg (vPC-100 on Po100)
-    {"l1PhysIf": {"attributes": {"dn": "topology/pod-1/node-149/sys/phys-[eth1/20]", "id": "eth1/20", "adminSt": "up", "speed": "10G", "mtu": "9000", "layer": "Layer2", "mode": "trunk"}}},
-    {"ethpmPhysIf": {"attributes": {"dn": "topology/pod-1/node-149/sys/phys-[eth1/20]/phys", "operSt": "up", "operSpeed": "10G", "operDuplex": "full"}}},
-    {"pcAggrIf": {"attributes": {"dn": "topology/pod-1/node-149/sys/aggr-[po100]", "id": "po100", "pcMode": "active", "operSt": "up"}}},
-    {"pcRsMbrIfs": {"attributes": {"dn": "topology/pod-1/node-149/sys/phys-[eth1/20]/rsmbrIfs", "tDn": "topology/pod-1/node-149/sys/aggr-[po100]"}}},
-    {"vpcRsVpcConf": {"attributes": {"dn": "topology/pod-1/node-149/sys/vpc/inst/dom-1/if-[vpc-100]/rsvpcConf", "tDn": "topology/pod-1/node-149/sys/aggr-[po100]"}}},
+    {"l1PhysIf": {"attributes": {"dn": "topology/pod-1/node-208/sys/phys-[eth1/20]", "id": "eth1/20", "adminSt": "up", "speed": "10G", "mtu": "9000", "layer": "Layer2", "mode": "trunk", "descr": ""}}},
+    {"ethpmPhysIf": {"attributes": {"dn": "topology/pod-1/node-208/sys/phys-[eth1/20]/phys", "operSt": "up", "operSpeed": "10G", "operDuplex": "full"}}},
+    {"pcAggrIf": {"attributes": {"dn": "topology/pod-1/node-208/sys/aggr-[po6]", "id": "po6", "pcMode": "active", "operSt": "up", "name": "PC6"}}},
+    {"pcRsMbrIfs": {"attributes": {"dn": "topology/pod-1/node-208/sys/aggr-[po6]/rsmbrIfs-[topology/pod-1/node-208/sys/phys-[eth1/20]]", "tDn": "topology/pod-1/node-208/sys/phys-[eth1/20]"}}},
+    {"pcAggrMbrIf": {"attributes": {"dn": "topology/pod-1/node-208/sys/phys-[eth1/20]/aggrmbrif", "channelingSt": "channeling", "pcMode": "active"}}},
 ]
 
 MOCK_IPAM_TREE = {
