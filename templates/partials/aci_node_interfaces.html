@@ -85,7 +85,10 @@
                         </td>
                         <td>
                             {% if i.lacp %}
-                            <span class="badge {{ 'bg-success' if i.lacp == 'active' else 'bg-warning' }}">{{ i.lacp }}</span>
+                            <span class="badge {{ 'bg-success' if i.lacp_state == 'bndl-mbr' else 'bg-warning' }}" title="{{ i.lacp_state }}">
+                                {{ 'bundled' if i.lacp_state == 'bndl-mbr' else 'indep' }}
+                            </span>
+                            <span class="small text-muted ms-1">({{ i.lacp }})</span>
                             {% endif %}
                         </td>
                         <td>

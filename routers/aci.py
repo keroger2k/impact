@@ -296,8 +296,9 @@ async def get_node_interfaces(
     # 3. Join Logic
     phys_ifs = {}     # dn -> attributes
     pc_ifs = {}       # dn -> attributes + members list
-    member_to_pc = {} # phys_dn -> pc_dn
-    pc_to_vpc = {}    # pc_dn -> vpc_id
+    member_to_pc = {}   # phys_dn -> pc_dn
+    pc_to_vpc = {}      # pc_dn -> vpc_id
+    lacp_states = {}    # phys_dn -> lacp state (from pcAggrMbrIf)
 
     for item in imdata:
         if "l1PhysIf" in item:
@@ -325,9 +326,16 @@ async def get_node_interfaces(
             pc_ifs[attr["dn"]] = {**attr, "vpc": "", "members": []}
         elif "pcRsMbrIfs" in item:
             attr = item["pcRsMbrIfs"]["attributes"]
-            # Parent is l1PhysIf
+            # Parent is l1PhysIf: .../phys-[eth1/1]/rsmbrIfs
             phys_dn = "/".join(attr["dn"].split("/")[:-1])
-            member_to_pc[phys_dn] = attr["tDn"]
+            member_to_pc[phys_dn] = attr.get("tDn")
+        elif "pcAggrMbrIf" in item:
+            attr = item["pcAggrMbrIf"]["attributes"]
+            # DN: .../aggr-[po10]/mbr-[eth1/1]
+            mbr_match = re.search(r'/mbr-\[(.*)\]', attr.get("dn", ""))
+            if mbr_match:
+                port_id = mbr_match.group(1)
+                lacp_states[port_id] = attr.get("lacpAggrSt")
         elif "vpcRsVpcConf" in item:
             attr = item["vpcRsVpcConf"]["attributes"]
             # Parent is vpcIf: .../if-[vpc-100]
@@ -350,30 +358,31 @@ async def get_node_interfaces(
         pc_obj = pc_ifs.get(target_pc_dn) if target_pc_dn else None
 
         interfaces.append({
-            "id": p["id"],
+            "id": p.get("id", "??"),
             "descr": p.get("descr", ""),
-            "adminSt": p["adminSt"],
-            "operSt": p["operSt"],
-            "adminSpeed": p["speed"],
-            "operSpeed": p["operSpeed"],
-            "operDuplex": p["operDuplex"],
-            "mtu": p["mtu"],
-            "layer": p["layer"],
-            "mode": p["mode"],
-            "channel": pc_obj["id"] if pc_obj else "",
-            "lacp": pc_obj["pcMode"] if pc_obj else "",
+            "adminSt": p.get("adminSt", "unknown"),
+            "operSt": p.get("operSt", "unknown"),
+            "adminSpeed": p.get("speed", "inherit"),
+            "operSpeed": p.get("operSpeed", "inherit"),
+            "operDuplex": p.get("operDuplex", "auto"),
+            "mtu": p.get("mtu", "inherit"),
+            "layer": p.get("layer", "Layer2"),
+            "mode": p.get("mode", "trunk"),
+            "channel": pc_obj.get("id", "") if pc_obj else "",
+            "lacp": pc_obj.get("pcMode", "") if pc_obj else "",
+            "lacp_state": lacp_states.get(p.get("id"), ""),
             "vpc": pc_to_vpc.get(target_pc_dn, "") if target_pc_dn else "",
-            "last_change": p["lastChange"]
+            "last_change": p.get("lastChange", "")
         })
 
     aggregates = []
     for dn, a in pc_ifs.items():
         aggregates.append({
-            "id": a["id"],
-            "pcMode": a["pcMode"],
-            "members": a["members"],
+            "id": a.get("id", "??"),
+            "pcMode": a.get("pcMode", ""),
+            "members": a.get("members", []),
             "vpc": pc_to_vpc.get(dn, ""),
-            "operSt": a["operSt"]
+            "operSt": a.get("operSt", "unknown")
         })
 
     if request.headers.get("HX-Request"):

@@ -65,6 +65,7 @@
         fetch('/api/aci/fabrics')
             .then(r => r.json())
             .then(fabrics => {
+                if (!fabrics || fabrics.length === 0) return;
                 let options = fabrics.map(f => `<option value="${f.id}">${f.label}</option>`).join('');
                 options += '<option value="all">All Fabrics (Aggregated)</option>';
                 select.innerHTML = options;
