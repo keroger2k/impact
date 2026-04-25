@@ -226,21 +226,11 @@ class ACIClient:
         return self.get("api/node/class/l3extSubnet.json", action="FETCH_ACI_SUBNETS")
 
     def get_bgp_routes(self, dn):
-        """Query all BGP route types on a specific node.
-
-        APIC rejects the entire request with 400 if any class in a comma-separated
-        target-subtree-class list is unknown to that version (bgpBdpRoute / bgpEvpnRoute
-        aren't present on every release). Query each class independently and merge.
-        """
+        """Query BGP routes on a specific node."""
         if "topology/" not in dn:
             dn = f"topology/pod-1/node-{dn}"
-        merged = []
-        for cls in ("bgpRoute", "bgpBdpRoute", "bgpEvpnRoute"):
-            path = f"api/node/mo/{_quote_dn(dn)}.json?query-target=subtree&target-subtree-class={cls}"
-            res = self.get(path, action=f"FETCH_ACI_BGP_ROUTES_{cls}")
-            if res and isinstance(res, dict):
-                merged.extend(res.get("imdata", []))
-        return {"imdata": merged}
+        path = f"api/node/mo/{_quote_dn(dn)}.json?query-target=subtree&target-subtree-class=bgpRoute"
+        return self.get(path, action="FETCH_ACI_BGP_ROUTES")
 
     def get_all_bgp_doms(self):
         """Query all bgpDomAf objects across the fabric to get route counts."""

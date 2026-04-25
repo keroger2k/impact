@@ -455,9 +455,7 @@ MOCK_ACI_EPGS = [
 
 MOCK_ACI_BGP_DOMS = [
     {"bgpRoute": {"attributes": {"dn": "topology/pod-1/node-149/sys/bgp/inst/dom-default/af-ipv4-ucast/rt-[10.1.1.0/24]", "prefix": "10.1.1.0/24", "nextHop": "192.168.1.1", "origin": "igp", "asPath": "65001"}}},
-    {"bgpRoute": {"attributes": {"dn": "topology/pod-1/node-149/sys/bgp/inst/dom-default/af-ipv4-ucast/rt-[172.16.10.0/24]", "prefix": "172.16.10.0/24", "nextHop": "192.168.1.2", "origin": "ebgp", "asPath": "65002 65100"}}},
-    {"bgpBdpRoute": {"attributes": {"dn": "topology/pod-1/node-149/sys/bgp/inst/dom-PRODUCTION:PROD_VRF/af-ipv4-ucast/rt-[10.200.10.0/24]", "pfx": "10.200.10.0/24", "nh": "10.200.10.1", "origin": "igp", "asPath": ""}}},
-    {"bgpEvpnRoute": {"attributes": {"dn": "topology/pod-1/node-149/sys/bgp/inst/dom-overlay-1/af-evpn/rt-[[2]:[0]:[0]:[48]:[00:50:56:00:00:01]:[32]:[192.0.2.101]]", "prefix": "192.0.2.101/32", "nextHop": "192.168.255.10", "origin": "igp", "asPath": ""}}}
+    {"bgpRoute": {"attributes": {"dn": "topology/pod-1/node-149/sys/bgp/inst/dom-default/af-ipv4-ucast/rt-[172.16.10.0/24]", "prefix": "172.16.10.0/24", "nextHop": "192.168.1.2", "origin": "ebgp", "asPath": "65002 65100"}}}
 ]
 
 MOCK_ACI_BGP_RIB_IN = [

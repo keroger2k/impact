@@ -1023,7 +1023,7 @@ async def get_bgp_routes(
     processed = []
     for item in raw.get('imdata', []):
         cls = next(iter(item)) if item else None
-        if cls in {'bgpRoute', 'bgpBdpRoute', 'bgpEvpnRoute'}:
+        if cls == 'bgpRoute':
             attr = item[cls]['attributes']
             vrf = attr.get('dn', '').split('dom-')[-1].split('/')[0] if 'dom-' in attr.get('dn','') else '?'
             processed.append({
