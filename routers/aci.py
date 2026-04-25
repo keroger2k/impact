@@ -1175,6 +1175,12 @@ async def get_bgp_peer_routes(
     raw = await loop.run_in_executor(None, run_with_context(aci.get_bgp_adj_rib), dn, direction)
     if isinstance(raw, list):
         raw = {"imdata": raw}
+    if not raw:
+        logger.warning(
+            f"BGP peer routes fetch returned NoneType for fabric={fabric_id} dn={dn} dir={direction} — "
+            f"likely 400/auth/upstream error. Run /api/aci/bgp/diagnose?fabric={fabric_id} to investigate."
+        )
+        raw = {"imdata": []}
 
     cls = "bgpAdjRibIn" if direction == "in" else "bgpAdjRibOut"
     processed = []
