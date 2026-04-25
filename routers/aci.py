@@ -118,7 +118,7 @@ def _bgp_adjrib_supported(aci: ac.ACIClient, fabric_id: str) -> bool:
         return bool(cached)
 
     res = aci.get("api/node/class/bgpAdjRibIn.json?rsp-subtree-include=count",
-                  action="PROBE_ACI_BGP_ADJRIB")
+                  action="PROBE_ACI_BGP_ADJRIB", quiet=True)
     supported = isinstance(res, dict)
     cache.set(key, supported, _BGP_ADJRIB_PROBE_TTL)
     if not supported:
@@ -630,7 +630,18 @@ async def _get_processed_bgp_peers(aci: ac.ACIClient, loop: asyncio.AbstractEven
             "base_dn": "/".join(dn_parts[:3]) if len(dn_parts) >= 3 else "" # topology/pod-1/node-101
         })
 
-    return processed, peers_raw
+    # Dedupe: in vPC pairs the same peer IP shows up on multiple nodes. When at least
+    # one row in (addr, vrf, l3out) is ESTABLISHED, drop the non-established siblings.
+    groups: Dict[Tuple[str, str, str], List[Dict]] = {}
+    for row in processed:
+        groups.setdefault((row["addr"], row["vrf"], row["l3out"]), []).append(row)
+
+    deduped: List[Dict] = []
+    for rows in groups.values():
+        established = [r for r in rows if r["state"] == "ESTABLISHED"]
+        deduped.extend(established if established else rows)
+
+    return deduped, peers_raw
 
 @router.get("/bgp/peers")
 async def list_bgp_peers(
@@ -686,43 +697,94 @@ async def bgp_diagnose(
     loop = asyncio.get_event_loop()
 
     async def _run_diagnostics():
-        # 1. Tenants, Version, RIB-In Class, and Peer Count
-        tenants_raw, version_raw, rib_in_raw, peer_data_raw = await asyncio.gather(
+        # 1. Tenants, Version, Peer Count
+        tenants_raw, version_raw, peer_data_raw = await asyncio.gather(
             loop.run_in_executor(None, run_with_context(aci.get), "api/node/class/fvTenant.json"),
             loop.run_in_executor(None, run_with_context(aci.get), "api/node/class/firmwareCtrlrRunning.json"),
-            loop.run_in_executor(None, run_with_context(aci.get), "api/node/class/bgpAdjRibIn.json?rsp-subtree-include=count"),
             loop.run_in_executor(None, run_with_context(aci.get_bgp_peers))
         )
 
-        # 2. Per-leaf count
+        # 2. Probe BGP-related class queries to find what this APIC version supports.
+        # Each entry: ok (200 + dict), count (if available), error string (if 4xx/5xx).
+        candidate_classes = [
+            "bgpRoute", "bgpAdjRibIn", "bgpAdjRibOut",
+            "bgpPeerEntry", "bgpPeerAfEntry", "bgpDom", "bgpDomAf",
+            "bgpPathAttr", "bgpRtPfxEntry", "bgpRouteEntry",
+            "uribv4Route", "uribv6Route",
+        ]
+
+        def _probe_class(cls: str):
+            res = aci.get(
+                f"api/node/class/{cls}.json?rsp-subtree-include=count",
+                action=f"PROBE_{cls}", quiet=True,
+            )
+            if not isinstance(res, dict):
+                return cls, {"ok": False, "count": None}
+            count = (
+                res.get("imdata", [{}])[0]
+                .get("moCount", {}).get("attributes", {}).get("count")
+            )
+            try:
+                count = int(count) if count is not None else 0
+            except (TypeError, ValueError):
+                count = 0
+            return cls, {"ok": True, "count": count}
+
+        probe_results = await asyncio.gather(*[
+            loop.run_in_executor(None, run_with_context(_probe_class), cls)
+            for cls in candidate_classes
+        ])
+        class_probes = dict(probe_results)
+
+        # 3. Per-leaf count of bgpRoute (most reliable across versions)
         nodes_proc, _ = await _get_processed_nodes(aci, loop, fabric_id)
         leaves = [n for n in nodes_proc if n["role"] == "leaf"]
 
         async def _get_count(n):
             async with get_apic_sem():
-                # Corrected: api/node/mo/... instead of api/node/class/...
                 res = await loop.run_in_executor(
                     None, run_with_context(aci.get),
-                    f"api/node/mo/topology/pod-1/node-{n['id']}/sys/bgp.json?query-target=subtree&target-subtree-class=bgpAdjRibIn&rsp-subtree-include=count"
+                    f"api/node/mo/topology/pod-1/node-{n['id']}/sys/bgp.json?query-target=subtree&target-subtree-class=bgpRoute&rsp-subtree-include=count",
+                    "PROBE_NODE_BGPROUTE", True,
                 )
+                if not isinstance(res, dict):
+                    return n["id"], None
                 count = res.get("imdata", [{}])[0].get("moCount", {}).get("attributes", {}).get("count", 0)
-                return n["id"], int(count)
+                try:
+                    return n["id"], int(count)
+                except (TypeError, ValueError):
+                    return n["id"], 0
 
         counts = await asyncio.gather(*[_get_count(l) for l in leaves])
 
-        # 3. Soft-reconfig check
-        peer_pfx_pols = await loop.run_in_executor(None, run_with_context(aci.get), "api/node/class/bgpPeerPfxPol.json")
-        soft_reconfig_map = {
-            p.get("bgpPeerPfxPol", {}).get("attributes", {}).get("dn"): p.get("bgpPeerPfxPol", {}).get("attributes", {}).get("action") == "permit"
-            for p in peer_pfx_pols.get("imdata", [])
-        }
+        # 4. Sample subtree under one peer (if any), to reveal actual child classes.
+        sample_subtree = None
+        for entry in peer_data_raw.get("imdata", []):
+            peer_dn = entry.get("bgpPeerEntry", {}).get("attributes", {}).get("dn", "")
+            # Step up from .../ent-[ip] to .../peer-[ip] for the parent peer container
+            if "/ent-" in peer_dn:
+                peer_parent = peer_dn.rsplit("/ent-", 1)[0]
+                res = await loop.run_in_executor(
+                    None, run_with_context(aci.get),
+                    f"api/node/mo/{peer_parent}.json?query-target=children",
+                    "PROBE_PEER_CHILDREN", True,
+                )
+                if isinstance(res, dict):
+                    sample_subtree = {
+                        "peer_dn": peer_parent,
+                        "child_classes": sorted({
+                            next(iter(item)) for item in res.get("imdata", []) if item
+                        }),
+                    }
+                break
 
         return {
-            "user_readable_tenants": [t.get("fvTenant", {}).get("attributes", {}).get("name") for t in tenants_raw.get("imdata", [])],
             "apic_version": version_raw.get("imdata", [{}])[0].get("firmwareCtrlrRunning", {}).get("attributes", {}).get("version"),
+            "tenants": [t.get("fvTenant", {}).get("attributes", {}).get("name") for t in tenants_raw.get("imdata", [])],
             "bgp_peer_count": len(peer_data_raw.get("imdata", [])),
-            "class_query_adj_rib_in": int(rib_in_raw.get("imdata", [{}])[0].get("moCount", {}).get("attributes", {}).get("count", 0)),
-            "per_node_adj_rib_in": dict(counts)
+            "class_probes": class_probes,
+            "per_node_bgproute_count": dict(counts),
+            "sample_peer_subtree": sample_subtree,
         }
 
     try:

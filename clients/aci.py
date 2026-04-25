@@ -107,8 +107,12 @@ class ACIClient:
             })
             return False
 
-    def get(self, path, action="GET_DATA"):
-        """Generic GET request to the APIC."""
+    def get(self, path, action="GET_DATA", quiet=False):
+        """Generic GET request to the APIC.
+
+        When `quiet=True`, upstream failures (e.g. 400s on capability probes) are
+        logged at INFO instead of ERROR so they don't appear as alerts.
+        """
         from dev import DEV_MODE
         if DEV_MODE:
             from dev import (
@@ -176,7 +180,8 @@ class ACIClient:
             except Exception as e:
                 duration = int((time.time() - start_time) * 1000)
                 status = getattr(e.response, 'status_code', 500) if hasattr(e, 'response') else 500
-                logger.error(f"ACI GET {path} failed: {e}", extra={
+                log_fn = logger.info if quiet else logger.error
+                log_fn(f"ACI GET {path} failed: {e}", extra={
                     "target": "ACI",
                     "action": action,
                     "status": status,
