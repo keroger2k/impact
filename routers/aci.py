@@ -722,6 +722,8 @@ def _parse_adj_rib_dn(dn: str) -> Tuple[str, str, str]:
 def _build_adj_rib_rows(raw: Dict, cls: str, peer_to_l3out: Dict) -> List[Dict]:
     """Transform raw Adj-RIB-In/Out objects into flat table rows."""
     rows = []
+    if not raw or not isinstance(raw, dict):
+        return rows
     for item in raw.get('imdata', []):
         attr = item.get(cls, {}).get('attributes', {})
         if not attr:
@@ -798,6 +800,12 @@ async def _fetch_bgp_rib_aggregated(
             None, run_with_context(aci.get),
             f"api/node/class/{cls}.json?page-size=1000"
         )
+        if not class_raw or not isinstance(class_raw, dict):
+            logger.warning(
+                f"BGP RIB class-level fallback returned {type(class_raw).__name__} for {fabric_id} — "
+                f"likely auth or upstream error. Run /api/aci/bgp/diagnose?fabric={fabric_id} to investigate."
+            )
+            class_raw = {"imdata": []}
         rows = _build_adj_rib_rows(class_raw, cls, peer_to_l3out)
         all_raw = class_raw
 
@@ -814,15 +822,30 @@ async def get_bgp_advertised(
     loop = asyncio.get_event_loop()
 
     if request.query_params.get("fabric") == "all":
-        results = await asyncio.gather(*[_fetch_bgp_rib_aggregated(await _get_aci_async(session, f.id), loop, f.id, "out") for f in reg.list_fabrics()])
+        fabrics = reg.list_fabrics()
+        clients = await asyncio.gather(
+            *[_get_aci_async(session, f.id) for f in fabrics],
+            return_exceptions=True,
+        )
+
+        async def _safe_fetch(client, fabric):
+            if isinstance(client, Exception):
+                logger.warning(f"Fabric {fabric.id} client init failed: {client}")
+                return ([], {"imdata": []})
+            try:
+                return await _fetch_bgp_rib_aggregated(client, loop, fabric.id, "out")
+            except Exception as e:
+                logger.warning(f"Fabric {fabric.id} BGP advertised fetch failed: {e}")
+                return ([], {"imdata": []})
+
+        results = await asyncio.gather(*[_safe_fetch(c, f) for c, f in zip(clients, fabrics)])
 
         processed = []
-        for i, (p, _) in enumerate(results):
-            fabric = reg.list_fabrics()[i]
+        for (p, _), fabric in zip(results, fabrics):
             for x in p:
                 x.update({"fabric_id": fabric.id, "fabric_label": fabric.label})
             processed.extend(p)
-        rib_raw = {"imdata": [item for _, raw in results for item in raw.get("imdata", [])]}
+        rib_raw = {"imdata": [item for _, raw in results for item in (raw or {}).get("imdata", [])]}
     else:
         aci = await _get_aci_async(session, fabric_id)
         processed, rib_raw = await _fetch_bgp_rib_aggregated(aci, loop, fabric_id, "out")
@@ -847,15 +870,30 @@ async def get_bgp_received(
     loop = asyncio.get_event_loop()
 
     if request.query_params.get("fabric") == "all":
-        results = await asyncio.gather(*[_fetch_bgp_rib_aggregated(await _get_aci_async(session, f.id), loop, f.id, "in") for f in reg.list_fabrics()])
+        fabrics = reg.list_fabrics()
+        clients = await asyncio.gather(
+            *[_get_aci_async(session, f.id) for f in fabrics],
+            return_exceptions=True,
+        )
+
+        async def _safe_fetch(client, fabric):
+            if isinstance(client, Exception):
+                logger.warning(f"Fabric {fabric.id} client init failed: {client}")
+                return ([], {"imdata": []})
+            try:
+                return await _fetch_bgp_rib_aggregated(client, loop, fabric.id, "in")
+            except Exception as e:
+                logger.warning(f"Fabric {fabric.id} BGP received fetch failed: {e}")
+                return ([], {"imdata": []})
+
+        results = await asyncio.gather(*[_safe_fetch(c, f) for c, f in zip(clients, fabrics)])
 
         processed = []
-        for i, (p, _) in enumerate(results):
-            fabric = reg.list_fabrics()[i]
+        for (p, _), fabric in zip(results, fabrics):
             for x in p:
                 x.update({"fabric_id": fabric.id, "fabric_label": fabric.label})
             processed.extend(p)
-        rib_raw = {"imdata": [item for _, raw in results for item in raw.get("imdata", [])]}
+        rib_raw = {"imdata": [item for _, raw in results for item in (raw or {}).get("imdata", [])]}
     else:
         aci = await _get_aci_async(session, fabric_id)
         processed, rib_raw = await _fetch_bgp_rib_aggregated(aci, loop, fabric_id, "in")
@@ -974,6 +1012,13 @@ async def get_bgp_routes(
     raw = await loop.run_in_executor(None, run_with_context(aci.get_bgp_routes), target)
     if isinstance(raw, list):
         raw = {"imdata": raw}
+    if not raw or not isinstance(raw, dict):
+        logger.warning(
+            f"BGP routes query for {target} on fabric {fabric_id} returned no data "
+            f"(likely 400 from APIC — class query unsupported on this version, or RBAC). "
+            f"Run /api/aci/bgp/diagnose?fabric={fabric_id} to investigate."
+        )
+        raw = {"imdata": []}
 
     processed = []
     for item in raw.get('imdata', []):

@@ -4,9 +4,13 @@
         {% set color_class = 'admin-down' %}
     {% elif p.operSt == 'up' %}
         {% set color_class = 'up' %}
-    {% elif p.operStQual in ['hot-standby-in-bundle', 'sfp-missing'] or (p.channel and p.operSt == 'down') %}
-        {% set color_class = 'warning' %}
-    {% elif p.operSt == 'down' and p.operStQual in ['link-failure', 'none'] %}
+    {% elif p.operStQual == 'hot-standby-in-bundle' %}
+        {% set color_class = 'hot-standby' %}
+    {% elif p.operStQual == 'sfp-missing' %}
+        {% set color_class = 'sfp-missing' %}
+    {% elif p.channel and p.operSt == 'down' %}
+        {% set color_class = 'bundled-down' %}
+    {% elif p.operSt == 'down' %}
         {% set color_class = 'down' %}
     {% endif %}
 
@@ -95,7 +99,9 @@ Bundle: {{ p.bundleIndex if p.bundleIndex != 'unspecified' else (p.channel or 'n
             <div class="d-flex gap-4 mt-4 small text-muted border-top pt-3 w-100 justify-content-center">
                 <div class="d-flex align-items-center gap-2"><span class="pip-legend up"></span> Up</div>
                 <div class="d-flex align-items-center gap-2"><span class="pip-legend down"></span> Down</div>
-                <div class="d-flex align-items-center gap-2"><span class="pip-legend warning"></span> Hot-Standby / SFP-Missing / Bundled-Down</div>
+                <div class="d-flex align-items-center gap-2"><span class="pip-legend hot-standby"></span> Hot-Standby</div>
+                <div class="d-flex align-items-center gap-2"><span class="pip-legend sfp-missing"></span> SFP Missing</div>
+                <div class="d-flex align-items-center gap-2"><span class="pip-legend bundled-down"></span> Bundled-Down</div>
                 <div class="d-flex align-items-center gap-2"><span class="pip-legend admin-down"></span> Admin Down</div>
             </div>
         </div>
@@ -248,7 +254,9 @@ Bundle: {{ p.bundleIndex if p.bundleIndex != 'unspecified' else (p.channel or 'n
     }
     .port-pip.up { background-color: #10b981; }
     .port-pip.down { background-color: #ef4444; }
-    .port-pip.warning { background-color: #f59e0b; color: #000; }
+    .port-pip.hot-standby { background-color: #f59e0b; color: #000; }
+    .port-pip.sfp-missing { background-color: #06b6d4; color: #000; }
+    .port-pip.bundled-down { background-color: #fb923c; color: #000; }
     .port-pip.admin-down { background-color: #94a3b8; opacity: 0.6; }
     .port-pip.other { background-color: #64748b; }
     .port-pip.uplink { border: 2px solid #6366f1; width: 30px; }
@@ -261,7 +269,9 @@ Bundle: {{ p.bundleIndex if p.bundleIndex != 'unspecified' else (p.channel or 'n
     }
     .pip-legend.up { background-color: #10b981; }
     .pip-legend.down { background-color: #ef4444; }
-    .pip-legend.warning { background-color: #f59e0b; }
+    .pip-legend.hot-standby { background-color: #f59e0b; }
+    .pip-legend.sfp-missing { background-color: #06b6d4; }
+    .pip-legend.bundled-down { background-color: #fb923c; }
     .pip-legend.admin-down { background-color: #94a3b8; }
 
     .letter-spacing-1 { letter-spacing: 0.1em; }
