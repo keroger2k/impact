@@ -1,3 +1,26 @@
+{% macro render_pip(p, is_uplink=False) %}
+    {% set color_class = 'other' %}
+    {% if p.adminSt == 'down' or p.operSt == 'unknown' %}
+        {% set color_class = 'admin-down' %}
+    {% elif p.operSt == 'up' %}
+        {% set color_class = 'up' %}
+    {% elif p.operStQual in ['hot-standby-in-bundle', 'sfp-missing'] or (p.channel and p.operSt == 'down') %}
+        {% set color_class = 'warning' %}
+    {% elif p.operSt == 'down' and p.operStQual in ['link-failure', 'none'] %}
+        {% set color_class = 'down' %}
+    {% endif %}
+
+    <div class="port-pip {{ color_class }} {{ 'uplink' if is_uplink else '' }}"
+         title="{{ p.id }}
+Descr: {{ p.descr }}
+Speed: {{ p.operSpeed }}
+Reason: {{ p.operStQual }}
+Bundle: {{ p.bundleIndex if p.bundleIndex != 'unspecified' else (p.channel or 'none') }}"
+         onclick="scrollToPort('{{ p.id }}')">
+        {{ p.port_num }}
+    </div>
+{% endmacro %}
+
 <div class="card shadow-sm border-0 animate-fade-in">
     <script id="aci-node-interfaces-raw" type="application/json">{{ raw_json|tojson }}</script>
     <div class="card-header bg-light d-flex justify-content-between align-items-center">
@@ -202,29 +225,6 @@
         </table>
     </div>
 </div>
-
-{% macro render_pip(p, is_uplink=False) %}
-    {% set color_class = 'other' %}
-    {% if p.adminSt == 'down' or p.operSt == 'unknown' %}
-        {% set color_class = 'admin-down' %}
-    {% elif p.operSt == 'up' %}
-        {% set color_class = 'up' %}
-    {% elif p.operStQual in ['hot-standby-in-bundle', 'sfp-missing'] or (p.channel and p.operSt == 'down') %}
-        {% set color_class = 'warning' %}
-    {% elif p.operSt == 'down' and p.operStQual in ['link-failure', 'none'] %}
-        {% set color_class = 'down' %}
-    {% endif %}
-
-    <div class="port-pip {{ color_class }} {{ 'uplink' if is_uplink else '' }}"
-         title="{{ p.id }}
-Descr: {{ p.descr }}
-Speed: {{ p.operSpeed }}
-Reason: {{ p.operStQual }}
-Bundle: {{ p.bundleIndex if p.bundleIndex != 'unspecified' else (p.channel or 'none') }}"
-         onclick="scrollToPort('{{ p.id }}')">
-        {{ p.port_num }}
-    </div>
-{% endmacro %}
 
 <style>
     .port-pip {

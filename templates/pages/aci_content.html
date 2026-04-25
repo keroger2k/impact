@@ -85,6 +85,12 @@
         window.currentFabric = fid;
         document.cookie = `impact_aci_fabric=${fid}; path=/; SameSite=Strict`;
 
+        // Update the dropdown selector if it wasn't the source of the change
+        const select = document.getElementById('aci-fabric-select');
+        if (select && select.value !== fid) {
+            select.value = fid;
+        }
+
         // Re-trigger the active sidebar button
         const activeBtn = document.querySelector('.list-group-item.active');
         if (activeBtn) htmx.trigger(activeBtn, 'click');

@@ -14,10 +14,10 @@
             <table class="table table-hover align-middle mb-0">
                 <thead class="table-light">
                     <tr>
-                        <th>Node</th>
                         {% if peers and peers[0].fabric_label %}
                         <th>Fabric</th>
                         {% endif %}
+                        <th>Node</th>
                         <th>VRF</th>
                         <th>L3Out</th>
                         <th>Neighbor IP</th>
@@ -31,7 +31,6 @@
                 <tbody>
                     {% for p in peers %}
                     <tr>
-                        <td>{{ p.node }}</td>
                         {% if p.fabric_label %}
                         <td class="small">
                             <a href="javascript:void(0)" class="fw-bold text-navy text-decoration-none" onclick="switchFabric('{{ p.fabric_id }}')">
@@ -39,6 +38,7 @@
                             </a>
                         </td>
                         {% endif %}
+                        <td>{{ p.node }}</td>
                         <td class="small">{{ p.vrf }}</td>
                         <td class="small">{{ p.l3out }}</td>
                         <td class="fw-bold text-navy mono">{{ p.addr }}</td>

@@ -14,11 +14,11 @@
             <table class="table table-hover align-middle mb-0">
                 <thead class="table-light">
                     <tr>
-                        <th>ID</th>
-                        <th>Name</th>
                         {% if nodes and nodes[0].fabric_label %}
                         <th>Fabric</th>
                         {% endif %}
+                        <th>ID</th>
+                        <th>Name</th>
                         <th>Role</th>
                         <th>Model</th>
                         <th>Status</th>
@@ -29,8 +29,6 @@
                 <tbody>
                     {% for n in nodes %}
                     <tr>
-                        <td class="fw-bold text-navy">{{ n.id }}</td>
-                        <td>{{ n.name }}</td>
                         {% if n.fabric_label %}
                         <td class="small">
                              <a href="javascript:void(0)" class="fw-bold text-navy text-decoration-none" onclick="switchFabric('{{ n.fabric_id }}')">
@@ -38,6 +36,8 @@
                              </a>
                         </td>
                         {% endif %}
+                        <td class="fw-bold text-navy">{{ n.id }}</td>
+                        <td>{{ n.name }}</td>
                         <td>
                             <span class="badge {% if n.role == 'spine' %}bg-primary{% elif n.role == 'leaf' %}bg-info{% else %}bg-secondary{% endif %}">
                                 {{ n.role|upper }}

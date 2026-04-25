@@ -20,7 +20,7 @@ def mock_aci():
 
 @pytest.mark.asyncio
 async def test_node_interfaces_join_logic(mock_aci):
-    with patch("routers.aci._get_aci", return_value=mock_aci), \
+    with patch("routers.aci._get_aci_async", return_value=mock_aci), \
          patch("routers.aci._get_processed_nodes", return_value=([{"id": "101", "dn": "topology/pod-1/node-101"}], {})), \
          patch("routers.aci.require_auth", return_value=None):
 

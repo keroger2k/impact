@@ -72,10 +72,14 @@ def _fkey(fabric_id: str, suffix: str) -> str:
     """Helper to generate a namespaced cache key for a specific fabric."""
     return f"aci_{fabric_id}_{suffix}"
 
-def _get_aci(session: SessionEntry, fabric_id: str) -> ac.ACIClient:
-    """Helper to retrieve the ACI client for a session/fabric."""
+async def _get_aci_async(session: SessionEntry, fabric_id: str) -> ac.ACIClient:
+    """Async helper to retrieve the ACI client for a session/fabric, offloading login if needed."""
+    loop = asyncio.get_event_loop()
     try:
-        return auth_module.get_aci_for_session(session, fabric_id)
+        return await loop.run_in_executor(
+            None, run_with_context(auth_module.get_aci_for_session),
+            session, fabric_id
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -230,7 +234,7 @@ async def list_fabric_nodes(
 
         async def _fetch_single(f):
             try:
-                aci = _get_aci(session, f.id)
+                aci = await _get_aci_async(session, f.id)
                 p, raw = await _get_processed_nodes(aci, loop, f.id)
                 # Inject fabric metadata for aggregated table
                 for n in p:
@@ -250,7 +254,7 @@ async def list_fabric_nodes(
             merged_imdata.extend(raw.get("imdata", []))
         nodes_raw = {"imdata": merged_imdata}
     else:
-        aci = _get_aci(session, fabric_id)
+        aci = await _get_aci_async(session, fabric_id)
         processed, nodes_raw = await _get_processed_nodes(aci, loop, fabric_id)
 
     if request.headers.get("HX-Request"):
@@ -275,7 +279,7 @@ async def get_node_interfaces(
     Detailed interface view for a node.
     Joins physical ports with operational state, Port-Channels, and vPCs.
     """
-    aci = _get_aci(session, fabric_id)
+    aci = await _get_aci_async(session, fabric_id)
     loop = asyncio.get_event_loop()
 
     # 1. Resolve Node DN
@@ -464,7 +468,7 @@ async def list_l3outs(
     fabric_id: str = Depends(get_fabric_id)
 ):
     """List L3Out configurations across the fabric."""
-    aci = _get_aci(session, fabric_id)
+    aci = await _get_aci_async(session, fabric_id)
     loop = asyncio.get_event_loop()
 
     l3outs_raw = await loop.run_in_executor(
@@ -505,7 +509,7 @@ async def get_l3out_detail(
 ):
     """Drill down into a specific L3Out to see associated nodes and interfaces."""
     _validate_dn(dn)
-    aci = _get_aci(session, fabric_id)
+    aci = await _get_aci_async(session, fabric_id)
     loop = asyncio.get_event_loop()
 
     detail_raw = await loop.run_in_executor(None, run_with_context(aci.get_l3out_details), dn)
@@ -618,7 +622,7 @@ async def list_bgp_peers(
     if request.query_params.get("fabric") == "all":
         async def _fetch_single(f):
             try:
-                aci = _get_aci(session, f.id)
+                aci = await _get_aci_async(session, f.id)
                 p, raw = await _get_processed_bgp_peers(aci, loop, f.id)
                 for x in p:
                     x.update({"fabric_id": f.id, "fabric_label": f.label})
@@ -636,7 +640,8 @@ async def list_bgp_peers(
                 processed.extend(p)
                 peers_raw["imdata"].extend(raw.get("imdata", []))
     else:
-        processed, peers_raw = await _get_processed_bgp_peers(_get_aci(session, fabric_id), loop, fabric_id)
+        aci = await _get_aci_async(session, fabric_id)
+        processed, peers_raw = await _get_processed_bgp_peers(aci, loop, fabric_id)
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
@@ -654,14 +659,16 @@ async def bgp_diagnose(
     fabric_id: str = Depends(get_fabric_id)
 ):
     """Diagnostic report for BGP visibility issues in production."""
-    aci = _get_aci(session, fabric_id)
+    aci = await _get_aci_async(session, fabric_id)
     loop = asyncio.get_event_loop()
 
     async def _run_diagnostics():
-        # 1. Tenants & Version
-        tenants_raw, version_raw = await asyncio.gather(
+        # 1. Tenants, Version, RIB-In Class, and Peer Count
+        tenants_raw, version_raw, rib_in_raw, peer_data_raw = await asyncio.gather(
             loop.run_in_executor(None, run_with_context(aci.get), "api/node/class/fvTenant.json"),
-            loop.run_in_executor(None, run_with_context(aci.get), "api/node/class/firmwareCtrlrRunning.json")
+            loop.run_in_executor(None, run_with_context(aci.get), "api/node/class/firmwareCtrlrRunning.json"),
+            loop.run_in_executor(None, run_with_context(aci.get), "api/node/class/bgpAdjRibIn.json?rsp-subtree-include=count"),
+            loop.run_in_executor(None, run_with_context(aci.get_bgp_peers))
         )
 
         # 2. Per-leaf count
@@ -670,6 +677,7 @@ async def bgp_diagnose(
 
         async def _get_count(n):
             async with get_apic_sem():
+                # Corrected: api/node/mo/... instead of api/node/class/...
                 res = await loop.run_in_executor(
                     None, run_with_context(aci.get),
                     f"api/node/mo/topology/pod-1/node-{n['id']}/sys/bgp.json?query-target=subtree&target-subtree-class=bgpAdjRibIn&rsp-subtree-include=count"
@@ -679,9 +687,18 @@ async def bgp_diagnose(
 
         counts = await asyncio.gather(*[_get_count(l) for l in leaves])
 
+        # 3. Soft-reconfig check
+        peer_pfx_pols = await loop.run_in_executor(None, run_with_context(aci.get), "api/node/class/bgpPeerPfxPol.json")
+        soft_reconfig_map = {
+            p.get("bgpPeerPfxPol", {}).get("attributes", {}).get("dn"): p.get("bgpPeerPfxPol", {}).get("attributes", {}).get("action") == "permit"
+            for p in peer_pfx_pols.get("imdata", [])
+        }
+
         return {
             "user_readable_tenants": [t.get("fvTenant", {}).get("attributes", {}).get("name") for t in tenants_raw.get("imdata", [])],
             "apic_version": version_raw.get("imdata", [{}])[0].get("firmwareCtrlrRunning", {}).get("attributes", {}).get("version"),
+            "bgp_peer_count": len(peer_data_raw.get("imdata", [])),
+            "class_query_adj_rib_in": int(rib_in_raw.get("imdata", [{}])[0].get("moCount", {}).get("attributes", {}).get("count", 0)),
             "per_node_adj_rib_in": dict(counts)
         }
 
@@ -797,7 +814,7 @@ async def get_bgp_advertised(
     loop = asyncio.get_event_loop()
 
     if request.query_params.get("fabric") == "all":
-        results = await asyncio.gather(*[_fetch_bgp_rib_aggregated(_get_aci(session, f.id), loop, f.id, "out") for f in reg.list_fabrics()])
+        results = await asyncio.gather(*[_fetch_bgp_rib_aggregated(await _get_aci_async(session, f.id), loop, f.id, "out") for f in reg.list_fabrics()])
 
         processed = []
         for i, (p, _) in enumerate(results):
@@ -807,7 +824,8 @@ async def get_bgp_advertised(
             processed.extend(p)
         rib_raw = {"imdata": [item for _, raw in results for item in raw.get("imdata", [])]}
     else:
-        processed, rib_raw = await _fetch_bgp_rib_aggregated(_get_aci(session, fabric_id), loop, fabric_id, "out")
+        aci = await _get_aci_async(session, fabric_id)
+        processed, rib_raw = await _fetch_bgp_rib_aggregated(aci, loop, fabric_id, "out")
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
@@ -829,7 +847,7 @@ async def get_bgp_received(
     loop = asyncio.get_event_loop()
 
     if request.query_params.get("fabric") == "all":
-        results = await asyncio.gather(*[_fetch_bgp_rib_aggregated(_get_aci(session, f.id), loop, f.id, "in") for f in reg.list_fabrics()])
+        results = await asyncio.gather(*[_fetch_bgp_rib_aggregated(await _get_aci_async(session, f.id), loop, f.id, "in") for f in reg.list_fabrics()])
 
         processed = []
         for i, (p, _) in enumerate(results):
@@ -839,7 +857,8 @@ async def get_bgp_received(
             processed.extend(p)
         rib_raw = {"imdata": [item for _, raw in results for item in raw.get("imdata", [])]}
     else:
-        processed, rib_raw = await _fetch_bgp_rib_aggregated(_get_aci(session, fabric_id), loop, fabric_id, "in")
+        aci = await _get_aci_async(session, fabric_id)
+        processed, rib_raw = await _fetch_bgp_rib_aggregated(aci, loop, fabric_id, "in")
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
@@ -865,7 +884,7 @@ async def get_l3out_routes(
     Groups results by BGP peer.
     """
     _validate_dn(dn)
-    aci = _get_aci(session, fabric_id)
+    aci = await _get_aci_async(session, fabric_id)
     loop = asyncio.get_event_loop()
 
     # 1. Identify peers for this L3Out from config (bgpPeerP)
@@ -948,7 +967,7 @@ async def get_bgp_routes(
     """General node-wide BGP route table (RIB)."""
     if dn:
         _validate_dn(dn)
-    aci = _get_aci(session, fabric_id)
+    aci = await _get_aci_async(session, fabric_id)
     loop = asyncio.get_event_loop()
 
     target = dn or node_id
@@ -986,7 +1005,7 @@ async def list_epgs(
     fabric_id: str = Depends(get_fabric_id)
 ):
     """List endpoint groups (EPGs) with real-time health scores."""
-    aci = _get_aci(session, fabric_id)
+    aci = await _get_aci_async(session, fabric_id)
     loop = asyncio.get_event_loop()
 
     raw = await loop.run_in_executor(None, run_with_context(_cached), _fkey(fabric_id, "epgs"), aci.get_epgs)
@@ -1024,7 +1043,11 @@ async def get_health_summary(
     fabric_id: str = Depends(get_fabric_id)
 ):
     """Return a summary of overall, tenant, and pod health scores."""
-    aci = _get_aci(session, fabric_id)
+    return await get_health_summary_logic(session, fabric_id)
+
+async def get_health_summary_logic(session: SessionEntry, fabric_id: str):
+    """Business logic for health summary, callable from other routers."""
+    aci = await _get_aci_async(session, fabric_id)
     loop = asyncio.get_event_loop()
 
     overall, tenants, pods = await asyncio.gather(
@@ -1062,7 +1085,19 @@ async def list_faults(
     fabric_id: str = Depends(get_fabric_id)
 ):
     """List operational faults, optionally filtered by severity."""
-    aci = _get_aci(session, fabric_id)
+    processed, raw = await list_faults_logic(session, fabric_id, severity)
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/aci_faults.html", {
+            "faults": processed,
+            "raw_json": raw
+        })
+    return {"items": processed, "raw": raw}
+
+async def list_faults_logic(session: SessionEntry, fabric_id: str, severity: Optional[str] = None):
+    """Business logic for faults, callable from other routers."""
+    aci = await _get_aci_async(session, fabric_id)
     loop = asyncio.get_event_loop()
 
     raw = await loop.run_in_executor(None, run_with_context(aci.get_faults), severity)
@@ -1077,14 +1112,7 @@ async def list_faults(
             "dn": attr.get('dn'),
             "created": attr.get('created')
         })
-
-    if request.headers.get("HX-Request"):
-        from templates_module import templates
-        return templates.TemplateResponse(request, "partials/aci_faults.html", {
-            "faults": processed,
-            "raw_json": raw
-        })
-    return {"items": processed, "raw": raw}
+    return processed, raw
 
 @router.get("/bgp/peer-routes")
 async def get_bgp_peer_routes(
@@ -1096,7 +1124,7 @@ async def get_bgp_peer_routes(
 ):
     """Direct fetch of Adj-RIB (RX/TX) for a specific BGP peer DN."""
     _validate_dn(dn)
-    aci = _get_aci(session, fabric_id)
+    aci = await _get_aci_async(session, fabric_id)
     loop = asyncio.get_event_loop()
 
     raw = await loop.run_in_executor(None, run_with_context(aci.get_bgp_adj_rib), dn, direction)
