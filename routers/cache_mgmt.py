@@ -289,12 +289,21 @@ async def get_cache_status(request: Request, session: SessionEntry = Depends(req
         _get_card_info("pan_managed_devices","Panorama Devices",      "ph ph-fire",             "danger",    "/api/cache/refresh/panorama"),
         _get_card_info("pan_rules",          "Firewall Rules",        "ph ph-fire",             "danger",    "/api/cache/refresh/panorama"),
         _get_card_info("pan_interfaces",     "Firewall Interfaces",   "ph ph-fire",             "danger",    "/api/firewall/interfaces/refresh"),
-        _get_card_info("aci_nodes",          "ACI Fabric Nodes",      "ph ph-buildings",        "secondary", "/api/cache/refresh/aci"),
-        _get_card_info("aci_bgp_peers",      "ACI BGP Peers",         "ph ph-plug-connect",     "secondary", "/api/cache/refresh/aci"),
-        _get_card_info("aci_l3outs",         "ACI L3Outs",            "ph ph-globe-hemisphere-east", "secondary", "/api/cache/refresh/aci"),
+    ]
+
+    import clients.aci_registry as reg
+    fabrics = reg.list_fabrics()
+    for f in fabrics:
+        cards.extend([
+            _get_card_info(f"aci_{f.id}_nodes",          f"ACI {f.label}: Nodes",      "ph ph-buildings",        "secondary", f"/api/cache/refresh/aci?fabric={f.id}"),
+            _get_card_info(f"aci_{f.id}_bgp_peers",      f"ACI {f.label}: BGP Peers",  "ph ph-plug-connect",     "secondary", f"/api/cache/refresh/aci?fabric={f.id}"),
+            _get_card_info(f"aci_{f.id}_l3outs",         f"ACI {f.label}: L3Outs",     "ph ph-globe-hemisphere-east", "secondary", f"/api/cache/refresh/aci?fabric={f.id}"),
+        ])
+
+    cards.extend([
         _get_card_info("nexus_inventory",    "Nexus Switch Inventory","ph ph-hard-drives",      "warning",   None,                             sse=True, sse_fn="triggerNexusCacheRefresh()"),
         _get_card_info("nexus_interfaces",   "Nexus Interface Cache", "ph ph-hard-drives",      "warning",   None,                             sse=True, sse_fn="triggerNexusCacheRefresh()"),
-    ]
+    ])
 
     return templates.TemplateResponse(request, "partials/cache_cards.html", {"cards": cards})
 
@@ -397,8 +406,13 @@ async def refresh_specific_cache(category: str, session: SessionEntry = Depends(
         msg = "ISE data is being refreshed in the background."
 
     elif category == "aci":
-        cache.invalidate_prefix("aci_")
-        msg = "ACI cache cleared. Data will reload automatically when you visit ACI pages."
+        fabric = request.query_params.get("fabric")
+        if fabric:
+            cache.invalidate_prefix(f"aci_{fabric}_")
+            msg = f"ACI cache for {fabric} cleared."
+        else:
+            cache.invalidate_prefix("aci_")
+            msg = "All ACI caches cleared. Data will reload automatically when you visit ACI pages."
 
     elif category == "ipam":
         cache.invalidate("ipam_tree")

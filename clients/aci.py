@@ -30,13 +30,15 @@ def _quote_dn(dn: str) -> str:
     return "/".join(urllib.parse.quote(s, safe=':[]') for s in segments)
 
 class ACIClient:
-    def __init__(self, url, username, password, domain=None):
+    def __init__(self, url, username, password, domain=None, fabric_id="default"):
         self.url = url.rstrip('/')
         self.username = username
         self.password = password
         self.domain = domain
+        self.fabric_id = fabric_id
         self.session = requests.Session()
         self.token = None
+        self.domains = []
 
     def login(self):
         """Authenticate with the APIC and store the session token."""
@@ -78,7 +80,21 @@ class ACIClient:
             data = response.json()
             self.token = data['imdata'][0]['aaaLogin']['attributes']['token']
 
-            logger.debug(f"ACI Login response: {data}", extra={"payload": data})
+            # Deliverable 3d — Record session domains
+            try:
+                domains_resp = self.session.get(f"{self.url}/api/aaaListDomains.json", verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true", timeout=5)
+                if domains_resp.ok:
+                    d_data = domains_resp.json()
+                    self.domains = [d.get("aaaDomain", {}).get("attributes", {}).get("name") for d in d_data.get("imdata", [])]
+                    if self.domains == ["common"] or not self.domains:
+                         logger.warning(
+                            "ACI [%s] login succeeded but user '%s' has restricted read access to domains %s. L3Out and BGP data may be empty.",
+                            self.fabric_id, self.username, self.domains
+                         )
+            except Exception as e:
+                logger.warning(f"ACI [{self.fabric_id}] failed to fetch domain list: {e}")
+
+            logger.debug(f"ACI Login response: {data}", extra={"payload": data, "fabric": self.fabric_id})
             return True
         except Exception as e:
             duration = int((time.time() - start_time) * 1000)
@@ -100,7 +116,8 @@ class ACIClient:
                 MOCK_ACI_SUBNETS, MOCK_ACI_EPGS, MOCK_ACI_FAULT_INST,
                 MOCK_ACI_BGP_DOMS, MOCK_ACI_BGP_RIB_IN, MOCK_ACI_BGP_RIB_OUT,
                 MOCK_ACI_BGP_DOMS_ALL, MOCK_ACI_BGP_PEER_CFG,
-                MOCK_ACI_BGP_ADJ_RIB_IN, MOCK_ACI_BGP_ADJ_RIB_OUT
+                MOCK_ACI_BGP_ADJ_RIB_IN, MOCK_ACI_BGP_ADJ_RIB_OUT,
+                MOCK_ACI_NODE_INTERFACES, MOCK_ACI_NODE_208_INTERFACES
             )
             if "fabricNode" in path: return {"imdata": MOCK_ACI_NODES}
             if "l3extOut" in path: return {"imdata": MOCK_ACI_L3OUTS}
@@ -122,6 +139,12 @@ class ACIClient:
             if "class/bgpAdjRibOut" in path: return {"imdata": MOCK_ACI_BGP_ADJ_RIB_OUT}
             if "bgpAdjRibIn" in path: return {"imdata": MOCK_ACI_BGP_RIB_IN}
             if "bgpAdjRibOut" in path: return {"imdata": MOCK_ACI_BGP_RIB_OUT}
+            if "l1PhysIf" in path:
+                if "node-208" in path:
+                    return {"imdata": MOCK_ACI_NODE_208_INTERFACES}
+                return {"imdata": MOCK_ACI_NODE_INTERFACES}
+            if "fvTenant" in path: return {"imdata": [{"fvTenant": {"attributes": {"name": "common"}}}]}
+            if "firmwareCtrlrRunning" in path: return {"imdata": [{"firmwareCtrlrRunning": {"attributes": {"version": "5.2(4d)"}}}]}
             return {"imdata": []}
 
         if not self.token:
@@ -139,7 +162,8 @@ class ACIClient:
                     "target": "ACI",
                     "action": action,
                     "status": response.status_code,
-                    "duration_ms": duration
+                    "duration_ms": duration,
+                    "fabric": self.fabric_id
                 })
 
                 if response.status_code in (401, 403):
@@ -156,7 +180,8 @@ class ACIClient:
                     "target": "ACI",
                     "action": action,
                     "status": status,
-                    "duration_ms": duration
+                    "duration_ms": duration,
+                    "fabric": self.fabric_id
                 })
                 return getattr(e, 'response', None), None
 
@@ -242,6 +267,18 @@ class ACIClient:
     def get_bgp_received_routes(self):
         """Fabric-wide query for all bgpAdjRibIn (RX) routes."""
         return self.get("api/node/class/bgpAdjRibIn.json?page-size=1000", action="FETCH_ACI_BGP_ADJ_RIB_IN")
+
+    def get_bgp_rib_for_node(self, node_dn, direction="in"):
+        """Fetch BGP RIB for a specific leaf node."""
+        cls = "bgpAdjRibIn" if direction == "in" else "bgpAdjRibOut"
+        path = f"api/node/mo/{_quote_dn(node_dn)}/sys/bgp.json?query-target=subtree&target-subtree-class={cls}&page-size=1000"
+        return self.get(path, action=f"FETCH_ACI_BGP_RIB_NODE_{direction.upper()}")
+
+    def get_node_interfaces(self, node_dn):
+        """Single tree fetch of every interface-related MO on a node."""
+        classes = "l1PhysIf,ethpmPhysIf,pcAggrIf,pcAggrMbrIf,pcRsMbrIfs,vpcIf,vpcRsVpcConf,vpcDom"
+        path = f"api/node/mo/{_quote_dn(node_dn)}.json?query-target=subtree&target-subtree-class={classes}"
+        return self.get(path, action="FETCH_ACI_NODE_INTERFACES")
 
     def get_epg_stats(self, dn):
         """Fetch health and stats for a specific EPG."""

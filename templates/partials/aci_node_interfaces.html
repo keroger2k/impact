@@ -1,0 +1,319 @@
+{% macro render_pip(p, is_uplink=False) %}
+    {% set color_class = 'other' %}
+    {% if p.adminSt == 'down' or p.operSt == 'unknown' %}
+        {% set color_class = 'admin-down' %}
+    {% elif p.operSt == 'up' %}
+        {% set color_class = 'up' %}
+    {% elif p.operStQual in ['hot-standby-in-bundle', 'sfp-missing'] or (p.channel and p.operSt == 'down') %}
+        {% set color_class = 'warning' %}
+    {% elif p.operSt == 'down' and p.operStQual in ['link-failure', 'none'] %}
+        {% set color_class = 'down' %}
+    {% endif %}
+
+    <div class="port-pip {{ color_class }} {{ 'uplink' if is_uplink else '' }}"
+         title="{{ p.id }}
+Descr: {{ p.descr }}
+Speed: {{ p.operSpeed }}
+Reason: {{ p.operStQual }}
+Bundle: {{ p.bundleIndex if p.bundleIndex != 'unspecified' else (p.channel or 'none') }}"
+         onclick="scrollToPort('{{ p.id }}')">
+        {{ p.port_num }}
+    </div>
+{% endmacro %}
+
+<div class="card shadow-sm border-0 animate-fade-in">
+    <script id="aci-node-interfaces-raw" type="application/json">{{ raw_json|tojson }}</script>
+    <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <div class="d-flex align-items-center gap-3">
+            <button class="btn btn-xs btn-outline-navy" hx-get="/api/aci/fabric/nodes" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results">
+                <i class="ph ph-arrow-left me-1"></i>Back
+            </button>
+            <span class="fw-bold text-navy"><i class="ph ph-hard-drive me-2"></i>{{ node_name }} (Node-{{ node_id }})</span>
+            <button class="btn btn-xs btn-outline-navy" onclick="showRawData('aci-node-interfaces-raw')">
+                <i class="ph ph-code me-1"></i>Raw
+            </button>
+        </div>
+        <div class="d-flex gap-2">
+            <span class="badge bg-secondary">{{ interfaces|length }} Interfaces</span>
+            <span class="badge bg-info">{{ aggregates|length }} Port-Channels</span>
+        </div>
+    </div>
+
+    <!-- Front Panel Visualization -->
+    <div class="card-body bg-white border-bottom p-4 aci-front-panel">
+        <div class="d-flex flex-column align-items-center">
+            <div class="text-muted small mb-3 fw-bold text-uppercase letter-spacing-1">Front Panel Visualization</div>
+
+            <div class="d-flex flex-column gap-4 w-100 align-items-center">
+                {% for mod in panel %}
+                <div class="module-container">
+                    {% if panel|length > 1 %}
+                    <div class="text-center mb-2"><span class="badge bg-light text-dark border">Module {{ mod.module }}</span></div>
+                    {% endif %}
+
+                    <div class="port-grid p-2 bg-dark rounded shadow-inner" style="border: 4px solid #334155;">
+                        <div class="d-flex flex-column gap-1">
+                            {# Top Row (Odds) #}
+                            <div class="d-flex align-items-center">
+                                <div class="d-flex gap-1">
+                                    {% for p in mod.access_top %}
+                                        {{ render_pip(p) }}
+                                    {% endfor %}
+                                </div>
+                                {% if mod.uplink_top %}
+                                <div class="mx-3 border-start border-secondary h-100" style="width: 2px; min-height: 26px;"></div>
+                                <div class="d-flex gap-1">
+                                    {% for p in mod.uplink_top %}
+                                        {{ render_pip(p, is_uplink=True) }}
+                                    {% endfor %}
+                                </div>
+                                {% endif %}
+                            </div>
+
+                            {# Bottom Row (Evens) #}
+                            <div class="d-flex align-items-center">
+                                <div class="d-flex gap-1">
+                                    {% for p in mod.access_bottom %}
+                                        {{ render_pip(p) }}
+                                    {% endfor %}
+                                </div>
+                                {% if mod.uplink_bottom %}
+                                <div class="mx-3 border-start border-secondary h-100" style="width: 2px; min-height: 26px;"></div>
+                                <div class="d-flex gap-1">
+                                    {% for p in mod.uplink_bottom %}
+                                        {{ render_pip(p, is_uplink=True) }}
+                                    {% endfor %}
+                                </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+
+            <div class="d-flex gap-4 mt-4 small text-muted border-top pt-3 w-100 justify-content-center">
+                <div class="d-flex align-items-center gap-2"><span class="pip-legend up"></span> Up</div>
+                <div class="d-flex align-items-center gap-2"><span class="pip-legend down"></span> Down</div>
+                <div class="d-flex align-items-center gap-2"><span class="pip-legend warning"></span> Hot-Standby / SFP-Missing / Bundled-Down</div>
+                <div class="d-flex align-items-center gap-2"><span class="pip-legend admin-down"></span> Admin Down</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card-body p-3 bg-light border-bottom">
+        <div class="d-flex flex-wrap gap-3 align-items-center">
+            <div class="input-group input-group-sm" style="width: 250px;">
+                <span class="input-group-text"><i class="ph ph-funnel"></i></span>
+                <input type="text" class="form-control" placeholder="Filter ports..." onkeyup="filterNodePorts(this.value)">
+            </div>
+            <div class="form-check form-check-inline small">
+                <input class="form-check-input" type="checkbox" id="filter-up" onchange="togglePortFilter()">
+                <label class="form-check-label" for="filter-up">Only Up</label>
+            </div>
+            <div class="form-check form-check-inline small">
+                <input class="form-check-input" type="checkbox" id="filter-bundled" onchange="togglePortFilter()">
+                <label class="form-check-label" for="filter-bundled">Only Bundled</label>
+            </div>
+        </div>
+    </div>
+
+    <div class="card-body p-0">
+        <div class="table-responsive" style="max-height: 600px;">
+            <table id="node-ports-table" class="table table-hover align-middle mb-0">
+                <thead class="table-light sticky-top">
+                    <tr class="small text-uppercase letter-spacing-05">
+                        <th class="ps-4" style="width: 40px;">Stat</th>
+                        <th>Interface</th>
+                        <th>Speed</th>
+                        <th>Layer</th>
+                        <th>Mode</th>
+                        <th>Switching State</th>
+                        <th>Usage</th>
+                        <th>Oper Vlans</th>
+                        <th>Configured Vlans</th>
+                        <th>Bundle Index</th>
+                        <th>Oper Duplex</th>
+                        <th>Oper State</th>
+                        <th>Oper State Reason</th>
+                        <th>Description</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for i in interfaces %}
+                    <tr class="port-row border-bottom"
+                        id="port-{{ i.id }}"
+                        data-up="{{ 'true' if i.operSt == 'up' else 'false' }}"
+                        data-bundled="{{ 'true' if i.channel else 'false' }}">
+                        <td class="ps-4">
+                            {% if i.adminSt == 'down' %}
+                                <i class="ph-fill ph-circle text-secondary" title="Admin Down"></i>
+                            {% elif i.operSt == 'up' %}
+                                <i class="ph-fill ph-caret-up text-success" title="Up"></i>
+                            {% else %}
+                                <i class="ph-fill ph-caret-down text-danger" title="Down"></i>
+                            {% endif %}
+                        </td>
+                        <td class="fw-bold text-navy">{{ i.id }}</td>
+                        <td class="small">{{ i.operSpeed if i.operSpeed != 'inherit' else i.adminSpeed }}</td>
+                        <td class="small">{{ i.layer }}</td>
+                        <td class="small">{{ i.mode }}</td>
+                        <td>
+                            <span class="badge {{ 'bg-success' if i.switchingSt == 'enabled' else 'bg-secondary' }} btn-xs">
+                                {{ i.switchingSt }}
+                            </span>
+                        </td>
+                        <td class="small text-muted">{{ i.usage }}</td>
+                        <td class="small" title="{{ i.operVlans or '' }}">{{ (i.operVlans or '')|truncate(20) }}</td>
+                        <td class="small" title="{{ i.allowedVlans or '' }}">{{ (i.allowedVlans or '')|truncate(20) }}</td>
+                        <td>
+                            {% if i.channel %}
+                            <a href="#po-{{ i.channel }}" class="badge bg-navy text-decoration-none" onclick="highlightAggregate('{{ i.channel }}')">
+                                {{ i.bundleIndex if i.bundleIndex != 'unspecified' else i.channel }}
+                            </a>
+                            {% else %}
+                            <span class="text-muted small">—</span>
+                            {% endif %}
+                        </td>
+                        <td class="small">{{ i.operDuplex }}</td>
+                        <td>
+                            <span class="badge {{ 'bg-success' if i.operSt == 'up' else ('bg-danger' if i.operSt == 'down' else 'bg-warning text-dark') }} btn-xs">
+                                {{ i.operSt }}
+                            </span>
+                        </td>
+                        <td class="small text-muted">{{ i.operStQual }}</td>
+                        <td class="small text-truncate" style="max-width: 250px;">{{ i.descr }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Aggregates Section -->
+    <div class="card-header bg-white border-top py-3">
+        <span class="fw-bold text-navy"><i class="ph ph-stack me-2"></i>Logical Aggregates (Port-Channels / vPCs)</span>
+    </div>
+    <div class="card-body p-0">
+        <table class="table table-sm table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr class="small text-uppercase">
+                    <th class="ps-4">ID</th>
+                    <th>Mode</th>
+                    <th>Status</th>
+                    <th>vPC</th>
+                    <th>Name / Policy Group</th>
+                    <th>Members</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for a in aggregates %}
+                <tr id="po-{{ a.id }}" class="aggregate-row border-bottom">
+                    <td class="fw-bold ps-4">{{ a.id }}</td>
+                    <td><span class="badge bg-light text-dark border">{{ a.pcMode }}</span></td>
+                    <td><span class="badge {{ 'bg-success' if a.operSt == 'up' else 'bg-danger' }}">{{ a.operSt }}</span></td>
+                    <td>
+                        {% if a.vpc %}
+                        <span class="badge bg-primary">{{ a.vpc }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="small">{{ a.name }}</td>
+                    <td class="small text-navy">{{ a.members|join(', ') }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<style>
+    .port-pip {
+        width: 26px;
+        height: 26px;
+        font-size: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: 700;
+        border-radius: 3px;
+        cursor: pointer;
+        transition: transform 0.1s, filter 0.1s;
+        border: 1px solid rgba(0,0,0,0.2);
+    }
+    .port-pip:hover {
+        transform: scale(1.15);
+        z-index: 10;
+        filter: brightness(1.2);
+    }
+    .port-pip.up { background-color: #10b981; }
+    .port-pip.down { background-color: #ef4444; }
+    .port-pip.warning { background-color: #f59e0b; color: #000; }
+    .port-pip.admin-down { background-color: #94a3b8; opacity: 0.6; }
+    .port-pip.other { background-color: #64748b; }
+    .port-pip.uplink { border: 2px solid #6366f1; width: 30px; }
+
+    .pip-legend {
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        border-radius: 2px;
+    }
+    .pip-legend.up { background-color: #10b981; }
+    .pip-legend.down { background-color: #ef4444; }
+    .pip-legend.warning { background-color: #f59e0b; }
+    .pip-legend.admin-down { background-color: #94a3b8; }
+
+    .letter-spacing-1 { letter-spacing: 0.1em; }
+    .shadow-inner { box-shadow: inset 0 2px 4px 0 rgba(0, 0, 0, 0.06); }
+    .module-container { max-width: 100%; overflow-x: auto; }
+</style>
+
+<script>
+    function filterNodePorts(query) {
+        query = query.toLowerCase();
+        document.querySelectorAll('#node-ports-table .port-row').forEach(row => {
+            const text = row.innerText.toLowerCase();
+            const matches = text.includes(query);
+            row.dataset.matchesFilter = matches;
+            updateVisibility(row);
+        });
+    }
+
+    function togglePortFilter() {
+        document.querySelectorAll('#node-ports-table .port-row').forEach(row => {
+            updateVisibility(row);
+        });
+    }
+
+    function updateVisibility(row) {
+        const isUp = row.dataset.up === 'true';
+        const isBundled = row.dataset.bundled === 'true';
+        const matchesQuery = row.dataset.matchesFilter !== 'false';
+
+        let show = matchesQuery;
+        if (document.getElementById('filter-up').checked && !isUp) show = false;
+        if (document.getElementById('filter-bundled').checked && !isBundled) show = false;
+
+        row.style.display = show ? '' : 'none';
+    }
+
+    function scrollToPort(id) {
+        const row = document.getElementById('port-' + id);
+        if (row) {
+            document.querySelectorAll('.port-row').forEach(r => r.classList.remove('table-primary'));
+            row.classList.add('table-primary');
+            row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            setTimeout(() => row.classList.remove('table-primary'), 2000);
+        }
+    }
+
+    function highlightAggregate(id) {
+        const row = document.getElementById('po-' + id);
+        if (row) {
+            document.querySelectorAll('.aggregate-row').forEach(r => r.classList.remove('table-warning'));
+            row.classList.add('table-warning');
+            row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }
+</script>

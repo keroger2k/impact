@@ -2,11 +2,25 @@
     <script id="aci-l3out-detail-raw" type="application/json">{{ raw_json|tojson }}</script>
     <div class="card-header bg-light d-flex justify-content-between align-items-center">
         <div class="d-flex align-items-center">
-            <button class="btn btn-sm btn-outline-secondary me-3" hx-get="/api/aci/l3outs" hx-target="#aci-results" hx-indicator="#aci-loading">
+            <button class="btn btn-sm btn-outline-secondary me-3" hx-get="/api/aci/l3outs" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading">
                 <i class=" ph ph-arrow-left"></i>
             </button>
             <div class="d-flex align-items-center gap-3">
                 <span class="fw-bold text-navy">L3Out: {{ l.name }}</span>
+                <div class="btn-group btn-group-xs">
+                    <button class="btn btn-xs btn-outline-primary"
+                            hx-get="/api/aci/l3outs/routes?dn={{ l.dn|urlencode }}&direction=in"
+                            hx-vals='js:{fabric: window.currentFabric}'
+                            hx-target="#aci-results" hx-indicator="#aci-loading">
+                        RX Routes
+                    </button>
+                    <button class="btn btn-xs btn-outline-info"
+                            hx-get="/api/aci/l3outs/routes?dn={{ l.dn|urlencode }}&direction=out"
+                            hx-vals='js:{fabric: window.currentFabric}'
+                            hx-target="#aci-results" hx-indicator="#aci-loading">
+                        TX Routes
+                    </button>
+                </div>
                 <button class="btn btn-xs btn-outline-navy" onclick="showRawData('aci-l3out-detail-raw')">
                     <i class=" ph ph-code me-1"></i>Raw
                 </button>

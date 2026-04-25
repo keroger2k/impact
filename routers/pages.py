@@ -65,11 +65,15 @@ async def dashboard(request: Request, user: SessionEntry = Depends(get_current_u
     aci_health = None
     aci_faults = []
     if current_status.get("aci", {}).get("ok"):
-        from routers.aci import get_health_summary, list_faults
+        from routers.aci import get_health_summary_logic, list_faults_logic
+        import clients.aci_registry as reg
         try:
-            aci_health = await get_health_summary(user)
-            faults_resp = await list_faults(request, severity=None, session=user)
-            aci_faults = faults_resp.get("items", []) if isinstance(faults_resp, dict) else []
+            # Default to the first fabric for the dashboard summary
+            fabrics = reg.list_fabrics()
+            if fabrics:
+                fid = fabrics[0].id
+                aci_health = await get_health_summary_logic(user, fid)
+                aci_faults, _ = await list_faults_logic(user, fid, severity=None)
         except Exception as e:
             logger.warning(f"Failed to fetch ACI dashboard data: {e}")
 
