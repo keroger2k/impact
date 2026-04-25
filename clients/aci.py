@@ -326,14 +326,9 @@ class ACIClient:
         return self.get(path)
 
     def get_pod_health(self):
-        """Fetch health scores for pods."""
-        # Some ACI versions prefer fabricPod objects directly
-        # If health subtree fails (400), we fallback to the class itself
-        path = "api/node/class/fabricPod.json?rsp-subtree-include=health"
-        resp = self.get(path)
-        if resp is None:
-            return self.get("api/node/class/fabricPod.json")
-        return resp
+        """Fetch pod list. The ?rsp-subtree-include=health modifier 400s on this
+        APIC version, so we skip it; per-pod health is unavailable."""
+        return self.get("api/node/class/fabricPod.json")
 
 def connectivity_check(client: ACIClient) -> bool:
     """Verify APIC is reachable using the existing session token."""
