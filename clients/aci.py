@@ -118,7 +118,7 @@ class ACIClient:
             from dev import (
                 MOCK_ACI_NODES, MOCK_ACI_L3OUTS, MOCK_ACI_BGP_PEERS,
                 MOCK_ACI_SUBNETS, MOCK_ACI_EPGS, MOCK_ACI_FAULT_INST,
-                MOCK_ACI_BGP_DOMS, MOCK_ACI_BGP_RIB_IN, MOCK_ACI_BGP_RIB_OUT,
+                MOCK_ACI_BGP_RIB_IN, MOCK_ACI_BGP_RIB_OUT,
                 MOCK_ACI_BGP_DOMS_ALL, MOCK_ACI_BGP_PEER_CFG,
                 MOCK_ACI_BGP_ADJ_RIB_IN, MOCK_ACI_BGP_ADJ_RIB_OUT,
                 MOCK_ACI_NODE_INTERFACES, MOCK_ACI_NODE_208_INTERFACES
@@ -137,7 +137,6 @@ class ACIClient:
             if "fvAEPg" in path: return {"imdata": MOCK_ACI_EPGS}
             if "faultInst" in path: return {"imdata": MOCK_ACI_FAULT_INST}
             if "bgpDomAf.json" in path: return {"imdata": MOCK_ACI_BGP_DOMS_ALL}
-            if "target-subtree-class=bgpRoute" in path: return {"imdata": MOCK_ACI_BGP_DOMS}
             if "bgpPeerP" in path: return {"imdata": MOCK_ACI_BGP_PEER_CFG}
             if "class/bgpAdjRibIn" in path: return {"imdata": MOCK_ACI_BGP_ADJ_RIB_IN}
             if "class/bgpAdjRibOut" in path: return {"imdata": MOCK_ACI_BGP_ADJ_RIB_OUT}
@@ -230,13 +229,6 @@ class ACIClient:
         """Query l3extSubnet for external subnet policies."""
         return self.get("api/node/class/l3extSubnet.json", action="FETCH_ACI_SUBNETS")
 
-    def get_bgp_routes(self, dn):
-        """Query BGP routes on a specific node."""
-        if "topology/" not in dn:
-            dn = f"topology/pod-1/node-{dn}"
-        path = f"api/node/mo/{_quote_dn(dn)}.json?query-target=subtree&target-subtree-class=bgpRoute"
-        return self.get(path, action="FETCH_ACI_BGP_ROUTES")
-
     def get_all_bgp_doms(self):
         """Query all bgpDomAf objects across the fabric to get route counts."""
         # We query bgpDomAf and count its route children.
@@ -253,30 +245,9 @@ class ACIClient:
             path = "api/node/class/fvAEPg.json?rsp-subtree-include=health"
         return self.get(path, action="FETCH_ACI_EPGS")
 
-    def get_bgp_adj_rib(self, peer_dn, direction="in"):
-        """Fetch BGP Received or Advertised routes for a specific peer."""
-        # direction can be "in" (bgpAdjRibIn) or "out" (bgpAdjRibOut)
-        cls = "bgpAdjRibIn" if direction == "in" else "bgpAdjRibOut"
-        path = f"api/node/mo/{_quote_dn(peer_dn)}.json?query-target=subtree&target-subtree-class={cls}"
-        return self.get(path, action=f"FETCH_ACI_BGP_RIB_{direction.upper()}")
-
     def get_bgp_peer_configs(self):
         """Query bgpPeerP (policy-space) to map peer IPs to their L3Outs."""
         return self.get("api/node/class/bgpPeerP.json", action="FETCH_ACI_BGP_PEER_CFG")
-
-    def get_bgp_advertised_routes(self):
-        """Fabric-wide query for all bgpAdjRibOut (TX) routes."""
-        return self.get("api/node/class/bgpAdjRibOut.json?page-size=1000", action="FETCH_ACI_BGP_ADJ_RIB_OUT")
-
-    def get_bgp_received_routes(self):
-        """Fabric-wide query for all bgpAdjRibIn (RX) routes."""
-        return self.get("api/node/class/bgpAdjRibIn.json?page-size=1000", action="FETCH_ACI_BGP_ADJ_RIB_IN")
-
-    def get_bgp_rib_for_node(self, node_dn, direction="in"):
-        """Fetch BGP RIB for a specific leaf node."""
-        cls = "bgpAdjRibIn" if direction == "in" else "bgpAdjRibOut"
-        path = f"api/node/mo/{_quote_dn(node_dn)}/sys/bgp.json?query-target=subtree&target-subtree-class={cls}&page-size=1000"
-        return self.get(path, action=f"FETCH_ACI_BGP_RIB_NODE_{direction.upper()}")
 
     def get_node_interfaces(self, node_dn):
         """Single tree fetch of every interface-related MO on a node."""

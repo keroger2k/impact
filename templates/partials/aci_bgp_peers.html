@@ -24,8 +24,6 @@
                         <th>Type</th>
                         <th>State</th>
                         <th>Advertised (Policy)</th>
-                        <th class="text-center">Peer Routes</th>
-                        <th>Node Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -44,36 +42,12 @@
                         <td class="fw-bold text-navy mono">{{ p.addr }}</td>
                         <td class="small">{{ p.type }}</td>
                         <td>
-                            <span class="badge {% if p.state == 'ESTABLISHED' %}bg-success{% else %}bg-danger{% endif %}">{{ p.state }}</span><span class="sr-only"> - {{ p.state }}</span>
+                            <span class="badge {% if p.state == 'ESTABLISHED' %}bg-success{% else %}bg-danger{% endif %}">{{ p.state }}</span>
                         </td>
                         <td class="small">
                             {% for net in p.nets %}
                                 <div class="text-nowrap">• {{ net }}</div>
                             {% endfor %}
-                        </td>
-                        <td class="text-center">
-                            <div class="btn-group">
-                                <button class="btn btn-outline-primary btn-sm"
-                                        hx-get="/api/aci/bgp/peer-routes?dn={{ p.dn | urlencode }}&direction=in"
-                                        hx-vals='js:{fabric: "{{ p.fabric_id if p.fabric_id else "" }}" || window.currentFabric}'
-                                        hx-target="#aci-results" hx-indicator="#aci-loading">
-                                    RX
-                                </button>
-                                <button class="btn btn-outline-info btn-sm"
-                                        hx-get="/api/aci/bgp/peer-routes?dn={{ p.dn | urlencode }}&direction=out"
-                                        hx-vals='js:{fabric: "{{ p.fabric_id if p.fabric_id else "" }}" || window.currentFabric}'
-                                        hx-target="#aci-results" hx-indicator="#aci-loading">
-                                    TX
-                                </button>
-                            </div>
-                        </td>
-                        <td>
-                            <button class="btn btn-link btn-sm p-0 text-decoration-none"
-                                    hx-get="/api/aci/bgp/routes?dn={{ p.base_dn|urlencode }}"
-                                    hx-vals='js:{fabric: "{{ p.fabric_id if p.fabric_id else "" }}" || window.currentFabric}'
-                                    hx-target="#aci-results" hx-indicator="#aci-loading">
-                                <i class=" ph ph-list"></i> Node Routes
-                            </button>
                         </td>
                     </tr>
                     {% endfor %}

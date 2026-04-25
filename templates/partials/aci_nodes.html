@@ -59,12 +59,6 @@
                         <td>
                             <div class="d-flex gap-1">
                                 <button class="btn btn-xs btn-outline-navy"
-                                        hx-get="/api/aci/bgp/routes?dn={{ n.dn|urlencode }}"
-                                        hx-vals='js:{fabric: "{{ n.fabric_id if n.fabric_id else "" }}" || window.currentFabric}'
-                                        hx-target="#aci-results" hx-indicator="#aci-loading" title="View Routes">
-                                    <i class="ph ph-navigation-arrow"></i>
-                                </button>
-                                <button class="btn btn-xs btn-outline-navy"
                                         hx-get="/api/aci/faults?dn={{ n.dn|urlencode }}"
                                         hx-vals='js:{fabric: "{{ n.fabric_id if n.fabric_id else "" }}" || window.currentFabric}'
                                         hx-target="#aci-results" hx-indicator="#aci-loading" title="View Faults">
