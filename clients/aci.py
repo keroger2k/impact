@@ -117,7 +117,7 @@ class ACIClient:
                 MOCK_ACI_BGP_DOMS, MOCK_ACI_BGP_RIB_IN, MOCK_ACI_BGP_RIB_OUT,
                 MOCK_ACI_BGP_DOMS_ALL, MOCK_ACI_BGP_PEER_CFG,
                 MOCK_ACI_BGP_ADJ_RIB_IN, MOCK_ACI_BGP_ADJ_RIB_OUT,
-                MOCK_ACI_NODE_INTERFACES
+                MOCK_ACI_NODE_INTERFACES, MOCK_ACI_NODE_208_INTERFACES
             )
             if "fabricNode" in path: return {"imdata": MOCK_ACI_NODES}
             if "l3extOut" in path: return {"imdata": MOCK_ACI_L3OUTS}
@@ -139,7 +139,10 @@ class ACIClient:
             if "class/bgpAdjRibOut" in path: return {"imdata": MOCK_ACI_BGP_ADJ_RIB_OUT}
             if "bgpAdjRibIn" in path: return {"imdata": MOCK_ACI_BGP_RIB_IN}
             if "bgpAdjRibOut" in path: return {"imdata": MOCK_ACI_BGP_RIB_OUT}
-            if "l1PhysIf" in path: return {"imdata": MOCK_ACI_NODE_INTERFACES}
+            if "l1PhysIf" in path:
+                if "node-208" in path:
+                    return {"imdata": MOCK_ACI_NODE_208_INTERFACES}
+                return {"imdata": MOCK_ACI_NODE_INTERFACES}
             if "fvTenant" in path: return {"imdata": [{"fvTenant": {"attributes": {"name": "common"}}}]}
             if "firmwareCtrlrRunning" in path: return {"imdata": [{"firmwareCtrlrRunning": {"attributes": {"version": "5.2(4d)"}}}]}
             return {"imdata": []}

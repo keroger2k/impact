@@ -9,6 +9,7 @@ and handles aggregated views across all fabrics.
 import asyncio
 import logging
 import re
+from collections import defaultdict
 from typing import Optional, List, Dict, Any, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -294,82 +295,108 @@ async def get_node_interfaces(
     imdata = raw.get("imdata", [])
 
     # 3. Join Logic
-    phys_ifs = {}
-    pc_ifs = {}
-    member_to_pc = {}     # phys_dn -> pc_dn
-    pc_to_vpc = {}        # pc_dn -> "vPC-<id>"
-    lacp_states = {}      # phys_dn -> {"state": ..., "mode": ...}
+    phys_ifs = {}     # dn -> attributes
+    pc_ifs = {}       # dn -> attributes + members list
+    member_to_pc = {}   # phys_dn -> pc_dn
+    pc_to_vpc = {}      # pc_dn -> vpc_id
+    lacp_states = {}    # phys_dn -> lacp state (from pcAggrMbrIf channelingSt)
 
     for item in imdata:
         if "l1PhysIf" in item:
             attr = item["l1PhysIf"]["attributes"]
             phys_ifs[attr["dn"]] = {
                 **attr,
-                "operSt": "unknown", "operSpeed": "inherit",
-                "operDuplex": "auto", "lastChange": "",
+                "operSt": "unknown",
+                "operSpeed": "inherit",
+                "operDuplex": "auto",
+                "lastChange": "",
+                "operVlans": "",
+                "allowedVlans": "",
+                "cfgAccessVlan": "",
+                "bundleIndex": "unspecified",
+                "operStQual": ""
             }
         elif "ethpmPhysIf" in item:
             attr = item["ethpmPhysIf"]["attributes"]
+            # Deliverable 2d: more robust split for bracketed DNs
             parent_dn = attr["dn"].rsplit("/phys", 1)[0]
             if parent_dn in phys_ifs:
                 phys_ifs[parent_dn].update({
-                    "operSt":     attr.get("operSt"),
-                    "operSpeed":  attr.get("operSpeed"),
+                    "operSt": attr.get("operSt"),
+                    "operSpeed": attr.get("operSpeed"),
                     "operDuplex": attr.get("operDuplex"),
                     "lastChange": attr.get("lastLinkStChg"),
+                    "operVlans": attr.get("operVlans"),
+                    "allowedVlans": attr.get("allowedVlans"),
+                    "cfgAccessVlan": attr.get("cfgAccessVlan"),
+                    "bundleIndex": attr.get("bundleIndex"),
+                    "operStQual": attr.get("operStQual")
                 })
         elif "pcAggrIf" in item:
             attr = item["pcAggrIf"]["attributes"]
             pc_ifs[attr["dn"]] = {**attr, "vpc": "", "members": []}
         elif "pcRsMbrIfs" in item:
             attr = item["pcRsMbrIfs"]["attributes"]
+            # DN: .../aggr-[po10]/rsmbrIfs-[.../phys-[eth1/31]]
+            # Parent is PC, tDn is physical port
             pc_dn = attr["dn"].split("/rsmbrIfs-")[0]
             phys_dn = attr.get("tDn")
             if phys_dn:
                 member_to_pc[phys_dn] = pc_dn
         elif "pcAggrMbrIf" in item:
             attr = item["pcAggrMbrIf"]["attributes"]
-            parent_dn = attr["dn"].rsplit("/aggrmbrif", 1)[0]
-            lacp_states[parent_dn] = {
-                "state": attr.get("channelingSt", ""),
-                "mode":  attr.get("pcMode", ""),
-            }
+            # DN: topology/pod-1/node-208/sys/phys-[eth1/32]/aggrmbrif
+            phys_dn = attr["dn"].rsplit("/aggrmbrif", 1)[0]
+            if phys_dn in phys_ifs:
+                lacp_states[phys_dn] = attr.get("channelingSt")
         elif "vpcRsVpcConf" in item:
             attr = item["vpcRsVpcConf"]["attributes"]
-            vpc_id = attr.get("parentSKey", "")
-            target_pc = attr.get("tDn")
-            if target_pc and vpc_id:
-                pc_to_vpc[target_pc] = f"vPC-{vpc_id}"
+            # parentSKey is usually the numerical vPC ID
+            vpc_id = attr.get("parentSKey")
+            if vpc_id:
+                vpc_id = f"vPC-{vpc_id}"
+            pc_to_vpc[attr["tDn"]] = vpc_id
 
-    # Cross-reference members into PCs (for the aggregates table)
+    # Cross-reference members into PCs
     for phys_dn, pc_dn in member_to_pc.items():
-        if pc_dn in pc_ifs and phys_dn in phys_ifs:
-            pc_ifs[pc_dn]["members"].append(phys_ifs[phys_dn]["id"])
+        if pc_dn in pc_ifs:
+            pc_id = phys_ifs[phys_dn]["id"] if phys_dn in phys_ifs else "??"
+            pc_ifs[pc_dn]["members"].append(pc_id)
 
     # 4. Final Normalization
     interfaces = []
     for dn, p in phys_ifs.items():
         target_pc_dn = member_to_pc.get(dn)
         pc_obj = pc_ifs.get(target_pc_dn) if target_pc_dn else None
-        lacp = lacp_states.get(dn, {})
-        descr = p.get("descr") or (pc_obj.get("name") if pc_obj else "") or ""
+
+        # For description, fall back to PC name if the physical port descr is empty
+        descr = p.get("descr")
+        if not descr and pc_obj:
+            descr = pc_obj.get("name")
 
         interfaces.append({
-            "id":          p.get("id", "??"),
-            "descr":       descr,
-            "adminSt":     p.get("adminSt", "unknown"),
-            "operSt":      p.get("operSt", "unknown"),
-            "adminSpeed":  p.get("speed", "inherit"),
-            "operSpeed":   p.get("operSpeed", "inherit"),
-            "operDuplex":  p.get("operDuplex", "auto"),
-            "mtu":         p.get("mtu", "inherit"),
-            "layer":       p.get("layer", "Layer2"),
-            "mode":        p.get("mode", "trunk"),
-            "channel":     pc_obj.get("id", "") if pc_obj else "",
-            "lacp":        lacp.get("mode", ""),
-            "lacp_state":  lacp.get("state", ""),
-            "vpc":         pc_to_vpc.get(target_pc_dn, "") if target_pc_dn else "",
-            "last_change": p.get("lastChange", ""),
+            "id": p.get("id", "??"),
+            "descr": descr or "",
+            "adminSt": p.get("adminSt", "unknown"),
+            "operSt": p.get("operSt", "unknown"),
+            "adminSpeed": p.get("speed", "inherit"),
+            "operSpeed": p.get("operSpeed", "inherit"),
+            "operDuplex": p.get("operDuplex", "auto"),
+            "mtu": p.get("mtu", "inherit"),
+            "layer": p.get("layer", "Layer2"),
+            "mode": p.get("mode", "trunk"),
+            "switchingSt": p.get("switchingSt", "disabled"),
+            "usage": p.get("usage", "discovery"),
+            "portT": p.get("portT", "leaf"),
+            "operVlans": p.get("operVlans", ""),
+            "allowedVlans": p.get("allowedVlans", "") or p.get("cfgAccessVlan", ""),
+            "bundleIndex": p.get("bundleIndex", "unspecified"),
+            "operStQual": p.get("operStQual", "none"),
+            "channel": pc_obj.get("id", "") if pc_obj else "",
+            "lacp": pc_obj.get("pcMode", "") if pc_obj else "",
+            "lacp_state": lacp_states.get(dn, ""),
+            "vpc": pc_to_vpc.get(target_pc_dn, "") if target_pc_dn else "",
+            "last_change": p.get("lastChange", "")
         })
 
     aggregates = []
@@ -379,22 +406,52 @@ async def get_node_interfaces(
             "pcMode": a.get("pcMode", ""),
             "members": a.get("members", []),
             "vpc": pc_to_vpc.get(dn, ""),
-            "operSt": a.get("operSt", "unknown")
+            "operSt": a.get("operSt", "unknown"),
+            "name": a.get("name", "")
         })
+
+    # 5. Build Front Panel structure
+    def _parse_port(port_id):
+        m = re.match(r"eth(\d+)/(\d+)", port_id or "")
+        return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+
+    modules = defaultdict(lambda: {"access": [], "uplink": []})
+    for i in interfaces:
+        mod, port = _parse_port(i["id"])
+        bucket = "uplink" if i.get("portT") == "fab" else "access"
+        modules[mod][bucket].append({**i, "port_num": port})
+
+    panel = []
+    for mod in sorted(modules.keys()):
+        acc = sorted(modules[mod]["access"], key=lambda p: p["port_num"])
+        upl = sorted(modules[mod]["uplink"], key=lambda p: p["port_num"])
+        panel.append({
+            "module":        mod,
+            "access_top":    [p for p in acc if p["port_num"] % 2 == 1],
+            "access_bottom": [p for p in acc if p["port_num"] % 2 == 0],
+            "uplink_top":    [p for p in upl if p["port_num"] % 2 == 1],
+            "uplink_bottom": [p for p in upl if p["port_num"] % 2 == 0],
+        })
+
+    node_name = node.get("name") if node else f"Node-{node_id}"
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
         return templates.TemplateResponse(request, "partials/aci_node_interfaces.html", {
             "node_id": node_id,
+            "node_name": node_name,
             "interfaces": interfaces,
             "aggregates": aggregates,
+            "panel": panel,
             "raw_json": raw
         })
 
     return {
         "node_id": node_id,
+        "node_name": node_name,
         "interfaces": interfaces,
         "aggregates": aggregates,
+        "panel": panel,
         "raw": raw
     }
 
