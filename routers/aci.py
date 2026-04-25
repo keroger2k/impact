@@ -105,6 +105,29 @@ def _cached(key: str, loader, ttl: int = ACI_TTL):
 
     return data or {"imdata": []}
 
+# Some APIC versions don't expose bgpAdjRibIn/bgpAdjRibOut classes; querying them 400s.
+# Probe once per fabric per hour and cache the verdict so we skip the per-leaf fanout
+# (and the class-level fallback) entirely when unsupported.
+_BGP_ADJRIB_PROBE_TTL = 3600
+
+def _bgp_adjrib_supported(aci: ac.ACIClient, fabric_id: str) -> bool:
+    """Return True if bgpAdjRibIn/Out classes are queryable on this fabric. Cached."""
+    key = _fkey(fabric_id, "bgpadjrib_supported")
+    cached = cache.get(key)
+    if cached is not None:
+        return bool(cached)
+
+    res = aci.get("api/node/class/bgpAdjRibIn.json?rsp-subtree-include=count",
+                  action="PROBE_ACI_BGP_ADJRIB")
+    supported = isinstance(res, dict)
+    cache.set(key, supported, _BGP_ADJRIB_PROBE_TTL)
+    if not supported:
+        logger.info(
+            f"BGP Adj-RIB classes unsupported on fabric {fabric_id} — "
+            f"skipping RIB queries for {_BGP_ADJRIB_PROBE_TTL}s."
+        )
+    return supported
+
 # ── Fabrics ───────────────────────────────────────────────────────────────────
 
 @router.get("/fabrics")
@@ -759,6 +782,11 @@ async def _fetch_bgp_rib_aggregated(
     """Fetch BGP RIB using a parallel per-leaf strategy with class-level fallback."""
     cls = "bgpAdjRibIn" if direction == "in" else "bgpAdjRibOut"
 
+    if not await loop.run_in_executor(
+        None, run_with_context(_bgp_adjrib_supported), aci, fabric_id
+    ):
+        return [], {"imdata": [], "unsupported": True}
+
     # 1. Prepare Leaf List and L3Out Mapping
     nodes_proc, _ = await _get_processed_nodes(aci, loop, fabric_id)
     leaves = [n for n in nodes_proc if n["role"] == "leaf"]
@@ -1172,15 +1200,20 @@ async def get_bgp_peer_routes(
     aci = await _get_aci_async(session, fabric_id)
     loop = asyncio.get_event_loop()
 
-    raw = await loop.run_in_executor(None, run_with_context(aci.get_bgp_adj_rib), dn, direction)
-    if isinstance(raw, list):
-        raw = {"imdata": raw}
-    if not raw:
-        logger.warning(
-            f"BGP peer routes fetch returned NoneType for fabric={fabric_id} dn={dn} dir={direction} — "
-            f"likely 400/auth/upstream error. Run /api/aci/bgp/diagnose?fabric={fabric_id} to investigate."
-        )
-        raw = {"imdata": []}
+    if not await loop.run_in_executor(
+        None, run_with_context(_bgp_adjrib_supported), aci, fabric_id
+    ):
+        raw = {"imdata": [], "unsupported": True}
+    else:
+        raw = await loop.run_in_executor(None, run_with_context(aci.get_bgp_adj_rib), dn, direction)
+        if isinstance(raw, list):
+            raw = {"imdata": raw}
+        if not raw:
+            logger.warning(
+                f"BGP peer routes fetch returned NoneType for fabric={fabric_id} dn={dn} dir={direction} — "
+                f"likely 400/auth/upstream error. Run /api/aci/bgp/diagnose?fabric={fabric_id} to investigate."
+            )
+            raw = {"imdata": []}
 
     cls = "bgpAdjRibIn" if direction == "in" else "bgpAdjRibOut"
     processed = []
