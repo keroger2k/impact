@@ -798,7 +798,7 @@ async def get_l3out_routes(
                 "dn": attr.get("dn")
             })
 
-    # 2. Correlate with operational peers to get Node and VRF
+    # 2. Correlate with operational peers to get Node, VRF, and the operational DN
     all_peers_raw = await loop.run_in_executor(None, run_with_context(_cached), _fkey(fabric_id, "bgp_peers"), aci.get_bgp_peers)
     peer_data = []
     for p in peers:
@@ -807,9 +807,11 @@ async def get_l3out_routes(
             # Match on IP address
             op_addr = attr.get("addr", "").split("/")[0]
             if op_addr == p["addr"]:
-                dn_p = attr.get("dn").split("/")
+                op_dn = attr.get("dn") or ""
+                dn_p = op_dn.split("/")
                 peer_data.append({
                     **p,
+                    "op_dn": op_dn,
                     "node": next((x.replace("node-", "") for x in dn_p if x.startswith("node-")), "?"),
                     "vrf": next((x.replace("dom-", "") for x in dn_p if x.startswith("dom-")), "?")
                 })
@@ -818,13 +820,16 @@ async def get_l3out_routes(
     # 3. Parallel Fetch Routes per Peer
     cls = "bgpAdjRibIn" if direction == "in" else "bgpAdjRibOut"
     async def _fetch_peer_routes(p):
-        # Specific peer MO path for Adj-RIB
+        # Use the operational bgpPeerEntry DN directly so we preserve any /32 mask
+        # in the peer-[...] segment. _quote_dn handles bracket-internal slashes.
         path = (
-            f"api/node/mo/topology/pod-1/node-{p['node']}/sys/bgp/inst/"
-            f"dom-{p['vrf']}/peer-[{p['addr']}]/ent-[{p['addr']}].json"
+            f"api/node/mo/{ac._quote_dn(p['op_dn'])}.json"
             f"?query-target=subtree&target-subtree-class={cls}"
         )
         raw = await loop.run_in_executor(None, run_with_context(aci.get), path)
+
+        if not isinstance(raw, dict):
+            return {**p, "routes": [], "raw": None, "error": "fetch_failed"}
 
         routes = []
         for item in raw.get("imdata", []):
