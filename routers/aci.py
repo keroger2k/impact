@@ -817,37 +817,70 @@ async def get_l3out_routes(
                 })
                 break
 
-    # 3. Parallel Fetch Routes per Peer
+    # 3. Fetch routes per (node, vrf), then partition by peer client-side.
+    # APIC's URL parser rejects percent-encoded brackets in the path, so we avoid
+    # putting peer-[<addr>] in the URL entirely and filter the returned DNs locally.
     cls = "bgpAdjRibIn" if direction == "in" else "bgpAdjRibOut"
-    async def _fetch_peer_routes(p):
-        # Use the operational bgpPeerEntry DN directly so we preserve any /32 mask
-        # in the peer-[...] segment. _quote_dn handles bracket-internal slashes.
+
+    groups: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
+    for p in peer_data:
+        if p["node"] != "?" and p["vrf"] != "?":
+            groups[(p["node"], p["vrf"])].append(p)
+
+    async def _fetch_group_routes(node: str, vrf: str):
+        vrf_dn = f"topology/pod-1/node-{node}/sys/bgp/inst/dom-{vrf}"
         path = (
-            f"api/node/mo/{ac._quote_dn(p['op_dn'])}.json"
+            f"api/node/mo/{ac._quote_dn(vrf_dn)}.json"
             f"?query-target=subtree&target-subtree-class={cls}"
         )
-        raw = await loop.run_in_executor(None, run_with_context(aci.get), path)
+        meta = await loop.run_in_executor(None, run_with_context(aci.get_with_meta), path)
+        return (node, vrf), meta
 
+    fetched = await asyncio.gather(*[_fetch_group_routes(n, v) for (n, v) in groups.keys()])
+    meta_by_group: Dict[Tuple[str, str], Dict[str, Any]] = dict(fetched)
+
+    results = []
+    for p in peer_data:
+        key = (p["node"], p["vrf"])
+        meta = meta_by_group.get(key) or {}
+        raw = meta.get("data")
         if not isinstance(raw, dict):
-            return {**p, "routes": [], "raw": None, "error": "fetch_failed"}
+            results.append({
+                **p,
+                "routes": [],
+                "raw": None,
+                "error": "fetch_failed",
+                "fetch_status": meta.get("status"),
+                "fetch_error": meta.get("error"),
+                "fetch_body": meta.get("body"),
+                "fetch_url": meta.get("url"),
+            })
+            continue
+
+        # Match routes to this peer by DN substring. The peer segment may carry
+        # a mask (e.g. peer-[10.91.15.249/32]), so check both forms.
+        marker_plain = f"peer-[{p['addr']}]/"
+        marker_masked = f"peer-[{p['addr']}/"
 
         routes = []
         for item in raw.get("imdata", []):
             attr = item.get(cls, {}).get("attributes", {})
-            if attr:
-                routes.append({
-                    "prefix": attr.get('prefix') or attr.get('pfx', ''),
-                    "nextHop": attr.get('nextHop') or attr.get('nh', ''),
-                    "asPath": attr.get('asPath', ''),
-                    "origin": attr.get('origin', ''),
-                    "flags": attr.get('flags') or attr.get('status', ''),
-                    "localPref": attr.get('localPref', ''),
-                    "med": attr.get('med', ''),
-                    "community": attr.get('community', '')
-                })
-        return {**p, "routes": routes, "raw": raw}
-
-    results = await asyncio.gather(*[_fetch_peer_routes(p) for p in peer_data])
+            if not attr:
+                continue
+            route_dn = attr.get("dn", "")
+            if marker_plain not in route_dn and marker_masked not in route_dn:
+                continue
+            routes.append({
+                "prefix": attr.get('prefix') or attr.get('pfx', ''),
+                "nextHop": attr.get('nextHop') or attr.get('nh', ''),
+                "asPath": attr.get('asPath', ''),
+                "origin": attr.get('origin', ''),
+                "flags": attr.get('flags') or attr.get('status', ''),
+                "localPref": attr.get('localPref', ''),
+                "med": attr.get('med', ''),
+                "community": attr.get('community', '')
+            })
+        results.append({**p, "routes": routes, "raw": raw})
 
     if request.headers.get("HX-Request"):
         from templates_module import templates

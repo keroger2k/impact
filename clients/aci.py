@@ -199,6 +199,52 @@ class ACIClient:
 
         return data
 
+    def get_with_meta(self, path, action="GET_DATA", quiet=False):
+        """Like `get()`, but returns a dict with the underlying status/error so
+        callers can surface diagnostic info instead of seeing only `None`.
+        """
+        from dev import DEV_MODE
+        if DEV_MODE:
+            return {"data": self.get(path, action=action, quiet=quiet), "status": 200, "error": None}
+
+        if not self.token and not self.login():
+            return {"data": None, "status": None, "error": "login_failed"}
+
+        url = f"{self.url}/{path.lstrip('/')}"
+
+        def _do():
+            try:
+                response = self.session.get(url, verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true", timeout=15)
+                if response.status_code in (401, 403):
+                    return response, None, f"status_{response.status_code}"
+                response.raise_for_status()
+                return response, response.json(), None
+            except Exception as e:
+                status = getattr(e.response, 'status_code', None) if hasattr(e, 'response') else None
+                log_fn = logger.info if quiet else logger.error
+                log_fn(f"ACI GET {path} failed: {e}", extra={
+                    "target": "ACI", "action": action, "status": status or 500, "fabric": self.fabric_id
+                })
+                return getattr(e, 'response', None), None, str(e)
+
+        resp, data, err = _do()
+        if resp is not None and resp.status_code in (401, 403):
+            if self.login():
+                resp, data, err = _do()
+        body_text = None
+        if resp is not None and data is None:
+            try:
+                body_text = resp.text[:500]
+            except Exception:
+                pass
+        return {
+            "data": data,
+            "status": resp.status_code if resp is not None else None,
+            "error": err,
+            "body": body_text,
+            "url": url,
+        }
+
     def get_fabric_nodes(self):
         """List all fabricNode objects."""
         return self.get("api/node/class/fabricNode.json", action="FETCH_ACI_NODES")
