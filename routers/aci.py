@@ -817,10 +817,13 @@ async def get_l3out_routes(
                 })
                 break
 
-    # 3. Fetch routes per (node, vrf), then partition by peer client-side.
-    # APIC's URL parser rejects percent-encoded brackets in the path, so we avoid
-    # putting peer-[<addr>] in the URL entirely and filter the returned DNs locally.
-    cls = "bgpAdjRibIn" if direction == "in" else "bgpAdjRibOut"
+    # 3. Fetch routes per (node, vrf), then partition by peer + direction client-side.
+    # `bgpAdjRibIn`/`bgpAdjRibOut` aren't exposed as classes on every APIC version
+    # ("Unknown class" 400 on some), so we query the generic `bgpRoute` and use the
+    # `adj-rib-in-post` / `adj-rib-out-post` DN segment to distinguish direction.
+    # Brackets are also kept out of the URL path (APIC rejects %5B/%5D there).
+    cls = "bgpRoute"
+    direction_marker = "/adj-rib-in" if direction == "in" else "/adj-rib-out"
 
     groups: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
     for p in peer_data:
@@ -869,6 +872,8 @@ async def get_l3out_routes(
                 continue
             route_dn = attr.get("dn", "")
             if marker_plain not in route_dn and marker_masked not in route_dn:
+                continue
+            if direction_marker not in route_dn:
                 continue
             routes.append({
                 "prefix": attr.get('prefix') or attr.get('pfx', ''),
