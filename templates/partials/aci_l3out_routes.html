@@ -14,6 +14,13 @@
     </div>
 
     <div class="card-body p-0">
+        {% if note %}
+        <div class="alert alert-info border-0 rounded-0 mb-0 small d-flex align-items-start gap-2">
+            <i class="ph ph-info mt-1"></i>
+            <div>{{ note }}</div>
+        </div>
+        {% endif %}
+
         {% if not peer_results %}
         <div class="p-5 text-center text-muted">
             <i class="ph ph-prohibit-inset display-4 d-block mb-3"></i>
@@ -74,5 +81,43 @@
             </div>
         </div>
         {% endfor %}
+
+        {% if vrf_other_routes %}
+        <div class="peer-section border-top">
+            <div class="bg-white p-3 d-flex justify-content-between align-items-center">
+                <div>
+                    <span class="small text-muted fw-bold">OTHER BGP ROUTES IN VRF</span>
+                    <span class="ms-2 small text-muted">(next-hop is not an L3Out peer — likely iBGP / fabric-internal)</span>
+                </div>
+                <span class="badge bg-secondary">{{ vrf_other_routes|length }} Routes</span>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-sm table-hover mb-0">
+                    <thead class="table-light small fw-bold">
+                        <tr>
+                            <th class="ps-3">Prefix</th>
+                            <th>Next Hop(s)</th>
+                            <th>Node</th>
+                            <th>VRF</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for r in vrf_other_routes %}
+                        <tr class="small">
+                            <td class="ps-3 fw-bold">{{ r.prefix }}</td>
+                            <td class="mono">
+                                {% for nh in r.nextHops %}
+                                <div>{{ nh.addr }}<span class="text-muted ms-2 small">{{ nh.type }}</span></div>
+                                {% endfor %}
+                            </td>
+                            <td>{{ r.node }}</td>
+                            <td class="small">{{ r.vrf }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
     </div>
 </div>

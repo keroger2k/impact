@@ -780,8 +780,13 @@ async def get_l3out_routes(
     fabric_id: str = Depends(get_fabric_id)
 ):
     """
-    Focused view of routes received/advertised for a specific L3Out.
-    Groups results by BGP peer.
+    BGP route view for an L3Out's VRF.
+
+    APIC versions before ~6.x do not expose per-peer adj-RIB-in/out as MOs
+    (`bgpAdjRibIn`/`bgpAdjRibOut` returns "Unknown class"). We instead read the
+    URIB on each leaf node carrying L3Out peers and surface the BGP-installed
+    routes for the L3Out's VRF, grouped by peer where the route's next-hop
+    matches a configured peer. Adj-RIB-out is not derivable from URIB.
     """
     _validate_dn(dn)
     aci = await _get_aci_async(session, fabric_id)
@@ -804,7 +809,6 @@ async def get_l3out_routes(
     for p in peers:
         for op in all_peers_raw.get("imdata", []):
             attr = op.get("bgpPeerEntry", {}).get("attributes", {})
-            # Match on IP address
             op_addr = attr.get("addr", "").split("/")[0]
             if op_addr == p["addr"]:
                 op_dn = attr.get("dn") or ""
@@ -812,90 +816,146 @@ async def get_l3out_routes(
                 peer_data.append({
                     **p,
                     "op_dn": op_dn,
+                    "state": attr.get("operSt"),
                     "node": next((x.replace("node-", "") for x in dn_p if x.startswith("node-")), "?"),
                     "vrf": next((x.replace("dom-", "") for x in dn_p if x.startswith("dom-")), "?")
                 })
                 break
 
-    # 3. Fetch routes per (node, vrf), then partition by peer + direction client-side.
-    # `bgpAdjRibIn`/`bgpAdjRibOut` aren't exposed as classes on every APIC version
-    # ("Unknown class" 400 on some), so we query the generic `bgpRoute` and use the
-    # `adj-rib-in-post` / `adj-rib-out-post` DN segment to distinguish direction.
-    # Brackets are also kept out of the URL path (APIC rejects %5B/%5D there).
-    cls = "bgpRoute"
-    direction_marker = "/adj-rib-in" if direction == "in" else "/adj-rib-out"
+    note = (
+        "APIC %s does not expose per-peer adj-RIB MOs. RX shows the BGP-installed "
+        "routes from the URIB on each leaf, grouped by peer when the next-hop matches. "
+        "TX (advertised-routes) is not queryable through the APIC API on this version."
+    )
 
+    # If TX requested, return early with the explanatory note (no fetch).
+    if direction == "out":
+        results = [{**p, "routes": [], "raw": None, "note": "adj-rib-out not available"} for p in peer_data]
+        if request.headers.get("HX-Request"):
+            from templates_module import templates
+            return templates.TemplateResponse(request, "partials/aci_l3out_routes.html", {
+                "l3out_dn": dn, "direction": direction, "peer_results": results, "note": note,
+            })
+        return {"l3out": dn, "direction": direction, "peers": results, "note": note,
+                "vrf_other_routes": []}
+
+    # 3. Fetch URIB v4 routes (with their nexthop children) per (node, vrf)
+    # `dom-<tenant>:<vrf>` is the same in URIB as in BGP. Use rsp-subtree=children
+    # so we get uribv4Nexthop entries embedded under each uribv4Route.
     groups: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
     for p in peer_data:
         if p["node"] != "?" and p["vrf"] != "?":
             groups[(p["node"], p["vrf"])].append(p)
 
-    async def _fetch_group_routes(node: str, vrf: str):
-        vrf_dn = f"topology/pod-1/node-{node}/sys/bgp/inst/dom-{vrf}"
+    async def _fetch_uribv4(node: str, vrf: str):
+        vrf_dn = f"topology/pod-1/node-{node}/sys/uribv4/dom-{vrf}"
         path = (
             f"api/node/mo/{ac._quote_dn(vrf_dn)}.json"
-            f"?query-target=subtree&target-subtree-class={cls}"
+            f"?query-target=subtree&target-subtree-class=uribv4Route"
+            f"&rsp-subtree=children&rsp-subtree-class=uribv4Nexthop"
         )
         meta = await loop.run_in_executor(None, run_with_context(aci.get_with_meta), path)
         return (node, vrf), meta
 
-    fetched = await asyncio.gather(*[_fetch_group_routes(n, v) for (n, v) in groups.keys()])
+    fetched = await asyncio.gather(*[_fetch_uribv4(n, v) for (n, v) in groups.keys()])
     meta_by_group: Dict[Tuple[str, str], Dict[str, Any]] = dict(fetched)
 
-    results = []
-    for p in peer_data:
-        key = (p["node"], p["vrf"])
-        meta = meta_by_group.get(key) or {}
+    def _is_bgp_nh(nh_attr: Dict[str, Any]) -> bool:
+        # Try a few common attribute names; fall back to DN substring.
+        for k in ("routeType", "srcType", "protocol", "nhType"):
+            v = nh_attr.get(k, "")
+            if isinstance(v, str) and "bgp" in v.lower():
+                return True
+        return "-bgp-" in nh_attr.get("dn", "")
+
+    def _summarize_nh(nh_attr: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "addr": nh_attr.get("addr", "") or nh_attr.get("nhAddr", ""),
+            "vrf": nh_attr.get("nhVrf", ""),
+            "pref": nh_attr.get("pref", ""),
+            "metric": nh_attr.get("metric", ""),
+            "type": nh_attr.get("routeType") or nh_attr.get("srcType") or nh_attr.get("protocol") or "",
+            "dn": nh_attr.get("dn", ""),
+        }
+
+    # 4. Walk routes per group; assign each BGP-sourced route to its peer when next-hop matches.
+    routes_by_peer: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    vrf_other_routes: List[Dict[str, Any]] = []
+    fetch_errors: List[Dict[str, Any]] = []
+
+    for (node, vrf), peers_in_group in groups.items():
+        meta = meta_by_group.get((node, vrf)) or {}
         raw = meta.get("data")
         if not isinstance(raw, dict):
-            results.append({
-                **p,
-                "routes": [],
-                "raw": None,
-                "error": "fetch_failed",
-                "fetch_status": meta.get("status"),
-                "fetch_error": meta.get("error"),
-                "fetch_body": meta.get("body"),
-                "fetch_url": meta.get("url"),
+            fetch_errors.append({
+                "node": node, "vrf": vrf,
+                "status": meta.get("status"), "error": meta.get("error"),
+                "body": meta.get("body"), "url": meta.get("url"),
             })
             continue
 
-        # Match routes to this peer by DN substring. The peer segment may carry
-        # a mask (e.g. peer-[10.91.15.249/32]), so check both forms.
-        marker_plain = f"peer-[{p['addr']}]/"
-        marker_masked = f"peer-[{p['addr']}/"
-
-        routes = []
+        peer_addrs = {p["addr"] for p in peers_in_group}
         for item in raw.get("imdata", []):
-            attr = item.get(cls, {}).get("attributes", {})
-            if not attr:
-                continue
-            route_dn = attr.get("dn", "")
-            if marker_plain not in route_dn and marker_masked not in route_dn:
-                continue
-            if direction_marker not in route_dn:
-                continue
-            routes.append({
-                "prefix": attr.get('prefix') or attr.get('pfx', ''),
-                "nextHop": attr.get('nextHop') or attr.get('nh', ''),
-                "asPath": attr.get('asPath', ''),
-                "origin": attr.get('origin', ''),
-                "flags": attr.get('flags') or attr.get('status', ''),
-                "localPref": attr.get('localPref', ''),
-                "med": attr.get('med', ''),
-                "community": attr.get('community', '')
-            })
-        results.append({**p, "routes": routes, "raw": raw})
+            rt_obj = item.get("uribv4Route", {})
+            rt_attr = rt_obj.get("attributes", {})
+            children = rt_obj.get("children", []) or []
+
+            bgp_nhs = []
+            for child in children:
+                nh_attr = child.get("uribv4Nexthop", {}).get("attributes", {})
+                if not nh_attr:
+                    continue
+                if _is_bgp_nh(nh_attr):
+                    bgp_nhs.append(nh_attr)
+
+            if not bgp_nhs:
+                continue  # not a BGP-installed route
+
+            entry = {
+                "prefix": rt_attr.get("prefix") or rt_attr.get("pfx", ""),
+                "nextHops": [_summarize_nh(nh) for nh in bgp_nhs],
+                "node": node,
+                "vrf": vrf,
+                # URIB doesn't carry these BGP attrs; left blank for UI compat.
+                "asPath": "", "origin": "", "flags": "", "localPref": "", "med": "", "community": "",
+            }
+
+            matched = False
+            for nh in bgp_nhs:
+                nh_addr = (nh.get("addr") or nh.get("nhAddr") or "").split("/")[0]
+                if nh_addr in peer_addrs:
+                    routes_by_peer[f"{node}|{nh_addr}"].append({**entry, "nextHop": nh_addr})
+                    matched = True
+                    break
+            if not matched:
+                vrf_other_routes.append(entry)
+
+    # 5. Assemble per-peer results in the original shape so the template still works.
+    results = []
+    for p in peer_data:
+        key = f"{p['node']}|{p['addr']}"
+        results.append({**p, "routes": routes_by_peer.get(key, []), "raw": None})
+
+    response = {
+        "l3out": dn,
+        "direction": direction,
+        "peers": results,
+        "vrf_other_routes": vrf_other_routes,
+        "note": note,
+        "fetch_errors": fetch_errors,
+    }
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
         return templates.TemplateResponse(request, "partials/aci_l3out_routes.html", {
             "l3out_dn": dn,
             "direction": direction,
-            "peer_results": results
+            "peer_results": results,
+            "vrf_other_routes": vrf_other_routes,
+            "note": note,
         })
 
-    return {"l3out": dn, "direction": direction, "peers": results}
+    return response
 
 # ── Miscellany (Health, Faults, EPGs) ───────────────────────────────────────────
 
