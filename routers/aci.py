@@ -769,7 +769,78 @@ async def bgp_diagnose(
     except asyncio.TimeoutError:
         raise HTTPException(504, f"ACI diagnostics timed out for fabric {fabric_id} after 60s")
 
+# ── BGP capability probe (cached per fabric) ─────────────────────────────────
+
+def _probe_bgp_caps(aci: ac.ACIClient) -> Dict[str, Any]:
+    """Probe which BGP / URIB classes this APIC version supports & populates.
+
+    Returns: {apic_version, adj_rib_in, adj_rib_out, uribv4, uribv6, bgp_route}.
+    bool fields mean "class exists AND has nonzero count fabric-wide".
+    """
+    def _count(r):
+        if not isinstance(r, dict):
+            return None
+        try:
+            return int(r.get("imdata", [{}])[0].get("moCount", {}).get("attributes", {}).get("count", 0))
+        except (TypeError, ValueError):
+            return None
+
+    probes = {
+        "adj_in":  "api/node/class/bgpAdjRibIn.json?rsp-subtree-include=count",
+        "adj_out": "api/node/class/bgpAdjRibOut.json?rsp-subtree-include=count",
+        "bgproute": "api/node/class/bgpRoute.json?rsp-subtree-include=count",
+        "uribv4":  "api/node/class/uribv4Route.json?rsp-subtree-include=count",
+        "uribv6":  "api/node/class/uribv6Route.json?rsp-subtree-include=count",
+    }
+    counts = {k: _count(aci.get(p, action=f"PROBE_{k.upper()}", quiet=True)) for k, p in probes.items()}
+
+    ver = aci.get("api/node/class/firmwareCtrlrRunning.json", action="PROBE_VERSION", quiet=True)
+    version = None
+    if isinstance(ver, dict) and ver.get("imdata"):
+        version = ver["imdata"][0].get("firmwareCtrlrRunning", {}).get("attributes", {}).get("version")
+
+    return {
+        "apic_version": version,
+        "adj_rib_in":  bool((counts["adj_in"] or 0) > 0),
+        "adj_rib_out": bool((counts["adj_out"] or 0) > 0),
+        "bgp_route":   bool((counts["bgproute"] or 0) > 0),
+        "uribv4":      bool((counts["uribv4"] or 0) > 0),
+        "uribv6":      bool((counts["uribv6"] or 0) > 0),
+        "raw_counts":  counts,
+    }
+
+
+async def _get_bgp_caps(aci: ac.ACIClient, loop: asyncio.AbstractEventLoop, fabric_id: str) -> Dict[str, Any]:
+    """Cached wrapper around `_probe_bgp_caps`. 15-minute TTL — capabilities rarely change."""
+    key = _fkey(fabric_id, "bgp_caps")
+    res = await loop.run_in_executor(
+        None, run_with_context(cache.get_or_set),
+        key, lambda: _probe_bgp_caps(aci), ACI_TTL,
+    )
+    return res or {"apic_version": None, "adj_rib_in": False, "adj_rib_out": False,
+                   "bgp_route": False, "uribv4": False, "uribv6": False, "raw_counts": {}}
+
+
 # ── L3Out Routes ──────────────────────────────────────────────────────────────
+
+def _is_bgp_nh(nh_attr: Dict[str, Any]) -> bool:
+    """Detect a BGP-sourced nexthop across URIB attribute name variants."""
+    for k in ("routeType", "srcType", "protocol", "nhType"):
+        v = nh_attr.get(k, "")
+        if isinstance(v, str) and "bgp" in v.lower():
+            return True
+    return "-bgp-" in nh_attr.get("dn", "")
+
+
+def _nh_summary(nh_attr: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "addr": (nh_attr.get("addr") or nh_attr.get("nhAddr", "")).split("/")[0],
+        "vrf": nh_attr.get("nhVrf", ""),
+        "pref": nh_attr.get("pref", ""),
+        "metric": nh_attr.get("metric", ""),
+        "type": nh_attr.get("routeType") or nh_attr.get("srcType") or nh_attr.get("protocol") or "",
+    }
+
 
 @router.get("/l3outs/routes")
 async def get_l3out_routes(
@@ -779,166 +850,200 @@ async def get_l3out_routes(
     session: SessionEntry = Depends(require_auth),
     fabric_id: str = Depends(get_fabric_id)
 ):
-    """
-    BGP route view for an L3Out's VRF.
+    """BGP route view for an L3Out, adapted to APIC capabilities.
 
-    APIC versions before ~6.x do not expose per-peer adj-RIB-in/out as MOs
-    (`bgpAdjRibIn`/`bgpAdjRibOut` returns "Unknown class"). We instead read the
-    URIB on each leaf node carrying L3Out peers and surface the BGP-installed
-    routes for the L3Out's VRF, grouped by peer where the route's next-hop
-    matches a configured peer. Adj-RIB-out is not derivable from URIB.
+    Modern APICs (≥6.x) expose `bgpAdjRibIn`/`bgpAdjRibOut` and we use them
+    for true RX/TX per peer. Older APICs (5.x) don't, so we fall back to URIB
+    (BGP-installed routes per VRF). Adj-RIB-out has no URIB equivalent so TX
+    on those versions returns an explanatory empty result.
     """
     _validate_dn(dn)
     aci = await _get_aci_async(session, fabric_id)
     loop = asyncio.get_event_loop()
 
-    # 1. Identify peers for this L3Out from config (bgpPeerP)
-    peer_cfg_raw = await loop.run_in_executor(None, run_with_context(_cached), _fkey(fabric_id, "bgp_peer_cfg"), aci.get_bgp_peer_configs)
-    peers = []
-    for entry in peer_cfg_raw.get('imdata', []):
-        attr = entry.get('bgpPeerP', {}).get('attributes', {})
-        if attr.get('dn', '').startswith(dn):
-            peers.append({
-                "addr": attr.get("addr", "").split("/")[0],
-                "dn": attr.get("dn")
-            })
+    caps = await _get_bgp_caps(aci, loop, fabric_id)
 
-    # 2. Correlate with operational peers to get Node, VRF, and the operational DN
-    all_peers_raw = await loop.run_in_executor(None, run_with_context(_cached), _fkey(fabric_id, "bgp_peers"), aci.get_bgp_peers)
-    peer_data = []
+    # 1. L3Out → configured peers
+    peer_cfg_raw = await loop.run_in_executor(
+        None, run_with_context(_cached),
+        _fkey(fabric_id, "bgp_peer_cfg"), aci.get_bgp_peer_configs)
+    peers = [
+        {"addr": attr.get("addr", "").split("/")[0], "dn": attr.get("dn")}
+        for attr in (e.get("bgpPeerP", {}).get("attributes", {}) for e in peer_cfg_raw.get("imdata", []))
+        if attr.get("dn", "").startswith(dn)
+    ]
+
+    # 2. Correlate with operational peers (node, vrf, state)
+    all_peers_raw = await loop.run_in_executor(
+        None, run_with_context(_cached),
+        _fkey(fabric_id, "bgp_peers"), aci.get_bgp_peers)
+    peer_data: List[Dict[str, Any]] = []
     for p in peers:
         for op in all_peers_raw.get("imdata", []):
             attr = op.get("bgpPeerEntry", {}).get("attributes", {})
-            op_addr = attr.get("addr", "").split("/")[0]
-            if op_addr == p["addr"]:
-                op_dn = attr.get("dn") or ""
-                dn_p = op_dn.split("/")
-                peer_data.append({
-                    **p,
-                    "op_dn": op_dn,
-                    "state": attr.get("operSt"),
-                    "node": next((x.replace("node-", "") for x in dn_p if x.startswith("node-")), "?"),
-                    "vrf": next((x.replace("dom-", "") for x in dn_p if x.startswith("dom-")), "?")
-                })
-                break
-
-    note = (
-        "APIC %s does not expose per-peer adj-RIB MOs. RX shows the BGP-installed "
-        "routes from the URIB on each leaf, grouped by peer when the next-hop matches. "
-        "TX (advertised-routes) is not queryable through the APIC API on this version."
-    )
-
-    # If TX requested, return early with the explanatory note (no fetch).
-    if direction == "out":
-        results = [{**p, "routes": [], "raw": None, "note": "adj-rib-out not available"} for p in peer_data]
-        if request.headers.get("HX-Request"):
-            from templates_module import templates
-            return templates.TemplateResponse(request, "partials/aci_l3out_routes.html", {
-                "l3out_dn": dn, "direction": direction, "peer_results": results, "note": note,
+            if attr.get("addr", "").split("/")[0] != p["addr"]:
+                continue
+            op_dn = attr.get("dn") or ""
+            dn_p = op_dn.split("/")
+            peer_data.append({
+                **p,
+                "op_dn": op_dn,
+                "state": (attr.get("operSt") or "unknown").upper(),
+                "type": attr.get("type") or "",
+                "node": next((x.replace("node-", "") for x in dn_p if x.startswith("node-")), "?"),
+                "vrf": next((x.replace("dom-", "") for x in dn_p if x.startswith("dom-")), "?"),
+                "is_v6": ":" in p["addr"],
             })
-        return {"l3out": dn, "direction": direction, "peers": results, "note": note,
-                "vrf_other_routes": []}
+            break
 
-    # 3. Fetch URIB v4 routes (with their nexthop children) per (node, vrf)
-    # `dom-<tenant>:<vrf>` is the same in URIB as in BGP. Use rsp-subtree=children
-    # so we get uribv4Nexthop entries embedded under each uribv4Route.
-    groups: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
-    for p in peer_data:
-        if p["node"] != "?" and p["vrf"] != "?":
-            groups[(p["node"], p["vrf"])].append(p)
-
-    async def _fetch_uribv4(node: str, vrf: str):
-        vrf_dn = f"topology/pod-1/node-{node}/sys/uribv4/dom-{vrf}"
-        path = (
-            f"api/node/mo/{ac._quote_dn(vrf_dn)}.json"
-            f"?query-target=subtree&target-subtree-class=uribv4Route"
-            f"&rsp-subtree=children&rsp-subtree-class=uribv4Nexthop"
-        )
-        meta = await loop.run_in_executor(None, run_with_context(aci.get_with_meta), path)
-        return (node, vrf), meta
-
-    fetched = await asyncio.gather(*[_fetch_uribv4(n, v) for (n, v) in groups.keys()])
-    meta_by_group: Dict[Tuple[str, str], Dict[str, Any]] = dict(fetched)
-
-    def _is_bgp_nh(nh_attr: Dict[str, Any]) -> bool:
-        # Try a few common attribute names; fall back to DN substring.
-        for k in ("routeType", "srcType", "protocol", "nhType"):
-            v = nh_attr.get(k, "")
-            if isinstance(v, str) and "bgp" in v.lower():
-                return True
-        return "-bgp-" in nh_attr.get("dn", "")
-
-    def _summarize_nh(nh_attr: Dict[str, Any]) -> Dict[str, Any]:
-        return {
-            "addr": nh_attr.get("addr", "") or nh_attr.get("nhAddr", ""),
-            "vrf": nh_attr.get("nhVrf", ""),
-            "pref": nh_attr.get("pref", ""),
-            "metric": nh_attr.get("metric", ""),
-            "type": nh_attr.get("routeType") or nh_attr.get("srcType") or nh_attr.get("protocol") or "",
-            "dn": nh_attr.get("dn", ""),
-        }
-
-    # 4. Walk routes per group; assign each BGP-sourced route to its peer when next-hop matches.
+    fetch_errors: List[Dict[str, Any]] = []
     routes_by_peer: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     vrf_other_routes: List[Dict[str, Any]] = []
-    fetch_errors: List[Dict[str, Any]] = []
+    note = None
+    source_used = None
 
-    for (node, vrf), peers_in_group in groups.items():
-        meta = meta_by_group.get((node, vrf)) or {}
-        raw = meta.get("data")
-        if not isinstance(raw, dict):
-            fetch_errors.append({
-                "node": node, "vrf": vrf,
-                "status": meta.get("status"), "error": meta.get("error"),
-                "body": meta.get("body"), "url": meta.get("url"),
-            })
-            continue
+    use_adj = (direction == "in" and caps["adj_rib_in"]) or (direction == "out" and caps["adj_rib_out"])
+    use_urib = direction == "in" and not caps["adj_rib_in"] and (caps["uribv4"] or caps["uribv6"])
+    tx_unavailable = direction == "out" and not caps["adj_rib_out"]
 
-        peer_addrs = {p["addr"] for p in peers_in_group}
-        for item in raw.get("imdata", []):
-            rt_obj = item.get("uribv4Route", {})
-            rt_attr = rt_obj.get("attributes", {})
-            children = rt_obj.get("children", []) or []
+    if use_adj:
+        # ── Adj-RIB path (modern APIC) ─────────────────────────────────────
+        source_used = "adj_rib"
+        cls = "bgpAdjRibIn" if direction == "in" else "bgpAdjRibOut"
+        # Group peers by node, query bgpInst per node (no brackets in URL path).
+        nodes = {p["node"] for p in peer_data if p["node"] != "?"}
 
-            bgp_nhs = []
-            for child in children:
-                nh_attr = child.get("uribv4Nexthop", {}).get("attributes", {})
-                if not nh_attr:
+        async def _fetch_node(node: str):
+            inst_dn = f"topology/pod-1/node-{node}/sys/bgp/inst"
+            path = (
+                f"api/node/mo/{ac._quote_dn(inst_dn)}.json"
+                f"?query-target=subtree&target-subtree-class={cls}"
+            )
+            return node, await loop.run_in_executor(
+                None, run_with_context(aci.get_with_meta), path)
+
+        fetched = await asyncio.gather(*[_fetch_node(n) for n in nodes])
+        for node, meta in fetched:
+            raw = meta.get("data")
+            if not isinstance(raw, dict):
+                fetch_errors.append({"node": node, "stage": "adj_rib",
+                                     "status": meta.get("status"), "error": meta.get("error"),
+                                     "body": meta.get("body"), "url": meta.get("url")})
+                continue
+
+            for item in raw.get("imdata", []):
+                attr = item.get(cls, {}).get("attributes", {})
+                if not attr:
                     continue
-                if _is_bgp_nh(nh_attr):
-                    bgp_nhs.append(nh_attr)
+                rt_dn = attr.get("dn", "")
+                # Match a peer in this L3Out by DN substring (handles /32 or plain).
+                matched_peer = None
+                for p in peer_data:
+                    if p["node"] != node:
+                        continue
+                    if f"peer-[{p['addr']}]/" in rt_dn or f"peer-[{p['addr']}/" in rt_dn:
+                        matched_peer = p
+                        break
+                if not matched_peer:
+                    continue
+                routes_by_peer[f"{node}|{matched_peer['addr']}"].append({
+                    "prefix": attr.get("prefix") or attr.get("pfx", ""),
+                    "nextHop": attr.get("nextHop") or attr.get("nh", ""),
+                    "asPath": attr.get("asPath", ""),
+                    "origin": attr.get("origin", ""),
+                    "flags": attr.get("flags") or attr.get("status", ""),
+                    "localPref": attr.get("localPref", ""),
+                    "med": attr.get("med", ""),
+                    "community": attr.get("community", ""),
+                })
 
-            if not bgp_nhs:
-                continue  # not a BGP-installed route
+    elif use_urib:
+        # ── URIB fallback (older APIC) ─────────────────────────────────────
+        source_used = "urib"
+        note = (f"APIC {caps.get('apic_version') or 'this version'} does not expose per-peer "
+                f"adj-RIB MOs. Showing post-best-path BGP routes installed in URIB for the "
+                f"L3Out's VRF, grouped by peer when the next-hop matches. BGP attributes "
+                f"(AS-path, origin, MED, local-pref) aren't carried by URIB.")
 
-            entry = {
-                "prefix": rt_attr.get("prefix") or rt_attr.get("pfx", ""),
-                "nextHops": [_summarize_nh(nh) for nh in bgp_nhs],
-                "node": node,
-                "vrf": vrf,
-                # URIB doesn't carry these BGP attrs; left blank for UI compat.
-                "asPath": "", "origin": "", "flags": "", "localPref": "", "med": "", "community": "",
-            }
+        groups: Dict[Tuple[str, str, bool], List[Dict[str, Any]]] = defaultdict(list)
+        for p in peer_data:
+            if p["node"] != "?" and p["vrf"] != "?":
+                groups[(p["node"], p["vrf"], p["is_v6"])].append(p)
 
-            matched = False
-            for nh in bgp_nhs:
-                nh_addr = (nh.get("addr") or nh.get("nhAddr") or "").split("/")[0]
-                if nh_addr in peer_addrs:
-                    routes_by_peer[f"{node}|{nh_addr}"].append({**entry, "nextHop": nh_addr})
-                    matched = True
-                    break
-            if not matched:
-                vrf_other_routes.append(entry)
+        async def _fetch_urib(node: str, vrf: str, v6: bool):
+            family = "uribv6" if v6 else "uribv4"
+            route_cls = "uribv6Route" if v6 else "uribv4Route"
+            nh_cls = "uribv6Nexthop" if v6 else "uribv4Nexthop"
+            vrf_dn = f"topology/pod-1/node-{node}/sys/{family}/dom-{vrf}"
+            path = (
+                f"api/node/mo/{ac._quote_dn(vrf_dn)}.json"
+                f"?query-target=subtree&target-subtree-class={route_cls}"
+                f"&rsp-subtree=children&rsp-subtree-class={nh_cls}"
+            )
+            return (node, vrf, v6), await loop.run_in_executor(
+                None, run_with_context(aci.get_with_meta), path)
 
-    # 5. Assemble per-peer results in the original shape so the template still works.
-    results = []
-    for p in peer_data:
-        key = f"{p['node']}|{p['addr']}"
-        results.append({**p, "routes": routes_by_peer.get(key, []), "raw": None})
+        fetched = await asyncio.gather(*[_fetch_urib(n, v, six) for (n, v, six) in groups.keys()])
+        for (node, vrf, v6), meta in fetched:
+            raw = meta.get("data")
+            if not isinstance(raw, dict):
+                fetch_errors.append({"node": node, "vrf": vrf, "v6": v6, "stage": "urib",
+                                     "status": meta.get("status"), "error": meta.get("error"),
+                                     "body": meta.get("body"), "url": meta.get("url")})
+                continue
+
+            route_cls = "uribv6Route" if v6 else "uribv4Route"
+            nh_cls = "uribv6Nexthop" if v6 else "uribv4Nexthop"
+            peer_addrs = {p["addr"] for p in groups[(node, vrf, v6)]}
+
+            for item in raw.get("imdata", []):
+                rt_obj = item.get(route_cls, {})
+                rt_attr = rt_obj.get("attributes", {})
+                children = rt_obj.get("children", []) or []
+
+                bgp_nhs = [
+                    child.get(nh_cls, {}).get("attributes", {})
+                    for child in children
+                    if _is_bgp_nh(child.get(nh_cls, {}).get("attributes", {}))
+                ]
+                if not bgp_nhs:
+                    continue
+
+                entry_base = {
+                    "prefix": rt_attr.get("prefix") or rt_attr.get("pfx", ""),
+                    "nextHops": [_nh_summary(nh) for nh in bgp_nhs],
+                    "node": node,
+                    "vrf": vrf,
+                    "asPath": "", "origin": "", "flags": "",
+                    "localPref": "", "med": "", "community": "",
+                }
+
+                matched = False
+                for nh in bgp_nhs:
+                    nh_addr = (nh.get("addr") or nh.get("nhAddr") or "").split("/")[0]
+                    if nh_addr in peer_addrs:
+                        routes_by_peer[f"{node}|{nh_addr}"].append({**entry_base, "nextHop": nh_addr})
+                        matched = True
+                        break
+                if not matched:
+                    vrf_other_routes.append(entry_base)
+
+    elif tx_unavailable:
+        note = (f"Advertised-routes (TX) are not queryable through the APIC API on "
+                f"{caps.get('apic_version') or 'this APIC version'}. Use SSH to a leaf "
+                f"and run `show ip bgp neighbors <addr> advertised-routes` for that view.")
+
+    # 3. Assemble per-peer results
+    results = [
+        {**p, "routes": routes_by_peer.get(f"{p['node']}|{p['addr']}", [])}
+        for p in peer_data
+    ]
 
     response = {
         "l3out": dn,
         "direction": direction,
+        "source": source_used,
+        "apic_version": caps.get("apic_version"),
         "peers": results,
         "vrf_other_routes": vrf_other_routes,
         "note": note,
@@ -950,9 +1055,12 @@ async def get_l3out_routes(
         return templates.TemplateResponse(request, "partials/aci_l3out_routes.html", {
             "l3out_dn": dn,
             "direction": direction,
+            "source": source_used,
+            "apic_version": caps.get("apic_version"),
             "peer_results": results,
             "vrf_other_routes": vrf_other_routes,
             "note": note,
+            "fetch_errors": fetch_errors,
         })
 
     return response

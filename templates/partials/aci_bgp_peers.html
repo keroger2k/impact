@@ -2,14 +2,32 @@
     <script id="aci-bgp-peers-raw" type="application/json">{{ raw_json|tojson }}</script>
     <div class="card-header bg-light d-flex justify-content-between align-items-center">
         <div class="d-flex align-items-center gap-3">
-            <span class="fw-bold text-navy">🔌 BGP Peers</span>
+            <span class="fw-bold text-navy"><i class="ph ph-plugs-connected me-1"></i>BGP Peers</span>
             <button class="btn btn-xs btn-outline-navy" onclick="showRawData('aci-bgp-peers-raw')">
-                <i class=" ph ph-code me-1"></i>Raw
+                <i class="ph ph-code me-1"></i>Raw
             </button>
         </div>
-        <span class="badge bg-secondary">{{ peers|length }} Peers</span>
+        <div class="d-flex align-items-center gap-2">
+            {% set up = peers | selectattr('state','equalto','ESTABLISHED') | list | length %}
+            {% set down = peers|length - up %}
+            <span class="badge bg-success-subtle text-success border border-success-subtle">
+                <i class="ph ph-check-circle me-1"></i>{{ up }} up
+            </span>
+            {% if down > 0 %}
+            <span class="badge bg-danger-subtle text-danger border border-danger-subtle">
+                <i class="ph ph-x-circle me-1"></i>{{ down }} down
+            </span>
+            {% endif %}
+            <span class="badge bg-secondary">{{ peers|length }} total</span>
+        </div>
     </div>
     <div class="card-body p-0">
+        {% if not peers %}
+        <div class="p-5 text-center text-muted">
+            <i class="ph ph-empty display-4 d-block mb-3"></i>
+            <div>No BGP peers detected on this fabric.</div>
+        </div>
+        {% else %}
         <div class="table-responsive sticky-header" style="max-height: calc(100vh - 250px);">
             <table class="table table-hover align-middle mb-0">
                 <thead class="table-light">
@@ -18,11 +36,11 @@
                         <th>Fabric</th>
                         {% endif %}
                         <th>Node</th>
+                        <th>Neighbor</th>
+                        <th>State</th>
+                        <th>Type</th>
                         <th>VRF</th>
                         <th>L3Out</th>
-                        <th>Neighbor IP</th>
-                        <th>Type</th>
-                        <th>State</th>
                         <th>Advertised (Policy)</th>
                     </tr>
                 </thead>
@@ -32,21 +50,41 @@
                         {% if p.fabric_label %}
                         <td class="small">
                             <a href="javascript:void(0)" class="fw-bold text-navy text-decoration-none" onclick="switchFabric('{{ p.fabric_id }}')">
-                                {{ p.fabric_label }}
+                                <i class="ph ph-intersect me-1"></i>{{ p.fabric_label }}
                             </a>
                         </td>
                         {% endif %}
-                        <td>{{ p.node }}</td>
-                        <td class="small">{{ p.vrf }}</td>
-                        <td class="small">{{ p.l3out }}</td>
+                        <td><span class="badge bg-light text-dark border">{{ p.node }}</span></td>
                         <td class="fw-bold text-navy mono">{{ p.addr }}</td>
-                        <td class="small">{{ p.type }}</td>
                         <td>
-                            <span class="badge {% if p.state == 'ESTABLISHED' %}bg-success{% else %}bg-danger{% endif %}">{{ p.state }}</span>
+                            {% if p.state == 'ESTABLISHED' %}
+                            <span class="badge bg-success">
+                                <i class="ph ph-check-circle me-1"></i>ESTABLISHED
+                            </span>
+                            {% elif p.state in ('IDLE','CONNECT','ACTIVE') %}
+                            <span class="badge bg-warning text-dark">
+                                <i class="ph ph-circle-dashed me-1"></i>{{ p.state }}
+                            </span>
+                            {% else %}
+                            <span class="badge bg-danger">
+                                <i class="ph ph-x-circle me-1"></i>{{ p.state }}
+                            </span>
+                            {% endif %}
+                        </td>
+                        <td><span class="badge bg-light text-dark border small">{{ p.type|upper }}</span></td>
+                        <td class="small mono">{{ p.vrf }}</td>
+                        <td class="small">
+                            {% if p.l3out and p.l3out != 'N/A' %}
+                            <i class="ph ph-globe-hemisphere-east me-1 text-muted"></i>{{ p.l3out }}
+                            {% else %}
+                            <span class="text-muted">—</span>
+                            {% endif %}
                         </td>
                         <td class="small">
                             {% for net in p.nets %}
-                                <div class="text-nowrap">• {{ net }}</div>
+                                <div class="text-nowrap mono">
+                                    <i class="ph ph-arrow-right text-muted me-1"></i>{{ net }}
+                                </div>
                             {% endfor %}
                         </td>
                     </tr>
@@ -54,5 +92,6 @@
                 </tbody>
             </table>
         </div>
+        {% endif %}
     </div>
 </div>

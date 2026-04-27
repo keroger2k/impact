@@ -1,52 +1,58 @@
 <div class="card shadow-sm border-0 animate-fade-in mt-4">
   <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center">
     <div class="d-flex align-items-center gap-2">
-      <i class=" ph ph-globe"></i>
+      <i class="ph ph-globe-hemisphere-east"></i>
       <span class="fw-bold">BGP Health Analysis</span>
     </div>
-    <button class="btn btn-sm btn-outline-light" onclick="this.closest('.card').remove()">Close</button>
+    <button class="btn btn-sm btn-outline-light" onclick="this.closest('.card').remove()">
+      <i class="ph ph-x me-1"></i>Close
+    </button>
   </div>
   <div class="card-body p-0">
     {% if not correlations and not output %}
     <div class="p-4 text-center">
-      <i class="ph ph-warning-circle ph-3x text-muted mb-3"></i>
+      <i class="ph ph-warning-circle ph-3x text-muted mb-3 d-block"></i>
       <h6 class="text-muted">No data available</h6>
       <p class="small text-muted mb-0">No results returned from the device.</p>
     </div>
     {% else %}
     <div class="p-3 bg-light border-bottom">
-      <h6 class="text-uppercase text-navy fw-bold mb-3 small letter-spacing-1">Next-Hop Inventory Correlation</h6>
+      <h6 class="text-uppercase text-navy fw-bold mb-3 small letter-spacing-1">
+        <i class="ph ph-tree-structure me-1"></i>Next-Hop Inventory Correlation
+      </h6>
       {% if correlations %}
         <div class="row g-3">
           {% for ip, info in correlations.items() %}
             <div class="col-md-6">
               <div class="d-flex align-items-center p-3 bg-white border rounded shadow-sm border-start border-4 border-primary h-100">
                 <div class="bg-primary-subtle text-primary rounded-circle p-2 me-3">
-                  <i class=" ph ph-tree-structure"></i>
+                  <i class="ph ph-tree-structure"></i>
                 </div>
                 <div class="flex-grow-1">
-                  <div class="small text-muted fw-bold uppercase mb-1">Neighbor IP: {{ ip }}</div>
+                  <div class="small text-muted fw-bold text-uppercase mb-1">Neighbor: {{ ip }}</div>
                   <div class="fw-bold text-navy h5 mb-0">{{ info.hostname }}</div>
                   <div class="badge bg-light text-muted small mt-1">{{ info.type }}</div>
                 </div>
                 <div class="ms-auto">
-                   <button class="btn btn-xs btn-outline-primary" hx-get="/api/dnac/ip-lookup/ui?ip={{ ip }}" hx-target="#bgp-results" hx-swap="afterend">
-                     View Node
-                   </button>
+                  <button class="btn btn-xs btn-outline-primary" hx-get="/api/dnac/ip-lookup/ui?ip={{ ip }}" hx-target="#bgp-results" hx-swap="afterend">
+                    <i class="ph ph-info me-1"></i>View Node
+                  </button>
                 </div>
               </div>
             </div>
           {% endfor %}
         </div>
       {% else %}
-        <div class="alert alert-info py-2 mb-0">
-          <i class=" ph ph-info me-2"></i> No inventory matches found for BGP neighbors.
+        <div class="alert alert-info py-2 mb-0 small">
+          <i class="ph ph-info me-2"></i>No inventory matches found for BGP neighbors.
         </div>
       {% endif %}
     </div>
     <div class="bg-dark p-0">
-       <div class="px-3 py-2 border-bottom border-secondary small text-success opacity-50 fw-bold uppercase">Raw SSH Console</div>
-       <pre class="p-3 mb-0 text-success" style="max-height: 400px; overflow: auto; font-family: 'SF Mono', monospace; font-size: 12px; line-height: 1.5;">{{ output }}</pre>
+      <div class="px-3 py-2 border-bottom border-secondary small text-success opacity-50 fw-bold text-uppercase">
+        <i class="ph ph-terminal me-1"></i>Raw SSH Console
+      </div>
+      <pre class="p-3 mb-0 text-success" style="max-height: 400px; overflow: auto; font-family: 'SF Mono', monospace; font-size: 12px; line-height: 1.5;">{{ output }}</pre>
     </div>
     {% endif %}
   </div>

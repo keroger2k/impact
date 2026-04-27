@@ -1,95 +1,190 @@
 <div class="card shadow-sm border-0 animate-fade-in">
     <script id="aci-l3out-routes-raw" type="application/json">{{ peer_results|tojson }}</script>
-    <div class="card-header bg-light d-flex justify-content-between align-items-center">
-        <div class="d-flex align-items-center gap-3">
-            <button class="btn btn-xs btn-outline-navy" hx-get="/api/aci/l3outs" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results">
+
+    <div class="card-header bg-light d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div class="d-flex align-items-center gap-3 flex-wrap">
+            <button class="btn btn-xs btn-outline-navy"
+                    hx-get="/api/aci/l3outs"
+                    hx-vals='js:{fabric: window.currentFabric}'
+                    hx-target="#aci-results" hx-indicator="#aci-loading">
                 <i class="ph ph-arrow-left me-1"></i>Back
             </button>
-            <span class="fw-bold text-navy">🌍 L3Out Routes: {{ l3out_dn.split('/')[-1] }}</span>
-            <span class="badge bg-primary">{{ direction|upper }}</span>
+            <span class="fw-bold text-navy">
+                <i class="ph ph-globe-hemisphere-east me-1"></i>L3Out Routes:
+                <span class="text-dark">{{ l3out_dn.split('/')[-1].replace('out-', '') }}</span>
+            </span>
+            <span class="badge {% if direction == 'in' %}bg-primary{% else %}bg-info{% endif %}">
+                <i class="ph {% if direction == 'in' %}ph-arrow-down-left{% else %}ph-arrow-up-right{% endif %} me-1"></i>
+                {{ direction|upper }}
+            </span>
+            {% if direction == 'in' %}
+            <button class="btn btn-xs btn-outline-info"
+                    hx-get="/api/aci/l3outs/routes?dn={{ l3out_dn|urlencode }}&direction=out"
+                    hx-vals='js:{fabric: window.currentFabric}'
+                    hx-target="#aci-results" hx-indicator="#aci-loading">
+                <i class="ph ph-arrow-up-right me-1"></i>Switch to TX
+            </button>
+            {% else %}
+            <button class="btn btn-xs btn-outline-primary"
+                    hx-get="/api/aci/l3outs/routes?dn={{ l3out_dn|urlencode }}&direction=in"
+                    hx-vals='js:{fabric: window.currentFabric}'
+                    hx-target="#aci-results" hx-indicator="#aci-loading">
+                <i class="ph ph-arrow-down-left me-1"></i>Switch to RX
+            </button>
+            {% endif %}
             <button class="btn btn-xs btn-outline-navy" onclick="showRawData('aci-l3out-routes-raw')">
                 <i class="ph ph-code me-1"></i>Raw
             </button>
+        </div>
+
+        <div class="d-flex align-items-center gap-2 small text-muted">
+            {% if apic_version %}
+            <span class="badge bg-light text-dark border">
+                <i class="ph ph-cpu me-1"></i>APIC {{ apic_version }}
+            </span>
+            {% endif %}
+            {% if source == 'adj_rib' %}
+            <span class="badge bg-success-subtle text-success border border-success-subtle">
+                <i class="ph ph-database me-1"></i>adj-RIB
+            </span>
+            {% elif source == 'urib' %}
+            <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle">
+                <i class="ph ph-database me-1"></i>URIB (approx.)
+            </span>
+            {% endif %}
         </div>
     </div>
 
     <div class="card-body p-0">
         {% if note %}
         <div class="alert alert-info border-0 rounded-0 mb-0 small d-flex align-items-start gap-2">
-            <i class="ph ph-info mt-1"></i>
+            <i class="ph ph-info mt-1 fs-5"></i>
             <div>{{ note }}</div>
+        </div>
+        {% endif %}
+
+        {% if fetch_errors %}
+        <div class="border-bottom">
+            <div class="px-3 py-2 bg-light d-flex justify-content-between align-items-center small">
+                <span class="text-danger fw-bold">
+                    <i class="ph ph-warning-circle me-1"></i>{{ fetch_errors|length }} fetch error(s)
+                </span>
+                <button class="btn btn-xs btn-outline-danger"
+                        type="button" data-bs-toggle="collapse" data-bs-target="#l3out-fetch-errors">
+                    Show details
+                </button>
+            </div>
+            <div class="collapse" id="l3out-fetch-errors">
+                <div class="bg-white border-top p-3 small">
+                    {% for e in fetch_errors %}
+                    <div class="mb-2 pb-2 border-bottom">
+                        <div><strong>Node:</strong> {{ e.node }}{% if e.vrf %} <strong>VRF:</strong> {{ e.vrf }}{% endif %} <strong>Stage:</strong> {{ e.stage }}</div>
+                        <div><strong>Status:</strong> {{ e.status or '—' }}</div>
+                        <div class="mono small text-muted text-break">{{ e.url }}</div>
+                        {% if e.error %}<div class="text-danger small">{{ e.error }}</div>{% endif %}
+                        {% if e.body %}<pre class="mb-0 mt-1 p-2 bg-light small" style="max-height:120px;overflow:auto;">{{ e.body }}</pre>{% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
         </div>
         {% endif %}
 
         {% if not peer_results %}
         <div class="p-5 text-center text-muted">
             <i class="ph ph-prohibit-inset display-4 d-block mb-3"></i>
-            No active BGP peers found for this L3Out.
+            <div>No active BGP peers found for this L3Out.</div>
         </div>
         {% endif %}
 
+        {% set show_attrs = (source != 'urib') %}
+
         {% for res in peer_results %}
         <div class="peer-section border-bottom">
-            <div class="bg-white p-3 d-flex justify-content-between align-items-center">
-                <div>
-                    <span class="small text-muted fw-bold">NEIGHBOR</span>
-                    <span class="ms-2 fw-bold text-navy mono">{{ res.addr }}</span>
-                    <span class="ms-3 small text-muted fw-bold">NODE</span>
-                    <span class="ms-2 badge bg-light text-dark border">{{ res.node }}</span>
-                    <span class="ms-3 small text-muted fw-bold">VRF</span>
-                    <span class="ms-2 small">{{ res.vrf }}</span>
+            <div class="bg-white p-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <div class="d-flex align-items-center gap-3 flex-wrap">
+                    <div>
+                        <span class="small text-muted fw-bold text-uppercase">Neighbor</span>
+                        <span class="ms-2 fw-bold text-navy mono">{{ res.addr }}</span>
+                    </div>
+                    {% if res.state %}
+                    <span class="badge {% if res.state == 'ESTABLISHED' %}bg-success{% elif res.state in ('IDLE','CONNECT','ACTIVE') %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
+                        <i class="ph {% if res.state == 'ESTABLISHED' %}ph-check-circle{% else %}ph-circle-dashed{% endif %} me-1"></i>
+                        {{ res.state }}
+                    </span>
+                    {% endif %}
+                    {% if res.type %}
+                    <span class="badge bg-light text-dark border">{{ res.type|upper }}</span>
+                    {% endif %}
+                    <div>
+                        <span class="small text-muted fw-bold text-uppercase">Node</span>
+                        <span class="ms-2 badge bg-light text-dark border">{{ res.node }}</span>
+                    </div>
+                    <div>
+                        <span class="small text-muted fw-bold text-uppercase">VRF</span>
+                        <span class="ms-2 small mono">{{ res.vrf }}</span>
+                    </div>
                 </div>
-                <span class="badge bg-secondary">{{ res.routes|length }} Routes</span>
+                <span class="badge {% if res.routes %}bg-primary{% else %}bg-secondary{% endif %}">
+                    <i class="ph ph-route me-1"></i>{{ res.routes|length }} routes
+                </span>
             </div>
 
+            {% if res.routes %}
             <div class="table-responsive">
                 <table class="table table-sm table-hover mb-0">
                     <thead class="table-light small fw-bold">
                         <tr>
                             <th class="ps-3">Prefix</th>
                             <th>Next Hop</th>
+                            {% if show_attrs %}
                             <th>AS Path</th>
                             <th>Local Pref</th>
                             <th>MED</th>
                             <th>Origin</th>
                             <th>Flags</th>
+                            {% endif %}
                         </tr>
                     </thead>
                     <tbody>
                         {% for r in res.routes %}
                         <tr class="small">
-                            <td class="ps-3 fw-bold">{{ r.prefix }}</td>
-                            <td class="mono">{{ r.nextHop }}</td>
+                            <td class="ps-3 fw-bold mono">{{ r.prefix }}</td>
+                            <td class="mono">{{ r.nextHop or '—' }}</td>
+                            {% if show_attrs %}
                             <td class="small">{{ r.asPath or '—' }}</td>
-                            <td>{{ r.localPref }}</td>
-                            <td>{{ r.med }}</td>
-                            <td><span class="badge bg-light text-dark border-0">{{ r.origin }}</span></td>
+                            <td>{{ r.localPref or '—' }}</td>
+                            <td>{{ r.med or '—' }}</td>
+                            <td>{% if r.origin %}<span class="badge bg-light text-dark border-0">{{ r.origin }}</span>{% else %}—{% endif %}</td>
                             <td>
-                                {% for flag in r.flags.split(',') %}
-                                <span class="badge bg-opacity-10 bg-primary text-primary border-0">{{ flag }}</span>
+                                {% for flag in (r.flags or '').split(',') if flag %}
+                                <span class="badge bg-primary-subtle text-primary border-0">{{ flag }}</span>
                                 {% endfor %}
                             </td>
+                            {% endif %}
                         </tr>
                         {% endfor %}
-                        {% if not res.routes %}
-                        <tr>
-                            <td colspan="7" class="text-center py-3 text-muted italic">No routes in this direction for this peer.</td>
-                        </tr>
-                        {% endif %}
                     </tbody>
                 </table>
             </div>
+            {% else %}
+            <div class="px-3 py-3 small text-muted fst-italic text-center">
+                No {{ direction|upper }} routes for this peer.
+            </div>
+            {% endif %}
         </div>
         {% endfor %}
 
         {% if vrf_other_routes %}
         <div class="peer-section border-top">
-            <div class="bg-white p-3 d-flex justify-content-between align-items-center">
+            <div class="bg-white p-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
                 <div>
-                    <span class="small text-muted fw-bold">OTHER BGP ROUTES IN VRF</span>
-                    <span class="ms-2 small text-muted">(next-hop is not an L3Out peer — likely iBGP / fabric-internal)</span>
+                    <span class="small text-muted fw-bold text-uppercase">Other BGP Routes in VRF</span>
+                    <span class="ms-2 small text-muted">next-hop is not an L3Out peer (likely iBGP / fabric-internal)</span>
                 </div>
-                <span class="badge bg-secondary">{{ vrf_other_routes|length }} Routes</span>
+                <span class="badge bg-secondary">
+                    <i class="ph ph-tree me-1"></i>{{ vrf_other_routes|length }} routes
+                </span>
             </div>
             <div class="table-responsive">
                 <table class="table table-sm table-hover mb-0">
@@ -104,14 +199,14 @@
                     <tbody>
                         {% for r in vrf_other_routes %}
                         <tr class="small">
-                            <td class="ps-3 fw-bold">{{ r.prefix }}</td>
+                            <td class="ps-3 fw-bold mono">{{ r.prefix }}</td>
                             <td class="mono">
                                 {% for nh in r.nextHops %}
-                                <div>{{ nh.addr }}<span class="text-muted ms-2 small">{{ nh.type }}</span></div>
+                                <div>{{ nh.addr }}<span class="text-muted ms-2 small">{{ nh.type or '' }}</span></div>
                                 {% endfor %}
                             </td>
-                            <td>{{ r.node }}</td>
-                            <td class="small">{{ r.vrf }}</td>
+                            <td><span class="badge bg-light text-dark border">{{ r.node }}</span></td>
+                            <td class="small mono">{{ r.vrf }}</td>
                         </tr>
                         {% endfor %}
                     </tbody>

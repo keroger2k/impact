@@ -87,6 +87,7 @@ async def dashboard(request: Request, user: SessionEntry = Depends(get_current_u
         "aci_health": aci_health,
         "aci_faults": aci_faults,
         "systems_online": len([s for s in current_status.values() if s.get("ok")]),
+        "systems_total": len(current_status),
         **current_status
     }
     if request.headers.get("HX-Request"):

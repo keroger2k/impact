@@ -2,14 +2,20 @@
     <script id="aci-l3outs-raw" type="application/json">{{ raw_json|tojson }}</script>
     <div class="card-header bg-light d-flex justify-content-between align-items-center">
         <div class="d-flex align-items-center gap-3">
-            <span class="fw-bold text-navy">🌐 L3Out Visibility</span>
+            <span class="fw-bold text-navy"><i class="ph ph-globe-hemisphere-east me-1"></i>L3Out Visibility</span>
             <button class="btn btn-xs btn-outline-navy" onclick="showRawData('aci-l3outs-raw')">
-                <i class=" ph ph-code me-1"></i>Raw
+                <i class="ph ph-code me-1"></i>Raw
             </button>
         </div>
         <span class="badge bg-secondary">{{ l3outs|length }} L3Outs</span>
     </div>
     <div class="card-body p-0">
+        {% if not l3outs %}
+        <div class="p-5 text-center text-muted">
+            <i class="ph ph-empty display-4 d-block mb-3"></i>
+            <div>No L3Outs configured on this fabric.</div>
+        </div>
+        {% else %}
         <div class="table-responsive sticky-header" style="max-height: calc(100vh - 250px);">
             <table class="table table-hover align-middle mb-0">
                 <thead class="table-light">
@@ -18,10 +24,10 @@
                         <th>Fabric</th>
                         {% endif %}
                         <th>Tenant</th>
-                        <th>Name</th>
+                        <th>L3Out</th>
                         <th>Description</th>
-                        <th>Routes (RX/TX)</th>
-                        <th>Actions</th>
+                        <th class="text-center">BGP Routes</th>
+                        <th class="text-end pe-3">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -30,39 +36,44 @@
                         {% if l.fabric_label %}
                         <td class="small">
                             <a href="javascript:void(0)" class="fw-bold text-navy text-decoration-none" onclick="switchFabric('{{ l.fabric_id }}')">
-                                {{ l.fabric_label }}
+                                <i class="ph ph-intersect me-1"></i>{{ l.fabric_label }}
                             </a>
                         </td>
                         {% endif %}
-                        <td class="fw-bold text-navy">{{ l.tenant }}</td>
-                        <td>{{ l.name }}</td>
-                        <td class="small text-muted">{{ l.descr }}</td>
+                        <td class="fw-bold text-navy">
+                            <i class="ph ph-buildings me-1 text-muted"></i>{{ l.tenant }}
+                        </td>
                         <td>
-                            <div class="btn-group btn-group-xs">
+                            <span class="fw-bold">{{ l.name }}</span>
+                        </td>
+                        <td class="small text-muted">{{ l.descr or '—' }}</td>
+                        <td class="text-center">
+                            <div class="btn-group btn-group-xs" role="group">
                                 <button class="btn btn-xs btn-outline-primary"
                                         hx-get="/api/aci/l3outs/routes?dn={{ l.dn|urlencode }}&direction=in"
                                         hx-vals='js:{fabric: "{{ l.fabric_id if l.fabric_id else "" }}" || window.currentFabric}'
                                         hx-target="#aci-results"
                                         hx-indicator="#aci-loading"
-                                        title="Routes Received">
-                                    RX
+                                        title="Routes received from peers (RX)">
+                                    <i class="ph ph-arrow-down-left me-1"></i>RX
                                 </button>
                                 <button class="btn btn-xs btn-outline-info"
                                         hx-get="/api/aci/l3outs/routes?dn={{ l.dn|urlencode }}&direction=out"
                                         hx-vals='js:{fabric: "{{ l.fabric_id if l.fabric_id else "" }}" || window.currentFabric}'
                                         hx-target="#aci-results"
                                         hx-indicator="#aci-loading"
-                                        title="Routes Advertised">
-                                    TX
+                                        title="Routes advertised to peers (TX)">
+                                    <i class="ph ph-arrow-up-right me-1"></i>TX
                                 </button>
                             </div>
                         </td>
-                        <td>
+                        <td class="text-end pe-3">
                             <button class="btn btn-xs btn-outline-navy"
                                     hx-get="/api/aci/l3outs/detail?dn={{ l.dn | urlencode }}"
                                     hx-vals='js:{fabric: "{{ l.fabric_id if l.fabric_id else "" }}" || window.currentFabric}'
                                     hx-target="#aci-results"
-                                    hx-indicator="#aci-loading">
+                                    hx-indicator="#aci-loading"
+                                    title="L3Out details">
                                 <i class="ph ph-info"></i>
                             </button>
                         </td>
@@ -71,5 +82,6 @@
                 </tbody>
             </table>
         </div>
+        {% endif %}
     </div>
 </div>

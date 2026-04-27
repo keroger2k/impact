@@ -1,63 +1,105 @@
 <div class="card shadow-sm border-0 animate-fade-in">
     <script id="aci-l3out-detail-raw" type="application/json">{{ raw_json|tojson }}</script>
     <div class="card-header bg-light d-flex justify-content-between align-items-center">
-        <div class="d-flex align-items-center">
-            <button class="btn btn-sm btn-outline-secondary me-3" hx-get="/api/aci/l3outs" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading">
-                <i class=" ph ph-arrow-left"></i>
+        <div class="d-flex align-items-center gap-3 flex-wrap">
+            <button class="btn btn-xs btn-outline-navy"
+                    hx-get="/api/aci/l3outs"
+                    hx-vals='js:{fabric: window.currentFabric}'
+                    hx-target="#aci-results" hx-indicator="#aci-loading">
+                <i class="ph ph-arrow-left me-1"></i>Back
             </button>
-            <div class="d-flex align-items-center gap-3">
-                <span class="fw-bold text-navy">L3Out: {{ l.name }}</span>
-                <div class="btn-group btn-group-xs">
-                    <button class="btn btn-xs btn-outline-primary"
-                            hx-get="/api/aci/l3outs/routes?dn={{ l.dn|urlencode }}&direction=in"
-                            hx-vals='js:{fabric: window.currentFabric}'
-                            hx-target="#aci-results" hx-indicator="#aci-loading">
-                        RX Routes
-                    </button>
-                    <button class="btn btn-xs btn-outline-info"
-                            hx-get="/api/aci/l3outs/routes?dn={{ l.dn|urlencode }}&direction=out"
-                            hx-vals='js:{fabric: window.currentFabric}'
-                            hx-target="#aci-results" hx-indicator="#aci-loading">
-                        TX Routes
-                    </button>
-                </div>
-                <button class="btn btn-xs btn-outline-navy" onclick="showRawData('aci-l3out-detail-raw')">
-                    <i class=" ph ph-code me-1"></i>Raw
+            <span class="fw-bold text-navy">
+                <i class="ph ph-globe-hemisphere-east me-1"></i>L3Out: {{ l.name }}
+            </span>
+            <div class="btn-group btn-group-xs">
+                <button class="btn btn-xs btn-outline-primary"
+                        hx-get="/api/aci/l3outs/routes?dn={{ l.dn|urlencode }}&direction=in"
+                        hx-vals='js:{fabric: window.currentFabric}'
+                        hx-target="#aci-results" hx-indicator="#aci-loading"
+                        title="Routes received from peers">
+                    <i class="ph ph-arrow-down-left me-1"></i>RX Routes
+                </button>
+                <button class="btn btn-xs btn-outline-info"
+                        hx-get="/api/aci/l3outs/routes?dn={{ l.dn|urlencode }}&direction=out"
+                        hx-vals='js:{fabric: window.currentFabric}'
+                        hx-target="#aci-results" hx-indicator="#aci-loading"
+                        title="Routes advertised to peers">
+                    <i class="ph ph-arrow-up-right me-1"></i>TX Routes
                 </button>
             </div>
+            <button class="btn btn-xs btn-outline-navy" onclick="showRawData('aci-l3out-detail-raw')">
+                <i class="ph ph-code me-1"></i>Raw
+            </button>
         </div>
-        <span class="small text-muted mono">{{ l.dn }}</span>
+        <span class="small text-muted mono d-none d-lg-inline">{{ l.dn }}</span>
     </div>
+
     <div class="card-body">
+        <div class="row g-3 mb-3">
+            <div class="col-sm-6 col-md-4">
+                <div class="border rounded p-3 h-100 d-flex align-items-center gap-3 bg-light">
+                    <div class="text-primary fs-4"><i class="ph ph-tree-structure"></i></div>
+                    <div>
+                        <div class="small text-muted fw-bold text-uppercase">Node Profiles</div>
+                        <div class="fw-bold text-navy fs-5">{{ l.nodes|length }}</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-sm-6 col-md-4">
+                <div class="border rounded p-3 h-100 d-flex align-items-center gap-3 bg-light">
+                    <div class="text-info fs-4"><i class="ph ph-plugs-connected"></i></div>
+                    <div>
+                        <div class="small text-muted fw-bold text-uppercase">Interface Profiles</div>
+                        <div class="fw-bold text-navy fs-5">{{ l.interfaces|length }}</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-sm-12 col-md-4">
+                <div class="border rounded p-3 h-100 d-flex align-items-center gap-3 bg-light">
+                    <div class="text-success fs-4"><i class="ph ph-identification-card"></i></div>
+                    <div>
+                        <div class="small text-muted fw-bold text-uppercase">DN</div>
+                        <div class="small mono text-truncate" style="max-width: 280px;" title="{{ l.dn }}">{{ l.dn }}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div class="row g-4">
             <div class="col-md-6">
-                <h6 class="text-navy fw-bold border-bottom pb-2">Node Profiles</h6>
+                <h6 class="text-navy fw-bold border-bottom pb-2 mb-3">
+                    <i class="ph ph-tree-structure me-1"></i>Node Profiles
+                </h6>
                 {% if l.nodes %}
                 <ul class="list-group list-group-flush">
                     {% for n in l.nodes %}
                     <li class="list-group-item d-flex justify-content-between align-items-center px-0">
-                        <span>{{ n.name }}</span>
-                        <span class="small text-muted">{{ n.dn.split('/')[-1] if n.dn else 'N/A' }}</span>
+                        <span class="fw-bold">{{ n.name }}</span>
+                        <span class="small text-muted mono">{{ n.dn.split('/')[-1] if n.dn else 'N/A' }}</span>
                     </li>
                     {% endfor %}
                 </ul>
                 {% else %}
-                <p class="text-muted small">No node profiles found.</p>
+                <p class="text-muted small fst-italic">No node profiles configured.</p>
                 {% endif %}
             </div>
             <div class="col-md-6">
-                <h6 class="text-navy fw-bold border-bottom pb-2">Interface Profiles</h6>
+                <h6 class="text-navy fw-bold border-bottom pb-2 mb-3">
+                    <i class="ph ph-plugs-connected me-1"></i>Interface Profiles
+                </h6>
                 {% if l.interfaces %}
                 <ul class="list-group list-group-flush">
                     {% for i in l.interfaces %}
                     <li class="list-group-item d-flex flex-column px-0">
                         <span class="fw-bold">{{ i.name }}</span>
-                        <span class="small text-muted">Profile: {{ i.node_profile }}</span>
+                        <span class="small text-muted">
+                            <i class="ph ph-arrow-elbow-up-right me-1"></i>Profile: {{ i.node_profile }}
+                        </span>
                     </li>
                     {% endfor %}
                 </ul>
                 {% else %}
-                <p class="text-muted small">No interface profiles found.</p>
+                <p class="text-muted small fst-italic">No interface profiles configured.</p>
                 {% endif %}
             </div>
         </div>
