@@ -73,18 +73,36 @@
                 {% set _ = peer_y.update({peer.id: 20 + loop.index0 * row_height}) %}
             {% endfor %}
 
+            {# Lookup tables for hover tooltips #}
+            {% set leaf_lookup = {} %}
+            {% for leaf in fabric_leaves %}
+                {% set _ = leaf_lookup.update({leaf.id: leaf}) %}
+            {% endfor %}
+            {% set peer_lookup = {} %}
+            {% for peer in fabric_peers %}
+                {% set _ = peer_lookup.update({peer.id: peer}) %}
+            {% endfor %}
+
             <div class="bg-white border rounded p-3 overflow-auto mb-4">
-                <svg width="1100" height="{{ svg_height }}" viewBox="0 0 1100 {{ svg_height }}" xmlns="http://www.w3.org/2000/svg">
+                <svg width="1100" height="{{ svg_height }}" viewBox="0 0 1100 {{ svg_height }}" xmlns="http://www.w3.org/2000/svg" class="aci-map-svg">
                     <!-- Edges -->
                     {% for edge in data.edges %}
                         {% if edge.leaf_id in leaf_y and edge.peer_id in peer_y %}
                             {% set y1 = leaf_y[edge.leaf_id] + 20 %}
                             {% set y2 = peer_y[edge.peer_id] + 24 %}
                             {% set color = '#16a34a' if edge.state == 'established' else '#dc2626' %}
+                            {% set leaf = leaf_lookup[edge.leaf_id] %}
+                            {% set peer = peer_lookup[edge.peer_id] %}
+                            {% set peer_label = (peer.resolved_name ~ ' (' ~ peer.addr ~ ')') if peer.resolved_name else peer.addr %}
 
-                            {# Horizontal cubic bezier for cleaner crossings #}
-                            <path d="M 220 {{ y1 }} C 470 {{ y1 }}, 470 {{ y2 }}, 720 {{ y2 }}"
-                                  stroke="{{ color }}" stroke-width="2" fill="none" stroke-opacity="0.6" />
+                            {# Horizontal cubic bezier for cleaner crossings; group adds a wide transparent hit area for easier hovering #}
+                            <g class="edge-group">
+                                <title>{{ leaf.name }} → {{ peer_label }} · {{ peer.l3out }} · {{ peer.vrf }} · {{ edge.state|upper }}</title>
+                                <path class="edge-hit" d="M 220 {{ y1 }} C 470 {{ y1 }}, 470 {{ y2 }}, 720 {{ y2 }}"
+                                      stroke="transparent" stroke-width="14" fill="none" />
+                                <path class="edge-line" d="M 220 {{ y1 }} C 470 {{ y1 }}, 470 {{ y2 }}, 720 {{ y2 }}"
+                                      stroke="{{ color }}" stroke-width="2" fill="none" stroke-opacity="0.6" />
+                            </g>
                         {% endif %}
                     {% endfor %}
 
@@ -134,6 +152,11 @@
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
 
-    /* Hover effect for edges if we wanted it, but keeping it simple as requested */
-    svg path { transition: stroke-width 0.2s; }
+    /* Edge hover: thicken the line and surface the title tooltip.
+       The transparent .edge-hit path makes the thin line easy to grab. */
+    .aci-map-svg .edge-line { transition: stroke-width 0.15s, stroke-opacity 0.15s; }
+    .aci-map-svg .edge-group:hover { cursor: help; }
+    .aci-map-svg .edge-group:hover .edge-line { stroke-width: 4; stroke-opacity: 1; }
+    /* Dim non-hovered edges when one is hovered, so the hovered one stands out. */
+    .aci-map-svg:has(.edge-group:hover) .edge-group:not(:hover) .edge-line { stroke-opacity: 0.12; }
 </style>
