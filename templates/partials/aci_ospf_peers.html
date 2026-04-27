@@ -1,0 +1,110 @@
+<div class="card shadow-sm border-0 animate-fade-in">
+    <script id="aci-ospf-peers-raw" type="application/json">{{ raw_json|tojson }}</script>
+    <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <div class="d-flex align-items-center gap-3">
+            <span class="fw-bold text-navy"><i class="ph ph-tree-structure me-1"></i>OSPF Peers</span>
+            <button class="btn btn-xs btn-outline-navy" onclick="showRawData('aci-ospf-peers-raw')">
+                <i class="ph ph-code me-1"></i>Raw
+            </button>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+            {% set up = peers | selectattr('state','equalto','full') | list | length %}
+            {% set down = peers|length - up %}
+            <span class="badge bg-success-subtle text-success border border-success-subtle">
+                <i class="ph ph-check-circle me-1"></i>{{ up }} full
+            </span>
+            {% if down > 0 %}
+            <span class="badge bg-danger-subtle text-danger border border-danger-subtle">
+                <i class="ph ph-x-circle me-1"></i>{{ down }} down
+            </span>
+            {% endif %}
+            <span class="badge bg-secondary">{{ peers|length }} total</span>
+        </div>
+    </div>
+    <div class="card-body p-0">
+        {% if not peers %}
+        <div class="p-5 text-center text-muted">
+            <i class="ph ph-empty display-4 d-block mb-3"></i>
+            <div>No OSPF peers detected on this fabric.</div>
+        </div>
+        {% else %}
+        <div class="table-responsive sticky-header" style="max-height: calc(100vh - 250px);">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        {% if peers and peers[0].fabric_label %}
+                        <th>Fabric</th>
+                        {% endif %}
+                        <th>Node</th>
+                        <th>Interface</th>
+                        <th>Neighbor IP</th>
+                        <th>Router ID</th>
+                        <th>State</th>
+                        <th>Area</th>
+                        <th>VRF</th>
+                        <th>L3Out</th>
+                        <th>Resolved</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in peers %}
+                    <tr>
+                        {% if p.fabric_label %}
+                        <td class="small">
+                            <a href="javascript:void(0)" class="fw-bold text-navy text-decoration-none" onclick="switchFabric('{{ p.fabric_id }}')">
+                                <i class="ph ph-intersect me-1"></i>{{ p.fabric_label }}
+                            </a>
+                        </td>
+                        {% endif %}
+                        <td><span class="badge bg-light text-dark border">{{ p.node }}</span></td>
+                        <td class="small mono">
+                            {% if p.interface %}{{ p.interface }}{% else %}<span class="text-muted">—</span>{% endif %}
+                        </td>
+                        <td class="fw-bold text-navy mono">
+                            {% if p.addr %}{{ p.addr }}{% else %}<span class="text-muted">—</span>{% endif %}
+                        </td>
+                        <td class="small mono">
+                            {% if p.router_id %}{{ p.router_id }}{% else %}<span class="text-muted">—</span>{% endif %}
+                        </td>
+                        <td>
+                            {% if p.state == 'full' %}
+                            <span class="badge bg-success">
+                                <i class="ph ph-check-circle me-1"></i>FULL
+                            </span>
+                            {% elif p.state in ('two-way','twoway','exstart','exchange','loading','init','attempt') %}
+                            <span class="badge bg-warning text-dark">
+                                <i class="ph ph-circle-dashed me-1"></i>{{ p.state|upper }}
+                            </span>
+                            {% else %}
+                            <span class="badge bg-danger">
+                                <i class="ph ph-x-circle me-1"></i>{{ p.state|upper }}
+                            </span>
+                            {% endif %}
+                        </td>
+                        <td class="small mono">
+                            {% if p.area %}{{ p.area }}{% else %}<span class="text-muted">—</span>{% endif %}
+                        </td>
+                        <td class="small mono">{{ p.vrf }}</td>
+                        <td class="small">
+                            {% if p.l3out and p.l3out not in ('N/A','(unmapped)') %}
+                            <i class="ph ph-globe-hemisphere-east me-1 text-muted"></i>{{ p.l3out }}
+                            {% else %}
+                            <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
+                        <td class="small">
+                            {% if p.resolved_name %}
+                            <span class="fw-bold text-navy">{{ p.resolved_name }}</span>
+                            <span class="badge bg-light text-muted border ms-1" style="text-transform: uppercase; font-size: 9px;">{{ p.resolved_source }}</span>
+                            {% else %}
+                            <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+    </div>
+</div>

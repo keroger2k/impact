@@ -70,7 +70,7 @@ ACI_CACHE_KEYS = [
     "nodes", "l3outs", "bgp_peers", "bgp_peer_cfg",
     "ospf_peers", "epgs", "faults", "subnets",
     "health_overall", "health_tenants", "health_pods",
-    "bgp_doms_all", "bgp_map"
+    "bgp_doms_all", "bgp_map", "ospf_map", "l3out_vrf"
 ]
 
 def _fkey(fabric_id: str, suffix: str) -> str:
@@ -1122,6 +1122,407 @@ async def _get_bgp_caps(aci: ac.ACIClient, loop: asyncio.AbstractEventLoop, fabr
     )
     return res or {"apic_version": None, "adj_rib_in": False, "adj_rib_out": False,
                    "bgp_route": False, "uribv4": False, "uribv6": False, "raw_counts": {}}
+
+
+# ── OSPF Map ──────────────────────────────────────────────────────────────────
+
+async def _get_processed_ospf_peers(
+    aci: ac.ACIClient,
+    loop: asyncio.AbstractEventLoop,
+    fabric_id: str,
+) -> Tuple[List[Dict], List[Dict], Dict]:
+    """Fetch and correlate OSPF operational state with L3Out (via VRF binding).
+
+    Returns: (processed_all, deduped_for_table, raw_response)
+    """
+    ospf_peers_raw, l3out_vrf_raw = await asyncio.gather(
+        loop.run_in_executor(None, run_with_context(_cached), _fkey(fabric_id, "ospf_peers"), aci.get_ospf_peers),
+        loop.run_in_executor(None, run_with_context(_cached), _fkey(fabric_id, "l3out_vrf"), aci.get_l3out_vrf_bindings),
+    )
+
+    # 1. Build vrf_to_l3outs: Dict[str, List[Dict[str, str]]]
+    # tDn: uni/tn-{tenant}/ctx-{vrf}
+    # dn: uni/tn-{tenant}/out-{l3out}/rsectx
+    vrf_to_l3outs = defaultdict(list)
+    for entry in l3out_vrf_raw.get('imdata', []):
+        attr = entry.get('l3extRsEctx', {}).get('attributes', {})
+        t_dn = attr.get('tDn', '')
+        dn = attr.get('dn', '')
+
+        t_parts = t_dn.split('/')
+        if len(t_parts) >= 3:
+            tenant = t_parts[1].replace('tn-', '')
+            vrf_name = t_parts[2].replace('ctx-', '')
+            vrf_canonical = f"{tenant}:{vrf_name}"
+
+            dn_parts = dn.split('/')
+            l3out = next((p.replace('out-', '') for p in dn_parts if p.startswith('out-')), None)
+            if l3out:
+                vrf_to_l3outs[vrf_canonical].append({"tenant": tenant, "l3out": l3out})
+
+    # 2. Process OSPF adjacencies
+    # ACI's ospfAdjEp class exposes the neighbor as: peerIp (neighbor IP),
+    # name (neighbor router ID, also encoded in the DN as adj-<router-id>),
+    # operSt (FSM state), area, peerType.
+    processed = []
+    for entry in ospf_peers_raw.get('imdata', []):
+        attr = entry.get('ospfAdjEp', {}).get('attributes', {})
+        dn = attr.get('dn', '')
+        dn_parts = dn.split('/')
+
+        node_id = next((p.replace('node-', '') for p in dn_parts if p.startswith('node-')), "N/A")
+        vrf = next((p.replace('dom-', '') for p in dn_parts if p.startswith('dom-')), "N/A")
+        iface_match = re.search(r'if-\[(.+?)\]', dn)
+        interface = iface_match.group(1) if iface_match else None
+
+        # Router ID: prefer 'name' (ACI standard), fall back to legacy 'routerId',
+        # then to the adj-<router-id> segment in the DN.
+        router_id = attr.get("name") or attr.get("routerId")
+        if not router_id:
+            adj_match = re.search(r'/adj-([^/]+)', dn)
+            if adj_match:
+                router_id = adj_match.group(1)
+
+        # Peer IP: prefer 'peerIp' (ACI standard), then 'addr', then legacy 'ip'.
+        peer_ip = _norm_ip(attr.get("peerIp") or attr.get("addr") or attr.get("ip"))
+
+        # Look up L3Outs for this VRF
+        matches = vrf_to_l3outs.get(vrf, [])
+        if len(matches) == 1:
+            l3out = matches[0]["l3out"]
+            tenant = matches[0]["tenant"]
+        elif len(matches) > 1:
+            l3out = ", ".join(sorted(list(set(m["l3out"] for m in matches))))
+            tenants = list(set(m["tenant"] for m in matches))
+            tenant = tenants[0] if len(tenants) == 1 else "(multi)"
+        else:
+            l3out = "(unmapped)"
+            tenant = "(unmapped)"
+
+        processed.append({
+            "node": node_id,
+            "vrf": vrf,
+            "l3out": l3out,
+            "tenant": tenant,
+            "addr": peer_ip,
+            "router_id": router_id,
+            "area": attr.get("area"),
+            "state": (attr.get("operSt") or "unknown").lower(),
+            "peer_type": attr.get("peerType"),
+            "interface": interface,
+            "dn": dn,
+        })
+
+    # 3. Dedupe for table view (if needed later). A unique OSPF neighbor is
+    # identified by router_id + vrf; fall back to addr+vrf when router_id is missing.
+    groups: Dict[Tuple[str, str], List[Dict]] = {}
+    for row in processed:
+        key = (row["router_id"] or row["addr"], row["vrf"])
+        groups.setdefault(key, []).append(row)
+
+    deduped: List[Dict] = []
+    for rows in groups.values():
+        full = [r for r in rows if r["state"] == "full"]
+        deduped.extend(full if full else rows)
+
+    return processed, deduped, ospf_peers_raw
+
+
+async def _enrich_ospf_peers(session: SessionEntry, peers: List[Dict]):
+    """Best-effort hostname enrichment for OSPF peers using Panorama and DNAC caches."""
+    import clients.panorama as pc
+
+    pan_devices = cache.get("pan_firewalls")
+    if pan_devices is None:
+        try:
+            from routers.firewall import _get_key
+            key = _get_key(session)
+            pan_devices = pc.fetch_firewall_interfaces(key)
+            if pan_devices:
+                from cache import TTL_PAN_INTERFACES
+                cache.set("pan_firewalls", pan_devices, TTL_PAN_INTERFACES)
+        except Exception as e:
+            logger.warning(f"Failed to fetch Panorama devices for enrichment: {e}")
+            pan_devices = []
+
+    dnac_devices = cache.get("devices") or []
+
+    for p in peers:
+        ip = p.get("addr", "").split('/')[0]
+        if not ip:
+            continue
+
+        p["resolved_name"] = None
+        p["resolved_source"] = None
+
+        try:
+            matches = pc.search_firewall_interfaces(ip, pan_devices)
+            if matches:
+                p["resolved_name"] = matches[0]["device"]["hostname"]
+                p["resolved_source"] = "panorama"
+                continue
+        except Exception as e:
+            logger.warning(f"Panorama enrichment failed for {ip}: {e}")
+
+        try:
+            match = next((d for d in dnac_devices if d.get("managementIpAddress") == ip), None)
+            if match:
+                p["resolved_name"] = match.get("hostname")
+                p["resolved_source"] = "dnac"
+        except Exception as e:
+            logger.warning(f"DNAC enrichment failed for {ip}: {e}")
+
+
+async def _get_ospf_map_data(
+    session: SessionEntry,
+    aci: ac.ACIClient,
+    loop: asyncio.AbstractEventLoop,
+    fabric_id: str,
+    debug: bool = False,
+) -> Dict[str, Any]:
+    """Build the OSPF Map data structure for a single fabric."""
+    processed, _, peers_raw = await _get_processed_ospf_peers(aci, loop, fabric_id)
+    nodes_proc, _ = await _get_processed_nodes(aci, loop, fabric_id)
+    node_map = {n["id"]: n for n in nodes_proc}
+
+    await _enrich_ospf_peers(session, processed)
+
+    leaves_seen = set()
+    leaves = []
+    peers_seen = {}
+    edges = []
+
+    import clients.aci_registry as reg
+    fabric_label = next((f.label for f in reg.list_fabrics() if f.id == fabric_id), fabric_id)
+
+    histogram = defaultdict(int)
+    unmapped_count = 0
+
+    for p in processed:
+        state = p["state"]
+        histogram[state] += 1
+        if p["l3out"] == "(unmapped)":
+            unmapped_count += 1
+
+        node_id = p["node"]
+        peer_addr = p["addr"]
+        vrf = p["vrf"]
+        # OSPF neighbors are uniquely identified by router_id within a VRF.
+        # Fall back to peer IP when router_id is unavailable.
+        peer_ident = p["router_id"] or peer_addr
+        peer_key = (peer_ident, vrf)
+
+        prefixed_leaf_id = f"{fabric_id}:node-{node_id}"
+        prefixed_peer_id = f"{fabric_id}:peer-{peer_ident}-vrf-{vrf}"
+
+        if node_id not in leaves_seen:
+            node_info = node_map.get(node_id, {"name": f"node-{node_id}"})
+            leaves.append({
+                "id": prefixed_leaf_id,
+                "name": node_info.get("name"),
+                "fabric_id": fabric_id,
+                "fabric_label": fabric_label
+            })
+            leaves_seen.add(node_id)
+
+        if peer_key not in peers_seen:
+            peers_seen[peer_key] = {
+                "id": prefixed_peer_id,
+                "addr": peer_addr,
+                "vrf": vrf,
+                "area": p["area"],
+                "router_id": p["router_id"],
+                "l3out": p["l3out"],
+                "tenant": p["tenant"],
+                "resolved_name": p.get("resolved_name"),
+                "resolved_source": p.get("resolved_source"),
+                "fabric_id": fabric_id
+            }
+
+        edges.append({
+            "leaf_id": prefixed_leaf_id,
+            "peer_id": prefixed_peer_id,
+            "state": state,
+            "type": "ospf"
+        })
+
+    stats = {
+        "leaf_count": len(leaves),
+        "peer_count": len(peers_seen),
+        "edge_count": len(edges),
+        "full": len([e for e in edges if e["state"] == "full"]),
+        "down": len([e for e in edges if e["state"] != "full"]),
+    }
+
+    res = {
+        "leaves": sorted(leaves, key=lambda x: x["name"]),
+        "peers": sorted(peers_seen.values(), key=lambda x: x["addr"]),
+        "edges": edges,
+        "stats": stats
+    }
+
+    if debug:
+        # Fetch l3out_vrf again for debug info
+        l3out_vrf_raw = await loop.run_in_executor(None, run_with_context(_cached), _fkey(fabric_id, "l3out_vrf"), aci.get_l3out_vrf_bindings)
+        vrf_to_l3out_keys = []
+        for entry in l3out_vrf_raw.get('imdata', []):
+            attr = entry.get('l3extRsEctx', {}).get('attributes', {})
+            t_dn = attr.get('tDn', '')
+            t_parts = t_dn.split('/')
+            if len(t_parts) >= 3:
+                vrf_to_l3out_keys.append(f"{t_parts[1].replace('tn-', '')}:{t_parts[2].replace('ctx-', '')}")
+
+        res["_debug"] = {
+            "fabric_id": fabric_id,
+            "ospf_adj_count": len(processed),
+            "vrf_to_l3out_size": len(vrf_to_l3out_keys),
+            "vrf_to_l3out_keys_sample": list(set(vrf_to_l3out_keys))[:10],
+            "ospf_adj_sample": [
+                {
+                    "ip": p["addr"],
+                    "operSt": p["state"],
+                    "routerId": p["router_id"],
+                    "area": p["area"],
+                    "dn": p["dn"],
+                } for p in processed[:5]
+            ],
+            "operSt_value_histogram": dict(histogram),
+            "unmapped_count": unmapped_count
+        }
+
+    return res
+
+
+@router.get("/ospf/map")
+async def ospf_map(
+    request: Request,
+    debug: int = 0,
+    session: SessionEntry = Depends(require_auth),
+    fabric_id: str = Depends(get_fabric_id),
+):
+    """
+    Visualize external OSPF adjacencies (Leaf -> OSPF Neighbor).
+    """
+    import clients.aci_registry as reg
+    loop = asyncio.get_event_loop()
+
+    if request.query_params.get("fabric") == "all":
+        fabrics = reg.list_fabrics()
+
+        async def _fetch_single(f):
+            try:
+                aci = await _get_aci_async(session, f.id)
+                def _loader():
+                    new_loop = asyncio.new_event_loop()
+                    try:
+                        return new_loop.run_until_complete(
+                            _get_ospf_map_data(session, aci, new_loop, f.id, debug=bool(debug))
+                        )
+                    finally:
+                        new_loop.close()
+                return await loop.run_in_executor(
+                    None, run_with_context(_cached),
+                    _fkey(f.id, "ospf_map"),
+                    _loader,
+                )
+            except Exception as e:
+                logger.error(f"Aggregated OSPF map fetch failed for {f.id}: {e}")
+                return {"leaves": [], "peers": [], "edges": [], "stats": {}}
+
+        results = await asyncio.gather(*[_fetch_single(f) for f in fabrics])
+
+        merged = {
+            "leaves": [], "peers": [], "edges": [],
+            "stats": {"leaf_count": 0, "peer_count": 0, "edge_count": 0, "full": 0, "down": 0},
+        }
+        debug_blocks = []
+        for res in results:
+            merged["leaves"].extend(res.get("leaves", []))
+            merged["peers"].extend(res.get("peers", []))
+            merged["edges"].extend(res.get("edges", []))
+            for k in merged["stats"]:
+                merged["stats"][k] += res.get("stats", {}).get(k, 0)
+            if "_debug" in res:
+                debug_blocks.append(res["_debug"])
+
+        data = merged
+        if debug_blocks:
+            data["_debug"] = debug_blocks
+        raw_json = results
+    else:
+        aci = await _get_aci_async(session, fabric_id)
+
+        def _loader():
+            new_loop = asyncio.new_event_loop()
+            try:
+                return new_loop.run_until_complete(
+                    _get_ospf_map_data(session, aci, new_loop, fabric_id, debug=bool(debug))
+                )
+            finally:
+                new_loop.close()
+
+        data = await loop.run_in_executor(
+            None, run_with_context(_cached),
+            _fkey(fabric_id, "ospf_map"),
+            _loader,
+        )
+        raw_json = data
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/aci_ospf_map.html", {
+            "data": data,
+            "raw_json": raw_json,
+        })
+
+    return data
+
+
+@router.get("/ospf/peers")
+async def list_ospf_peers(
+    request: Request,
+    session: SessionEntry = Depends(require_auth),
+    fabric_id: str = Depends(get_fabric_id),
+):
+    """List OSPF neighbors and their adjacency states."""
+    import clients.aci_registry as reg
+    loop = asyncio.get_event_loop()
+
+    if request.query_params.get("fabric") == "all":
+        async def _fetch_single(f):
+            try:
+                aci = await _get_aci_async(session, f.id)
+                _, deduped, raw = await _get_processed_ospf_peers(aci, loop, f.id)
+                await _enrich_ospf_peers(session, deduped)
+                for x in deduped:
+                    x.update({"fabric_id": f.id, "fabric_label": f.label})
+                return deduped, raw
+            except Exception as e:
+                logger.error(f"Aggregated OSPF peers fetch failed for {f.id}: {e}")
+                return [], {"imdata": []}
+
+        results = await asyncio.gather(*[_fetch_single(f) for f in reg.list_fabrics()], return_exceptions=True)
+
+        processed: List[Dict] = []
+        peers_raw: Dict[str, Any] = {"imdata": []}
+        for res in results:
+            if isinstance(res, tuple):
+                p, raw = res
+                processed.extend(p)
+                peers_raw["imdata"].extend(raw.get("imdata", []))
+    else:
+        aci = await _get_aci_async(session, fabric_id)
+        _, processed, peers_raw = await _get_processed_ospf_peers(aci, loop, fabric_id)
+        await _enrich_ospf_peers(session, processed)
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/aci_ospf_peers.html", {
+            "peers": processed,
+            "raw_json": peers_raw,
+        })
+
+    return {"items": processed, "raw": peers_raw}
 
 
 # ── L3Out Routes ──────────────────────────────────────────────────────────────

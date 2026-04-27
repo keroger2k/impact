@@ -1,36 +1,36 @@
 <div class="card shadow-sm border-0 animate-fade-in">
-    <script id="aci-bgp-map-raw" type="application/json">{{ raw_json|tojson }}</script>
+    <script id="aci-ospf-map-raw" type="application/json">{{ raw_json|tojson }}</script>
     <div class="card-header bg-light d-flex justify-content-between align-items-center">
         <div class="d-flex align-items-center gap-3">
-            <span class="fw-bold text-navy"><i class="ph ph-share-network me-1"></i>BGP Map (External Peers)</span>
-            <button class="btn btn-xs btn-outline-navy" onclick="showRawData('aci-bgp-map-raw')">
+            <span class="fw-bold text-navy"><i class="ph ph-tree-structure me-1"></i>OSPF Map (External Adjacencies)</span>
+            <button class="btn btn-xs btn-outline-navy" onclick="showRawData('aci-ospf-map-raw')">
                 <i class="ph ph-code me-1"></i>Raw
             </button>
         </div>
         <div class="d-flex align-items-center gap-2">
             <span class="badge bg-success-subtle text-success border border-success-subtle">
-                <i class="ph ph-check-circle me-1"></i>{{ data.stats.established }} established
+                <i class="ph ph-check-circle me-1"></i>{{ data.stats.full }} full
             </span>
             {% if data.stats.down > 0 %}
             <span class="badge bg-danger-subtle text-danger border border-danger-subtle">
                 <i class="ph ph-x-circle me-1"></i>{{ data.stats.down }} down
             </span>
             {% endif %}
-            <span class="badge bg-secondary">{{ data.stats.peer_count }} external peers</span>
+            <span class="badge bg-secondary">{{ data.stats.peer_count }} external OSPF neighbors</span>
         </div>
     </div>
     <div class="card-body p-4">
         {% if not data.edges %}
         <div class="p-5 text-center text-muted">
             <i class="ph ph-empty display-4 d-block mb-3"></i>
-            <div>No external BGP peers found via L3Outs.</div>
+            <div>No external OSPF adjacencies found on this fabric.</div>
         </div>
         {% else %}
 
         <div class="mb-4 d-flex gap-4 small fw-bold">
             <div class="d-flex align-items-center gap-2">
                 <div style="width: 24px; height: 3px; background: #16a34a; border-radius: 2px;"></div>
-                <span class="text-navy">ESTABLISHED</span>
+                <span class="text-navy">FULL</span>
             </div>
             <div class="d-flex align-items-center gap-2">
                 <div style="width: 24px; height: 3px; background: #dc2626; border-radius: 2px;"></div>
@@ -90,14 +90,15 @@
                         {% if edge.leaf_id in leaf_y and edge.peer_id in peer_y %}
                             {% set y1 = leaf_y[edge.leaf_id] + 20 %}
                             {% set y2 = peer_y[edge.peer_id] + 24 %}
-                            {% set color = '#16a34a' if edge.state == 'established' else '#dc2626' %}
+                            {% set color = '#16a34a' if edge.state == 'full' else '#dc2626' %}
                             {% set leaf = leaf_lookup[edge.leaf_id] %}
                             {% set peer = peer_lookup[edge.peer_id] %}
-                            {% set peer_label = (peer.resolved_name ~ ' (' ~ peer.addr ~ ')') if peer.resolved_name else peer.addr %}
+                            {% set peer_addr = peer.addr if peer.addr else (peer.router_id if peer.router_id else 'unknown') %}
+                            {% set peer_label = (peer.resolved_name ~ ' (' ~ peer_addr ~ ')') if peer.resolved_name else peer_addr %}
 
                             {# Horizontal cubic bezier for cleaner crossings; group adds a wide transparent hit area for easier hovering #}
                             <g class="edge-group">
-                                <title>{{ leaf.name }} → {{ peer_label }} · {{ peer.l3out }} · {{ peer.vrf }} · {{ edge.state|upper }}</title>
+                                <title>{{ leaf.name }} → {{ peer_label }}{% if peer.router_id %} · rid {{ peer.router_id }}{% endif %} · {{ peer.l3out }} · area {{ peer.area }} · {{ peer.vrf }} · {{ edge.state|upper }}</title>
                                 <path class="edge-hit" d="M 220 {{ y1 }} C 470 {{ y1 }}, 470 {{ y2 }}, 720 {{ y2 }}"
                                       stroke="transparent" stroke-width="14" fill="none" />
                                 <path class="edge-line" d="M 220 {{ y1 }} C 470 {{ y1 }}, 470 {{ y2 }}, 720 {{ y2 }}"
@@ -120,14 +121,14 @@
                         {% set y = peer_y[peer.id] %}
                         <g transform="translate(720, {{ y }})">
                             <rect width="360" height="48" rx="8" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1" />
-                            <text x="14" y="20" font-size="13" font-weight="700" fill="#001e44">{{ peer.addr }}</text>
+                            <text x="14" y="20" font-size="13" font-weight="700" fill="#001e44">{{ peer.addr }} · <tspan font-size="11" font-weight="400" fill="#64748b">rid {{ peer.router_id }}</tspan></text>
                             <text x="14" y="38" font-size="11" fill="#64748b">
                                 {% if peer.resolved_name %}
                                     {{ peer.resolved_name }} ({{ peer.l3out }})
                                 {% else %}
                                     {{ peer.l3out }}
                                 {% endif %}
-                                · {{ peer.vrf }}
+                                · area {{ peer.area }} · {{ peer.vrf }}
                             </text>
 
                             {% if peer.resolved_source %}
