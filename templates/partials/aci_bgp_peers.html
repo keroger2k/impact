@@ -8,7 +8,7 @@
             </button>
         </div>
         <div class="d-flex align-items-center gap-2">
-            {% set up = peers | selectattr('state','equalto','ESTABLISHED') | list | length %}
+            {% set up = peers | selectattr('state','equalto','established') | list | length %}
             {% set down = peers|length - up %}
             <span class="badge bg-success-subtle text-success border border-success-subtle">
                 <i class="ph ph-check-circle me-1"></i>{{ up }} up
@@ -57,17 +57,17 @@
                         <td><span class="badge bg-light text-dark border">{{ p.node }}</span></td>
                         <td class="fw-bold text-navy mono">{{ p.addr }}</td>
                         <td>
-                            {% if p.state == 'ESTABLISHED' %}
+                            {% if p.state == 'established' %}
                             <span class="badge bg-success">
                                 <i class="ph ph-check-circle me-1"></i>ESTABLISHED
                             </span>
-                            {% elif p.state in ('IDLE','CONNECT','ACTIVE') %}
+                            {% elif p.state in ('idle','connect','active','openconfirm','opensent') %}
                             <span class="badge bg-warning text-dark">
-                                <i class="ph ph-circle-dashed me-1"></i>{{ p.state }}
+                                <i class="ph ph-circle-dashed me-1"></i>{{ p.state|upper }}
                             </span>
                             {% else %}
                             <span class="badge bg-danger">
-                                <i class="ph ph-x-circle me-1"></i>{{ p.state }}
+                                <i class="ph ph-x-circle me-1"></i>{{ p.state|upper }}
                             </span>
                             {% endif %}
                         </td>

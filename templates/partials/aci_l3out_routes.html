@@ -108,9 +108,9 @@
                         <span class="ms-2 fw-bold text-navy mono">{{ res.addr }}</span>
                     </div>
                     {% if res.state %}
-                    <span class="badge {% if res.state == 'ESTABLISHED' %}bg-success{% elif res.state in ('IDLE','CONNECT','ACTIVE') %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
-                        <i class="ph {% if res.state == 'ESTABLISHED' %}ph-check-circle{% else %}ph-circle-dashed{% endif %} me-1"></i>
-                        {{ res.state }}
+                    <span class="badge {% if res.state == 'established' %}bg-success{% elif res.state in ('idle','connect','active','openconfirm','opensent') %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
+                        <i class="ph {% if res.state == 'established' %}ph-check-circle{% else %}ph-circle-dashed{% endif %} me-1"></i>
+                        {{ res.state|upper }}
                     </span>
                     {% endif %}
                     {% if res.type %}
