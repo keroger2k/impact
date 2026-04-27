@@ -65,7 +65,7 @@ ACI_CACHE_KEYS = [
     "nodes", "l3outs", "bgp_peers", "bgp_peer_cfg",
     "ospf_peers", "epgs", "faults", "subnets",
     "health_overall", "health_tenants", "health_pods",
-    "bgp_doms_all"
+    "bgp_doms_all", "bgp_map"
 ]
 
 def _fkey(fabric_id: str, suffix: str) -> str:
@@ -569,9 +569,11 @@ async def _get_processed_bgp_peers(aci: ac.ACIClient, loop: asyncio.AbstractEven
         attr = entry.get('bgpPeerP', {}).get('attributes', {})
         addr = attr.get('addr', '').split('/')[0]
         # DN: uni/tn-COMMON/out-INET/lnodep-L101/lifp-L101/peerP-[1.1.1.1]
-        l3out = next((p.replace('out-', '') for p in attr.get('dn', '').split('/') if p.startswith('out-')), None)
+        dn_parts = attr.get('dn', '').split('/')
+        tenant = next((p.replace('tn-', '') for p in dn_parts if p.startswith('tn-')), None)
+        l3out = next((p.replace('out-', '') for p in dn_parts if p.startswith('out-')), None)
         if addr and l3out:
-            peer_to_l3out[addr] = l3out
+            peer_to_l3out[addr] = {"l3out": l3out, "tenant": tenant}
 
     # 2. Map Export Subnets to L3Outs
     ads_map = {}
@@ -588,7 +590,10 @@ async def _get_processed_bgp_peers(aci: ac.ACIClient, loop: asyncio.AbstractEven
         attr = entry.get('bgpPeerEntry', {}).get('attributes', {})
         dn = attr.get('dn', '')
         peer_addr = attr.get('addr', '').split('/')[0]
-        l3out = peer_to_l3out.get(peer_addr, 'N/A')
+
+        l3_info = peer_to_l3out.get(peer_addr, {"l3out": "N/A", "tenant": "N/A"})
+        l3out = l3_info["l3out"]
+        tenant = l3_info["tenant"]
 
         # Extract basic hierarchy
         dn_parts = dn.split('/')
@@ -599,6 +604,7 @@ async def _get_processed_bgp_peers(aci: ac.ACIClient, loop: asyncio.AbstractEven
             "node": node_id,
             "vrf": vrf,
             "l3out": l3out,
+            "tenant": tenant,
             "addr": attr.get('addr'),
             "state": attr.get('operSt', 'unknown').upper(),
             "type": attr.get('type', 'unknown'),
@@ -620,6 +626,211 @@ async def _get_processed_bgp_peers(aci: ac.ACIClient, loop: asyncio.AbstractEven
 
     return deduped, peers_raw
 
+async def _enrich_bgp_peers(session: SessionEntry, peers: List[Dict]):
+    """Best-effort hostname enrichment for BGP peers using Panorama and DNAC caches."""
+    import clients.panorama as pc
+
+    # 1. Load Caches
+    pan_devices = cache.get("pan_firewalls")
+    if pan_devices is None:
+        try:
+            from routers.firewall import _get_key
+            key = _get_key(session)
+            pan_devices = pc.fetch_firewall_interfaces(key)
+            if pan_devices:
+                from cache import TTL_PAN_INTERFACES
+                cache.set("pan_firewalls", pan_devices, TTL_PAN_INTERFACES)
+        except Exception as e:
+            logger.warning(f"Failed to fetch Panorama devices for enrichment: {e}")
+            pan_devices = []
+
+    dnac_devices = cache.get("devices") or []
+
+    # 2. Enrich
+    for p in peers:
+        ip = p.get("addr", "").split('/')[0]
+        if not ip:
+            continue
+
+        p["resolved_name"] = None
+        p["resolved_source"] = None
+
+        # Try Panorama first
+        try:
+            matches = pc.search_firewall_interfaces(ip, pan_devices)
+            if matches:
+                p["resolved_name"] = matches[0]["device"]["hostname"]
+                p["resolved_source"] = "panorama"
+                continue
+        except Exception as e:
+            logger.warning(f"Panorama enrichment failed for {ip}: {e}")
+
+        # Try DNAC second
+        try:
+            match = next((d for d in dnac_devices if d.get("managementIpAddress") == ip), None)
+            if match:
+                p["resolved_name"] = match.get("hostname")
+                p["resolved_source"] = "dnac"
+        except Exception as e:
+            logger.warning(f"DNAC enrichment failed for {ip}: {e}")
+
+async def _get_bgp_map_data(session: SessionEntry, aci: ac.ACIClient, loop: asyncio.AbstractEventLoop, fabric_id: str) -> Dict[str, Any]:
+    """Build the BGP Map data structure for a single fabric."""
+    # 1. Get processed BGP peers and filter for L3Out only
+    all_peers, _ = await _get_processed_bgp_peers(aci, loop, fabric_id)
+    external_peers = [p for p in all_peers if p.get("l3out") and p.get("l3out") != "N/A"]
+
+    # 2. Get fabric nodes to resolve names and IDs
+    nodes_proc, _ = await _get_processed_nodes(aci, loop, fabric_id)
+    node_map = {n["id"]: n for n in nodes_proc}
+
+    # 3. Enrich external peers with hostnames
+    await _enrich_bgp_peers(session, external_peers)
+
+    # 4. Build Response Shape
+    leaves_seen = set()
+    leaves = []
+    peers_seen = {} # (addr, vrf) -> peer_obj
+    edges = []
+
+    import clients.aci_registry as reg
+    fabric_label = next((f.label for f in reg.list_fabrics() if f.id == fabric_id), fabric_id)
+
+    for p in external_peers:
+        node_id = p["node"]
+        peer_addr = p["addr"].split('/')[0]
+        vrf = p["vrf"]
+        peer_key = (peer_addr, vrf)
+
+        # Fabric-prefixed IDs to prevent crossover in aggregated views
+        prefixed_leaf_id = f"{fabric_id}:node-{node_id}"
+        prefixed_peer_id = f"{fabric_id}:peer-{peer_addr}-vrf-{vrf}"
+
+        # Add leaf
+        if node_id not in leaves_seen:
+            node_info = node_map.get(node_id, {"name": f"node-{node_id}"})
+            leaves.append({
+                "id": prefixed_leaf_id,
+                "name": node_info.get("name"),
+                "fabric_id": fabric_id,
+                "fabric_label": fabric_label
+            })
+            leaves_seen.add(node_id)
+
+        # Add peer
+        if peer_key not in peers_seen:
+            peers_seen[peer_key] = {
+                "id": prefixed_peer_id,
+                "addr": peer_addr,
+                "vrf": vrf,
+                "l3out": p["l3out"],
+                "tenant": p.get("tenant", "unknown"),
+                "resolved_name": p.get("resolved_name"),
+                "resolved_source": p.get("resolved_source"),
+                "fabric_id": fabric_id
+            }
+
+        # Add edge
+        edges.append({
+            "leaf_id": prefixed_leaf_id,
+            "peer_id": prefixed_peer_id,
+            "state": p["state"].lower(),
+            "type": "ebgp"
+        })
+
+    stats = {
+        "leaf_count": len(leaves),
+        "peer_count": len(peers_seen),
+        "edge_count": len(edges),
+        "established": len([e for e in edges if e["state"] == "established"]),
+        "down": len([e for e in edges if e["state"] != "established"])
+    }
+
+    return {
+        "leaves": sorted(leaves, key=lambda x: x["name"]),
+        "peers": sorted(peers_seen.values(), key=lambda x: x["addr"]),
+        "edges": edges,
+        "stats": stats
+    }
+
+@router.get("/bgp/map")
+async def bgp_map(
+    request: Request,
+    session: SessionEntry = Depends(require_auth),
+    fabric_id: str = Depends(get_fabric_id),
+):
+    """
+    Visualize external BGP peering relationships (Leaf -> eBGP Peer).
+    """
+    import clients.aci_registry as reg
+    loop = asyncio.get_event_loop()
+
+    if request.query_params.get("fabric") == "all":
+        fabrics = reg.list_fabrics()
+
+        async def _fetch_single(f):
+            try:
+                aci = await _get_aci_async(session, f.id)
+                # Use _cached to leverage single-fabric caching
+                def _loader():
+                    new_loop = asyncio.new_event_loop()
+                    try:
+                        return new_loop.run_until_complete(_get_bgp_map_data(session, aci, new_loop, f.id))
+                    finally:
+                        new_loop.close()
+
+                return await loop.run_in_executor(
+                    None, run_with_context(_cached),
+                    _fkey(f.id, "bgp_map"),
+                    _loader
+                )
+            except Exception as e:
+                logger.error(f"Aggregated BGP map fetch failed for {f.id}: {e}")
+                return {"leaves": [], "peers": [], "edges": [], "stats": {}}
+
+        results = await asyncio.gather(*[_fetch_single(f) for f in fabrics])
+
+        # Merge results
+        merged = {
+            "leaves": [], "peers": [], "edges": [],
+            "stats": {"leaf_count": 0, "peer_count": 0, "edge_count": 0, "established": 0, "down": 0}
+        }
+        for res in results:
+            # We don't need to deduplicate across fabrics for leaves and peers as they are tagged with fabric_id
+            merged["leaves"].extend(res.get("leaves", []))
+            merged["peers"].extend(res.get("peers", []))
+            merged["edges"].extend(res.get("edges", []))
+            for k in merged["stats"]:
+                merged["stats"][k] += res.get("stats", {}).get(k, 0)
+
+        data = merged
+        raw_json = results # Aggregate of raw responses
+    else:
+        aci = await _get_aci_async(session, fabric_id)
+
+        def _loader():
+            new_loop = asyncio.new_event_loop()
+            try:
+                return new_loop.run_until_complete(_get_bgp_map_data(session, aci, new_loop, fabric_id))
+            finally:
+                new_loop.close()
+
+        data = await loop.run_in_executor(
+            None, run_with_context(_cached),
+            _fkey(fabric_id, "bgp_map"),
+            _loader
+        )
+        raw_json = data
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/aci_bgp_map.html", {
+            "data": data,
+            "raw_json": raw_json
+        })
+
+    return data
+
 @router.get("/bgp/peers")
 async def list_bgp_peers(
     request: Request,
@@ -634,7 +845,8 @@ async def list_bgp_peers(
         async def _fetch_single(f):
             try:
                 aci = await _get_aci_async(session, f.id)
-                p, raw = await _get_processed_bgp_peers(aci, loop, f.id)
+                res = await _get_processed_bgp_peers(aci, loop, f.id)
+                p, raw = res if isinstance(res, tuple) else (res, {"imdata": []})
                 for x in p:
                     x.update({"fabric_id": f.id, "fabric_label": f.label})
                 return p, raw
@@ -652,7 +864,8 @@ async def list_bgp_peers(
                 peers_raw["imdata"].extend(raw.get("imdata", []))
     else:
         aci = await _get_aci_async(session, fabric_id)
-        processed, peers_raw = await _get_processed_bgp_peers(aci, loop, fabric_id)
+        res = await _get_processed_bgp_peers(aci, loop, fabric_id)
+        processed, peers_raw = res if isinstance(res, tuple) else (res, {"imdata": []})
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
