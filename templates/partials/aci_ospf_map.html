@@ -1,0 +1,139 @@
+<div class="card shadow-sm border-0 animate-fade-in">
+    <script id="aci-ospf-map-raw" type="application/json">{{ raw_json|tojson }}</script>
+    <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <div class="d-flex align-items-center gap-3">
+            <span class="fw-bold text-navy"><i class="ph ph-tree-structure me-1"></i>OSPF Map (External Adjacencies)</span>
+            <button class="btn btn-xs btn-outline-navy" onclick="showRawData('aci-ospf-map-raw')">
+                <i class="ph ph-code me-1"></i>Raw
+            </button>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+            <span class="badge bg-success-subtle text-success border border-success-subtle">
+                <i class="ph ph-check-circle me-1"></i>{{ data.stats.full }} full
+            </span>
+            {% if data.stats.down > 0 %}
+            <span class="badge bg-danger-subtle text-danger border border-danger-subtle">
+                <i class="ph ph-x-circle me-1"></i>{{ data.stats.down }} down
+            </span>
+            {% endif %}
+            <span class="badge bg-secondary">{{ data.stats.peer_count }} external OSPF neighbors</span>
+        </div>
+    </div>
+    <div class="card-body p-4">
+        {% if not data.edges %}
+        <div class="p-5 text-center text-muted">
+            <i class="ph ph-empty display-4 d-block mb-3"></i>
+            <div>No external OSPF adjacencies found on this fabric.</div>
+        </div>
+        {% else %}
+
+        <div class="mb-4 d-flex gap-4 small fw-bold">
+            <div class="d-flex align-items-center gap-2">
+                <div style="width: 24px; height: 3px; background: #16a34a; border-radius: 2px;"></div>
+                <span class="text-navy">FULL</span>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+                <div style="width: 24px; height: 3px; background: #dc2626; border-radius: 2px;"></div>
+                <span class="text-navy">DOWN / OTHER</span>
+            </div>
+        </div>
+
+        {% for fabric_group in data.leaves | groupby('fabric_id') %}
+            {% set fabric_id = fabric_group.grouper %}
+            {% set fabric_leaves = fabric_group.list %}
+            {% set fabric_label = fabric_leaves[0].fabric_label if fabric_leaves else fabric_id %}
+
+            {# Filter peers for this fabric #}
+            {% set fabric_peers = [] %}
+            {% for p in data.peers %}
+                {% if p.fabric_id == fabric_id %}
+                    {% set _ = fabric_peers.append(p) %}
+                {% endif %}
+            {% endfor %}
+
+            {% if data.leaves | groupby('fabric_id') | list | length > 1 %}
+            <div class="text-navy fw-bold mb-3 mt-4 border-bottom pb-2" style="font-size: 0.9rem;">
+                <i class="ph ph-intersect me-1"></i>Fabric: {{ fabric_label }}
+            </div>
+            {% endif %}
+
+            {% set row_height = 64 %}
+            {% set leaf_count = fabric_leaves | length %}
+            {% set peer_count = fabric_peers | length %}
+            {% set svg_height = ([leaf_count, peer_count] | max * row_height) + 20 %}
+
+            {# Map IDs to Y coordinates #}
+            {% set leaf_y = {} %}
+            {% for leaf in fabric_leaves %}
+                {% set _ = leaf_y.update({leaf.id: 20 + loop.index0 * row_height}) %}
+            {% endfor %}
+
+            {% set peer_y = {} %}
+            {% for peer in fabric_peers %}
+                {% set _ = peer_y.update({peer.id: 20 + loop.index0 * row_height}) %}
+            {% endfor %}
+
+            <div class="bg-white border rounded p-3 overflow-auto mb-4">
+                <svg width="1100" height="{{ svg_height }}" viewBox="0 0 1100 {{ svg_height }}" xmlns="http://www.w3.org/2000/svg">
+                    <!-- Edges -->
+                    {% for edge in data.edges %}
+                        {% if edge.leaf_id in leaf_y and edge.peer_id in peer_y %}
+                            {% set y1 = leaf_y[edge.leaf_id] + 20 %}
+                            {% set y2 = peer_y[edge.peer_id] + 24 %}
+                            {% set color = '#16a34a' if edge.state == 'full' else '#dc2626' %}
+
+                            {# Horizontal cubic bezier for cleaner crossings #}
+                            <path d="M 220 {{ y1 }} C 470 {{ y1 }}, 470 {{ y2 }}, 720 {{ y2 }}"
+                                  stroke="{{ color }}" stroke-width="2" fill="none" stroke-opacity="0.6" />
+                        {% endif %}
+                    {% endfor %}
+
+                    <!-- Leaf Nodes (Left) -->
+                    {% for leaf in fabric_leaves %}
+                        {% set y = leaf_y[leaf.id] %}
+                        <g transform="translate(20, {{ y }})">
+                            <rect width="200" height="40" rx="8" fill="#fff" stroke="#001e44" stroke-width="1.5" />
+                            <text x="100" y="25" text-anchor="middle" font-size="13" font-weight="600" fill="#001e44">{{ leaf.name }}</text>
+                        </g>
+                    {% endfor %}
+
+                    <!-- External Peers (Right) -->
+                    {% for peer in fabric_peers %}
+                        {% set y = peer_y[peer.id] %}
+                        <g transform="translate(720, {{ y }})">
+                            <rect width="360" height="48" rx="8" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1" />
+                            <text x="14" y="20" font-size="13" font-weight="700" fill="#001e44">{{ peer.addr }} · <tspan font-size="11" font-weight="400" fill="#64748b">rid {{ peer.router_id }}</tspan></text>
+                            <text x="14" y="38" font-size="11" fill="#64748b">
+                                {% if peer.resolved_name %}
+                                    {{ peer.resolved_name }} ({{ peer.l3out }})
+                                {% else %}
+                                    {{ peer.l3out }}
+                                {% endif %}
+                                · area {{ peer.area }} · {{ peer.vrf }}
+                            </text>
+
+                            {% if peer.resolved_source %}
+                            <text x="346" y="18" text-anchor="end" font-size="9" font-weight="800" fill="#94a3b8" style="text-transform: uppercase;">{{ peer.resolved_source }}</text>
+                            {% endif %}
+                        </g>
+                    {% endfor %}
+                </svg>
+            </div>
+        {% endfor %}
+
+        {% endif %}
+    </div>
+</div>
+
+<style>
+    .animate-fade-in { animation: fadeIn 0.4s ease-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+
+    svg text {
+        pointer-events: none;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+
+    /* Hover effect for edges if we wanted it, but keeping it simple as requested */
+    svg path { transition: stroke-width 0.2s; }
+</style>

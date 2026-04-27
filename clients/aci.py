@@ -271,6 +271,10 @@ class ACIClient:
         """Query ospfAdjEp for OSPF neighbor states."""
         return self.get("api/node/class/ospfAdjEp.json", action="FETCH_ACI_OSPF_PEERS")
 
+    def get_l3out_vrf_bindings(self):
+        """Query l3extRsEctx to map L3Outs to their VRF contexts (used by OSPF Map)."""
+        return self.get("api/node/class/l3extRsEctx.json", action="FETCH_ACI_L3OUT_VRF_BINDINGS")
+
     def get_l3_subnets(self):
         """Query l3extSubnet for external subnet policies."""
         return self.get("api/node/class/l3extSubnet.json", action="FETCH_ACI_SUBNETS")
