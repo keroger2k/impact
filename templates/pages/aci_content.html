@@ -32,6 +32,9 @@
           <button class="list-group-item list-group-item-action py-3 px-4" hx-get="/api/aci/bgp/map" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
             <i class="ph ph-share-network me-2"></i> BGP Map
           </button>
+          <button class="list-group-item list-group-item-action py-3 px-4" hx-get="/api/aci/ospf/peers" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-plugs-connected me-2"></i> OSPF Peers
+          </button>
           <button class="list-group-item list-group-item-action py-3 px-4" hx-get="/api/aci/ospf/map" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
             <i class="ph ph-tree-structure me-2"></i> OSPF Map
           </button>

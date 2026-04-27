@@ -1161,6 +1161,9 @@ async def _get_processed_ospf_peers(
                 vrf_to_l3outs[vrf_canonical].append({"tenant": tenant, "l3out": l3out})
 
     # 2. Process OSPF adjacencies
+    # ACI's ospfAdjEp class exposes the neighbor as: peerIp (neighbor IP),
+    # name (neighbor router ID, also encoded in the DN as adj-<router-id>),
+    # operSt (FSM state), area, peerType.
     processed = []
     for entry in ospf_peers_raw.get('imdata', []):
         attr = entry.get('ospfAdjEp', {}).get('attributes', {})
@@ -1171,6 +1174,17 @@ async def _get_processed_ospf_peers(
         vrf = next((p.replace('dom-', '') for p in dn_parts if p.startswith('dom-')), "N/A")
         iface_match = re.search(r'if-\[(.+?)\]', dn)
         interface = iface_match.group(1) if iface_match else None
+
+        # Router ID: prefer 'name' (ACI standard), fall back to legacy 'routerId',
+        # then to the adj-<router-id> segment in the DN.
+        router_id = attr.get("name") or attr.get("routerId")
+        if not router_id:
+            adj_match = re.search(r'/adj-([^/]+)', dn)
+            if adj_match:
+                router_id = adj_match.group(1)
+
+        # Peer IP: prefer 'peerIp' (ACI standard), then 'addr', then legacy 'ip'.
+        peer_ip = _norm_ip(attr.get("peerIp") or attr.get("addr") or attr.get("ip"))
 
         # Look up L3Outs for this VRF
         matches = vrf_to_l3outs.get(vrf, [])
@@ -1190,18 +1204,21 @@ async def _get_processed_ospf_peers(
             "vrf": vrf,
             "l3out": l3out,
             "tenant": tenant,
-            "addr": _norm_ip(attr.get("ip")),
-            "router_id": attr.get("routerId"),
+            "addr": peer_ip,
+            "router_id": router_id,
             "area": attr.get("area"),
             "state": (attr.get("operSt") or "unknown").lower(),
+            "peer_type": attr.get("peerType"),
             "interface": interface,
             "dn": dn,
         })
 
-    # 3. Dedupe for table view (if needed later)
+    # 3. Dedupe for table view (if needed later). A unique OSPF neighbor is
+    # identified by router_id + vrf; fall back to addr+vrf when router_id is missing.
     groups: Dict[Tuple[str, str], List[Dict]] = {}
     for row in processed:
-        groups.setdefault((row["addr"], row["vrf"]), []).append(row)
+        key = (row["router_id"] or row["addr"], row["vrf"])
+        groups.setdefault(key, []).append(row)
 
     deduped: List[Dict] = []
     for rows in groups.values():
@@ -1290,10 +1307,13 @@ async def _get_ospf_map_data(
         node_id = p["node"]
         peer_addr = p["addr"]
         vrf = p["vrf"]
-        peer_key = (peer_addr, vrf)
+        # OSPF neighbors are uniquely identified by router_id within a VRF.
+        # Fall back to peer IP when router_id is unavailable.
+        peer_ident = p["router_id"] or peer_addr
+        peer_key = (peer_ident, vrf)
 
         prefixed_leaf_id = f"{fabric_id}:node-{node_id}"
-        prefixed_peer_id = f"{fabric_id}:peer-{peer_addr}-vrf-{vrf}"
+        prefixed_peer_id = f"{fabric_id}:peer-{peer_ident}-vrf-{vrf}"
 
         if node_id not in leaves_seen:
             node_info = node_map.get(node_id, {"name": f"node-{node_id}"})
@@ -1456,6 +1476,53 @@ async def ospf_map(
         })
 
     return data
+
+
+@router.get("/ospf/peers")
+async def list_ospf_peers(
+    request: Request,
+    session: SessionEntry = Depends(require_auth),
+    fabric_id: str = Depends(get_fabric_id),
+):
+    """List OSPF neighbors and their adjacency states."""
+    import clients.aci_registry as reg
+    loop = asyncio.get_event_loop()
+
+    if request.query_params.get("fabric") == "all":
+        async def _fetch_single(f):
+            try:
+                aci = await _get_aci_async(session, f.id)
+                _, deduped, raw = await _get_processed_ospf_peers(aci, loop, f.id)
+                await _enrich_ospf_peers(session, deduped)
+                for x in deduped:
+                    x.update({"fabric_id": f.id, "fabric_label": f.label})
+                return deduped, raw
+            except Exception as e:
+                logger.error(f"Aggregated OSPF peers fetch failed for {f.id}: {e}")
+                return [], {"imdata": []}
+
+        results = await asyncio.gather(*[_fetch_single(f) for f in reg.list_fabrics()], return_exceptions=True)
+
+        processed: List[Dict] = []
+        peers_raw: Dict[str, Any] = {"imdata": []}
+        for res in results:
+            if isinstance(res, tuple):
+                p, raw = res
+                processed.extend(p)
+                peers_raw["imdata"].extend(raw.get("imdata", []))
+    else:
+        aci = await _get_aci_async(session, fabric_id)
+        _, processed, peers_raw = await _get_processed_ospf_peers(aci, loop, fabric_id)
+        await _enrich_ospf_peers(session, processed)
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/aci_ospf_peers.html", {
+            "peers": processed,
+            "raw_json": peers_raw,
+        })
+
+    return {"items": processed, "raw": peers_raw}
 
 
 # ── L3Out Routes ──────────────────────────────────────────────────────────────
