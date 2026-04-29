@@ -151,6 +151,12 @@ async def aci_cache_info():
         fabric_keys = [f"aci_{f.id}_{k}" for k in ACI_CACHE_KEYS]
         infos = {k: cache.cache_info(k) for k in fabric_keys}
 
+        # Per-L3Out route-table entries are stored under
+        # `aci_{fabric}_l3out_route_table:{quoted_dn}`, so the literal lookup
+        # above never finds them. Surface them via prefix scan.
+        for sub_key in cache.keys_for_prefix(f"aci_{f.id}_l3out_route_table:"):
+            infos[sub_key] = cache.cache_info(sub_key)
+
         # Find the oldest valid timestamp to represent fabric "freshness"
         valid_ts = [v["set_at"] for v in infos.values() if v]
 
@@ -1809,6 +1815,9 @@ async def _get_l3out_route_table_data(
     fetch_errors = []
     all_routes = []
 
+    nodes_proc, _ = await _get_processed_nodes(aci, current_loop, fabric_id)
+    node_name_map = {n["id"]: n["name"] for n in nodes_proc}
+
     async def fetch_node(node_id, fam):
         cls = "uribv4Route" if fam == "v4" else "uribv6Route"
         nh_cls = "uribv4Nexthop" if fam == "v4" else "uribv6Nexthop"
@@ -1819,8 +1828,7 @@ async def _get_l3out_route_table_data(
             fetch_errors.append({"node": node_id, "family": fam, "status": meta.get("status"), "error": meta.get("error")})
             return
 
-        nodes_proc, _ = await _get_processed_nodes(aci, current_loop, fabric_id)
-        node_name = next((n["name"] for n in nodes_proc if n["id"] == node_id), f"LEAF-{node_id}")
+        node_name = node_name_map.get(node_id, f"LEAF-{node_id}")
 
         for item in meta["data"].get("imdata", []):
             rt_obj = item.get(cls, {})
