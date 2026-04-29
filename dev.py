@@ -534,6 +534,101 @@ MOCK_ACI_HEALTH_PODS = [
     {"fabricPod": {"attributes": {"id": "1"}, "children": [{"healthInst": {"attributes": {"cur": "92"}}}]}}
 ]
 
+MOCK_ACI_URIBV4_ROUTES = [
+    {
+        "uribv4Route": {
+            "attributes": {"prefix": "10.100.1.0/24", "modTs": "2026-04-26T14:32:11.000Z", "dn": "topology/pod-1/node-101/sys/uribv4/dom-default/rt-[10.100.1.0/24]"},
+            "children": [
+                {"uribv4Nexthop": {"attributes": {"addr": "10.255.0.1", "pref": "20", "routeType": "bgp", "dn": "topology/pod-1/node-101/sys/uribv4/dom-default/rt-[10.100.1.0/24]/nh-[10.255.0.1]"}}}
+            ]
+        }
+    },
+    {
+        "uribv4Route": {
+            "attributes": {"prefix": "10.100.3.0/24", "modTs": "2026-04-26T14:32:11.000Z", "dn": "topology/pod-1/node-101/sys/uribv4/dom-default/rt-[10.100.3.0/24]"},
+            "children": [
+                {"uribv4Nexthop": {"attributes": {"addr": "10.255.0.1", "pref": "20", "routeType": "bgp", "dn": "topology/pod-1/node-101/sys/uribv4/dom-default/rt-[10.100.3.0/24]/nh-[10.255.0.1]"}}}
+            ]
+        }
+    },
+    {
+        "uribv4Route": {
+            "attributes": {"prefix": "10.100.1.0/24", "modTs": "2026-04-26T14:32:11.000Z", "dn": "topology/pod-1/node-102/sys/uribv4/dom-default/rt-[10.100.1.0/24]"},
+            "children": [
+                {"uribv4Nexthop": {"attributes": {"addr": "10.255.0.2", "pref": "20", "routeType": "bgp", "dn": "topology/pod-1/node-102/sys/uribv4/dom-default/rt-[10.100.1.0/24]/nh-[10.255.0.2]"}}}
+            ]
+        }
+    },
+    {
+        "uribv4Route": {
+            "attributes": {"prefix": "192.168.50.0/24", "modTs": "2026-04-26T14:32:11.000Z", "dn": "topology/pod-1/node-101/sys/uribv4/dom-default/rt-[192.168.50.0/24]"},
+            "children": [
+                {"uribv4Nexthop": {"attributes": {"addr": "10.250.0.5", "pref": "110", "routeType": "ospf-intra", "dn": "topology/pod-1/node-101/sys/uribv4/dom-default/rt-[192.168.50.0/24]/nh-[10.250.0.5]"}}}
+            ]
+        }
+    },
+    {
+        "uribv4Route": {
+            "attributes": {"prefix": "8.8.8.8/32", "modTs": "2026-04-26T14:32:11.000Z", "dn": "topology/pod-1/node-101/sys/uribv4/dom-default/rt-[8.8.8.8/32]"},
+            "children": [
+                {"uribv4Nexthop": {"attributes": {"addr": "10.255.0.254", "pref": "1", "routeType": "static", "dn": "topology/pod-1/node-101/sys/uribv4/dom-default/rt-[8.8.8.8/32]/nh-[10.255.0.254]"}}}
+            ]
+        }
+    },
+    {
+        "uribv4Route": {
+            "attributes": {"prefix": "10.255.0.252/30", "modTs": "2026-04-26T14:32:11.000Z", "dn": "topology/pod-1/node-101/sys/uribv4/dom-default/rt-[10.255.0.252/30]"},
+            "children": [
+                {"uribv4Nexthop": {"attributes": {"addr": "0.0.0.0", "pref": "0", "routeType": "direct", "dn": "topology/pod-1/node-101/sys/uribv4/dom-default/rt-[10.255.0.252/30]/nh-[0.0.0.0]"}}}
+            ]
+        }
+    },
+    {
+        "uribv4Route": {
+            "attributes": {"prefix": "44.44.44.0/24", "modTs": "2026-04-26T14:32:11.000Z", "dn": "topology/pod-1/node-101/sys/uribv4/dom-default/rt-[44.44.44.0/24]"},
+            "children": [
+                {"uribv4Nexthop": {"attributes": {"addr": "1.1.1.1", "pref": "115", "routeType": "isis", "dn": "topology/pod-1/node-101/sys/uribv4/dom-default/rt-[44.44.44.0/24]/nh-[1.1.1.1]"}}}
+            ]
+        }
+    },
+    {
+        "uribv4Route": {
+            "attributes": {"prefix": "172.16.99.0/24", "modTs": "2026-04-26T14:32:11.000Z", "dn": "topology/pod-1/node-101/sys/uribv4/dom-default/rt-[172.16.99.0/24]"},
+            "children": [
+                {"uribv4Nexthop": {"attributes": {"addr": "172.16.99.1", "pref": "20", "routeType": "bgp", "dn": "topology/pod-1/node-101/sys/uribv4/dom-default/rt-[172.16.99.0/24]/nh-[172.16.99.1]"}}}
+            ]
+        }
+    }
+]
+
+MOCK_ACI_URIBV6_ROUTES = [
+    {
+        "uribv6Route": {
+            "attributes": {"prefix": "2001:db8::/32", "modTs": "2026-04-26T14:32:11.000Z", "dn": "topology/pod-1/node-101/sys/uribv6/dom-default/rt-[2001:db8::/32]"},
+            "children": [
+                {"uribv6Nexthop": {"attributes": {"addr": "2001:db8::1", "pref": "20", "routeType": "bgp", "dn": "topology/pod-1/node-101/sys/uribv6/dom-default/rt-[2001:db8::/32]/nh-[2001:db8::1]"}}}
+            ]
+        }
+    }
+]
+
+MOCK_ACI_OSPF_ADJ_EP = [
+    {
+        "ospfAdjEp": {
+            "attributes": {
+                "dn": "topology/pod-1/node-101/sys/ospf/inst/dom-default/if-[eth1/49]/adj-[10.250.0.5]",
+                "addr": "10.250.0.5",
+                "operSt": "full"
+            }
+        }
+    }
+]
+
+MOCK_ACI_L3EXT_RS_ECTX = [
+    {"l3extRsEctx": {"attributes": {"dn": "uni/tn-COMMON/out-L3OUT-CORE/rsectx", "tDn": "uni/tn-COMMON/ctx-default"}}},
+    {"l3extRsEctx": {"attributes": {"dn": "uni/tn-COMMON/out-L3OUT-SHARED/rsectx", "tDn": "uni/tn-COMMON/ctx-default"}}}
+]
+
 MOCK_ACI_NODE_208_INTERFACES = [
     {
       "vpcIf": {
@@ -1145,6 +1240,10 @@ def seed_cache(cache) -> None:
     cache.set("aci_health_overall", {"imdata": MOCK_ACI_HEALTH_OVERALL}, LONG)
     cache.set("aci_health_tenants", {"imdata": MOCK_ACI_HEALTH_TENANTS}, LONG)
     cache.set("aci_health_pods",    {"imdata": MOCK_ACI_HEALTH_PODS},    LONG)
+    cache.set("aci_uribv4_routes",  {"imdata": MOCK_ACI_URIBV4_ROUTES},  LONG)
+    cache.set("aci_uribv6_routes",  {"imdata": MOCK_ACI_URIBV6_ROUTES},  LONG)
+    cache.set("aci_ospf_adj_ep",    {"imdata": MOCK_ACI_OSPF_ADJ_EP},    LONG)
+    cache.set("aci_l3ext_rs_ectx",  {"imdata": MOCK_ACI_L3EXT_RS_ECTX},  LONG)
     cache.set("status_aci", {"ok": True, "detail": "Connected (mock)"}, LONG)
 
     # Nexus (seed source caches BEFORE computing the IPAM tree below)

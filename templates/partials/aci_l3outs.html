@@ -65,6 +65,14 @@
                                         title="Routes advertised to peers (TX)">
                                     <i class="ph ph-arrow-up-right me-1"></i>TX
                                 </button>
+                                <button class="btn btn-xs btn-outline-success"
+                                        hx-get="/api/aci/l3outs/route-table?dn={{ l.dn|urlencode }}"
+                                        hx-vals='js:{fabric: "{{ l.fabric_id if l.fabric_id else "" }}" || window.currentFabric}'
+                                        hx-target="#aci-results"
+                                        hx-indicator="#aci-loading"
+                                        title="Full VRF Route Table (Border Leaves)">
+                                    <i class="ph ph-list-bullets me-1"></i>Routes
+                                </button>
                             </div>
                         </td>
                         <td class="text-end pe-3">

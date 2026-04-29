@@ -121,12 +121,52 @@ class ACIClient:
                 MOCK_ACI_BGP_RIB_IN, MOCK_ACI_BGP_RIB_OUT,
                 MOCK_ACI_BGP_DOMS_ALL, MOCK_ACI_BGP_PEER_CFG,
                 MOCK_ACI_BGP_ADJ_RIB_IN, MOCK_ACI_BGP_ADJ_RIB_OUT,
-                MOCK_ACI_NODE_INTERFACES, MOCK_ACI_NODE_208_INTERFACES
+                MOCK_ACI_NODE_INTERFACES, MOCK_ACI_NODE_208_INTERFACES,
+                MOCK_ACI_URIBV4_ROUTES, MOCK_ACI_URIBV6_ROUTES,
+                MOCK_ACI_OSPF_ADJ_EP, MOCK_ACI_L3EXT_RS_ECTX
             )
             if "fabricNode" in path: return {"imdata": MOCK_ACI_NODES}
-            if "l3extOut" in path: return {"imdata": MOCK_ACI_L3OUTS}
+            if "l3extOut" in path:
+                if "rsp-subtree=full" in path:
+                    return {
+                        "imdata": [{
+                            "l3extOut": {
+                                "attributes": {"name": "L3OUT-CORE", "dn": "uni/tn-COMMON/out-L3OUT-CORE"},
+                                "children": [
+                                    {
+                                        "l3extLNodeP": {
+                                            "attributes": {"name": "BorderLeafs", "dn": "uni/tn-COMMON/out-L3OUT-CORE/lnodep-BorderLeafs"},
+                                            "children": [
+                                                {"l3extRsNodeL3OutAtt": {"attributes": {"tDn": "topology/pod-1/node-101"}}},
+                                                {"l3extRsNodeL3OutAtt": {"attributes": {"tDn": "topology/pod-1/node-102"}}},
+                                                {
+                                                    "l3extLIfP": {
+                                                        "attributes": {"name": "IF1", "dn": "uni/tn-COMMON/out-L3OUT-CORE/lnodep-BorderLeafs/lifp-IF1"},
+                                                        "children": [
+                                                            {"l3extRsPathL3OutAtt": {"attributes": {
+                                                                "dn": "uni/tn-COMMON/out-L3OUT-CORE/lnodep-BorderLeafs/lifp-IF1/rspathL3OutAtt-[topology/pod-1/paths-101/pathep-[eth1/49]]",
+                                                                "tDn": "topology/pod-1/paths-101/pathep-[eth1/49]",
+                                                                "addr": "10.255.0.254/30"
+                                                            }}}
+                                                        ]
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    {"bgpPeerP": {"attributes": {"addr": "10.255.0.1", "dn": "uni/tn-COMMON/out-L3OUT-CORE/lnodep-BorderLeafs/rspeerToProfile/bgpPeerP-[10.255.0.1]"}}},
+                                    {"bgpPeerP": {"attributes": {"addr": "10.255.0.2", "dn": "uni/tn-COMMON/out-L3OUT-CORE/lnodep-BorderLeafs/rspeerToProfile/bgpPeerP-[10.255.0.2]"}}},
+                                ]
+                            }
+                        }]
+                    }
+                return {"imdata": MOCK_ACI_L3OUTS}
             if "bgpPeerEntry" in path: return {"imdata": MOCK_ACI_BGP_PEERS}
             if "l3extSubnet" in path: return {"imdata": MOCK_ACI_SUBNETS}
+            if "uribv4Route" in path or "uribv4/dom-" in path: return {"imdata": MOCK_ACI_URIBV4_ROUTES}
+            if "uribv6Route" in path or "uribv6/dom-" in path: return {"imdata": MOCK_ACI_URIBV6_ROUTES}
+            if "ospfAdjEp" in path: return {"imdata": MOCK_ACI_OSPF_ADJ_EP}
+            if "l3extRsEctx" in path: return {"imdata": MOCK_ACI_L3EXT_RS_ECTX}
             if "fvSubnet" in path:
                 return {
                     "imdata": [
