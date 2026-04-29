@@ -39,14 +39,33 @@ The app is structured in three layers:
 - `clients/aci.py` — direct REST API wrapper for APIC; handles login tokens and tree queries
 - `clients/aci_registry.py` — singleton registry managing multi-fabric configurations from environment variables
 
-**Cache layer** (`cache.py`) is a singleton in-memory TTL cache with disk persistence:
-- `devices` and `sites`: 24-hour TTL, pre-warmed at startup (skipped if valid disk cache exists)
-- `pan_*` keys (Panorama): device groups, rules, address objects, services — 1-hour TTL
-- `ise_*` keys (ISE): all stable list endpoints — 1-hour TTL
-- `aci_{fabric_id}_*` keys (ACI): namespaced by fabric ID (e.g., `aci_dc1_nodes`); 1-hour for static lists, 5-minute for operational data (interfaces, BGP RIB)
-- System status checks (`status_*`): 5-minute TTL, memory-only
-- Persistent keys survive server restarts — written as JSON to `data/cache/` (gitignored)
-- `cache.keys_for_prefix(prefix)` scans both memory and disk; `cache.invalidate_prefix(prefix)` clears both
+**Cache layer** (`cache.py`) is a singleton TTL cache backed by `diskcache` (SQLite at `data/cache/diskcache/cache.db`); persists across restarts.
+
+Default TTLs are defined as constants in `cache.py:21-29` and each is overridable via an `IMPACT_TTL_*` env var:
+
+| Constant | Default | Env override | Used by |
+|---|---|---|---|
+| `TTL_DEFAULT` | 48h | `IMPACT_TTL_DEFAULT` | fallback for `cache.set(...)` with no TTL |
+| `TTL_DEVICES` | 4h | `IMPACT_TTL_DEVICES` | DNAC `devices` cache |
+| `TTL_SITES` | 4h | `IMPACT_TTL_SITES` | DNAC `sites`, `device_site_map` |
+| `TTL_ISE_POLICIES` | 1h | `IMPACT_TTL_ISE_POLICIES` | all ISE stable lists (NADs, SGTs, policy sets, auth rules per policy set, etc.) |
+| `TTL_ACI_STATUS` | 15m | `IMPACT_TTL_ACI_STATUS` | every ACI call going through `_cached(...)` with no explicit TTL — nodes, L3Outs, BGP/OSPF peers, BGP DOMs, BGP capability probes, BGP/OSPF maps |
+| `TTL_ACI_ROUTE_TABLE` | 5m | `IMPACT_TTL_ACI_ROUTE_TABLE` | per-L3Out route table (`/api/aci/l3outs/route-table`) |
+| `TTL_STATUS` | 5m | `IMPACT_TTL_STATUS` | system connectivity probes (`status_dnac`, `status_ise`, `status_panorama`) |
+| `TTL_PAN_INTERFACES` | 48h | `IMPACT_TTL_PAN_INTERFACES` | Panorama interfaces, rules, device groups, address objects, services |
+| `TTL_DNAC_INTERFACES` | 4h | `IMPACT_TTL_DNAC_INTERFACES` | DNAC per-device interface inventory |
+
+Naming conventions for cache keys:
+- `devices` / `sites` / `device_site_map` — DNAC top-level, pre-warmed at startup
+- `pan_*` — Panorama (rules, device_groups, address_objects, services, interfaces, firewalls)
+- `ise_*` — ISE (stable lists, plus `ise_auth_rules_{policy_set_id}` per policy set)
+- `aci_{fabric_id}_{suffix}` — ACI, namespaced per fabric (`_fkey(fabric_id, suffix)` in `routers/aci.py`). Per-L3Out route-table entries are stored under `aci_{fabric_id}_l3out_route_table:{quoted_dn}`.
+- `status_*` — system connectivity probes
+
+Other notes:
+- **Stale-while-revalidate**: physical disk retention is 30 days regardless of logical TTL — if a loader fails on a logically-expired key, `get_or_set` returns the stale value rather than `None`.
+- **Helpers**: `cache.keys_for_prefix(prefix)` and `cache.invalidate_prefix(prefix)` scan all keys.
+- **DEV_MODE**: `dev.seed_cache(cache)` runs on every startup when `DEV_MODE=true`, *unconditionally overwriting* every mock key with a 1-year TTL. Real cached data is replaced by mock fixtures on every dev restart — this is intentional for deterministic dev sessions.
 
 **Router layer** (`routers/`) contains FastAPI request handlers:
 - `routers/dnac.py` — 9 endpoints under `/api/dnac/` including `GET /cache/info`
@@ -82,6 +101,12 @@ See `.env.template`. Required vars:
 - `PANORAMA_HOST` — Palo Alto Panorama hostname
 - `ACI_FABRICS` — Comma-separated fabric IDs (e.g., `dc1,dc2`)
 - `ACI_{ID}_URL` / `ACI_{ID}_DOMAIN` / `ACI_{ID}_LABEL` — per-fabric settings
+
+Optional cache TTL overrides (seconds — see the Cache layer table above for defaults and which keys each one governs): `IMPACT_TTL_DEFAULT`, `IMPACT_TTL_DEVICES`, `IMPACT_TTL_SITES`, `IMPACT_TTL_ISE_POLICIES`, `IMPACT_TTL_ACI_STATUS`, `IMPACT_TTL_ACI_ROUTE_TABLE`, `IMPACT_TTL_STATUS`, `IMPACT_TTL_PAN_INTERFACES`, `IMPACT_TTL_DNAC_INTERFACES`.
+
+Other optional vars:
+- `DEV_MODE` — when `true`, seeds mock fixtures into cache on every startup (deterministic dev mode). Disables LDAP and APIC/DNAC/ISE/Panorama calls.
+- `IMPACT_VERIFY_SSL` — defaults to `false` (the infrastructure uses self-signed certs). Set `true` to enforce verification.
 
 ## CLI Mode
 

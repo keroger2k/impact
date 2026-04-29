@@ -34,6 +34,32 @@ def _norm_ip(s):
     if not s: return ""
     return s.split('/')[0].strip().strip('[]').lower()
 
+def _ip_sort_key(s):
+    """Sort key for IP / CIDR strings that orders numerically across families.
+    v4 sorts before v6; non-IP strings sort after both, alphabetically. Handles
+    bare addresses, CIDRs (`10.0.0.0/8`), and zone-id suffixes (`fe80::1%eth0`).
+    """
+    if not s:
+        return (2, 0, 0, "")
+    raw = str(s).split('%')[0].strip()
+    try:
+        net = ipaddress.ip_network(raw, strict=False)
+        return (0 if net.version == 4 else 1, int(net.network_address), net.prefixlen, "")
+    except ValueError:
+        try:
+            addr = ipaddress.ip_address(raw.split('/')[0])
+            return (0 if addr.version == 4 else 1, int(addr), 0, "")
+        except ValueError:
+            return (2, 0, 0, raw)
+
+def _node_sort_key(s):
+    """Sort key for ACI node IDs (strings like '101', '1001'). Numeric when
+    possible, falls back to string."""
+    try:
+        return (0, int(s))
+    except (TypeError, ValueError):
+        return (1, str(s))
+
 def _validate_dn(dn: str):
     """Ensure the provided DN string is well-formed before sending to APIC."""
     if not dn or not ACI_DN_RE.match(dn):
@@ -82,7 +108,7 @@ def get_fabric_id(request: Request) -> str:
 
     return fid
 
-from cache import TTL_ACI_STATUS as ACI_TTL
+from cache import TTL_ACI_STATUS as ACI_TTL, TTL_ACI_ROUTE_TABLE
 
 # Standard keys used for namespacing ACI cache entries
 ACI_CACHE_KEYS = [
@@ -881,7 +907,7 @@ async def _get_bgp_map_data(session: SessionEntry, aci: ac.ACIClient, loop: asyn
 
     res = {
         "leaves": sorted(leaves, key=lambda x: x["name"]),
-        "peers": sorted(peers_seen.values(), key=lambda x: x["addr"]),
+        "peers": sorted(peers_seen.values(), key=lambda x: _ip_sort_key(x["addr"])),
         "edges": edges,
         "stats": stats
     }
@@ -968,6 +994,8 @@ async def list_bgp_peers(
     else:
         aci = await _get_aci_async(session, fabric_id)
         _, processed, peers_raw, _ = await _get_processed_bgp_peers(aci, loop, fabric_id)
+
+    processed.sort(key=lambda p: (_ip_sort_key(p.get("addr")), _node_sort_key(p.get("node")), p.get("vrf") or ""))
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
@@ -1368,7 +1396,7 @@ async def _get_ospf_map_data(
 
     res = {
         "leaves": sorted(leaves, key=lambda x: x["name"]),
-        "peers": sorted(peers_seen.values(), key=lambda x: x["addr"]),
+        "peers": sorted(peers_seen.values(), key=lambda x: _ip_sort_key(x["addr"])),
         "edges": edges,
         "stats": stats
     }
@@ -1468,6 +1496,8 @@ async def list_ospf_peers(
         aci = await _get_aci_async(session, fabric_id)
         _, processed, peers_raw = await _get_processed_ospf_peers(aci, loop, fabric_id)
         await _enrich_ospf_peers(session, processed)
+
+    processed.sort(key=lambda p: (_ip_sort_key(p.get("addr")), _ip_sort_key(p.get("router_id")), _node_sort_key(p.get("node"))))
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
@@ -1691,11 +1721,20 @@ async def get_l3out_routes(
                 f"{caps.get('apic_version') or 'this APIC version'}. Use SSH to a leaf "
                 f"and run `show ip bgp neighbors <addr> advertised-routes` for that view.")
 
-    # 3. Assemble per-peer results
+    # 3. Assemble per-peer results, sorting peers by IP, routes within each
+    # peer by prefix-IP, and the VRF-other bucket the same way.
     results = [
-        {**p, "routes": routes_by_peer.get(f"{p['node']}|{p['addr']}", [])}
+        {
+            **p,
+            "routes": sorted(
+                routes_by_peer.get(f"{p['node']}|{p['addr']}", []),
+                key=lambda r: _ip_sort_key(r.get("prefix")),
+            ),
+        }
         for p in peer_data
     ]
+    results.sort(key=lambda p: (_ip_sort_key(p.get("addr")), _node_sort_key(p.get("node"))))
+    vrf_other_routes.sort(key=lambda r: _ip_sort_key(r.get("prefix")))
 
     response = {
         "l3out": dn,
@@ -1926,6 +1965,13 @@ async def _get_l3out_route_table_data(
         by_proto[r["protocol"]] += 1
         by_node[r["node"]] += 1
 
+    # Sort routes by prefix (IP-aware), then node, then next-hop. The
+    # `_ip_sort_key` returns a tuple whose first element is the family (v4=0,
+    # v6=1), so v4 routes naturally cluster before v6.
+    route_sort_key = lambda r: (_ip_sort_key(r.get("prefix")), _node_sort_key(r.get("node")), _ip_sort_key(r.get("next_hop")))
+    primary_routes.sort(key=route_sort_key)
+    vrf_other_routes.sort(key=route_sort_key)
+
     return {
         "l3out": dn,
         "tenant": parsed_dn["tenant"],
@@ -1933,7 +1979,7 @@ async def _get_l3out_route_table_data(
         "vrf": my_vrf,
         "shared_with": shared_with,
         "apic_version": caps.get("apic_version"),
-        "border_nodes": sorted(list(border_nodes)),
+        "border_nodes": sorted(list(border_nodes), key=_node_sort_key),
         "family": family,
         "routes": primary_routes,
         "vrf_other_routes": vrf_other_routes,
@@ -1974,7 +2020,7 @@ async def get_l3out_route_table(
         None, run_with_context(_cached),
         _fkey(fabric_id, f"l3out_route_table:{quote(dn)}"),
         _loader,
-        300
+        TTL_ACI_ROUTE_TABLE
     )
 
     if request.headers.get("HX-Request"):

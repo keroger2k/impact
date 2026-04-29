@@ -8,6 +8,7 @@ thread-safe, and process-safe SQLite-backed disk cache.
 import asyncio
 import functools
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -16,15 +17,16 @@ import diskcache
 
 logger = logging.getLogger(__name__)
 
-# TTL Constants (in seconds)
-TTL_DEFAULT        = 172800  # 48 hours
-TTL_DEVICES        = 14400   # 4 hours
-TTL_SITES          = 14400   # 4 hours
-TTL_ISE_POLICIES   = 3600    # 1 hour
-TTL_ACI_STATUS     = 900     # 15 minutes
-TTL_STATUS         = 300     # 5 minutes
-TTL_PAN_INTERFACES = 172800  # 48 hours
-TTL_DNAC_INTERFACES = 14400  # 4 hours
+# TTL Constants (in seconds). Each is overridable via env (IMPACT_TTL_*).
+TTL_DEFAULT             = int(os.getenv("IMPACT_TTL_DEFAULT",          "172800"))  # 48 hours
+TTL_DEVICES             = int(os.getenv("IMPACT_TTL_DEVICES",           "14400"))  # 4 hours
+TTL_SITES               = int(os.getenv("IMPACT_TTL_SITES",             "14400"))  # 4 hours
+TTL_ISE_POLICIES        = int(os.getenv("IMPACT_TTL_ISE_POLICIES",       "3600"))  # 1 hour
+TTL_ACI_STATUS          = int(os.getenv("IMPACT_TTL_ACI_STATUS",          "900"))  # 15 minutes
+TTL_ACI_ROUTE_TABLE     = int(os.getenv("IMPACT_TTL_ACI_ROUTE_TABLE",     "300"))  # 5 minutes
+TTL_STATUS              = int(os.getenv("IMPACT_TTL_STATUS",              "300"))  # 5 minutes
+TTL_PAN_INTERFACES      = int(os.getenv("IMPACT_TTL_PAN_INTERFACES",   "172800"))  # 48 hours
+TTL_DNAC_INTERFACES     = int(os.getenv("IMPACT_TTL_DNAC_INTERFACES",   "14400"))  # 4 hours
 
 IPAM_TREE_CACHE_KEY = "ipam_tree_v3" # Bumped — DNAC now contributes full interfaces (was v2)
 
