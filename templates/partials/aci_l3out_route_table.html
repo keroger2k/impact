@@ -1,0 +1,275 @@
+<div class="card shadow-sm border-0 animate-fade-in" id="l3out-route-table-container">
+    <script id="aci-l3out-route-table-raw" type="application/json">{{ {
+        "l3out": l3out,
+        "tenant": tenant,
+        "l3out_name": l3out_name,
+        "vrf": vrf,
+        "shared_with": shared_with,
+        "apic_version": apic_version,
+        "border_nodes": border_nodes,
+        "family": family,
+        "routes": routes,
+        "vrf_other_routes": vrf_other_routes,
+        "stats": stats,
+        "fetch_errors": fetch_errors
+    }|tojson }}</script>
+
+    <div class="card-header bg-light d-flex justify-content-between align-items-center flex-wrap gap-2 sticky-top" style="z-index: 1020;">
+        <div class="d-flex align-items-center gap-3 flex-wrap">
+            <button class="btn btn-xs btn-outline-navy"
+                    hx-get="/api/aci/l3outs"
+                    hx-vals='js:{fabric: window.currentFabric}'
+                    hx-target="#aci-results" hx-indicator="#aci-loading">
+                <i class="ph ph-arrow-left me-1"></i>Back
+            </button>
+            <span class="fw-bold text-navy">
+                <i class="ph ph-list-bullets me-1"></i>L3Out Route Table:
+                <span class="text-dark">{{ l3out_name }}</span>
+                <span class="badge bg-success ms-1">{{ routes|length + vrf_other_routes|length }}</span>
+            </span>
+            <span class="badge bg-info">
+                <i class="ph ph-vignette me-1"></i>{{ vrf }}
+            </span>
+            <button class="btn btn-xs btn-outline-navy" onclick="showRawData('aci-l3out-route-table-raw')">
+                <i class="ph ph-code me-1"></i>Raw
+            </button>
+        </div>
+
+        <div class="d-flex align-items-center gap-2 small text-muted">
+            {% if apic_version %}
+            <span class="badge bg-light text-dark border">
+                <i class="ph ph-cpu me-1"></i>APIC {{ apic_version }}
+            </span>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card-body p-0">
+        {% if shared_with %}
+        <div class="alert alert-info border-0 rounded-0 mb-0 small d-flex align-items-start gap-2">
+            <i class="ph ph-info mt-1 fs-5"></i>
+            <div>
+                VRF <strong>{{ vrf }}</strong> is also bound to <strong>{{ shared_with|join(', ') }}</strong>.
+                Routes whose next-hop is plumbed under one of those L3Outs appear in the 'Other Routes in VRF' section below.
+            </div>
+        </div>
+        {% endif %}
+
+        {% if fetch_errors %}
+        <div class="border-bottom">
+            <div class="px-3 py-2 bg-light d-flex justify-content-between align-items-center small">
+                <span class="text-danger fw-bold">
+                    <i class="ph ph-warning-circle me-1"></i>{{ fetch_errors|length }} fetch error(s)
+                </span>
+                <button class="btn btn-xs btn-outline-danger"
+                        type="button" data-bs-toggle="collapse" data-bs-target="#l3out-route-fetch-errors">
+                    Show details
+                </button>
+            </div>
+            <div class="collapse" id="l3out-route-fetch-errors">
+                <div class="bg-white border-top p-3 small">
+                    {% for e in fetch_errors %}
+                    <div class="mb-2 pb-2 border-bottom">
+                        <div><strong>Node:</strong> {{ e.node }} <strong>Family:</strong> {{ e.family }}</div>
+                        <div><strong>Status:</strong> {{ e.status or '—' }}</div>
+                        {% if e.error %}<div class="text-danger small">{{ e.error }}</div>{% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if not routes and not vrf_other_routes %}
+        <div class="p-5 text-center text-muted">
+            <i class="ph ph-prohibit-inset display-4 d-block mb-3"></i>
+            <div>No routes found in VRF {{ vrf }} on border leaves.</div>
+        </div>
+        {% else %}
+        <!-- Filter Bar -->
+        <div class="p-3 bg-white border-bottom shadow-sm sticky-top" style="top: 50px; z-index: 1010;">
+            <div class="row g-3 align-items-center">
+                <div class="col-md-4">
+                    <div class="input-group input-group-sm">
+                        <span class="input-group-text bg-light border-end-0"><i class="ph ph-magnifying-glass"></i></span>
+                        <input type="text" id="route-prefix-filter" class="form-control border-start-0" placeholder="Filter by prefix..." onkeyup="filterRoutes()">
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <select id="route-node-filter" class="form-select form-select-sm" onchange="filterRoutes()">
+                        <option value="">All Nodes</option>
+                        {% for node_id in border_nodes %}
+                        <option value="{{ node_id }}">Node {{ node_id }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-5 d-flex align-items-center gap-2 flex-wrap">
+                    <div class="form-check form-check-inline mb-0 small">
+                        <input class="form-check-input" type="checkbox" id="proto-bgp" value="bgp" checked onchange="filterRoutes()">
+                        <label class="form-check-label badge bg-primary" for="proto-bgp">BGP</label>
+                    </div>
+                    <div class="form-check form-check-inline mb-0 small">
+                        <input class="form-check-input" type="checkbox" id="proto-ospf" value="ospf" checked onchange="filterRoutes()">
+                        <label class="form-check-label badge bg-info" for="proto-ospf">OSPF</label>
+                    </div>
+                    <div class="form-check form-check-inline mb-0 small">
+                        <input class="form-check-input" type="checkbox" id="proto-static" value="static" checked onchange="filterRoutes()">
+                        <label class="form-check-label badge bg-warning text-dark" for="proto-static">Static</label>
+                    </div>
+                    <div class="form-check form-check-inline mb-0 small">
+                        <input class="form-check-input" type="checkbox" id="proto-direct" value="direct" checked onchange="filterRoutes()">
+                        <label class="form-check-label badge bg-success" for="proto-direct">Direct</label>
+                    </div>
+                    <div class="form-check form-check-inline mb-0 small">
+                        <input class="form-check-input" type="checkbox" id="proto-local" value="local" checked onchange="filterRoutes()">
+                        <label class="form-check-label badge bg-secondary" for="proto-local">Local</label>
+                    </div>
+                    <div class="form-check form-check-inline mb-0 small">
+                        <input class="form-check-input" type="checkbox" id="proto-other" value="other" checked onchange="filterRoutes()">
+                        <label class="form-check-label badge bg-dark" for="proto-other">Other</label>
+                    </div>
+                </div>
+            </div>
+            <div class="mt-2 d-flex justify-content-between align-items-center small text-muted">
+                <div id="route-stats">Showing {{ routes|length + vrf_other_routes|length }} of {{ routes|length + vrf_other_routes|length }} routes</div>
+                <div class="form-check form-switch mb-0">
+                    <input class="form-check-input" type="checkbox" id="hide-other-routes" onchange="toggleOtherRoutes()">
+                    <label class="form-check-label" for="hide-other-routes">Hide Other Routes in VRF</label>
+                </div>
+            </div>
+        </div>
+
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0" id="l3out-route-table-primary">
+                <thead class="table-light small fw-bold">
+                    <tr>
+                        <th class="ps-3">Prefix</th>
+                        <th class="text-center">Fam</th>
+                        <th>Protocol</th>
+                        <th class="text-center">AD</th>
+                        <th class="text-center">Metric</th>
+                        <th>Next-Hop</th>
+                        <th>Interface</th>
+                        <th>Node</th>
+                        <th>Age</th>
+                    </tr>
+                </thead>
+                <tbody id="route-table-body">
+                    {% macro route_row(r, is_primary) %}
+                    <tr class="route-row small {% if not is_primary %}vrf-other-route{% endif %}"
+                        data-prefix="{{ r.prefix }}"
+                        data-protocol="{{ r.protocol }}"
+                        data-node="{{ r.node }}">
+                        <td class="ps-3 fw-bold mono">{{ r.prefix }}</td>
+                        <td class="text-center">
+                            <span class="badge bg-light text-dark border-0">{{ r.family }}</span>
+                        </td>
+                        <td>
+                            <span class="badge {% if r.protocol == 'bgp' %}bg-primary{% elif r.protocol == 'ospf' %}bg-info{% elif r.protocol == 'static' %}bg-warning text-dark{% elif r.protocol == 'direct' %}bg-success{% elif r.protocol == 'local' %}bg-secondary{% else %}bg-dark{% endif %}">
+                                {{ r.protocol|upper }}
+                            </span>
+                        </td>
+                        <td class="text-center">{{ r.admin_distance or '—' }}</td>
+                        <td class="text-center">{{ r.metric or '—' }}</td>
+                        <td class="mono">
+                            {{ r.next_hop }}
+                            {% if r.next_hop_resolved %}
+                            <span class="text-muted ms-1" title="{{ r.next_hop_source }}">(<i class="ph ph-magnifying-glass small"></i>{{ r.next_hop_resolved }})</span>
+                            {% endif %}
+                        </td>
+                        <td class="small">{{ r.interface or '—' }}</td>
+                        <td>
+                            <span class="badge bg-light text-dark border" title="{{ r.node_name }}">{{ r.node }}</span>
+                        </td>
+                        <td class="age-cell" data-ts="{{ r.age_ts }}">{{ r.age_ts }}</td>
+                    </tr>
+                    {% endmacro %}
+
+                    {% for r in routes %}
+                        {{ route_row(r, True) }}
+                    {% endfor %}
+
+                    <tr id="other-routes-header" class="table-light">
+                        <td colspan="9" class="ps-3 fw-bold text-muted py-2">
+                            <i class="ph ph-intersect me-1"></i>Other Routes in VRF (Next-hop not owned by this L3Out)
+                            <span class="badge bg-secondary ms-1">{{ vrf_other_routes|length }}</span>
+                        </td>
+                    </tr>
+
+                    {% for r in vrf_other_routes %}
+                        {{ route_row(r, False) }}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+    </div>
+
+    <script>
+        (function() {
+            function fmtAge(ts) {
+                if (!ts) return "—";
+                try {
+                    const then = new Date(ts);
+                    const now = new Date();
+                    const diff = Math.floor((now - then) / 1000);
+                    if (isNaN(diff)) return ts;
+                    if (diff < 60) return diff + "s";
+                    if (diff < 3600) return Math.floor(diff / 60) + "m";
+                    if (diff < 86400) return Math.floor(diff / 3600) + "h";
+                    return Math.floor(diff / 86400) + "d";
+                } catch(e) { return ts; }
+            }
+
+            document.querySelectorAll('.age-cell').forEach(cell => {
+                const ts = cell.getAttribute('data-ts');
+                if (ts) cell.textContent = fmtAge(ts);
+            });
+
+            window.filterRoutes = function() {
+                const prefix = document.getElementById('route-prefix-filter').value.toLowerCase();
+                const node = document.getElementById('route-node-filter').value;
+                const protos = {
+                    bgp: document.getElementById('proto-bgp').checked,
+                    ospf: document.getElementById('proto-ospf').checked,
+                    static: document.getElementById('proto-static').checked,
+                    direct: document.getElementById('proto-direct').checked,
+                    local: document.getElementById('proto-local').checked,
+                    other: document.getElementById('proto-other').checked
+                };
+                const hideOther = document.getElementById('hide-other-routes').checked;
+
+                let visibleCount = 0;
+                let totalCount = 0;
+
+                document.querySelectorAll('.route-row').forEach(row => {
+                    totalCount++;
+                    const rPrefix = row.getAttribute('data-prefix').toLowerCase();
+                    const rProto = row.getAttribute('data-protocol');
+                    const rNode = row.getAttribute('data-node');
+                    const isOther = row.classList.contains('vrf-other-route');
+
+                    let show = true;
+                    if (prefix && !rPrefix.includes(prefix)) show = false;
+                    if (node && rNode !== node) show = false;
+                    if (!protos[rProto]) show = false;
+                    if (isOther && hideOther) show = false;
+
+                    row.style.display = show ? '' : 'none';
+                    if (show) visibleCount++;
+                });
+
+                document.getElementById('route-stats').textContent = `Showing ${visibleCount} of ${totalCount} routes`;
+
+                const otherHeader = document.getElementById('other-routes-header');
+                if (otherHeader) {
+                    otherHeader.style.display = hideOther ? 'none' : '';
+                }
+            };
+
+            window.toggleOtherRoutes = function() {
+                window.filterRoutes();
+            };
+        })();
+    </script>
+</div>
