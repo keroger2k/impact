@@ -341,6 +341,7 @@ def get_device_detail(dnac, device_id):
 def get_recent_issues(dnac) -> list:
     """Fetch and normalize recent global issues/alerts from DNAC."""
     from dev import DEV_MODE, MOCK_ISSUES
+    from cache import cache
 
     raw_issues = []
     if DEV_MODE:
@@ -372,35 +373,55 @@ def get_recent_issues(dnac) -> list:
             logger.warning(f"Failed to fetch issues: {e}")
             return []
 
+    # DNAC's issues API returns siteId/deviceId UUIDs; resolve via warmed caches.
+    site_by_id = {s.get("id"): s.get("name") for s in (cache.get("sites") or []) if s.get("id")}
+    device_site_map = cache.get("device_site_map") or {}
+    device_by_id = {d.get("id"): (d.get("hostname") or d.get("managementIpAddress"))
+                    for d in (cache.get("devices") or []) if d.get("id")}
+
     normalized = []
     for issue in raw_issues:
-            d = _dictify(issue)
+        d = _dictify(issue)
 
-            # Manual filter for P1/P2
-            priority = d.get("priority", d.get("severity", "P3"))
-            if priority not in ("P1", "P2"):
-                continue
+        # Manual filter for P1/P2
+        priority = d.get("priority") or d.get("severity") or "P3"
+        if priority not in ("P1", "P2"):
+            continue
 
-            # Time can be in many places: lastOccurrenceTime, timestamp, occurredOn, etc.
-            ts_raw = d.get("lastOccurrenceTime") or d.get("timestamp") or d.get("occurredOn") or d.get("startTime") or ""
-            ts = ""
-            if isinstance(ts_raw, (int, float)):
-                from datetime import datetime
-                ts = datetime.fromtimestamp(ts_raw/1000.0).strftime('%Y-%m-%d %H:%M')
-            elif isinstance(ts_raw, str) and ts_raw:
-                ts = ts_raw[:16].replace('T', ' ') # Simple ISO-ish slice
+        # Time can be in many places. Real DNAC uses `last_occurence_time` (snake_case,
+        # single 'r' typo); other shapes appear in mocks and older SDK versions.
+        ts_raw = (d.get("last_occurence_time")
+                  or d.get("lastOccurrenceTime")
+                  or d.get("timestamp")
+                  or d.get("occurredOn")
+                  or d.get("startTime")
+                  or "")
+        ts = ""
+        if isinstance(ts_raw, (int, float)) and ts_raw:
+            from datetime import datetime
+            ts = datetime.fromtimestamp(ts_raw/1000.0).strftime('%Y-%m-%d %H:%M')
+        elif isinstance(ts_raw, str) and ts_raw:
+            ts = ts_raw[:16].replace('T', ' ') # Simple ISO-ish slice
 
-            # Device Name normalization
-            dev = d.get("device_name") or d.get("deviceName") or d.get("host") or d.get("source") or "Multiple"
+        # Device name: prefer explicit name fields, then resolve deviceId via cache.
+        device_id = d.get("deviceId") or d.get("device_id")
+        dev = (d.get("device_name") or d.get("deviceName") or d.get("host") or d.get("source")
+               or (device_by_id.get(device_id) if device_id else None)
+               or "Multiple")
 
-            # Site Name normalization - try hierarchy first, then name
-            site = d.get("site_name") or d.get("siteName") or d.get("siteHierarchy") or d.get("siteNameHierarchy") or "—"
+        # Site name: prefer explicit hierarchy/name fields, then resolve siteId via
+        # the sites cache, then fall back to device→site mapping.
+        site_id = d.get("siteId") or d.get("site_id")
+        site = (d.get("site_name") or d.get("siteName") or d.get("siteHierarchy") or d.get("siteNameHierarchy")
+                or (site_by_id.get(site_id) if site_id else None)
+                or (device_site_map.get(device_id) if device_id else None)
+                or "—")
 
-            normalized.append({
-                "priority": priority,
-                "issue_title": d.get("name") or d.get("issueTitle") or d.get("title") or "Unknown Issue",
-                "device_name": dev,
-                "site_name": site,
-                "last_occurrence_time": ts
-            })
+        normalized.append({
+            "priority": priority,
+            "issue_title": d.get("name") or d.get("issueTitle") or d.get("title") or "Unknown Issue",
+            "device_name": dev,
+            "site_name": site,
+            "last_occurrence_time": ts
+        })
     return normalized

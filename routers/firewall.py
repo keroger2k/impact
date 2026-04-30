@@ -1,7 +1,9 @@
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 """routers/firewall.py — Panorama security policy lookup endpoints."""
 
 import asyncio
+import csv
+import io
 import logging
 from typing import Optional
 
@@ -262,3 +264,117 @@ async def get_device_group_policies(request: Request, device_group: str, session
             "items": rules
         })
     return {"items": rules, "total": len(rules), "device_group": device_group}
+
+@router.get("/rules/export")
+async def export_all_rules_csv(
+    expand: bool = Query(False, description="Expand address/service object names to underlying values"),
+    session: SessionEntry = Depends(require_auth),
+):
+    """Export every security rule across all device groups as CSV (evaluation order)."""
+    from dev import DEV_MODE, MOCK_PAN_RULES_CACHE
+
+    key  = _get_key(session)
+    loop = asyncio.get_event_loop()
+
+    all_dgs = await loop.run_in_executor(
+        None, run_with_context(cache.get_or_set),
+        "pan_device_groups", lambda: pc.get_device_groups(key), PAN_TTL
+    )
+    if all_dgs is None: all_dgs = []
+
+    if DEV_MODE:
+        rules_cache = MOCK_PAN_RULES_CACHE
+    else:
+        def _build_rules():
+            all_rules = pc.get_all_security_rules(key, all_dgs)
+            by_dg: dict[str, list] = {}
+            for rule in all_rules:
+                dg = rule.get("device_group", "shared")
+                by_dg.setdefault(dg, []).append(rule)
+            return {"dg_order": all_dgs, "by_dg": by_dg}
+        rules_cache = await loop.run_in_executor(
+            None, run_with_context(cache.get_or_set),
+            "pan_rules", _build_rules, PAN_TTL
+        )
+        if not rules_cache: rules_cache = {"dg_order": [], "by_dg": {}}
+
+    rules = _flatten_rules(rules_cache, None)
+
+    objects: dict[str, list[str]] = {}
+    groups:  dict[str, list[str]] = {}
+    svc_obj: dict = {}
+    svc_grp: dict = {}
+    if expand and not DEV_MODE:
+        addr_data = await loop.run_in_executor(
+            None, run_with_context(cache.get_or_set),
+            "pan_addr", lambda: pc.get_address_objects_and_groups(key, all_dgs), PAN_TTL
+        )
+        objects, groups = addr_data if addr_data else ({}, {})
+
+        svc_data = await loop.run_in_executor(
+            None, run_with_context(cache.get_or_set),
+            "pan_svc", lambda: pc.get_services(key, all_dgs), PAN_TTL
+        )
+        svc_obj, svc_grp = svc_data if svc_data else ({}, {})
+
+    def _addr_cell(names: list[str], negate: bool) -> str:
+        if not names: return "any"
+        if "any" in names: base = "any"
+        elif expand:
+            parts = []
+            for n in names:
+                resolved = pc.resolve_name(n, objects, groups)
+                parts.append(f"{n} [{', '.join(resolved)}]" if resolved else n)
+            base = "; ".join(parts)
+        else:
+            base = "; ".join(names)
+        return f"NOT ({base})" if negate else base
+
+    def _svc_cell(names: list[str]) -> str:
+        if not names: return ""
+        if expand:
+            parts = []
+            for n in names:
+                if n in ("any", "application-default"):
+                    parts.append(n)
+                    continue
+                resolved = pc.resolve_service(n, svc_obj, svc_grp)
+                if resolved:
+                    pp = ", ".join(f"{p}/{pt}" for p, pt in resolved)
+                    parts.append(f"{n} [{pp}]")
+                else:
+                    parts.append(n)
+            return "; ".join(parts)
+        return "; ".join(names)
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Device Group", "Rule Name", "Description",
+        "Source Zone(s)", "Destination Zone(s)",
+        "Source Address(es)", "Destination Address(es)",
+        "Application(s)", "Service(s)", "Action",
+    ])
+    for r in rules:
+        from_zones = r.get("from_zones") or r.get("from") or []
+        to_zones   = r.get("to_zones")   or r.get("to")   or []
+        writer.writerow([
+            r.get("device_group", ""),
+            r.get("name", ""),
+            r.get("description", ""),
+            "; ".join(from_zones) if from_zones else "any",
+            "; ".join(to_zones)   if to_zones   else "any",
+            _addr_cell(r.get("source", []),      r.get("source_negate", False)),
+            _addr_cell(r.get("destination", []), r.get("dest_negate",   False)),
+            "; ".join(r.get("application", [])) or "any",
+            _svc_cell(r.get("service", [])),
+            r.get("action", ""),
+        ])
+
+    suffix   = "expanded" if expand else "names"
+    filename = f"panorama-rules-{suffix}.csv"
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

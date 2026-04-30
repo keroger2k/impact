@@ -16,6 +16,12 @@
           <button class="list-group-item list-group-item-action py-3 px-4" hx-get="/api/firewall/interfaces" hx-target="#pan-results" hx-indicator="#pan-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
             <i class="ph ph-plug me-2"></i> Interface Inventory
           </button>
+          <a class="list-group-item list-group-item-action py-3 px-4" href="/api/firewall/rules/export" download>
+            <i class="ph ph-download-simple me-2"></i> Export All Rules (Names)
+          </a>
+          <a class="list-group-item list-group-item-action py-3 px-4" href="/api/firewall/rules/export?expand=true" download>
+            <i class="ph ph-download-simple me-2"></i> Export All Rules (Expanded)
+          </a>
         </div>
       </div>
     </div>
