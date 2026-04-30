@@ -12,6 +12,11 @@
 <body>
 <div id="app">
 
+  <!-- ── Global Navigation Progress Bar ──────────────────── -->
+  <div id="nav-progress" aria-hidden="true">
+    <div class="nav-progress-bar"></div>
+  </div>
+
   <!-- ── Sidebar ─────────────────────────────────────────── -->
   <nav id="sidebar">
     <div class="sidebar-header">
@@ -264,22 +269,108 @@
     }
   });
 
-  // Handle HTMX navigation highlighting
-  document.body.addEventListener('htmx:afterOnLoad', function(evt) {
-    if (evt.detail.target.id === 'main-content') {
-      const path = window.location.pathname;
-      document.querySelectorAll('.nav-item').forEach(el => {
-        const hxGet = el.getAttribute('hx-get');
-        if (hxGet === path) {
-          el.classList.add('active');
-          const titleSpan = el.querySelector('.nav-text');
-          if (titleSpan) document.getElementById('page-title').textContent = titleSpan.textContent;
-        } else {
-          el.classList.remove('active');
-        }
-      });
+  // ── Global navigation progress bar + immediate nav-item highlight ──
+  (function() {
+    const progress = document.getElementById('nav-progress');
+    const fill = progress ? progress.querySelector('.nav-progress-bar') : null;
+    let inflight = 0;
+    let stalledTimer = null;
+    let finishTimer = null;
+
+    function isNavigationRequest(evt) {
+      const t = evt.detail && (evt.detail.target || evt.detail.elt);
+      // Treat any swap into #main-content as a "page navigation"
+      const target = evt.detail && evt.detail.target;
+      if (target && target.id === 'main-content') return true;
+      const elt = evt.detail && evt.detail.elt;
+      if (elt && elt.getAttribute && elt.getAttribute('hx-target') === '#main-content') return true;
+      return false;
     }
-  });
+
+    function showProgress() {
+      if (!progress || !fill) return;
+      clearTimeout(finishTimer);
+      progress.classList.remove('finishing');
+      progress.classList.add('active');
+      // Animate width to ~70% and stall there until the request completes
+      fill.style.transition = 'width 240ms cubic-bezier(0.1, 0.7, 0.3, 1)';
+      fill.style.width = '30%';
+      clearTimeout(stalledTimer);
+      stalledTimer = setTimeout(() => { fill.style.width = '70%'; }, 400);
+    }
+
+    function hideProgress() {
+      if (!progress || !fill) return;
+      clearTimeout(stalledTimer);
+      progress.classList.add('finishing');
+      fill.style.width = '100%';
+      clearTimeout(finishTimer);
+      finishTimer = setTimeout(() => {
+        progress.classList.remove('active', 'finishing');
+        fill.style.transition = 'none';
+        fill.style.width = '0%';
+      }, 260);
+    }
+
+    function highlightActiveNav(elt) {
+      if (!elt || !elt.getAttribute) return;
+      // Find nearest .nav-item ancestor (handles clicks on inner spans/icons)
+      const navItem = elt.classList && elt.classList.contains('nav-item')
+        ? elt
+        : elt.closest && elt.closest('.nav-item');
+      if (!navItem) return;
+      document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+      navItem.classList.add('active');
+      const titleSpan = navItem.querySelector('.nav-text');
+      const titleEl = document.getElementById('page-title');
+      if (titleSpan && titleEl) titleEl.textContent = titleSpan.textContent;
+    }
+
+    document.body.addEventListener('htmx:beforeRequest', function(evt) {
+      inflight++;
+      showProgress();
+      if (isNavigationRequest(evt)) {
+        document.body.classList.add('htmx-navigating');
+        highlightActiveNav(evt.detail.elt);
+      }
+    });
+
+    function requestEnded() {
+      inflight = Math.max(0, inflight - 1);
+      if (inflight === 0) {
+        hideProgress();
+        document.body.classList.remove('htmx-navigating');
+      }
+    }
+
+    // htmx:afterRequest fires exactly once per request (success, http error,
+    // network error, and timeout all route through it), so listen to that alone
+    // to avoid double-decrementing the in-flight counter.
+    document.body.addEventListener('htmx:afterRequest', requestEnded);
+    // Safety net: if a request is canceled before send (rare), still decrement.
+    document.body.addEventListener('htmx:beforeSend', function(evt) {
+      // beforeSend lets handlers cancel the request
+      if (evt.defaultPrevented) requestEnded();
+    });
+
+    // Fallback: ensure nav highlight matches the URL after a successful page swap
+    // (covers initial page load and back/forward navigation)
+    document.body.addEventListener('htmx:afterOnLoad', function(evt) {
+      if (evt.detail.target && evt.detail.target.id === 'main-content') {
+        const path = window.location.pathname;
+        document.querySelectorAll('.nav-item').forEach(el => {
+          const hxGet = el.getAttribute('hx-get');
+          if (hxGet === path) {
+            el.classList.add('active');
+            const titleSpan = el.querySelector('.nav-text');
+            if (titleSpan) document.getElementById('page-title').textContent = titleSpan.textContent;
+          } else {
+            el.classList.remove('active');
+          }
+        });
+      }
+    });
+  })();
 </script>
 {% block extra_js %}{% endblock %}
 </body>

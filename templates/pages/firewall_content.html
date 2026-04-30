@@ -25,7 +25,7 @@
       <div class="spinner spinner-lg"></div>
       <p class="text-muted small mt-2">Connecting to Panorama and fetching data...</p>
     </div>
-    <div id="pan-results" hx-get="/api/firewall/devices" hx-trigger="load" class="table-container shadow-md"></div>
+    <div id="pan-results" hx-get="/api/firewall/devices" hx-trigger="load" hx-indicator="#pan-loading" class="table-container shadow-md"></div>
   </div>
   </div>
 

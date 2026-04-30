@@ -37,7 +37,7 @@
       <div class="spinner spinner-lg"></div>
       <p class="text-muted small mt-2">Connecting to Cisco ISE and fetching data...</p>
     </div>
-    <div id="ise-results" hx-get="/api/ise/nads" hx-trigger="load" class="table-container shadow-md"></div>
+    <div id="ise-results" hx-get="/api/ise/nads" hx-trigger="load" hx-indicator="#ise-loading" class="table-container shadow-md"></div>
   </div>
   </div>
 
