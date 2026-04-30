@@ -190,6 +190,64 @@ for _idx, _dev in enumerate(MOCK_NEXUS_DEVICES):
             "vlans": [], "zone": "vpn", "mac_address": _mac, "error": None,
         })
 
+# vPC pair on the first two switches; standalone PC on switch 3 to exercise
+# the "not in vPC" view. Switches 4..10 have nothing — proves the empty-state
+# rendering on per-device drill-down.
+_VPC_PEERS = (MOCK_NEXUS_DEVICES[0]["hostname"], MOCK_NEXUS_DEVICES[1]["hostname"])
+
+MOCK_NEXUS_PORT_CHANNELS: list[dict] = []
+for _peer in _VPC_PEERS:
+    MOCK_NEXUS_PORT_CHANNELS.extend([
+        {"hostname": _peer, "group": 1,  "interface": "Po1",  "state": "U", "layer": "L2", "protocol": "LACP", "members": ["Eth1/47", "Eth1/48"]},
+        {"hostname": _peer, "group": 10, "interface": "Po10", "state": "U", "layer": "L2", "protocol": "LACP", "members": ["Eth1/10"]},
+        {"hostname": _peer, "group": 20, "interface": "Po20", "state": "U", "layer": "L2", "protocol": "LACP", "members": ["Eth1/20"]},
+        {"hostname": _peer, "group": 30, "interface": "Po30", "state": "D", "layer": "L2", "protocol": "LACP", "members": ["Eth1/30"]},
+    ])
+MOCK_NEXUS_PORT_CHANNELS.append({
+    "hostname": MOCK_NEXUS_DEVICES[2]["hostname"],
+    "group": 100, "interface": "Po100", "state": "U", "layer": "L3",
+    "protocol": "NONE", "members": ["Eth1/1", "Eth1/2"],
+})
+
+MOCK_NEXUS_VPCS: list[dict] = []
+for _peer, _role in zip(_VPC_PEERS, ("primary", "secondary")):
+    for _vpc_id, _port, _state, _consistency, _reason in [
+        (10, "Po10", "up",   "success", "success"),
+        (20, "Po20", "up",   "success", "success"),
+        (30, "Po30", "down", "failed",  "vPC type-1 consistency check failed"),
+    ]:
+        MOCK_NEXUS_VPCS.append({
+            "hostname":            _peer,
+            "domain_id":           "100",
+            "role":                _role,
+            "peer_status":         "peer-ok",
+            "config_consistency":  "success",
+            "vpc_id":              _vpc_id,
+            "port":                _port,
+            "status":              _state,
+            "consistency":         _consistency,
+            "reason":              _reason,
+            "active_vlans":        "10,20,30" if _state == "up" else "-",
+        })
+
+MOCK_NEXUS_VLANS: list[dict] = []
+_VLAN_DEFS = [
+    (1,  "default",     "active",    ["Po1", "Eth1/15", "Eth1/16"]),
+    (10, "USERS",       "active",    ["Po1", "Po10", "Eth1/20"]),
+    (20, "SERVERS",     "active",    ["Po1", "Po20"]),
+    (30, "GUEST",       "active",    ["Po1", "Po30"]),
+    (99, "QUARANTINE",  "suspended", []),
+]
+for _peer in _VPC_PEERS:
+    for _vid, _name, _state, _ports in _VLAN_DEFS:
+        MOCK_NEXUS_VLANS.append({
+            "hostname": _peer,
+            "vlan_id":  _vid,
+            "name":     _name,
+            "state":    _state,
+            "ports":    list(_ports),
+        })
+
 MOCK_USERS = [
     {"id": _uid("user-admin"), "name": "admin", "description": "Network Administrator", "enabled": True, "passwordPolicy": "Strong"},
     {"id": _uid("user-ops"),   "name": "ops-user", "description": "NOC Operations", "enabled": True, "passwordPolicy": "Standard"},
@@ -411,6 +469,22 @@ MOCK_PAN_INTERFACES: list[dict] = [
             {"name": "tunnel.10",   "ipv4": "10.99.5.2/24",   "ipv6": [], "zone": "vpn"},
         ],
     },
+]
+
+# Managed firewalls as returned by clients.panorama.get_managed_devices.
+# Derived from MOCK_PAN_INTERFACES so the two views agree.
+MOCK_PAN_MANAGED_DEVICES: list[dict] = [
+    {
+        "serial":       fw["serial"],
+        "hostname":     fw["hostname"],
+        "model":        fw["model"],
+        "ip_address":   fw["management_ip"],
+        "device_group": fw["device_group"],
+        "os_version":   fw["os_version"],
+        "ha_state":     fw["ha_state"],
+        "ha_enabled":   fw["ha_enabled"],
+    }
+    for fw in MOCK_PAN_INTERFACES
 ]
 
 # ── Mock ACI data ─────────────────────────────────────────────────────────────
@@ -1180,13 +1254,15 @@ def _build_ipam_tree_from_mocks() -> dict:
 
 def seed_cache(cache) -> None:
     """Pre-populate the in-memory cache with mock data for all UI-facing endpoints."""
-    from cache import TTL_DEVICES, TTL_SITES, IPAM_TREE_CACHE_KEY
+    from cache import IPAM_TREE_CACHE_KEY
     LONG = 86400 * 365  # 1 year — mock data never expires
 
-    # DNAC
-    cache.set("devices",         MOCK_DEVICES,          TTL_DEVICES)
-    cache.set("sites",           MOCK_SITES,            TTL_SITES)
-    cache.set("device_site_map", MOCK_DEVICE_SITE_MAP,  TTL_SITES)
+    # DNAC — use LONG for everything; the seed runs on every restart anyway
+    # and prod TTLs (TTL_DEVICES/TTL_SITES = 4h) make the dev cache widget
+    # go red while the mock data is still perfectly valid.
+    cache.set("devices",         MOCK_DEVICES,          LONG)
+    cache.set("sites",           MOCK_SITES,            LONG)
+    cache.set("device_site_map", MOCK_DEVICE_SITE_MAP,  LONG)
     cache.set("dnac_interfaces", MOCK_DNAC_INTERFACES,  LONG)
 
     # DNAC status
@@ -1215,40 +1291,51 @@ def seed_cache(cache) -> None:
     cache.set("status_ise", {"ok": True, "detail": "Connected (mock)"}, LONG)
 
     # Panorama / Firewall
-    cache.set("pan_rules",           MOCK_PAN_RULES_CACHE,  LONG)
-    cache.set("pan_device_groups",   MOCK_DEVICE_GROUPS,    LONG)
-    cache.set("pan_address_objects", MOCK_ADDRESS_OBJECTS,  LONG)
-    cache.set("pan_services",        MOCK_SERVICES,         LONG)
-    cache.set("pan_interfaces",      MOCK_PAN_INTERFACES,   LONG)
+    cache.set("pan_rules",            MOCK_PAN_RULES_CACHE,     LONG)
+    cache.set("pan_device_groups",    MOCK_DEVICE_GROUPS,       LONG)
+    cache.set("pan_managed_devices",  MOCK_PAN_MANAGED_DEVICES, LONG)
+    cache.set("pan_address_objects",  MOCK_ADDRESS_OBJECTS,     LONG)
+    cache.set("pan_services",         MOCK_SERVICES,            LONG)
+    cache.set("pan_interfaces",       MOCK_PAN_INTERFACES,      LONG)
 
     # Panorama status
     cache.set("status_panorama", {"ok": True, "detail": "Connected (mock)"}, LONG)
 
-    # ACI
-    cache.set("aci_nodes",          {"imdata": MOCK_ACI_NODES},         LONG)
-    cache.set("aci_l3outs",         {"imdata": MOCK_ACI_L3OUTS},        LONG)
-    cache.set("aci_bgp_peers",      {"imdata": MOCK_ACI_BGP_PEERS},     LONG)
-    cache.set("aci_bgp_peer_cfg",   {"imdata": MOCK_ACI_BGP_PEER_CFG},  LONG)
-    cache.set("aci_subnets",        {"imdata": MOCK_ACI_SUBNETS},       LONG)
-    cache.set("aci_epgs",           {"imdata": MOCK_ACI_EPGS},          LONG)
-    cache.set("aci_faults",         {"imdata": MOCK_ACI_FAULT_INST},    LONG)
-    cache.set("aci_bgp_doms_all",   {"imdata": MOCK_ACI_BGP_DOMS_ALL},  LONG)
-    cache.set("aci_bgp_adj_rib_out",{"imdata": MOCK_ACI_BGP_ADJ_RIB_OUT}, LONG)
-    cache.set("aci_bgp_adj_rib_in", {"imdata": MOCK_ACI_BGP_ADJ_RIB_IN},  LONG)
+    # ACI — keys are namespaced per fabric (aci_{fabric_id}_{suffix}).
+    # Seed every configured fabric with the same mock dataset so the cache
+    # widget and per-fabric pages are green from startup.
+    import clients.aci_registry as reg
+    aci_fabric_data = {
+        "nodes":           {"imdata": MOCK_ACI_NODES},
+        "l3outs":          {"imdata": MOCK_ACI_L3OUTS},
+        "bgp_peers":       {"imdata": MOCK_ACI_BGP_PEERS},
+        "bgp_peer_cfg":    {"imdata": MOCK_ACI_BGP_PEER_CFG},
+        "subnets":         {"imdata": MOCK_ACI_SUBNETS},
+        "epgs":            {"imdata": MOCK_ACI_EPGS},
+        "faults":          {"imdata": MOCK_ACI_FAULT_INST},
+        "bgp_doms_all":    {"imdata": MOCK_ACI_BGP_DOMS_ALL},
+        "bgp_adj_rib_out": {"imdata": MOCK_ACI_BGP_ADJ_RIB_OUT},
+        "bgp_adj_rib_in":  {"imdata": MOCK_ACI_BGP_ADJ_RIB_IN},
+        "health_overall":  {"imdata": MOCK_ACI_HEALTH_OVERALL},
+        "health_tenants":  {"imdata": MOCK_ACI_HEALTH_TENANTS},
+        "health_pods":     {"imdata": MOCK_ACI_HEALTH_PODS},
+        "uribv4_routes":   {"imdata": MOCK_ACI_URIBV4_ROUTES},
+        "uribv6_routes":   {"imdata": MOCK_ACI_URIBV6_ROUTES},
+        "ospf_adj_ep":     {"imdata": MOCK_ACI_OSPF_ADJ_EP},
+        "l3ext_rs_ectx":   {"imdata": MOCK_ACI_L3EXT_RS_ECTX},
+    }
+    for f in reg.list_fabrics():
+        for suffix, value in aci_fabric_data.items():
+            cache.set(f"aci_{f.id}_{suffix}", value, LONG)
 
-    # ACI status
-    cache.set("aci_health_overall", {"imdata": MOCK_ACI_HEALTH_OVERALL}, LONG)
-    cache.set("aci_health_tenants", {"imdata": MOCK_ACI_HEALTH_TENANTS}, LONG)
-    cache.set("aci_health_pods",    {"imdata": MOCK_ACI_HEALTH_PODS},    LONG)
-    cache.set("aci_uribv4_routes",  {"imdata": MOCK_ACI_URIBV4_ROUTES},  LONG)
-    cache.set("aci_uribv6_routes",  {"imdata": MOCK_ACI_URIBV6_ROUTES},  LONG)
-    cache.set("aci_ospf_adj_ep",    {"imdata": MOCK_ACI_OSPF_ADJ_EP},    LONG)
-    cache.set("aci_l3ext_rs_ectx",  {"imdata": MOCK_ACI_L3EXT_RS_ECTX},  LONG)
     cache.set("status_aci", {"ok": True, "detail": "Connected (mock)"}, LONG)
 
     # Nexus (seed source caches BEFORE computing the IPAM tree below)
-    cache.set("nexus_inventory", MOCK_NEXUS_DEVICES, LONG)
-    cache.set("nexus_interfaces", MOCK_NEXUS_INTERFACES, LONG)
+    cache.set("nexus_inventory",     MOCK_NEXUS_DEVICES,        LONG)
+    cache.set("nexus_interfaces",    MOCK_NEXUS_INTERFACES,     LONG)
+    cache.set("nexus_port_channels", MOCK_NEXUS_PORT_CHANNELS,  LONG)
+    cache.set("nexus_vpcs",          MOCK_NEXUS_VPCS,           LONG)
+    cache.set("nexus_vlans",         MOCK_NEXUS_VLANS,          LONG)
 
     # IPAM — compute the tree from the same source caches the live engine
     # consumes, so initial render matches what Refresh Discovery would produce.

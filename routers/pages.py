@@ -177,6 +177,33 @@ async def aci_page_render(request: Request, user: SessionEntry = Depends(get_cur
         return templates.TemplateResponse(request, "pages/aci_content.html", context)
     return templates.TemplateResponse(request, "aci.html", context)
 
+@router.get("/nexus", response_class=HTMLResponse)
+async def nexus_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
+    if not user: return RedirectResponse(url="/login")
+    context = {
+        "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
+        "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
+        "active_page": "nexus",
+        "username": user.username,
+    }
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse(request, "pages/nexus_content.html", context)
+    return templates.TemplateResponse(request, "nexus.html", context)
+
+@router.get("/nexus/{hostname}", response_class=HTMLResponse)
+async def nexus_device_page(request: Request, hostname: str, user: SessionEntry = Depends(get_current_user_from_cookie)):
+    if not user: return RedirectResponse(url="/login")
+    context = {
+        "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
+        "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
+        "active_page": "nexus",
+        "hostname": hostname,
+        "username": user.username,
+    }
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse(request, "pages/nexus_device_content.html", context)
+    return templates.TemplateResponse(request, "nexus_device.html", context)
+
 @router.get("/command-runner", response_class=HTMLResponse)
 async def command_runner_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
     if not user: return RedirectResponse(url="/login")

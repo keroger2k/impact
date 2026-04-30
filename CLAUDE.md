@@ -41,7 +41,7 @@ The app is structured in three layers:
 
 **Cache layer** (`cache.py`) is a singleton TTL cache backed by `diskcache` (SQLite at `data/cache/diskcache/cache.db`); persists across restarts.
 
-Default TTLs are defined as constants in `cache.py:21-29` and each is overridable via an `IMPACT_TTL_*` env var:
+Default TTLs are defined as constants in `cache.py:21-30` and each is overridable via an `IMPACT_TTL_*` env var:
 
 | Constant | Default | Env override | Used by |
 |---|---|---|---|
@@ -52,7 +52,8 @@ Default TTLs are defined as constants in `cache.py:21-29` and each is overridabl
 | `TTL_ACI_STATUS` | 15m | `IMPACT_TTL_ACI_STATUS` | every ACI call going through `_cached(...)` with no explicit TTL — nodes, L3Outs, BGP/OSPF peers, BGP DOMs, BGP capability probes, BGP/OSPF maps |
 | `TTL_ACI_ROUTE_TABLE` | 5m | `IMPACT_TTL_ACI_ROUTE_TABLE` | per-L3Out route table (`/api/aci/l3outs/route-table`) |
 | `TTL_STATUS` | 5m | `IMPACT_TTL_STATUS` | system connectivity probes (`status_dnac`, `status_ise`, `status_panorama`) |
-| `TTL_PAN_INTERFACES` | 48h | `IMPACT_TTL_PAN_INTERFACES` | Panorama interfaces, rules, device groups, address objects, services |
+| `TTL_PAN_INTERFACES` | 48h | `IMPACT_TTL_PAN_INTERFACES` | Panorama firewall interface inventory (`pan_interfaces`) |
+| `TTL_PAN_POLICY` | 1h | `IMPACT_TTL_PAN_POLICY` | Panorama policy/inventory data: `pan_rules`, `pan_device_groups`, `pan_managed_devices`, `pan_addr`, `pan_svc` (re-exported as `PAN_TTL` from `routers/firewall.py`) |
 | `TTL_DNAC_INTERFACES` | 4h | `IMPACT_TTL_DNAC_INTERFACES` | DNAC per-device interface inventory |
 
 Naming conventions for cache keys:
@@ -102,7 +103,7 @@ See `.env.template`. Required vars:
 - `ACI_FABRICS` — Comma-separated fabric IDs (e.g., `dc1,dc2`)
 - `ACI_{ID}_URL` / `ACI_{ID}_DOMAIN` / `ACI_{ID}_LABEL` — per-fabric settings
 
-Optional cache TTL overrides (seconds — see the Cache layer table above for defaults and which keys each one governs): `IMPACT_TTL_DEFAULT`, `IMPACT_TTL_DEVICES`, `IMPACT_TTL_SITES`, `IMPACT_TTL_ISE_POLICIES`, `IMPACT_TTL_ACI_STATUS`, `IMPACT_TTL_ACI_ROUTE_TABLE`, `IMPACT_TTL_STATUS`, `IMPACT_TTL_PAN_INTERFACES`, `IMPACT_TTL_DNAC_INTERFACES`.
+Optional cache TTL overrides (seconds — see the Cache layer table above for defaults and which keys each one governs): `IMPACT_TTL_DEFAULT`, `IMPACT_TTL_DEVICES`, `IMPACT_TTL_SITES`, `IMPACT_TTL_ISE_POLICIES`, `IMPACT_TTL_ACI_STATUS`, `IMPACT_TTL_ACI_ROUTE_TABLE`, `IMPACT_TTL_STATUS`, `IMPACT_TTL_PAN_INTERFACES`, `IMPACT_TTL_PAN_POLICY`, `IMPACT_TTL_DNAC_INTERFACES`.
 
 Other optional vars:
 - `DEV_MODE` — when `true`, seeds mock fixtures into cache on every startup (deterministic dev mode). Disables LDAP and APIC/DNAC/ISE/Panorama calls.

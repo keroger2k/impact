@@ -46,6 +46,10 @@
          hx-get="/aci" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
         <span class="nav-icon"><i class="ph ph-buildings"></i></span> <span class="nav-text">ACI Operations</span>
       </a>
+      <a class="nav-item {% if active_page == 'nexus' %}active{% endif %}"
+         hx-get="/nexus" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+        <span class="nav-icon"><i class="ph ph-hard-drives"></i></span> <span class="nav-text">Nexus Insights</span>
+      </a>
       <a class="nav-item {% if active_page == 'ipam' %}active{% endif %}"
          hx-get="/ipam" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
         <span class="nav-icon"><i class="ph ph-network"></i></span> <span class="nav-text">IPAM Dashboard</span>

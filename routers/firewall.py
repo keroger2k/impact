@@ -13,12 +13,12 @@ from pydantic import BaseModel
 import auth as auth_module
 import clients.panorama as pc
 from auth import SessionEntry, require_auth
-from cache import cache, TTL_PAN_INTERFACES
+from cache import cache, TTL_PAN_INTERFACES, TTL_PAN_POLICY
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-PAN_TTL = 3600
+PAN_TTL = TTL_PAN_POLICY
 
 class PolicyLookupRequest(BaseModel):
     src_ip:           str

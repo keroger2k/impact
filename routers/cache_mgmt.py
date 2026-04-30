@@ -4,7 +4,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from auth import require_auth, SessionEntry
-from cache import cache
+from cache import cache, IPAM_TREE_CACHE_KEY
 import logging
 
 
@@ -28,8 +28,8 @@ CACHE_SYSTEMS = [
         "id": "ipam",
         "label": "IPAM",
         "icon": "ph-tree-structure",
-        "keys": ["ipam_tree"],
-        "count_key": "ipam_tree",
+        "keys": [IPAM_TREE_CACHE_KEY],
+        "count_key": IPAM_TREE_CACHE_KEY,
         "refresh_url": None,
         "sse": True,
         "sse_fn": "triggerIpamCacheRefresh()",
@@ -56,8 +56,9 @@ CACHE_SYSTEMS = [
         "id": "aci",
         "label": "ACI",
         "icon": "ph-buildings",
-        "keys": ["aci_nodes", "aci_l3outs", "aci_bgp_peers", "aci_epgs", "aci_faults"],
-        "count_key": "aci_nodes",
+        # Real keys are aci_{fabric_id}_{suffix}; expanded per-fabric in get_cache_widget().
+        "key_suffixes": ["nodes", "l3outs", "bgp_peers", "epgs", "faults"],
+        "count_suffix": "nodes",
         "refresh_url": "/api/cache/refresh/aci",
         "sse": False,
     },
@@ -65,7 +66,7 @@ CACHE_SYSTEMS = [
         "id": "nexus",
         "label": "Nexus",
         "icon": "ph-hard-drives",
-        "keys": ["nexus_inventory", "nexus_interfaces"],
+        "keys": ["nexus_inventory", "nexus_interfaces", "nexus_port_channels", "nexus_vpcs", "nexus_vlans"],
         "count_key": "nexus_inventory",
         "refresh_url": None,
         "sse": True,
@@ -281,7 +282,7 @@ async def get_cache_status(request: Request, session: SessionEntry = Depends(req
         _get_card_info("sites",              "DNAC Sites",            "ph ph-map-pin",          "primary",   "/api/cache/refresh/sites"),
         _get_card_info("device_site_map",    "DNAC Device-Site Map",  "ph ph-map-trifold",      "primary",   "/api/cache/refresh/sites"),
         _get_card_info("dnac_interfaces",    "DNAC Interfaces",       "ph ph-plugs-connected",  "primary",   "/api/cache/refresh/dnac_interfaces"),
-        _get_card_info("ipam_tree",          "IPAM Tree",             "ph ph-tree-structure",   "info",      None,                             sse=True, sse_fn="triggerIpamCacheRefresh()"),
+        _get_card_info(IPAM_TREE_CACHE_KEY,  "IPAM Tree",             "ph ph-tree-structure",   "info",      None,                             sse=True, sse_fn="triggerIpamCacheRefresh()"),
         _get_card_info("ise_nads",           "ISE NADs",              "ph ph-shield-check",     "success",   "/api/cache/refresh/ise"),
         _get_card_info("ise_users",          "ISE Users",             "ph ph-users",            "success",   "/api/cache/refresh/ise"),
         _get_card_info("ise_sgts",           "ISE SGTs",              "ph ph-tag",              "success",   "/api/cache/refresh/ise"),
@@ -301,8 +302,11 @@ async def get_cache_status(request: Request, session: SessionEntry = Depends(req
         ])
 
     cards.extend([
-        _get_card_info("nexus_inventory",    "Nexus Switch Inventory","ph ph-hard-drives",      "warning",   None,                             sse=True, sse_fn="triggerNexusCacheRefresh()"),
-        _get_card_info("nexus_interfaces",   "Nexus Interface Cache", "ph ph-hard-drives",      "warning",   None,                             sse=True, sse_fn="triggerNexusCacheRefresh()"),
+        _get_card_info("nexus_inventory",     "Nexus Switch Inventory","ph ph-hard-drives",      "warning",   None,                             sse=True, sse_fn="triggerNexusCacheRefresh()"),
+        _get_card_info("nexus_interfaces",    "Nexus Interface Cache", "ph ph-hard-drives",      "warning",   None,                             sse=True, sse_fn="triggerNexusCacheRefresh()"),
+        _get_card_info("nexus_port_channels", "Nexus Port-Channels",   "ph ph-stack",            "warning",   None,                             sse=True, sse_fn="triggerNexusCacheRefresh()"),
+        _get_card_info("nexus_vpcs",          "Nexus vPCs",            "ph ph-share-network",    "warning",   None,                             sse=True, sse_fn="triggerNexusCacheRefresh()"),
+        _get_card_info("nexus_vlans",         "Nexus VLANs",           "ph ph-tag",              "warning",   None,                             sse=True, sse_fn="triggerNexusCacheRefresh()"),
     ])
 
     return templates.TemplateResponse(request, "partials/cache_cards.html", {"cards": cards})
@@ -311,7 +315,22 @@ async def get_cache_status(request: Request, session: SessionEntry = Depends(req
 @router.get("/widget", response_class=HTMLResponse)
 async def get_cache_widget(request: Request, session: SessionEntry = Depends(require_auth)):
     from templates_module import templates
-    systems = [_get_system_status(s) for s in CACHE_SYSTEMS]
+    import clients.aci_registry as reg
+    fabrics = reg.list_fabrics()
+
+    systems = []
+    for s in CACHE_SYSTEMS:
+        if s["id"] == "aci":
+            expanded = {**s}
+            if fabrics:
+                expanded["keys"] = [f"aci_{f.id}_{suf}" for f in fabrics for suf in s["key_suffixes"]]
+                expanded["count_key"] = f"aci_{fabrics[0].id}_{s['count_suffix']}"
+            else:
+                expanded["keys"] = []
+                expanded["count_key"] = ""
+            systems.append(_get_system_status(expanded))
+        else:
+            systems.append(_get_system_status(s))
     return templates.TemplateResponse(request, "partials/cache_widget.html", {"systems": systems})
 
 
@@ -320,7 +339,7 @@ _KEY_TO_CATEGORY = {
     "sites": "sites",
     "device_site_map": "sites",
     "dnac_interfaces": "dnac_interfaces",
-    "ipam_tree": "ipam",
+    IPAM_TREE_CACHE_KEY: "ipam",
     "ise_nads": "ise", "ise_nad_groups": "ise", "ise_endpoint_groups": "ise",
     "ise_identity_groups": "ise", "ise_users": "ise", "ise_sgts": "ise",
     "ise_sgacls": "ise", "ise_egress_matrix": "ise", "ise_policy_sets": "ise",
@@ -333,6 +352,7 @@ _KEY_TO_CATEGORY = {
     "aci_bgp_peer_cfg": "aci", "aci_ospf_peers": "aci", "aci_epgs": "aci",
     "aci_faults": "aci", "aci_subnets": "aci", "aci_health_overall": "aci",
     "nexus_inventory": "nexus", "nexus_interfaces": "nexus",
+    "nexus_port_channels": "nexus", "nexus_vpcs": "nexus", "nexus_vlans": "nexus",
 }
 
 
@@ -344,7 +364,7 @@ async def refresh_specific_cache(category: str, session: SessionEntry = Depends(
     if category == "devices":
         cache.invalidate("devices")
         cache.invalidate("device_site_map")
-        cache.invalidate("ipam_tree")  # IPAM depends on device IP data
+        cache.invalidate(IPAM_TREE_CACHE_KEY)  # IPAM depends on device IP data
         asyncio.create_task(_refetch_dnac(session, include_devices=True, include_sites=False))
         msg = "DNAC Inventory is being refreshed in the background."
 
@@ -361,7 +381,7 @@ async def refresh_specific_cache(category: str, session: SessionEntry = Depends(
         import auth as auth_module
         from cache import TTL_DNAC_INTERFACES
         cache.invalidate("dnac_interfaces")
-        cache.invalidate("ipam_tree")  # IPAM tree derives from dnac_interfaces
+        cache.invalidate(IPAM_TREE_CACHE_KEY)  # IPAM tree derives from dnac_interfaces
         async def _refetch_dnac_ifaces():
             try:
                 loop = asyncio.get_event_loop()
@@ -376,6 +396,9 @@ async def refresh_specific_cache(category: str, session: SessionEntry = Depends(
     elif category in ("nexus", "nexus_inventory", "nexus_interfaces"):
         cache.invalidate("nexus_inventory")
         cache.invalidate("nexus_interfaces")
+        cache.invalidate("nexus_port_channels")
+        cache.invalidate("nexus_vpcs")
+        cache.invalidate("nexus_vlans")
         msg = "Nexus cache cleared. Use the Collect button to run SSH collection."
 
     elif category == "pan_interfaces":
@@ -415,7 +438,7 @@ async def refresh_specific_cache(category: str, session: SessionEntry = Depends(
             msg = "All ACI caches cleared. Data will reload automatically when you visit ACI pages."
 
     elif category == "ipam":
-        cache.invalidate("ipam_tree")
+        cache.invalidate(IPAM_TREE_CACHE_KEY)
         msg = "IPAM cache cleared. Use the Collect button to rebuild the tree."
 
     elif category == "clear_all":

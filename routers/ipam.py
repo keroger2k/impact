@@ -120,7 +120,13 @@ async def debug_ipam_sources(session: SessionEntry = Depends(require_auth)):
     sitemap = cache.get("device_site_map") or {}
 
     # ── ACI ───────────────────────────────────────────────────────────────────
-    aci_nodes = cache.get("aci_nodes") or {"imdata": []}
+    # Real keys are aci_{fabric_id}_nodes; aggregate across fabrics for the count.
+    import clients.aci_registry as reg
+    aci_imdata = []
+    for f in reg.list_fabrics():
+        fabric_nodes = cache.get(f"aci_{f.id}_nodes") or {"imdata": []}
+        aci_imdata.extend(fabric_nodes.get("imdata", []))
+    aci_nodes = {"imdata": aci_imdata}
 
     # ── ipam_tree ────────────────────────────────────────────────────────────
     tree = cache.get(IPAM_TREE_CACHE_KEY)
