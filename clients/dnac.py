@@ -157,7 +157,7 @@ def get_device_config(dnac, device_id: str) -> str:
             "GET", f"/dna/intent/api/v1/network-device/{device_id}/config"
         )
         duration = int((time.time() - start_time) * 1000)
-        logger.info(f"DNAC GET Device Config: {device_id}", extra={
+        logger.debug(f"DNAC GET Device Config: {device_id}", extra={
             "target": "DNAC",
             "action": "FETCH_DNAC_CONFIG",
             "status": 200,

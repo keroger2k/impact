@@ -668,11 +668,19 @@ async def config_search(req: ConfigSearchRequest, session: SessionEntry = Depend
             "blocks": blocks[:50],
         }
 
+    import time
+    search_start = time.time()
     with ThreadPoolExecutor(max_workers=CONFIG_SEARCH_WORKERS) as executor:
         futures_done = list(executor.map(fetch_and_search, all_filtered))
 
     results = [r for r in futures_done if r is not None]
     results.sort(key=lambda r: (-r["match_count"], r["hostname"]))
+
+    duration_ms = int((time.time() - search_start) * 1000)
+    logger.info(
+        f"Config search '{req.search_string}': {len(results)}/{len(all_filtered)} devices matched in {duration_ms}ms",
+        extra={"target": "DNAC", "action": "CONFIG_SEARCH", "duration_ms": duration_ms},
+    )
 
     return {
         "search_string": req.search_string,
