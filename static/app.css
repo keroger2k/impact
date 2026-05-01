@@ -649,3 +649,65 @@ body.htmx-navigating #main-content {
 .cache-mgmt-link:hover { color: var(--accent); }
 
 #sidebar.collapsed .cache-health-panel { display: none; }
+
+/* ── Sortable / Filterable Data Tables ──────────────────────
+   Styles for tables wired by /static/js/data-table.js.
+   Apply by adding class="data-table" to a <table>. */
+table.data-table th.data-table-sort {
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  padding-right: 1.4em; /* leave room for the indicator glyph */
+}
+table.data-table th.data-table-sort:hover { background-color: rgba(59,130,246,0.06); }
+table.data-table th .data-table-sort-indicator {
+  display: inline-block;
+  width: 1em;
+  margin-left: 0.25em;
+  font-size: 0.8em;
+  opacity: 0.35;
+  transition: opacity 120ms ease;
+}
+table.data-table th .data-table-sort-indicator::before { content: "↕"; }
+table.data-table th.sorted-asc  .data-table-sort-indicator { opacity: 1; }
+table.data-table th.sorted-desc .data-table-sort-indicator { opacity: 1; }
+table.data-table th.sorted-asc  .data-table-sort-indicator::before { content: "▲"; }
+table.data-table th.sorted-desc .data-table-sort-indicator::before { content: "▼"; }
+table.data-table th.sorted-asc,
+table.data-table th.sorted-desc { color: var(--accent); }
+
+/* Filter input row sits directly below the header row.
+   When the parent <thead> is sticky (sticky-top / table-light), the filter
+   row inherits that stickiness automatically because it's part of the same
+   <thead>. */
+table.data-table tr.data-table-filter-row > th {
+  background-color: #ffffff;
+  padding: 4px 6px;
+  font-weight: 400;
+  border-top: 1px solid var(--border-subtle);
+  position: sticky;
+  top: 38px; /* approx. height of the header row above */
+  z-index: 2;
+}
+table.data-table thead.bg-light tr.data-table-filter-row > th,
+table.data-table thead.table-light tr.data-table-filter-row > th {
+  background-color: #f8fafc;
+}
+table.data-table input.data-table-filter-input {
+  font-size: 12px;
+  padding: 2px 8px;
+  height: 26px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background-color: #ffffff;
+  width: 100%;
+  min-width: 60px;
+}
+table.data-table input.data-table-filter-input:focus {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 2px rgba(59,130,246,0.15);
+}
+/* Hide the filter input cell content when the user explicitly opts out */
+table.data-table th.data-table-no-filter .data-table-filter-input { display: none; }
+
