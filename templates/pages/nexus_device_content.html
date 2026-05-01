@@ -1,0 +1,14 @@
+<div class="d-flex flex-column gap-3 animate-fade-in">
+  <div>
+    <a href="/nexus" hx-get="/nexus" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML"
+       class="text-muted small text-decoration-none">
+      <i class="ph ph-arrow-left"></i> Back to Nexus Insights
+    </a>
+  </div>
+  <div id="nexus-device-body" hx-get="/api/nexus/devices/{{ hostname }}" hx-trigger="load" hx-swap="innerHTML">
+    <div class="text-center p-5 text-muted">
+      <div class="spinner-border text-primary"></div>
+      <p class="mt-3">Loading device details…</p>
+    </div>
+  </div>
+</div>

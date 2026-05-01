@@ -1,0 +1,50 @@
+<div class="card shadow-sm border-0 animate-fade-in">
+  <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center">
+    <span class="fw-bold">VLANs ({{ items|length }})</span>
+    <button class="btn btn-sm btn-outline-light px-2"
+            hx-get="/api/nexus/vlans" hx-target="#nexus-results" hx-indicator="#nexus-loading">
+      <i class="ph ph-arrows-clockwise"></i>
+    </button>
+  </div>
+  <div class="card-body p-0 overflow-auto" style="max-height: calc(100vh - 200px);">
+    {% if not items %}
+      <div class="text-center text-muted p-5">
+        <i class="ph ph-tag" style="font-size: 2.5rem;"></i>
+        <p class="mt-2 mb-0">No VLAN data cached.</p>
+      </div>
+    {% else %}
+    <table class="table table-hover table-striped mb-0">
+      <thead class="bg-light sticky-top">
+        <tr>
+          <th>Hostname</th>
+          <th>VLAN ID</th>
+          <th>Name</th>
+          <th>State</th>
+          <th>Ports</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for v in items %}
+        <tr>
+          <td class="fw-bold text-navy">
+            <a class="text-decoration-none text-navy"
+               href="/nexus/{{ v.hostname }}"
+               hx-get="/nexus/{{ v.hostname }}" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+              {{ v.hostname }}
+            </a>
+          </td>
+          <td>{{ v.vlan_id }}</td>
+          <td>{{ v.name }}</td>
+          <td>
+            <span class="badge {% if v.state == 'active' %}bg-success-subtle text-success{% else %}bg-warning-subtle text-warning{% endif %}">
+              {{ v.state }}
+            </span>
+          </td>
+          <td class="mono small">{{ v.ports|join(', ') if v.ports else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</div>

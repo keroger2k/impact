@@ -1,0 +1,65 @@
+<div class="row g-4 h-100">
+  <div class="col-md-3">
+    <div class="card shadow-md border-0 animate-fade-in h-100">
+      <div class="card-header bg-white border-bottom py-3">
+        <div class="d-flex align-items-center gap-2 mb-3">
+          <i class="ph ph-hard-drives text-primary"></i>
+          <span class="fw-bold text-navy">Cisco Nexus Insights</span>
+        </div>
+        <div id="nexus-cache-bar" class="d-flex align-items-center justify-content-between gap-2 small text-muted"></div>
+      </div>
+      <div class="card-body p-0">
+        <div class="list-group list-group-flush">
+          <button class="list-group-item list-group-item-action py-3 px-4 active"
+                  hx-get="/api/nexus/devices" hx-target="#nexus-results" hx-indicator="#nexus-loading"
+                  onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-hard-drives me-2"></i> Inventory
+          </button>
+          <button class="list-group-item list-group-item-action py-3 px-4"
+                  hx-get="/api/nexus/interfaces" hx-target="#nexus-results" hx-indicator="#nexus-loading"
+                  onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-plugs me-2"></i> Interfaces
+          </button>
+          <button class="list-group-item list-group-item-action py-3 px-4"
+                  hx-get="/api/nexus/port-channels" hx-target="#nexus-results" hx-indicator="#nexus-loading"
+                  onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-stack me-2"></i> Port-Channels
+          </button>
+          <button class="list-group-item list-group-item-action py-3 px-4"
+                  hx-get="/api/nexus/vpcs" hx-target="#nexus-results" hx-indicator="#nexus-loading"
+                  onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-share-network me-2"></i> vPCs
+          </button>
+          <button class="list-group-item list-group-item-action py-3 px-4"
+                  hx-get="/api/nexus/vlans" hx-target="#nexus-results" hx-indicator="#nexus-loading"
+                  onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-tag me-2"></i> VLANs
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-9 d-flex flex-column position-relative">
+    <div id="nexus-loading" class="htmx-indicator position-absolute top-0 start-0 w-100 h-100 bg-white bg-opacity-75" style="z-index: 100; pointer-events: none;">
+      <div class="d-flex flex-column align-items-center justify-content-center h-100">
+        <div class="spinner-border text-primary" style="width: 3rem; height: 3rem;"></div>
+        <p class="text-main font-weight-bold mt-3">Loading Nexus data…</p>
+      </div>
+    </div>
+    <div id="nexus-results" hx-get="/api/nexus/devices" hx-trigger="load once" hx-indicator="#nexus-loading"
+         style="min-height: 600px;" class="table-container shadow-md"></div>
+  </div>
+</div>
+
+<script type="module">
+  import { initCacheBar } from '/static/js/utils.js';
+  const bar = document.getElementById('nexus-cache-bar');
+  initCacheBar(bar, '/api/nexus/cache/info', '/api/nexus/cache/refresh', () => {
+    // Trigger SSE refresh, then reload after a moment to pick up new data.
+    fetch('/api/nexus/refresh', { credentials: 'include' });
+    setTimeout(() => {
+      htmx.ajax('GET', '/api/nexus/devices', { target: '#nexus-results', indicator: '#nexus-loading' });
+      initCacheBar(bar, '/api/nexus/cache/info', '/api/nexus/cache/refresh', () => location.reload());
+    }, 1500);
+  });
+</script>

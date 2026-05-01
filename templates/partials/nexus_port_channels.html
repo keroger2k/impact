@@ -1,0 +1,55 @@
+<div class="card shadow-sm border-0 animate-fade-in">
+  <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center">
+    <span class="fw-bold">Port-Channels ({{ items|length }})</span>
+    <button class="btn btn-sm btn-outline-light px-2"
+            hx-get="/api/nexus/port-channels" hx-target="#nexus-results" hx-indicator="#nexus-loading">
+      <i class="ph ph-arrows-clockwise"></i>
+    </button>
+  </div>
+  <div class="card-body p-0 overflow-auto" style="max-height: calc(100vh - 200px);">
+    {% if not items %}
+      <div class="text-center text-muted p-5">
+        <i class="ph ph-stack" style="font-size: 2.5rem;"></i>
+        <p class="mt-2 mb-0">No port-channel data cached.</p>
+        <p class="small">Run an SSH collection from the sidebar to populate this view.</p>
+      </div>
+    {% else %}
+    <table class="table table-hover table-striped mb-0">
+      <thead class="bg-light sticky-top">
+        <tr>
+          <th>Hostname</th>
+          <th>Group</th>
+          <th>Interface</th>
+          <th>Layer</th>
+          <th>Protocol</th>
+          <th>State</th>
+          <th>Members</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for pc in items %}
+        <tr>
+          <td class="fw-bold text-navy">
+            <a class="text-decoration-none text-navy"
+               href="/nexus/{{ pc.hostname }}"
+               hx-get="/nexus/{{ pc.hostname }}" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+              {{ pc.hostname }}
+            </a>
+          </td>
+          <td>{{ pc.group }}</td>
+          <td class="mono">{{ pc.interface }}</td>
+          <td><span class="badge bg-light text-muted">{{ pc.layer }}</span></td>
+          <td><span class="badge bg-light text-muted">{{ pc.protocol }}</span></td>
+          <td>
+            <span class="badge {% if pc.state == 'U' or pc.state == 'up' %}bg-success-subtle text-success{% else %}bg-warning-subtle text-warning{% endif %}">
+              {{ pc.state }}
+            </span>
+          </td>
+          <td class="mono small">{{ pc.members|join(', ') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</div>

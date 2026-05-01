@@ -1,0 +1,52 @@
+<div class="card shadow-sm border-0 animate-fade-in">
+  <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center">
+    <span class="fw-bold">Nexus Interfaces ({{ items|length }})</span>
+    <button class="btn btn-sm btn-outline-light px-2"
+            hx-get="/api/nexus/interfaces" hx-target="#nexus-results" hx-indicator="#nexus-loading">
+      <i class="ph ph-arrows-clockwise"></i>
+    </button>
+  </div>
+  <div class="card-body p-0 overflow-auto" style="max-height: calc(100vh - 200px);">
+    {% if not items %}
+      <div class="text-center text-muted p-5">
+        <i class="ph ph-plugs" style="font-size: 2.5rem;"></i>
+        <p class="mt-2 mb-0">No Nexus interface data cached yet.</p>
+      </div>
+    {% else %}
+    <table class="table table-hover table-striped mb-0">
+      <thead class="bg-light sticky-top">
+        <tr>
+          <th>Hostname</th>
+          <th>Interface</th>
+          <th>IPv4</th>
+          <th>MAC</th>
+          <th>Zone</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for i in items %}
+        <tr>
+          <td class="fw-bold text-navy">
+            <a class="text-decoration-none text-navy"
+               href="/nexus/{{ i.hostname }}"
+               hx-get="/nexus/{{ i.hostname }}" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+              {{ i.hostname }}
+            </a>
+          </td>
+          <td class="mono">{{ i.interface_name }}</td>
+          <td class="mono">{{ i.ipv4_address or '—' }}</td>
+          <td class="mono small text-muted">{{ i.mac_address or '—' }}</td>
+          <td>
+            {% if i.zone %}
+              <span class="badge bg-light text-muted">{{ i.zone }}</span>
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</div>

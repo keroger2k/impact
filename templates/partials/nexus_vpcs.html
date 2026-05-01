@@ -1,0 +1,67 @@
+<div class="card shadow-sm border-0 animate-fade-in">
+  <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center">
+    <span class="fw-bold">vPCs ({{ items|length }})</span>
+    <button class="btn btn-sm btn-outline-light px-2"
+            hx-get="/api/nexus/vpcs" hx-target="#nexus-results" hx-indicator="#nexus-loading">
+      <i class="ph ph-arrows-clockwise"></i>
+    </button>
+  </div>
+  <div class="card-body p-0 overflow-auto" style="max-height: calc(100vh - 200px);">
+    {% if not items %}
+      <div class="text-center text-muted p-5">
+        <i class="ph ph-share-network" style="font-size: 2.5rem;"></i>
+        <p class="mt-2 mb-0">No vPC data cached.</p>
+        <p class="small">vPCs are collected from <span class="mono">show vpc</span> on each Nexus device.</p>
+      </div>
+    {% else %}
+    <table class="table table-hover table-striped mb-0">
+      <thead class="bg-light sticky-top">
+        <tr>
+          <th>Hostname</th>
+          <th>Domain</th>
+          <th>Role</th>
+          <th>Peer Status</th>
+          <th>vPC ID</th>
+          <th>Port</th>
+          <th>Status</th>
+          <th>Consistency</th>
+          <th>Active VLANs</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for v in items %}
+        <tr>
+          <td class="fw-bold text-navy">
+            <a class="text-decoration-none text-navy"
+               href="/nexus/{{ v.hostname }}"
+               hx-get="/nexus/{{ v.hostname }}" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+              {{ v.hostname }}
+            </a>
+          </td>
+          <td>{{ v.domain_id }}</td>
+          <td><span class="badge bg-light text-muted">{{ v.role or '—' }}</span></td>
+          <td>
+            <span class="badge {% if v.peer_status == 'peer-ok' or v.peer_status == 'ok' %}bg-success-subtle text-success{% else %}bg-warning-subtle text-warning{% endif %}">
+              {{ v.peer_status or '—' }}
+            </span>
+          </td>
+          <td>{{ v.vpc_id }}</td>
+          <td class="mono">{{ v.port }}</td>
+          <td>
+            <span class="badge {% if v.status == 'up' %}bg-success-subtle text-success{% else %}bg-danger-subtle text-danger{% endif %}">
+              {{ v.status }}
+            </span>
+          </td>
+          <td>
+            <span class="badge {% if v.consistency == 'success' %}bg-success-subtle text-success{% else %}bg-danger-subtle text-danger{% endif %}">
+              {{ v.consistency }}
+            </span>
+          </td>
+          <td class="mono small">{{ v.active_vlans }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</div>
