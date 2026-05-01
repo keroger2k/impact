@@ -40,6 +40,7 @@ async def lifespan(app: FastAPI):
         ldap_url = os.getenv("AD_LDAP_URL", "")
         if not ldap_url or not ldap_url.startswith("ldaps://"):
             raise RuntimeError("LDAP misconfigured: AD_LDAP_URL must use ldaps://")
+        auth_module.restore_sessions()
         asyncio.create_task(cache.warm())
 
     # C8: Background GC

@@ -54,14 +54,49 @@
 <script type="module">
   import { initCacheBar } from '/static/js/utils.js';
   const bar = document.getElementById('nexus-cache-bar');
+
+  let activeStream = null;
+
+  const setBar = (html) => { if (bar) bar.innerHTML = html; };
+
   window.nexusRefresh = async () => {
-    if (bar) bar.innerHTML = '<span class="cache-ts cache-ts-warn">Refreshing…</span>';
+    if (activeStream) return; // already refreshing
+    setBar('<span class="cache-ts cache-ts-warn">Refreshing…</span>');
     try { await fetch('/api/nexus/cache/refresh', { method: 'POST', credentials: 'include' }); } catch {}
-    fetch('/api/nexus/refresh', { credentials: 'include' });
-    setTimeout(() => {
+
+    let total = 0, done = 0;
+    const es = new EventSource('/api/nexus/refresh', { withCredentials: true });
+    activeStream = es;
+
+    const finish = (msg) => {
+      es.close();
+      activeStream = null;
+      if (msg) setBar(`<span class="cache-ts cache-ts-warn">${msg}</span>`);
       htmx.ajax('GET', '/api/nexus/devices', { target: '#nexus-results', indicator: '#nexus-loading' });
       initCacheBar(bar, '/api/nexus/cache/info', '/api/nexus/cache/refresh', window.nexusRefresh);
-    }, 1500);
+    };
+
+    es.onmessage = (evt) => {
+      let data;
+      try { data = JSON.parse(evt.data); } catch { return; }
+      if (data.type === 'log' && typeof data.message === 'string') {
+        const start = data.message.match(/Starting collection for (\d+)/);
+        if (start) total = parseInt(start[1], 10);
+        const prog = data.message.match(/\[(\d+)\/(\d+)\]/);
+        if (prog) { done = parseInt(prog[1], 10); total = parseInt(prog[2], 10); }
+        if (total > 0) setBar(`<span class="cache-ts cache-ts-warn">Collecting ${done}/${total}…</span>`);
+      } else if (data.type === 'complete') {
+        finish(null);
+      }
+    };
+
+    es.onerror = () => {
+      // The complete handler nulls activeStream; if we're past that, ignore
+      // the trailing onerror that fires when the server closes the stream.
+      if (activeStream !== es) return;
+      finish('Refresh failed');
+    };
   };
+
   initCacheBar(bar, '/api/nexus/cache/info', '/api/nexus/cache/refresh', window.nexusRefresh);
 </script>

@@ -38,6 +38,10 @@ def _purge_expired():
             del _sessions[t]
         if expired:
             logger.info(f"Purged {len(expired)} expired sessions")
+    import auth_persist
+    if expired and auth_persist.is_enabled():
+        for t in expired:
+            auth_persist.delete(t)
 
 async def session_gc_task():
     """Background task to purge expired sessions."""
@@ -58,6 +62,9 @@ def create_session(username: str, password: str) -> str:
     with _store_lock:
         _sessions[token] = entry
     logger.info(f"Session created for {username}")
+    import auth_persist
+    if auth_persist.is_enabled():
+        auth_persist.save(token, username, password, time.time() + SESSION_TTL)
     return token
 
 def get_session(token: str) -> SessionEntry | None:
@@ -74,6 +81,9 @@ def destroy_session(token: str):
         entry = _sessions.pop(token, None)
     if entry:
         logger.info(f"Session destroyed for {entry.username}")
+    import auth_persist
+    if auth_persist.is_enabled():
+        auth_persist.delete(token)
 
 def validate_ldap(username: str, password: str) -> bool:
     from dev import DEV_MODE
@@ -164,6 +174,31 @@ def require_auth(request: Request, credentials: HTTPAuthorizationCredentials | N
     with _store_lock:
         session.expires_at = time.monotonic() + SESSION_TTL
     return session
+
+def restore_sessions() -> int:
+    """Rehydrate _sessions from the encrypted on-disk store. Returns count restored."""
+    import auth_persist
+    if not auth_persist.is_enabled():
+        return 0
+    now_wall = time.time()
+    now_mono = time.monotonic()
+    restored = 0
+    for rec in auth_persist.load_all():
+        remaining = rec["wall_expires_at"] - now_wall
+        if remaining <= 0:
+            continue
+        entry = SessionEntry(
+            username   = rec["username"],
+            password   = rec["password"],
+            expires_at = now_mono + remaining,
+        )
+        with _store_lock:
+            _sessions[rec["token"]] = entry
+        restored += 1
+    if restored:
+        logger.info(f"Restored {restored} session(s) from disk")
+    return restored
+
 
 def verify_ldap_or_mock(username: str, password: str) -> tuple[str, str] | None:
     from dev import DEV_MODE
