@@ -2,7 +2,8 @@
   <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center">
     <span class="fw-bold">Nexus Devices ({{ items|length }})</span>
     <button class="btn btn-sm btn-outline-light px-2"
-            hx-get="/api/nexus/devices" hx-target="#nexus-results" hx-indicator="#nexus-loading">
+            title="Refresh from devices"
+            onclick="document.querySelector('#nexus-cache-bar .cache-refresh-btn')?.click()">
       <i class="ph ph-arrows-clockwise"></i>
     </button>
   </div>
