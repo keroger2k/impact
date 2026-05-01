@@ -360,16 +360,34 @@
 
     const cmp = comparatorFor(ctx.colTypes[ctx.sortIdx]);
     const dir = ctx.sortDir;
-    const rows = Array.from(ctx.tbody.rows).filter(
+    const headerCount = ctx.ths.length;
+    // Sort only data rows whose cell count matches the header (excludes
+    // group dividers like <tr><td colspan="9">…</td></tr>). Non-data rows
+    // are kept in their original positions relative to the tbody so the
+    // visual grouping survives a sort.
+    const rowsAll = Array.from(ctx.tbody.rows).filter(
       (r) => !r.classList.contains(FILTER_ROW_CLASS)
     );
-    rows.sort((a, b) => {
+    const dataRows = rowsAll.filter((r) => r.cells.length === headerCount);
+    const otherRows = rowsAll.filter((r) => r.cells.length !== headerCount);
+    dataRows.sort((a, b) => {
       const av = cellText(a.cells[ctx.sortIdx]);
       const bv = cellText(b.cells[ctx.sortIdx]);
       return cmp(av, bv) * dir;
     });
     const frag = document.createDocumentFragment();
-    rows.forEach((r) => frag.appendChild(r));
+    // Keep the non-data rows pinned to where they appeared in the original
+    // tbody by re-emitting them in original order, intermixed with the
+    // sorted data rows. We achieve this by walking the original tbody and
+    // emitting each row from the appropriate ordered list.
+    const sortedIter = dataRows[Symbol.iterator]();
+    rowsAll.forEach((row) => {
+      if (row.cells.length === headerCount) {
+        frag.appendChild(sortedIter.next().value);
+      } else {
+        frag.appendChild(row);
+      }
+    });
     ctx.tbody.appendChild(frag);
   }
 
@@ -382,9 +400,12 @@
       const v = (inp.value || "").trim().toLowerCase();
       if (v) filters.push({ idx: +inp.dataset.colIdx, q: v });
     });
+    const headerCount = ctx.ths.length;
     let visible = 0;
     Array.from(ctx.tbody.rows).forEach((row) => {
       if (row.classList.contains(FILTER_ROW_CLASS)) return;
+      // Skip non-data rows (group separators with mismatched cell counts).
+      if (row.cells.length !== headerCount) return;
       let show = true;
       for (const f of filters) {
         const cell = row.cells[f.idx];
@@ -394,8 +415,12 @@
           break;
         }
       }
-      row.style.display = show ? "" : "none";
-      if (show) visible++;
+      // Use a class instead of inline style so other (bespoke) filter
+      // scripts on the same table can independently set row.style.display
+      // without us trampling each other. CSS hides the row when either
+      // mechanism wants it gone.
+      row.classList.toggle("dt-filter-hidden", !show);
+      if (show && row.style.display !== "none") visible++;
     });
     if (typeof ctx.updateBadge === "function") {
       ctx.updateBadge(visible);

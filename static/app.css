@@ -711,3 +711,7 @@ table.data-table input.data-table-filter-input:focus {
 /* Hide the filter input cell content when the user explicitly opts out */
 table.data-table th.data-table-no-filter .data-table-filter-input { display: none; }
 
+/* Filter visibility uses a class (not inline style) so coexisting bespoke
+   filter scripts on the same table compose with AND semantics. */
+table.data-table tr.dt-filter-hidden { display: none !important; }
+
