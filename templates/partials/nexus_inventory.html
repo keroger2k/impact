@@ -3,7 +3,7 @@
     <span class="fw-bold">Nexus Devices ({{ items|length }})</span>
     <button class="btn btn-sm btn-outline-light px-2"
             title="Refresh from devices"
-            onclick="document.querySelector('#nexus-cache-bar .cache-refresh-btn')?.click()">
+            onclick="window.nexusRefresh && window.nexusRefresh()">
       <i class="ph ph-arrows-clockwise"></i>
     </button>
   </div>
