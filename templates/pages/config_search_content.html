@@ -8,8 +8,22 @@
       <div class="card-body">
         <form hx-post="/api/dnac/config-search/ui" hx-target="#search-results" hx-indicator="#search-loading">
           <div class="mb-3">
-            <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Search String</label>
-            <input type="text" name="search_string" class="form-control" placeholder="e.g. snmp-server" required minlength="2">
+            <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Search Rules</label>
+            <div id="search-rules-container">
+              <div class="search-rule-row mb-2 d-flex gap-2">
+                <select name="rule_type" class="form-select form-select-sm" style="width: auto;">
+                  <option value="contains">Must Contain</option>
+                  <option value="not_contains">Must NOT Contain</option>
+                </select>
+                <input type="text" name="rule_value" class="form-control form-control-sm flex-grow-1" placeholder="Search string..." required minlength="2">
+                <button type="button" class="btn btn-sm btn-outline-danger remove-rule" onclick="removeRule(this)" style="display:none;">
+                  <i class="ph ph-trash"></i>
+                </button>
+              </div>
+            </div>
+            <button type="button" class="btn btn-sm btn-outline-primary w-100 mt-1" onclick="addRule()">
+              <i class="ph ph-plus me-1"></i> Add Rule
+            </button>
           </div>
 
           <div class="mb-3">
@@ -85,3 +99,36 @@
     </div>
   </div>
 </div>
+
+<script>
+  function addRule() {
+    const container = document.getElementById('search-rules-container');
+    const firstRow = container.querySelector('.search-rule-row');
+    const newRow = firstRow.cloneNode(true);
+
+    // Clear the input
+    newRow.querySelector('input').value = '';
+
+    // Show the remove button on new rows
+    const removeBtn = newRow.querySelector('.remove-rule');
+    removeBtn.style.display = 'block';
+
+    container.appendChild(newRow);
+
+    // Also show remove button on the first row if there's more than one
+    if (container.querySelectorAll('.search-rule-row').length > 1) {
+      container.querySelector('.remove-rule').style.display = 'block';
+    }
+  }
+
+  function removeRule(btn) {
+    const container = document.getElementById('search-rules-container');
+    btn.closest('.search-rule-row').remove();
+
+    // Hide remove button if only one row left
+    const rows = container.querySelectorAll('.search-rule-row');
+    if (rows.length === 1) {
+      rows[0].querySelector('.remove-rule').style.display = 'none';
+    }
+  }
+</script>

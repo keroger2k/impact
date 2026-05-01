@@ -537,8 +537,12 @@ async def tag_devices(req: TagDevicesRequest, session: SessionEntry = Depends(re
 
 # ── Config search ─────────────────────────────────────────────────────────────
 
+class SearchRule(BaseModel):
+    type: str # 'contains' or 'not_contains'
+    value: str
+
 class ConfigSearchRequest(BaseModel):
-    search_string: str
+    rules:         list[SearchRule]
     hostname:      Optional[str] = None
     ip:            Optional[str] = None
     platform:      Optional[str] = None
@@ -552,8 +556,12 @@ class ConfigSearchRequest(BaseModel):
 
 @router.post("/config-search")
 async def config_search(req: ConfigSearchRequest, session: SessionEntry = Depends(require_auth)):
-    if not req.search_string or len(req.search_string.strip()) < 2:
-        raise HTTPException(400, "search_string must be at least 2 characters")
+    if not req.rules:
+         raise HTTPException(400, "At least one search rule is required")
+
+    for rule in req.rules:
+        if not rule.value or len(rule.value.strip()) < 2:
+             raise HTTPException(400, f"Search value '{rule.value}' must be at least 2 characters")
 
     loop    = asyncio.get_event_loop()
     dnac    = _get_dnac(session)
@@ -610,13 +618,12 @@ async def config_search(req: ConfigSearchRequest, session: SessionEntry = Depend
     all_filtered = list(filtered) + nexus_devices
 
     if not all_filtered:
-        return {"total_matches": 0, "results": [], "search_string": req.search_string}
+        return {"total_matches": 0, "results": [], "rules": [r.dict() for r in req.rules]}
 
     if req.max_devices and len(all_filtered) > req.max_devices:
         all_filtered = all_filtered[:req.max_devices]
 
     dnac     = _get_dnac(session)
-    search   = req.search_string.lower()
 
     def fetch_and_search(device: dict) -> dict | None:
         dev_id   = device.get("id", "")
@@ -635,8 +642,28 @@ async def config_search(req: ConfigSearchRequest, session: SessionEntry = Depend
         if not config: return None
 
         lines = config.splitlines()
-        match_indices = [i for i, line in enumerate(lines) if search in line.lower()]
-        if not match_indices: return None
+
+        include_rules = [r for r in req.rules if r.type == 'contains']
+        exclude_rules = [r for r in req.rules if r.type == 'not_contains']
+
+        all_match_indices = []
+
+        # Must satisfy ALL include rules
+        for rule in include_rules:
+            search_val = rule.value.lower()
+            match_indices = [i for i, line in enumerate(lines) if search_val in line.lower()]
+            if not match_indices:
+                return None
+            all_match_indices.extend(match_indices)
+
+        # Must satisfy NONE of the exclude rules
+        for rule in exclude_rules:
+            search_val = rule.value.lower()
+            if any(search_val in line.lower() for line in lines):
+                return None
+
+        # Dedup and sort match indices
+        match_indices = sorted(list(set(all_match_indices)))
 
         context = req.context_lines
         blocks = []
@@ -678,12 +705,12 @@ async def config_search(req: ConfigSearchRequest, session: SessionEntry = Depend
 
     duration_ms = int((time.time() - search_start) * 1000)
     logger.info(
-        f"Config search '{req.search_string}': {len(results)}/{len(all_filtered)} devices matched in {duration_ms}ms",
+        f"Config search rules={req.rules}: {len(results)}/{len(all_filtered)} devices matched in {duration_ms}ms",
         extra={"target": "DNAC", "action": "CONFIG_SEARCH", "duration_ms": duration_ms},
     )
 
     return {
-        "search_string": req.search_string,
+        "rules": [r.dict() for r in req.rules],
         "total_matches": len(results),
         "results": results,
     }
@@ -691,7 +718,6 @@ async def config_search(req: ConfigSearchRequest, session: SessionEntry = Depend
 @router.post("/config-search/ui", response_class=HTMLResponse)
 async def config_search_ui(
     request: Request,
-    search_string: str = Form(...),
     hostname: Optional[str] = Form(None),
     platform: Optional[str] = Form(None),
     role: Optional[str] = Form(None),
@@ -701,8 +727,22 @@ async def config_search_ui(
     context_lines: int = Form(5),
     session: SessionEntry = Depends(require_auth)
 ):
+    form_data = await request.form()
+    rule_types = form_data.getlist("rule_type")
+    rule_values = form_data.getlist("rule_value")
+
+    rules = []
+    for t, v in zip(rule_types, rule_values):
+        if v.strip():
+            rules.append(SearchRule(type=t, value=v))
+
+    if not rules:
+        # Fallback if no rules provided (shouldn't happen with proper frontend validation)
+        # But for robustness, let's handle it
+        return HTMLResponse("<div class='alert alert-warning'>At least one search rule is required.</div>")
+
     req = ConfigSearchRequest(
-        search_string=search_string,
+        rules=rules,
         hostname=hostname,
         platform=platform,
         role=role,
@@ -714,8 +754,65 @@ async def config_search_ui(
     results = await config_search(req, session)
     from templates_module import templates
     return templates.TemplateResponse(request, "partials/config_search_results.html", {
-        "results": results, "search_string": search_string
+        "results": results, "rules": rules
     })
+
+@router.post("/config-search/download")
+async def config_search_download(
+    request: Request,
+    hostname: Optional[str] = Form(None),
+    platform: Optional[str] = Form(None),
+    role: Optional[str] = Form(None),
+    device_family: Optional[str] = Form(None),
+    reachability: str = Form("Reachable"),
+    tag: Optional[str] = Form(None),
+    session: SessionEntry = Depends(require_auth)
+):
+    form_data = await request.form()
+    rule_types = form_data.getlist("rule_type")
+    rule_values = form_data.getlist("rule_value")
+
+    rules = []
+    for t, v in zip(rule_types, rule_values):
+        if v.strip():
+            rules.append(SearchRule(type=t, value=v))
+
+    if not rules:
+        raise HTTPException(400, "At least one search rule is required")
+
+    req = ConfigSearchRequest(
+        rules=rules,
+        hostname=hostname,
+        platform=platform,
+        role=role,
+        device_family=device_family,
+        reachability=reachability,
+        tag=tag,
+        max_devices=None, # Download all matches
+        context_lines=0    # Don't need context for download
+    )
+
+    results = await config_search(req, session)
+
+    import io
+    import csv
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Hostname", "Management IP", "Platform", "Match Count"])
+
+    for r in results["results"]:
+        writer.writerow([r["hostname"], r["ip"], r["platform"], r["match_count"]])
+
+    output.seek(0)
+
+    filename = f"config_search_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
 
 
 # ── Path Trace ──
