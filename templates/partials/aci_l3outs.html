@@ -17,7 +17,7 @@
         </div>
         {% else %}
         <div class="table-responsive sticky-header" style="max-height: calc(100vh - 250px);">
-            <table class="table table-hover align-middle mb-0">
+            <table class="table table-hover align-middle mb-0 data-table">
                 <thead class="table-light">
                     <tr>
                         {% if l3outs and l3outs[0].fabric_label %}
@@ -26,8 +26,8 @@
                         <th>Tenant</th>
                         <th>L3Out</th>
                         <th>Description</th>
-                        <th class="text-center">BGP Routes</th>
-                        <th class="text-end pe-3">Actions</th>
+                        <th class="text-center" data-no-sort data-no-filter>BGP Routes</th>
+                        <th class="text-end pe-3" data-no-sort data-no-filter>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
