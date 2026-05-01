@@ -26,12 +26,15 @@
       </div>
     </div>
   </div>
-  <div class="col-md-9 d-flex flex-column">
-    <div id="pan-loading" class="htmx-indicator text-center p-5">
-      <div class="spinner spinner-lg"></div>
-      <p class="text-muted small mt-2">Connecting to Panorama and fetching data...</p>
+  <div class="col-md-9 d-flex flex-column position-relative">
+    <div id="pan-loading" class="htmx-indicator position-absolute top-0 start-0 w-100 h-100 bg-white bg-opacity-75" style="z-index: 100; pointer-events: none;">
+      <div class="d-flex flex-column align-items-center justify-content-center h-100">
+        <div class="spinner spinner-lg"></div>
+        <p class="text-muted small mt-3">Connecting to Panorama and fetching data...</p>
+      </div>
     </div>
-    <div id="pan-results" hx-get="/api/firewall/devices" hx-trigger="load" hx-indicator="#pan-loading" class="table-container shadow-md"></div>
+    <div id="pan-results" hx-get="/api/firewall/devices" hx-trigger="load" hx-indicator="#pan-loading"
+         style="min-height: 600px;" class="table-container shadow-md"></div>
   </div>
   </div>
 
