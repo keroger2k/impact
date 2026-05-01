@@ -87,12 +87,12 @@ async def refresh_nexus_data(session: SessionEntry = Depends(require_auth)):
                     "siteName": "Nexus Inventory",
                     "reachabilityStatus": "Reachable",
                     "source": "Nexus",
-                    "softwareVersion": "N/A",
+                    "softwareVersion": "9.3(10)",
                     "lastUpdateTime": int(time.time() * 1000)
                  }
                  return ([
                      InterfaceResult(hostname, ip, "nxos", "Ethernet1/1", "10.1.1.1/24", [], zone="trust", mac_address="00:de:ad:be:ef:01")
-                 ], inv_item, None, {"port_channels": [], "vpcs": [], "vlans": []})
+                 ], inv_item, None, {"port_channels": [], "vpcs": [], "vlans": [], "software_version": "9.3(10)"})
 
             collector = NXOSCollector(hostname, ip, username, password)
             try:
@@ -109,13 +109,13 @@ async def refresh_nexus_data(session: SessionEntry = Depends(require_auth)):
                     "siteName": "Nexus Inventory",
                     "reachabilityStatus": "Reachable" if not any(i.error for i in interfaces) else "Unreachable",
                     "source": "Nexus",
-                    "softwareVersion": "N/A",
+                    "softwareVersion": extras.get("software_version") or "N/A",
                     "lastUpdateTime": int(time.time() * 1000)
                 }
                 return interfaces, inv_item, None, extras
             except Exception as e:
                 logger.error(f"Failed to collect from {hostname} ({ip}): {e}")
-                return [], None, str(e), {"port_channels": [], "vpcs": [], "vlans": []}
+                return [], None, str(e), {"port_channels": [], "vpcs": [], "vlans": [], "software_version": None}
 
         with ThreadPoolExecutor(max_workers=10) as executor:
             futures = [loop.run_in_executor(executor, run_with_context(collect_device), d) for d in devices]
@@ -286,7 +286,7 @@ async def init_nexus_collection(username: Optional[str] = None, password: Option
         from dev import DEV_MODE
         hostname = dev['hostname']
         ip = dev['ip']
-        empty_extras = {"port_channels": [], "vpcs": [], "vlans": []}
+        empty_extras = {"port_channels": [], "vpcs": [], "vlans": [], "software_version": None}
         if DEV_MODE:
              inv_item = {
                 "id": f"nexus_{hostname}",
@@ -297,12 +297,12 @@ async def init_nexus_collection(username: Optional[str] = None, password: Option
                 "siteName": "Nexus Inventory",
                 "reachabilityStatus": "Reachable",
                 "source": "Nexus",
-                "softwareVersion": "N/A",
+                "softwareVersion": "9.3(10)",
                 "lastUpdateTime": int(time.time() * 1000)
              }
              return ([
                  InterfaceResult(hostname, ip, "nxos", "Ethernet1/1", "10.1.1.1/24", [], zone="trust", mac_address="00:de:ad:be:ef:01")
-             ], inv_item, None, empty_extras)
+             ], inv_item, None, {**empty_extras, "software_version": "9.3(10)"})
 
         collector = NXOSCollector(hostname, ip, username, password)
         try:
@@ -318,7 +318,7 @@ async def init_nexus_collection(username: Optional[str] = None, password: Option
                 "siteName": "Nexus Inventory",
                 "reachabilityStatus": "Reachable" if not any(i.error for i in interfaces) else "Unreachable",
                 "source": "Nexus",
-                "softwareVersion": "N/A",
+                "softwareVersion": extras.get("software_version") or "N/A",
                 "lastUpdateTime": int(time.time() * 1000)
             }
             return interfaces, inv_item, None, extras

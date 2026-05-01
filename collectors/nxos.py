@@ -43,7 +43,7 @@ NETMIKO_DEVICE_TYPE = "cisco_nxos"
 
 def _empty_extras() -> Dict:
     """Empty extras payload returned on connection or parse failure."""
-    return {"port_channels": [], "vpcs": [], "vlans": []}
+    return {"port_channels": [], "vpcs": [], "vlans": [], "software_version": None}
 
 # NX-OS dotted MAC: 0050.5685.a1b2
 _MAC_DOTTED_RE = re.compile(
@@ -276,6 +276,14 @@ class NXOSCollector(BaseCollector):
         port_channels: List[Dict] = []
         vpcs:          List[Dict] = []
         vlans:         List[Dict] = []
+        software_version: Optional[str] = None
+
+        try:
+            raw = conn.send_command("show version", read_timeout=30)
+            self._save_raw(raw, "show_version")
+            software_version = self._parse_show_version(raw)
+        except Exception as exc:
+            logger.warning("[%s] 'show version' failed: %s", self.hostname, exc)
 
         try:
             raw = conn.send_command("show port-channel summary", read_timeout=30)
@@ -298,7 +306,25 @@ class NXOSCollector(BaseCollector):
         except Exception as exc:
             logger.warning("[%s] 'show vlan brief' failed: %s", self.hostname, exc)
 
-        return {"port_channels": port_channels, "vpcs": vpcs, "vlans": vlans}
+        return {
+            "port_channels":    port_channels,
+            "vpcs":             vpcs,
+            "vlans":            vlans,
+            "software_version": software_version,
+        }
+
+    def _parse_show_version(self, output: str) -> Optional[str]:
+        """
+        Extract the NX-OS software version from `show version` output.
+
+        Matches both modern ("NXOS: version 9.3(10)") and legacy
+        ("system:    version 7.3(0)D1(1)") formats.
+        """
+        for line in output.splitlines():
+            m = re.search(r"^\s*(?:NXOS|system)\s*:\s*version\s+(\S+)", line, re.IGNORECASE)
+            if m:
+                return m.group(1)
+        return None
 
     def _parse_port_channel_summary(self, output: str) -> List[Dict]:
         """
