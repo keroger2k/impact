@@ -62,8 +62,12 @@
           const form = document.querySelector('form[hx-post="/api/dnac/config-search/ui"]');
           const formData = new FormData(form);
 
+          const csrfToken = document.cookie.split('; ').find(row => row.startsWith('csrf_token='));
+          const csrfHeader = csrfToken ? csrfToken.split('=')[1] : '';
+
           fetch('/api/dnac/config-search/download', {
             method: 'POST',
+            headers: { 'X-CSRF-Token': csrfHeader },
             body: formData
           })
           .then(response => response.blob())
