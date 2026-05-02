@@ -6,23 +6,21 @@
         <span class="fw-bold">Global Config Search</span>
       </div>
       <div class="card-body">
-        <form hx-post="/api/dnac/config-search/ui" hx-target="#search-results" hx-indicator="#search-loading">
+        <form id="config-search-form"
+              hx-post="/api/dnac/config-search/ui"
+              hx-target="#search-results"
+              hx-indicator="#search-loading"
+              hx-on:htmx:config-request="serializeGroups(event)">
+
+          <input type="hidden" name="groups_json" id="groups_json">
+
           <div class="mb-3">
             <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Search Rules</label>
-            <div id="search-rules-container">
-              <div class="search-rule-row mb-2 d-flex gap-2">
-                <select name="rule_type" class="form-select form-select-sm" style="width: auto;">
-                  <option value="contains">Must Contain</option>
-                  <option value="not_contains">Must NOT Contain</option>
-                </select>
-                <input type="text" name="rule_value" class="form-control form-control-sm flex-grow-1" placeholder="Search string..." required minlength="2">
-                <button type="button" class="btn btn-sm btn-outline-danger remove-rule" onclick="removeRule(this)" style="display:none;">
-                  <i class="ph ph-trash"></i>
-                </button>
-              </div>
+            <div id="search-groups-container">
+              <!-- Groups will be injected here -->
             </div>
-            <button type="button" class="btn btn-sm btn-outline-primary w-100 mt-1" onclick="addRule()">
-              <i class="ph ph-plus me-1"></i> Add Rule
+            <button type="button" class="btn btn-sm btn-outline-primary w-100 mt-2" onclick="addGroup()">
+              <i class="ph ph-plus-circle me-1"></i> Add Group
             </button>
           </div>
 
@@ -48,6 +46,10 @@
                   <div class="mb-2">
                     <label class="form-label small">Hostname</label>
                     <input type="text" name="hostname" class="form-control form-control-sm">
+                  </div>
+                  <div class="mb-2">
+                    <label class="form-label small">IP Address</label>
+                    <input type="text" name="ip" class="form-control form-control-sm">
                   </div>
                   <div class="mb-2">
                     <label class="form-label small">Platform</label>
@@ -78,9 +80,13 @@
             </div>
           </div>
 
-          <button type="submit" class="btn btn-primary w-100 py-2 fw-bold shadow-sm">
+          <button type="submit" id="search-btn" class="btn btn-primary w-100 py-2 fw-bold shadow-sm" disabled>
             <i class=" ph ph-magnifying-glass me-1"></i> Search Configs
           </button>
+
+          <div class="mt-2 text-center">
+             <small class="text-muted">// TODO(saved-searches)</small>
+          </div>
         </form>
         <div id="search-loading" class="htmx-indicator mt-4 text-center">
           <div class="spinner spinner-md"></div>
@@ -94,41 +100,178 @@
       <div class="empty-state bg-white border rounded shadow-sm">
         <div class="empty-state-icon text-muted">🔍</div>
         <div class="empty-state-title">Configuration Search</div>
-        <div class="empty-state-desc">Search through all device configurations across the entire program. We search in parallel and cache results for performance.</div>
+        <div class="empty-state-desc">Search through all device configurations across the entire program using AND/OR rule groups.</div>
       </div>
     </div>
   </div>
 </div>
 
+<!-- Group Template -->
+<template id="group-template">
+  <div class="search-group card border mb-3 bg-light-subtle shadow-xs">
+    <div class="card-header py-2 d-flex justify-content-between align-items-center bg-white border-bottom-0">
+      <div class="d-flex align-items-center gap-2">
+        <span class="small fw-bold text-navy uppercase">Group</span>
+        <select class="form-select form-select-sm group-combinator" style="width: auto;" data-group-combinator>
+          <option value="any">Match ANY</option>
+          <option value="all">Match ALL</option>
+        </select>
+      </div>
+      <button type="button" class="btn-close btn-sm remove-group" onclick="removeGroup(this)"></button>
+    </div>
+    <div class="card-body py-2">
+      <div class="rules-container">
+        <!-- Rules injected here -->
+      </div>
+      <div class="d-flex justify-content-between align-items-center mt-2">
+        <button type="button" class="btn btn-xs btn-link p-0 text-decoration-none" onclick="addRule(this)">
+          <i class="ph ph-plus me-1"></i>Add rule
+        </button>
+        <div class="form-check form-switch mb-0">
+          <input class="form-check-input group-negate" type="checkbox" data-group-negate>
+          <label class="form-check-label small fw-bold text-muted">Must NOT match</label>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<!-- Rule Template -->
+<template id="rule-row-template">
+  <div class="search-rule-row mb-2 d-flex gap-1 align-items-center">
+    <select class="form-select form-select-sm rule-op" style="width: 100px;" data-rule-op onchange="validateForm()">
+      <option value="contains">Contains</option>
+      <option value="regex">Regex</option>
+      <option value="exact_line">Exact</option>
+    </select>
+    <input type="text" class="form-control form-control-sm flex-grow-1 rule-value"
+           placeholder="Value..." required oninput="validateForm()" data-rule-value>
+    <button type="button" class="btn btn-sm btn-outline-secondary rule-case"
+            onclick="toggleCase(this)" title="Case Sensitive" data-rule-case aria-pressed="false">
+      Aa
+    </button>
+    <button type="button" class="btn btn-sm text-danger remove-rule" onclick="removeRule(this)">
+      <i class="ph ph-minus-circle"></i>
+    </button>
+  </div>
+</template>
+
+<style>
+  .btn-xs { padding: 0.1rem 0.25rem; font-size: 0.75rem; }
+  .shadow-xs { box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.035); }
+  .rule-case.active { background-color: var(--bs-primary); color: white; border-color: var(--bs-primary); }
+</style>
+
 <script>
-  function addRule() {
-    const container = document.getElementById('search-rules-container');
-    const firstRow = container.querySelector('.search-rule-row');
-    const newRow = firstRow.cloneNode(true);
+  function addGroup() {
+    const container = document.getElementById('search-groups-container');
+    const template = document.getElementById('group-template');
+    const clone = template.content.cloneNode(true);
+    container.appendChild(clone);
 
-    // Clear the input
-    newRow.querySelector('input').value = '';
+    // Add initial rule to the new group
+    const groups = container.querySelectorAll('.search-group');
+    addRule(groups[groups.length - 1].querySelector('.btn-link'));
 
-    // Show the remove button on new rows
-    const removeBtn = newRow.querySelector('.remove-rule');
-    removeBtn.style.display = 'block';
+    updateRemoveButtons();
+    validateForm();
+  }
 
-    container.appendChild(newRow);
+  function removeGroup(btn) {
+    btn.closest('.search-group').remove();
+    updateRemoveButtons();
+    validateForm();
+  }
 
-    // Also show remove button on the first row if there's more than one
-    if (container.querySelectorAll('.search-rule-row').length > 1) {
-      container.querySelector('.remove-rule').style.display = 'block';
-    }
+  function addRule(btn) {
+    const group = btn.closest('.search-group');
+    const container = group.querySelector('.rules-container');
+    const template = document.getElementById('rule-row-template');
+    const clone = template.content.cloneNode(true);
+    container.appendChild(clone);
+
+    updateRemoveButtons();
+    validateForm();
   }
 
   function removeRule(btn) {
-    const container = document.getElementById('search-rules-container');
+    const group = btn.closest('.search-group');
     btn.closest('.search-rule-row').remove();
-
-    // Hide remove button if only one row left
-    const rows = container.querySelectorAll('.search-rule-row');
-    if (rows.length === 1) {
-      rows[0].querySelector('.remove-rule').style.display = 'none';
-    }
+    updateRemoveButtons();
+    validateForm();
   }
+
+  function toggleCase(btn) {
+    const pressed = btn.getAttribute('aria-pressed') === 'true';
+    btn.setAttribute('aria-pressed', !pressed);
+    btn.classList.toggle('active');
+  }
+
+  function updateRemoveButtons() {
+    const groups = document.querySelectorAll('.search-group');
+    groups.forEach(g => {
+      // Show group remove button only if > 1 group
+      g.querySelector('.remove-group').style.display = groups.length > 1 ? 'block' : 'none';
+
+      // Show rule remove button only if > 1 rule in group
+      const rules = g.querySelectorAll('.search-rule-row');
+      rules.forEach(r => {
+        r.querySelector('.remove-rule').style.display = rules.length > 1 ? 'block' : 'none';
+      });
+    });
+  }
+
+  function validateForm() {
+    const rules = document.querySelectorAll('.search-rule-row');
+    let isValid = false;
+    rules.forEach(r => {
+      const op = r.querySelector('[data-rule-op]').value;
+      const val = r.querySelector('[data-rule-value]').value.trim();
+      if (op === 'regex' && val.length >= 1) isValid = true;
+      else if (val.length >= 2) isValid = true;
+    });
+    document.getElementById('search-btn').disabled = !isValid;
+  }
+
+  function serializeGroups(event) {
+    const groups = [];
+    document.querySelectorAll('.search-group').forEach(g => {
+      const rules = [];
+      g.querySelectorAll('.search-rule-row').forEach(r => {
+        const val = r.querySelector('[data-rule-value]').value;
+        if (val) {
+          rules.push({
+            op: r.querySelector('[data-rule-op]').value,
+            value: val,
+            case_sensitive: r.querySelector('[data-rule-case]').getAttribute('aria-pressed') === 'true',
+          });
+        }
+      });
+      if (rules.length > 0) {
+        groups.push({
+          combinator: g.querySelector('[data-group-combinator]').value,
+          negate: g.querySelector('[data-group-negate]').checked,
+          rules,
+        });
+      }
+    });
+    document.getElementById('groups_json').value = JSON.stringify(groups);
+  }
+
+  // Initialize first group
+  document.addEventListener('DOMContentLoaded', () => {
+    if (document.getElementById('search-groups-container').children.length === 0) {
+      addGroup();
+
+      // If there is a pre-filled query from URL, inject it into the first rule
+      const initialQuery = "{{ query|safe }}";
+      if (initialQuery) {
+        const firstInput = document.querySelector('.rule-value');
+        if (firstInput) {
+          firstInput.value = initialQuery;
+          validateForm();
+        }
+      }
+    }
+  });
 </script>

@@ -1,123 +1,146 @@
-<div class="card shadow-sm border-0 animate-fade-in">
-  <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center">
-    <span class="fw-bold">
-      Search Results
-      {% if rules %}
-        <small class="ms-2 opacity-75 fw-normal">
-          ({% for r in rules %}{% if r.type == 'contains' %}Must Contain{% else %}Must Not Contain{% endif %}: "{{ r.value }}"{% if not loop.last %}, {% endif %}{% endfor %})
-        </small>
-      {% endif %}
-    </span>
-    <div class="d-flex align-items-center gap-3">
-      <span class="badge bg-light text-navy">{{ results.total_matches }} Devices Matched</span>
-      {% if results.results %}
-        <button class="btn btn-xs btn-outline-light" onclick="downloadSearchResults()">
-          <i class="ph ph-download-simple me-1"></i> Download CSV
-        </button>
+<div class="results-header d-flex justify-content-between align-items-center mb-3 p-3 bg-white border rounded shadow-sm">
+  <div>
+    <h5 class="mb-1 text-navy fw-bold">Search Results</h5>
+    <div class="text-muted small">
+      {% if error %}
+        <span class="text-danger"><i class="ph ph-warning-circle"></i> {{ error }}</span>
+      {% else %}
+        Found {{ results.total_matches }} matches across devices.
+        <div class="mt-1">
+          {% for g in groups %}
+            <span class="badge bg-light text-navy border me-1">
+              Group {{ loop.index }} ({{ g.combinator }}):
+              {% for r in g.rules %}
+                {{ r.op }} "{{ r.value }}"{% if not loop.last %}, {% endif %}
+              {% endfor %}
+              {% if g.negate %}(negated){% endif %}
+            </span>
+          {% endfor %}
+        </div>
       {% endif %}
     </div>
   </div>
-  <div class="card-body p-0">
-    {% if results.results %}
-      <div class="accordion accordion-flush" id="configResults">
-        {% for r in results.results %}
-          <div class="accordion-item">
-            <h2 class="accordion-header">
-              <button class="accordion-button collapsed py-3" type="button" data-bs-toggle="collapse" data-bs-target="#cfg-{{ loop.index }}">
-                <div class="d-flex w-100 justify-content-between align-items-center pe-3">
-                  <div>
-                    <span class="fw-bold text-navy">{{ r.hostname }}</span>
-                    <span class="text-muted small ms-2">{{ r.ip }} • {{ r.platform }}</span>
-                  </div>
-                  <span class="badge bg-primary-subtle text-primary">{{ r.match_count }} matches</span>
-                </div>
-              </button>
-            </h2>
-            <div id="cfg-{{ loop.index }}" class="accordion-collapse collapse">
-              <div class="accordion-body bg-dark p-0">
-                <div class="d-flex justify-content-end p-2 border-bottom border-secondary">
-                  <button class="btn btn-xs btn-outline-light"
-                          onclick="showFullConfig('{{ r.device_id }}', '{{ r.hostname }}')">
-                    <i class=" ph ph-arrow-square-out me-1"></i> View Full Config
-                  </button>
-                </div>
-                <pre class="mb-0 p-3 text-success small" style="max-height: 400px; overflow: auto; font-family: 'SF Mono', monospace;">
-{%- for block in r.blocks -%}
-{%- if not loop.first -%}
-<div class="text-muted opacity-25 my-2">--- context break ---</div>
-{%- endif -%}
-{%- for line in block -%}
-<div class="{% if line.is_match %}bg-primary bg-opacity-25 fw-bold text-white{% endif %}"><span class="text-muted opacity-50 me-3 d-inline-block text-end" style="width: 40px;">{{ line.line_num }}</span>{{ line.text }}</div>
-{%- endfor -%}
-{%- endfor -%}
-                </pre>
-              </div>
-            </div>
-          </div>
-        {% endfor %}
-      </div>
-
-      <script>
-        function downloadSearchResults() {
-          const form = document.querySelector('form[hx-post="/api/dnac/config-search/ui"]');
-          const formData = new FormData(form);
-
-          const csrfToken = document.cookie.split('; ').find(row => row.startsWith('csrf_token='));
-          const csrfHeader = csrfToken ? csrfToken.split('=')[1] : '';
-
-          fetch('/api/dnac/config-search/download', {
-            method: 'POST',
-            headers: { 'X-CSRF-Token': csrfHeader },
-            body: formData
-          })
-          .then(response => response.blob())
-          .then(blob => {
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.style.display = 'none';
-            a.href = url;
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-            a.download = `config_search_${timestamp}.csv`;
-            document.body.appendChild(a);
-            a.click();
-            window.URL.revokeObjectURL(url);
-          })
-          .catch(err => console.error('Download failed:', err));
-        }
-
-        function showFullConfig(deviceId, hostname) {
-          const modalEl = document.getElementById('rawDataModal');
-          const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
-          const title = document.getElementById('rawDataModalLabel');
-          const content = document.getElementById('rawDataContent');
-
-          title.textContent = '';
-          const icon = document.createElement('i');
-          icon.className = 'ph ph-file-code me-2';
-          title.appendChild(icon);
-          title.appendChild(document.createTextNode(`Full Configuration: ${hostname}`));
-          content.textContent = "Loading configuration...";
-          modal.show();
-
-          const csrfToken = document.cookie.split('; ').find(row => row.startsWith('csrf_token='));
-          const csrfHeader = csrfToken ? csrfToken.split('=')[1] : '';
-          fetch(`/api/dnac/devices/${deviceId}/config`, {
-            headers: { 'X-CSRF-Token': csrfHeader }
-          })
-          .then(res => res.json())
-          .then(data => {
-            content.textContent = data.config || "Config not found.";
-          })
-          .catch(err => {
-            content.textContent = "Error loading configuration: " + err;
-          });
-        }
-      </script>
-    {% else %}
-      <div class="p-5 text-center text-muted">
-        <i class=" ph ph-info mb-2" style="font-size: 24px;"></i>
-        <p>No matches found for your search criteria.</p>
-      </div>
-    {% endif %}
-  </div>
+  {% if results and results.total_matches > 0 %}
+  <button class="btn btn-sm btn-outline-primary" onclick="downloadCSV()">
+    <i class="ph ph-download me-1"></i> Download CSV
+  </button>
+  {% endif %}
 </div>
+
+{% if error %}
+<div class="alert alert-warning animate-fade-in">
+  <i class="ph ph-warning me-2"></i> {{ error }}
+</div>
+{% endif %}
+
+{% if results and results.total_matches > 0 %}
+  {% for r in results.results %}
+  <div class="card shadow-sm border-0 mb-4 animate-fade-in device-result-card">
+    <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+      <div>
+        <h6 class="mb-0 fw-bold text-navy">{{ r.hostname }}</h6>
+        <div class="text-muted small mt-1">
+          <span class="me-3"><i class="ph ph-hash me-1"></i>{{ r.ip }}</span>
+          <span><i class="ph ph-cpu me-1"></i>{{ r.platform }}</span>
+          <span class="ms-3 badge bg-info-subtle text-info border-info-subtle">{{ r.match_count }} matches</span>
+          {% if r.matched_groups %}
+            <span class="ms-2 badge bg-success-subtle text-success border-success-subtle">Groups: {{ r.matched_groups }}</span>
+          {% endif %}
+        </div>
+      </div>
+      <button class="btn btn-xs btn-outline-secondary" onclick="toggleConfig('{{ r.device_id }}')">
+        View Full Config
+      </button>
+    </div>
+    <div class="card-body bg-dark p-0">
+      <pre class="config-snippet mb-0 p-3 text-light small"><code>{% for block in r.blocks %}
+{% if not loop.first %}
+<span class="text-muted">...</span>
+{% endif %}
+{% for line in block %}<span class="line-row {% if line.is_match %}match-highlight{% endif %}"><span class="line-num">{{ line.line_num }}</span> {{ line.text }}</span>
+{% endfor %}{% endfor %}</code></pre>
+    </div>
+  </div>
+  {% endfor %}
+{% elif results and not error %}
+  <div class="empty-state bg-white border rounded shadow-sm">
+    <div class="empty-state-icon text-muted">∅</div>
+    <div class="empty-state-title">No Matches Found</div>
+    <div class="empty-state-desc">Your search did not return any results. Try broadening your criteria.</div>
+  </div>
+{% endif %}
+
+<style>
+  .device-result-card { border-left: 4px solid var(--bs-primary) !important; }
+  .config-snippet {
+    max-height: 400px;
+    overflow-y: auto;
+    background-color: #1e1e1e;
+    color: #d4d4d4;
+    font-family: 'Fira Code', 'Courier New', Courier, monospace;
+  }
+  .line-row { display: block; white-space: pre; }
+  .line-num {
+    display: inline-block;
+    width: 3.5rem;
+    color: #858585;
+    text-align: right;
+    padding-right: 1rem;
+    margin-right: 0.5rem;
+    border-right: 1px solid #404040;
+    user-select: none;
+  }
+  .match-highlight { background-color: rgba(255, 255, 0, 0.15); }
+  .match-highlight .line-num { color: #ffd700; border-right-color: #ffd700; }
+</style>
+
+<script>
+  function downloadCSV() {
+    const form = document.getElementById('config-search-form');
+    const formData = new FormData(form);
+    const csrfToken = document.cookie.split('; ').find(row => row.startsWith('csrf_token='));
+
+    fetch('/api/dnac/config-search/download', {
+      method: 'POST',
+      body: formData,
+      headers: {
+        'X-CSRF-Token': csrfToken ? csrfToken.split('=')[1] : ''
+      }
+    })
+    .then(response => {
+      if (!response.ok) throw new Error('Download failed');
+      return response.blob();
+    })
+    .then(blob => {
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `config_search_${new Date().toISOString().slice(0,19).replace(/[:T]/g, '-')}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      a.remove();
+    })
+    .catch(err => alert('Download failed: ' + err.message));
+  }
+
+  function toggleConfig(deviceId) {
+    // Reuse rawDataModal for config display
+    const modalEl = document.getElementById('rawDataModal');
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    const title = document.getElementById('rawDataModalLabel');
+    const content = document.getElementById('rawDataContent');
+
+    title.innerHTML = '<i class="ph ph-file-text me-2"></i>Device Configuration';
+    content.innerHTML = '<div class="text-center p-5"><div class="spinner-border text-success"></div></div>';
+    modal.show();
+
+    fetch(`/api/dnac/devices/${deviceId}/config`, {
+      headers: { 'HX-Request': 'true' }
+    })
+    .then(r => r.text())
+    .then(html => {
+      content.innerHTML = html;
+    });
+  }
+</script>

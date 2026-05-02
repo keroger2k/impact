@@ -2,13 +2,17 @@ import ipaddress
 import json
 import asyncio
 import logging
+import re
+import hashlib
+import io
+import csv
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, Depends, Form
 from fastapi.responses import HTMLResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator, ValidationInfo
 
 import clients.dnac as dc
 import clients.panorama as pc
@@ -20,6 +24,7 @@ from logger_config import run_with_context
 DEVICE_PAGE_LIMIT = 500
 DEVICE_PAGE_MAX = 5000
 CONFIG_SEARCH_WORKERS = 20
+CONFIG_SEARCH_RESULT_TTL = 300
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -537,12 +542,84 @@ async def tag_devices(req: TagDevicesRequest, session: SessionEntry = Depends(re
 
 # ── Config search ─────────────────────────────────────────────────────────────
 
-class SearchRule(BaseModel):
-    type: str # 'contains' or 'not_contains'
+class SearchRuleV2(BaseModel):
+    op: Literal["contains", "regex", "exact_line"] = "contains"
     value: str
+    case_sensitive: bool = False
 
-class ConfigSearchRequest(BaseModel):
-    rules:         list[SearchRule]
+class SearchGroup(BaseModel):
+    combinator: Literal["any", "all"] = "any"
+    negate: bool = False
+    rules: list[SearchRuleV2]
+
+def evaluate_groups(lines: list[str], groups: list[SearchGroup], compiled_regexes: dict) -> tuple[bool, set[int], list[int], str]:
+    """
+    Evaluate rule groups against configuration lines.
+    Returns (matches_all_groups, all_match_indices, matched_group_indices, first_match_line).
+    """
+    rule_hits = [[False] * len(g.rules) for g in groups]
+    rule_match_indices = [[set() for _ in range(len(g.rules))] for g in groups]
+
+    for li, line in enumerate(lines):
+        line_lower = line.lower()
+        line_strip = line.strip()
+        line_strip_lower = line_strip.lower()
+
+        for gi, group in enumerate(groups):
+            for ri, rule in enumerate(group.rules):
+                match = False
+                if rule.op == "contains":
+                    val = rule.value if rule.case_sensitive else rule.value.lower()
+                    match = val in (line if rule.case_sensitive else line_lower)
+                elif rule.op == "exact_line":
+                    val = rule.value.strip()
+                    if not rule.case_sensitive:
+                        match = line_strip_lower == val.lower()
+                    else:
+                        match = line_strip == val
+                elif rule.op == "regex":
+                    pattern = compiled_regexes.get((gi, ri))
+                    if pattern:
+                        match = bool(pattern.search(line))
+
+                if match:
+                    rule_hits[gi][ri] = True
+                    rule_match_indices[gi][ri].add(li)
+
+    all_match_indices = set()
+    matched_group_indices = []
+    for gi, group in enumerate(groups):
+        if group.combinator == "any":
+            group_matched = any(rule_hits[gi])
+        else:
+            group_matched = all(rule_hits[gi])
+
+        if group.negate:
+            group_matched = not group_matched
+
+        if not group_matched:
+            return False, set(), [], ""
+
+        # Collect match indices only from non-negated groups
+        if not group.negate:
+            group_contributed_match = False
+            for ri, rule in enumerate(group.rules):
+                if rule_match_indices[gi][ri]:
+                    all_match_indices.update(rule_match_indices[gi][ri])
+                    group_contributed_match = True
+            if group_contributed_match:
+                matched_group_indices.append(gi + 1)
+
+    first_match_line = ""
+    if all_match_indices:
+        first_idx = min(all_match_indices)
+        first_match_line = lines[first_idx][:120]
+
+    return True, all_match_indices, matched_group_indices, first_match_line
+
+
+class ConfigSearchRequestV2(BaseModel):
+    groups:        list[SearchGroup]
     hostname:      Optional[str] = None
     ip:            Optional[str] = None
     platform:      Optional[str] = None
@@ -553,15 +630,34 @@ class ConfigSearchRequest(BaseModel):
     max_devices:   Optional[int] = None
     context_lines: int = 5
 
+    @field_validator("groups")
+    @classmethod
+    def validate_groups(cls, v: list[SearchGroup]):
+        if not (1 <= len(v) <= 10):
+            raise ValueError("Search must have between 1 and 10 groups")
+
+        for gi, group in enumerate(v):
+            # Check rules count again here because Pydantic validator on SearchGroup
+            # might have already run, but we want the Group-indexed error message
+            if not (1 <= len(group.rules) <= 10):
+                raise ValueError(f"Group {gi+1} must have between 1 and 10 rules")
+
+            for ri, rule in enumerate(group.rules):
+                if rule.op in ("contains", "exact_line"):
+                    if not rule.value or len(rule.value.strip()) < 2:
+                        raise ValueError(f"Group {gi+1}, Rule {ri+1}: Value must be at least 2 characters")
+                elif rule.op == "regex":
+                    if not rule.value or len(rule.value.strip()) < 1:
+                        raise ValueError(f"Group {gi+1}, Rule {ri+1}: Regex pattern cannot be empty")
+                    try:
+                        re.compile(rule.value)
+                    except re.error as e:
+                        raise ValueError(f"Group {gi+1}, Rule {ri+1}: Invalid regex: {e}")
+        return v
+
 
 @router.post("/config-search")
-async def config_search(req: ConfigSearchRequest, session: SessionEntry = Depends(require_auth)):
-    if not req.rules:
-         raise HTTPException(400, "At least one search rule is required")
-
-    for rule in req.rules:
-        if not rule.value or len(rule.value.strip()) < 2:
-             raise HTTPException(400, f"Search value '{rule.value}' must be at least 2 characters")
+async def config_search(req: ConfigSearchRequestV2, session: SessionEntry = Depends(require_auth)):
 
     loop    = asyncio.get_event_loop()
     dnac    = _get_dnac(session)
@@ -618,15 +714,23 @@ async def config_search(req: ConfigSearchRequest, session: SessionEntry = Depend
     all_filtered = list(filtered) + nexus_devices
 
     if not all_filtered:
-        return {"total_matches": 0, "results": [], "rules": [r.dict() for r in req.rules]}
+        return {"total_matches": 0, "results": [], "groups": [g.model_dump() for g in req.groups]}
 
     if req.max_devices and len(all_filtered) > req.max_devices:
         all_filtered = all_filtered[:req.max_devices]
 
-    dnac     = _get_dnac(session)
+    dnac = _get_dnac(session)
+
+    # Pre-compile regexes
+    compiled_regexes = {}
+    for gi, group in enumerate(req.groups):
+        for ri, rule in enumerate(group.rules):
+            if rule.op == "regex":
+                flags = re.IGNORECASE if not rule.case_sensitive else 0
+                compiled_regexes[(gi, ri)] = re.compile(rule.value, flags)
 
     def fetch_and_search(device: dict) -> dict | None:
-        dev_id   = device.get("id", "")
+        dev_id = device.get("id", "")
 
         if device.get("source") == "Nexus":
             from dev import DEV_MODE
@@ -643,32 +747,15 @@ async def config_search(req: ConfigSearchRequest, session: SessionEntry = Depend
 
         lines = config.splitlines()
 
-        include_rules = [r for r in req.rules if r.type == 'contains']
-        exclude_rules = [r for r in req.rules if r.type == 'not_contains']
+        matched, all_match_indices, matched_group_indices, first_match_line = evaluate_groups(lines, req.groups, compiled_regexes)
+        if not matched:
+            return None
 
-        all_match_indices = []
-
-        # Must satisfy ALL include rules
-        for rule in include_rules:
-            search_val = rule.value.lower()
-            match_indices = [i for i, line in enumerate(lines) if search_val in line.lower()]
-            if not match_indices:
-                return None
-            all_match_indices.extend(match_indices)
-
-        # Must satisfy NONE of the exclude rules
-        for rule in exclude_rules:
-            search_val = rule.value.lower()
-            if any(search_val in line.lower() for line in lines):
-                return None
-
-        # Dedup and sort match indices
-        match_indices = sorted(list(set(all_match_indices)))
-
+        match_indices_list = sorted(list(all_match_indices))
         context = req.context_lines
         blocks = []
         include_indices = set()
-        for idx in match_indices:
+        for idx in match_indices_list:
             for i in range(max(0, idx - context), min(len(lines), idx + context + 1)):
                 include_indices.add(i)
 
@@ -683,15 +770,16 @@ async def config_search(req: ConfigSearchRequest, session: SessionEntry = Depend
                 temp_block.append({
                     "line_num": idx + 1,
                     "text": lines[idx],
-                    "is_match": idx in match_indices
+                    "is_match": idx in all_match_indices
                 })
             blocks.append(temp_block)
 
         return {
             "hostname": device.get("hostname"), "ip": device.get("managementIpAddress"),
             "platform": device.get("platformId"), "device_id": dev_id,
-            "match_count": len(match_indices),
-            "lines": [lines[i] for i in match_indices], # Keep for backward compatibility
+            "match_count": len(all_match_indices),
+            "matched_groups": "|".join(map(str, matched_group_indices)),
+            "first_match_line": first_match_line,
             "blocks": blocks[:50],
         }
 
@@ -705,20 +793,26 @@ async def config_search(req: ConfigSearchRequest, session: SessionEntry = Depend
 
     duration_ms = int((time.time() - search_start) * 1000)
     logger.info(
-        f"Config search rules={req.rules}: {len(results)}/{len(all_filtered)} devices matched in {duration_ms}ms",
+        f"Config search groups={len(req.groups)}: {len(results)}/{len(all_filtered)} devices matched in {duration_ms}ms",
         extra={"target": "DNAC", "action": "CONFIG_SEARCH", "duration_ms": duration_ms},
     )
 
     return {
-        "rules": [r.dict() for r in req.rules],
+        "groups": [g.model_dump() for g in req.groups],
         "total_matches": len(results),
         "results": results,
     }
+
+
+def _search_cache_key(req: ConfigSearchRequestV2) -> str:
+    payload = req.model_dump_json()
+    return f"config_search_result:{hashlib.sha256(payload.encode()).hexdigest()}"
 
 @router.post("/config-search/ui", response_class=HTMLResponse)
 async def config_search_ui(
     request: Request,
     hostname: Optional[str] = Form(None),
+    ip: Optional[str] = Form(None),
     platform: Optional[str] = Form(None),
     role: Optional[str] = Form(None),
     device_family: Optional[str] = Form(None),
@@ -728,39 +822,60 @@ async def config_search_ui(
     session: SessionEntry = Depends(require_auth)
 ):
     form_data = await request.form()
-    rule_types = form_data.getlist("rule_type")
-    rule_values = form_data.getlist("rule_value")
+    groups_json = form_data.get("groups_json")
 
-    rules = []
-    for t, v in zip(rule_types, rule_values):
-        if v.strip():
-            rules.append(SearchRule(type=t, value=v))
+    try:
+        groups_raw = json.loads(groups_json) if groups_json else []
+        groups = [SearchGroup(**g) for g in groups_raw]
+    except (json.JSONDecodeError, Exception) as e:
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/config_search_results.html", {
+            "results": {"total_matches": 0, "results": []},
+            "error": f"Invalid groups payload: {e}"
+        })
 
-    if not rules:
-        # Fallback if no rules provided (shouldn't happen with proper frontend validation)
-        # But for robustness, let's handle it
-        return HTMLResponse("<div class='alert alert-warning'>At least one search rule is required.</div>")
+    if not groups:
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/config_search_results.html", {
+            "results": {"total_matches": 0, "results": []},
+            "error": "At least one search group is required."
+        })
 
-    req = ConfigSearchRequest(
-        rules=rules,
-        hostname=hostname,
-        platform=platform,
-        role=role,
-        device_family=device_family,
-        reachability=reachability,
-        tag=tag,
-        context_lines=context_lines
-    )
+    try:
+        req = ConfigSearchRequestV2(
+            groups=groups,
+            hostname=hostname,
+            ip=ip,
+            platform=platform,
+            role=role,
+            device_family=device_family,
+            reachability=reachability,
+            tag=tag,
+            context_lines=context_lines
+        )
+    except Exception as e:
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/config_search_results.html", {
+            "results": {"total_matches": 0, "results": []},
+            "error": str(e)
+        })
+
     results = await config_search(req, session)
+
+    # Stash results in cache for download
+    cache_key = _search_cache_key(req)
+    cache.set(cache_key, results, CONFIG_SEARCH_RESULT_TTL)
+
     from templates_module import templates
     return templates.TemplateResponse(request, "partials/config_search_results.html", {
-        "results": results, "rules": rules
+        "results": results, "groups": groups
     })
 
 @router.post("/config-search/download")
 async def config_search_download(
     request: Request,
     hostname: Optional[str] = Form(None),
+    ip: Optional[str] = Form(None),
     platform: Optional[str] = Form(None),
     role: Optional[str] = Form(None),
     device_family: Optional[str] = Form(None),
@@ -769,20 +884,21 @@ async def config_search_download(
     session: SessionEntry = Depends(require_auth)
 ):
     form_data = await request.form()
-    rule_types = form_data.getlist("rule_type")
-    rule_values = form_data.getlist("rule_value")
+    groups_json = form_data.get("groups_json")
 
-    rules = []
-    for t, v in zip(rule_types, rule_values):
-        if v.strip():
-            rules.append(SearchRule(type=t, value=v))
+    try:
+        groups_raw = json.loads(groups_json) if groups_json else []
+        groups = [SearchGroup(**g) for g in groups_raw]
+    except (json.JSONDecodeError, Exception) as e:
+         raise HTTPException(400, f"Invalid groups payload: {e}")
 
-    if not rules:
-        raise HTTPException(400, "At least one search rule is required")
+    if not groups:
+        raise HTTPException(400, "At least one search group is required")
 
-    req = ConfigSearchRequest(
-        rules=rules,
+    req = ConfigSearchRequestV2(
+        groups=groups,
         hostname=hostname,
+        ip=ip,
         platform=platform,
         role=role,
         device_family=device_family,
@@ -792,17 +908,28 @@ async def config_search_download(
         context_lines=0    # Don't need context for download
     )
 
-    results = await config_search(req, session)
+    # Try to get from cache first
+    cache_key = _search_cache_key(req)
+    results = cache.get(cache_key)
 
-    import io
-    import csv
+    if not results:
+        # cache miss is expected if user navigated away and came back, or TTL elapsed
+        results = await config_search(req, session)
 
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["Hostname", "Management IP", "Platform", "Match Count"])
+
+    # Header
+    writer.writerow(["Hostname", "Management IP", "Platform", "Match Count", "Matched Groups", "First Match Line"])
 
     for r in results["results"]:
-        writer.writerow([r["hostname"], r["ip"], r["platform"], r["match_count"]])
+        matched_groups_str = r.get("matched_groups", "")
+        first_match_line = r.get("first_match_line", "")
+
+        writer.writerow([
+            r["hostname"], r["ip"], r["platform"], r["match_count"],
+            matched_groups_str, first_match_line
+        ])
 
     output.seek(0)
 
