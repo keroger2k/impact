@@ -10,6 +10,7 @@
           <button class="btn btn-outline px-3" onclick="toggleAll(true)" title="Expand All"><i class="ph ph-folders"></i></button>
           <button class="btn btn-outline px-3" onclick="toggleAll(false)" title="Collapse All"><i class="ph ph-folder"></i></button>
         </div>
+        <button class="btn btn-outline px-3" onclick="toggleDensity()" title="Toggle Density"><i class="ph ph-list-dashes"></i></button>
         <button class="btn btn-outline" onclick="runIpamDebug()">
           <i class="ph ph-bug me-1"></i> Debug Sources
         </button>
@@ -116,8 +117,37 @@
     const SPACER = document.querySelector('.ipam-spacer');
     const STICKY_PARENT = document.getElementById('ipam-sticky-parent');
 
+    const getRowHeight = () => VIEWPORT.classList.contains('ipam-density-dense') ? 34 : 38;
+
+    function toggleDensity() {
+        VIEWPORT.classList.toggle('ipam-density-dense');
+        render();
+    }
+
+    // --- Utilities ---
+    const esc = (str) => {
+        if (str === null || str === undefined) return '';
+        return String(str).replace(/[&<>"']/g, m => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
+        }[m]));
+    };
+
     // --- Data Loading ---
+    function showSkeleton() {
+        CONTAINER.innerHTML = '';
+        const h = getRowHeight();
+        const count = Math.ceil(VIEWPORT.clientHeight / h) + 2;
+        for (let i = 0; i < count; i++) {
+            const div = document.createElement('div');
+            div.className = 'ipam-row';
+            div.style.top = (i * h) + 'px';
+            div.innerHTML = '<div class="ipam-skeleton rounded-md" style="height: 18px; width: 60%; margin-left: 24px"></div>';
+            CONTAINER.appendChild(div);
+        }
+    }
+
     async function loadIPAM() {
+        showSkeleton();
         try {
             const res = await fetch('/api/ipam/tree');
             if (res.status === 404) {
@@ -126,6 +156,13 @@
             }
             fullData = await res.json();
             buildSearchIndex();
+
+            if (!initialExpandDone) {
+                initialExpandDone = true;
+                sessionStorage.setItem('ipam_initial_expand_done', 'true');
+                sessionStorage.setItem('ipam_expanded_paths', JSON.stringify([...expandedPaths]));
+            }
+
             updateStats();
             processTree();
             render();
@@ -169,7 +206,7 @@
                 // Default expansion: Roots (/8 etc) and their direct children (/16s)
                 if (!initialExpandDone) {
                     const isRoot = parentPath.length === 0;
-                    const isV16 = parentPath.length === 1 && n.cidr.includes('/16');
+                    const isV16 = parentPath.length === 1 && n.cidr.endsWith('/16');
                     if (isRoot || isV16) {
                         expandedPaths.add(pathStr);
                     }
@@ -249,13 +286,14 @@
         const query = document.getElementById('ipam-filter').value.trim();
         const resultsInfo = document.getElementById('ipam-filter-info');
         const defaultInfo = document.getElementById('ipam-default-info');
+        const h = getRowHeight();
 
         if (!query) {
             resultsInfo.classList.add('d-none');
             defaultInfo.classList.remove('d-none');
             flatVisibleNodes = flatten(fullData.ipv4 || [], 0);
             flatVisibleNodes.push(...flatten(fullData.ipv6 || [], 0));
-            SPACER.style.height = (flatVisibleNodes.length * ROW_HEIGHT) + 'px';
+            SPACER.style.height = (flatVisibleNodes.length * h) + 'px';
             return;
         }
 
@@ -340,7 +378,7 @@
 
         flatVisibleNodes = filteredFlat;
         resultsInfo.innerHTML = `Showing <b>${matches.size.toLocaleString()}</b> matches · <a href="#" onclick="clearFilter(event)">Clear</a>`;
-        SPACER.style.height = (flatVisibleNodes.length * ROW_HEIGHT) + 'px';
+        SPACER.style.height = (flatVisibleNodes.length * h) + 'px';
     }
 
     function flatten(nodes, depth, parentPath = []) {
@@ -360,26 +398,28 @@
     function render() {
         const scrollTop = VIEWPORT.scrollTop;
         const viewportHeight = VIEWPORT.clientHeight;
+        const h = getRowHeight();
 
-        const startIdx = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
-        const endIdx = Math.min(flatVisibleNodes.length, Math.ceil((scrollTop + viewportHeight) / ROW_HEIGHT) + OVERSCAN);
+        const startIdx = Math.max(0, Math.floor(scrollTop / h) - OVERSCAN);
+        const endIdx = Math.min(flatVisibleNodes.length, Math.ceil((scrollTop + viewportHeight) / h) + OVERSCAN);
 
         const fragment = document.createDocumentFragment();
 
-        let topAncestor = null;
+        let ancestors = [];
 
         for (let i = startIdx; i < endIdx; i++) {
             const item = flatVisibleNodes[i];
             const el = createRowElement(item, i);
             fragment.appendChild(el);
 
-            // For sticky context: find the "current" parent of the first truly visible row
-            if (!topAncestor && (i * ROW_HEIGHT) >= scrollTop && item.depth > 0) {
-                 // The parent is the nearest preceding row with depth item.depth - 1
+            // For sticky context: find full ancestor path of the first truly visible row
+            if (ancestors.length === 0 && (i * h) >= scrollTop && item.depth > 0) {
+                 let currentDepth = item.depth;
                  for (let j = i - 1; j >= 0; j--) {
-                     if (flatVisibleNodes[j].depth < item.depth) {
-                         topAncestor = flatVisibleNodes[j];
-                         break;
+                     if (flatVisibleNodes[j].depth < currentDepth) {
+                         ancestors.unshift(flatVisibleNodes[j]);
+                         currentDepth = flatVisibleNodes[j].depth;
+                         if (currentDepth === 0) break;
                      }
                  }
             }
@@ -392,14 +432,15 @@
             CONTAINER.appendChild(fragment);
         }
 
-        updateStickyParent(topAncestor);
+        updateStickyParent(ancestors);
     }
 
     function createRowElement(item, index) {
         const n = item.node;
         const row = document.createElement('div');
         row.className = `ipam-row ${item.isAncestor ? 'is-ancestor' : ''} ${item.isMatch ? 'is-match' : ''}`;
-        row.style.top = (index * ROW_HEIGHT) + 'px';
+        row.style.top = (index * getRowHeight()) + 'px';
+        row.tabIndex = 0; // Make reachable in tab order
 
         const hasChildren = n.children && n.children.length > 0;
         const isExpanded = expandedPaths.has(item.pathStr);
@@ -416,15 +457,24 @@
         else if (n.role === 'loopback_group' || n.role === 'host_route_group') icon = '<i class="ph ph-folders"></i>';
         else if (n.interface_type === 'Group' || n.interface_type === 'Supernet' || (hasChildren && !n.host_ip)) icon = '<i class="ph ph-folder"></i>';
 
-        let cidrDisplay = n.cidr;
+        let cidrDisplay = esc(n.cidr);
         if (n.role === 'endpoint' && n.host_ip) {
-            cidrDisplay = `${n.host_ip} <span class="text-muted fw-normal" style="font-size:0.8em">(${n.cidr})</span>`;
+            cidrDisplay = `${esc(n.host_ip)} <span class="text-muted fw-normal" style="font-size:0.8em">(${esc(n.cidr)})</span>`;
+        }
+
+        // Conflicts/Overlaps indicators
+        let warningHtml = '';
+        if (n.conflicts?.length > 0) {
+            warningHtml += `<i class="ph ph-warning-circle text-danger ms-1" title="Conflicts:\n${esc(n.conflicts.join('\n'))}"></i>`;
+        }
+        if (n.overlaps?.length > 0) {
+            warningHtml += `<i class="ph ph-info text-warning ms-1" title="Overlaps:\n${esc(n.overlaps.join('\n'))}"></i>`;
         }
 
         // Metadata consolidation
         let metaHtml = '';
-        if (n.site && n.site !== 'Unknown' && n.site !== 'N/A') metaHtml += `<span>${n.site}</span>`;
-        if (n.device && n.device !== 'Unknown' && n.device !== 'N/A') metaHtml += `<span> · ${n.device}</span>`;
+        if (n.site && n.site !== 'Unknown' && n.site !== 'N/A') metaHtml += `<span>${esc(n.site)}</span>`;
+        if (n.device && n.device !== 'Unknown' && n.device !== 'N/A') metaHtml += `<span> · ${esc(n.device)}</span>`;
 
         const typeColors = { tunnel: '#6366f1', svi: '#14b8a6', vip: '#f59e0b', management: '#a855f7', p2p: '#64748b' };
         const dotColor = typeColors[n.interface_type] || '#cbd5e1';
@@ -437,23 +487,21 @@
                         ${hasChildren ? `<i class="ph ph-caret-${isExpanded || currentFilter ? 'down' : 'right'}"></i>` : ''}
                     </div>
                     <div class="ipam-icon">${icon}</div>
-                    <div class="ipam-cidr">${cidrDisplay}</div>
-                    <div class="ipam-label">${n.display_name || 'System'}</div>
+                    <div class="ipam-cidr">${cidrDisplay}${warningHtml}</div>
+                    <div class="ipam-label">${esc(n.display_name) || 'System'}</div>
                     ${n.role === 'tunnel_group' ? `<span class="badge bg-indigo-soft text-indigo ms-1" style="font-size:9px">${n.children.length} ep</span>` : ''}
                 </div>
                 <div class="ipam-right">
                     <div class="ipam-meta-main">
-                        <div class="ipam-type-dot" style="background: ${dotColor}" title="${n.interface_type}"></div>
+                        <div class="ipam-type-dot" style="background: ${dotColor}" title="${esc(n.interface_type)}"></div>
                         ${metaHtml}
                     </div>
-                    <div class="ipam-source-pill">${n.source}</div>
+                    <div class="ipam-source-pill">${esc(n.source)}</div>
                     <div class="row-actions">
-                        <button class="btn-action" title="Search in Configs"
-                                onclick="event.stopPropagation(); htmx.ajax('GET', '/config-search?q='+encodeURIComponent('${n.cidr}'), {target:'#content', pushUrl:true})">
+                        <button class="btn-action btn-search" title="Search in Configs">
                             <i class="ph ph-magnifying-glass"></i>
                         </button>
-                        <button class="btn-action" title="IP Lookup"
-                                onclick="event.stopPropagation(); htmx.ajax('GET', '/ip-lookup?q='+encodeURIComponent('${n.cidr}'), {target:'#content', pushUrl:true})">
+                        <button class="btn-action btn-lookup" title="IP Lookup">
                             <i class="ph ph-map-pin"></i>
                         </button>
                     </div>
@@ -461,30 +509,57 @@
             </div>
         `;
 
-        row.onclick = () => {
+        row.onclick = (e) => {
             if (!hasChildren || currentFilter) return;
-            if (isExpanded) expandedPaths.delete(item.pathStr);
-            else expandedPaths.add(item.pathStr);
-
-            sessionStorage.setItem('ipam_expanded_paths', JSON.stringify([...expandedPaths]));
-            processTree();
-            render();
+            toggleExpand(item);
         };
+
+        row.onkeydown = (e) => {
+            if (e.key === 'Enter') {
+                if (hasChildren && !currentFilter) toggleExpand(item);
+            }
+        };
+
+        row.querySelector('.btn-search').addEventListener('click', (e) => {
+            e.stopPropagation();
+            htmx.ajax('GET', '/config-search?q='+encodeURIComponent(n.cidr), {target:'#content', pushUrl:true});
+        });
+        row.querySelector('.btn-lookup').addEventListener('click', (e) => {
+            e.stopPropagation();
+            htmx.ajax('GET', '/ip-lookup?q='+encodeURIComponent(n.cidr), {target:'#content', pushUrl:true});
+        });
 
         return row;
     }
 
-    function updateStickyParent(anc) {
-        if (!anc || currentFilter) {
+    function toggleExpand(item) {
+        const isExpanded = expandedPaths.has(item.pathStr);
+        if (isExpanded) expandedPaths.delete(item.pathStr);
+        else expandedPaths.add(item.pathStr);
+
+        sessionStorage.setItem('ipam_expanded_paths', JSON.stringify([...expandedPaths]));
+        processTree();
+        render();
+    }
+
+    function updateStickyParent(ancestors) {
+        if (!ancestors || ancestors.length === 0 || currentFilter) {
             STICKY_PARENT.style.display = 'none';
             return;
         }
         STICKY_PARENT.style.display = 'flex';
+
+        const crumbs = ancestors.map(anc => `
+            <span class="ipam-cidr">${esc(anc.node.cidr)}</span>
+            <span class="ipam-label ms-1 me-2">${esc(anc.node.display_name)}</span>
+        `).join('<i class="ph ph-caret-right text-light mx-1"></i>');
+
         STICKY_PARENT.innerHTML = `
-            <div class="text-muted small me-2"><i class="ph ph-arrow-elbow-down-right"></i> Inside</div>
-            <div class="ipam-cidr">${anc.node.cidr}</div>
-            <div class="ipam-label ms-2">${anc.node.display_name}</div>
-            <div class="ms-auto text-muted small">${anc.node.site}</div>
+            <div class="text-muted small me-2"><i class="ph ph-arrow-elbow-down-right"></i></div>
+            <div class="d-flex align-items-center overflow-hidden whitespace-nowrap">
+                ${crumbs}
+            </div>
+            <div class="ms-auto text-muted small ps-3">${esc(ancestors[ancestors.length-1].node.site)}</div>
         `;
     }
 
@@ -545,10 +620,46 @@
             const csrfHeader = csrfToken ? csrfToken.split('=')[1] : '';
             const res = await fetch('/api/ipam/debug', { headers: { ...hxHeaders, 'X-CSRF-Token': csrfHeader } });
             const data = await res.json();
-            let html = `<div class="fw-bold mb-2">Cache State:</div>`;
-            html += `<div>▸ IPAM Tree: ${data.ipam_tree.cached ? 'cached' : 'NOT CACHED'}</div>`;
-            html += `<div>▸ DNAC: ${data.dnac.devices_cached} dev, ${data.dnac.sites_cached} sites</div>`;
-            content.innerHTML = html + '<div class="mt-2 text-muted">Full details hidden for brevity in virtualized view.</div>';
+
+            let html = '';
+
+            // Cache summary
+            const tree = data.ipam_tree;
+            const dn = data.dnac;
+            html += `<div class="fw-bold mb-2">Cache State:</div>`;
+            html += `<div class="${tree.cached ? 'text-success' : 'text-danger'}">▸ IPAM Tree: ${tree.cached ? `cached (${tree.v4_roots} v4 roots, ${tree.v6_roots} v6 roots)` : 'NOT CACHED'}</div>`;
+            html += `<div class="text-info">▸ DNAC: ${dn.devices_cached} devices, ${dn.sites_cached} sites, ${dn.sitemap_entries} site-map entries</div>`;
+            html += `<div class="text-info">▸ ACI Nodes: ${data.aci_nodes_cached} cached</div>`;
+
+            // Panorama
+            const pan = data.panorama;
+            html += `<div class="fw-bold mt-3 mb-1">Panorama (pan_interfaces cache — ${pan.devices_in_cache} devices):</div>`;
+            if (pan.devices_in_cache === 0) {
+                html += '<div class="text-danger">⚠ pan_interfaces cache is EMPTY — go to Cache Management and refresh Firewall Interfaces first</div>';
+            } else {
+                html += `<div class="${pan.interfaces_with_prefix > 0 ? 'text-success' : 'text-danger'}">  ${pan.interfaces_with_prefix} interfaces WITH prefix (usable by IPAM)</div>`;
+                html += `<div class="${pan.interfaces_without_prefix > 0 ? 'text-warning' : 'text-muted'}">  ${pan.interfaces_without_prefix} interfaces WITHOUT prefix (skipped — no CIDR)</div>`;
+                for (const e of pan.sample) {
+                    const cls = e.has_prefix ? 'text-success' : 'text-warning';
+                    html += `<div class="${cls} ms-2">  ${e.hostname} / ${e.iface}: ${e.ipv4} ${e.has_prefix ? '✓' : '⚠ no /prefix'}</div>`;
+                }
+            }
+
+            // Nexus
+            const nex = data.nexus;
+            html += `<div class="fw-bold mt-3 mb-1">Nexus (nexus_interfaces cache — ${nex.interfaces_in_cache} interfaces):</div>`;
+            if (nex.interfaces_in_cache === 0) {
+                html += '<div class="text-danger">⚠ nexus_interfaces cache is EMPTY — run Nexus SSH collection in Cache Management first</div>';
+            } else {
+                html += `<div class="${nex.interfaces_with_ip > 0 ? 'text-success' : 'text-danger'}">  ${nex.interfaces_with_ip} interfaces with IP (usable by IPAM)</div>`;
+                html += `<div class="${nex.interfaces_na > 0 ? 'text-warning' : 'text-muted'}">  ${nex.interfaces_na} interfaces with N/A (skipped)</div>`;
+                for (const e of nex.sample) {
+                    const cls = e.ipv4 && e.ipv4 !== 'N/A' ? 'text-success' : 'text-warning';
+                    html += `<div class="${cls} ms-2">  ${e.hostname} / ${e.iface}: ${e.ipv4}</div>`;
+                }
+            }
+
+            content.innerHTML = html;
         } catch (e) {
             content.innerHTML = `<span class="text-danger">Debug request failed: ${e}</span>`;
         }
@@ -585,6 +696,14 @@
                 eventSource.close();
                 loadIPAM();
             }
+        };
+
+        eventSource.onerror = function() {
+            const err = document.createElement('div');
+            err.className = 'text-danger fw-bold mt-1';
+            err.textContent = '!! Connection lost or error occurred.';
+            log.appendChild(err);
+            eventSource.close();
         };
     }
 

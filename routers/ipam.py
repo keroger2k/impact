@@ -74,7 +74,7 @@ async def get_ipam_stats(session: SessionEntry = Depends(require_auth)):
     info = cache.cache_info(IPAM_TREE_CACHE_KEY)
 
     if not tree:
-        return {"ipv4_count": 0, "ipv6_count": 0, "last_refresh": None, "source_counts": {}}
+        return {"ipv4_node_count": 0, "ipv6_node_count": 0, "last_refresh_at": None, "source_counts": {}}
 
     v4_count = 0
     v6_count = 0

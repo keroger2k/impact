@@ -851,8 +851,13 @@ table.data-table tr.dt-filter-hidden { display: none !important; }
   display: flex;
   gap: 4px;
   margin-left: 12px;
+  transition: opacity var(--transition);
 }
-.ipam-row:hover .row-actions { opacity: 1; }
+.ipam-row:hover .row-actions,
+.ipam-row:focus-within .row-actions,
+.row-actions button:focus-visible {
+  opacity: 1;
+}
 
 /* Sticky Header & Filter */
 .ipam-sticky-bar {

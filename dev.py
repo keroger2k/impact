@@ -1231,7 +1231,6 @@ MOCK_IPAM_TREE = {
 
 def generate_large_ipam_tree() -> dict:
     """Generates a synthetic IPAM tree with ~10,000 nodes for performance testing."""
-    import netaddr
 
     def _node(cidr, display_name, site, role="subnet", itype="physical", source="Aggregated"):
         return {
@@ -1252,13 +1251,13 @@ def generate_large_ipam_tree() -> dict:
     root = _node("10.0.0.0/8", "Internal Network", "Global")
     ipv4_roots.append(root)
 
-    for i in range(64):  # 64 x /16s
+    for i in range(128):  # 128 x /16s
         v16_cidr = f"10.{i}.0.0/16"
-        site_name = f"SITE-{i:02d}"
+        site_name = f"SITE-{i:03d}"
         v16_node = _node(v16_cidr, f"Data Center {i}", site_name)
         root["children"].append(v16_node)
 
-        for j in range(20):  # ~20 x /24s per /16
+        for j in range(35):  # ~40 x /24s per /16
             v24_cidr = f"10.{i}.{j}.0/24"
             v24_node = _node(v24_cidr, f"VLAN {j+100}", site_name, itype="svi")
             v16_node["children"].append(v24_node)
