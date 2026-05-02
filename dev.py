@@ -15,6 +15,7 @@ import time
 import uuid
 
 DEV_MODE = os.getenv("DEV_MODE", "").lower() in ("1", "true", "yes")
+DEV_IPAM_LARGE = os.getenv("DEV_IPAM_LARGE", "").lower() in ("1", "true", "yes")
 
 # Fixed token used for the auto-login flow in the frontend
 DEV_TOKEN = "dev-local-token-impact-ii"
@@ -1228,6 +1229,76 @@ MOCK_IPAM_TREE = {
     ]
 }
 
+def generate_large_ipam_tree() -> dict:
+    """Generates a synthetic IPAM tree with ~10,000 nodes for performance testing."""
+
+    def _node(cidr, display_name, site, role="subnet", itype="physical", source="Aggregated"):
+        return {
+            "cidr": cidr,
+            "display_name": display_name,
+            "site": site,
+            "device": "N/A" if role == "subnet" else f"DEV-{site}-01",
+            "source": source,
+            "role": role,
+            "interface_type": itype,
+            "conflicts": [],
+            "overlaps": [],
+            "children": []
+        }
+
+    ipv4_roots = []
+    # 10.0.0.0/8 root
+    root = _node("10.0.0.0/8", "Internal Network", "Global")
+    ipv4_roots.append(root)
+
+    for i in range(128):  # 128 x /16s
+        v16_cidr = f"10.{i}.0.0/16"
+        site_name = f"SITE-{i:03d}"
+        v16_node = _node(v16_cidr, f"Data Center {i}", site_name)
+        root["children"].append(v16_node)
+
+        for j in range(35):  # ~40 x /24s per /16
+            v24_cidr = f"10.{i}.{j}.0/24"
+            v24_node = _node(v24_cidr, f"VLAN {j+100}", site_name, itype="svi")
+            v16_node["children"].append(v24_node)
+
+            # Add some endpoints and groups to every 5th /24
+            if j % 5 == 0:
+                # Tunnel Group
+                tg = _node(v24_cidr, f"Tunnels in {site_name}", site_name, role="tunnel_group", itype="tunnel")
+                v24_node["children"].append(tg)
+                for k in range(3):
+                    ep = _node(v24_cidr, f"Tunnel{k}", site_name, role="endpoint", itype="tunnel")
+                    ep["host_ip"] = f"10.{i}.{j}.{k+1}"
+                    tg["children"].append(ep)
+
+                # Loopback Group
+                lg = _node(v24_cidr, "Collapsed Loopbacks", site_name, role="loopback_group", itype="loopback")
+                v24_node["children"].append(lg)
+                for k in range(5):
+                    lb = _node(f"10.{i}.{j}.{k+10}/32", f"Loopback{k}", site_name, role="host_route", itype="loopback")
+                    lb["host_ip"] = f"10.{i}.{j}.{k+10}"
+                    lg["children"].append(lb)
+
+    # Add a few more supernets
+    ipv4_roots.append(_node("172.16.0.0/12", "DMZ Space", "External", source="Panorama"))
+    ipv4_roots.append(_node("192.168.0.0/16", "Legacy Branch Space", "Branch", source="Nexus"))
+
+    return {
+        "ipv4": ipv4_roots,
+        "ipv6": [
+            {
+                "cidr": "2001:db8::/32",
+                "display_name": "Documentation Prefix",
+                "role": "subnet",
+                "interface_type": "physical",
+                "site": "Global",
+                "source": "Aggregated",
+                "children": []
+            }
+        ]
+    }
+
 # ── Cache seeding ─────────────────────────────────────────────────────────────
 
 def _build_ipam_tree_from_mocks() -> dict:
@@ -1340,10 +1411,13 @@ def seed_cache(cache) -> None:
     # IPAM — compute the tree from the same source caches the live engine
     # consumes, so initial render matches what Refresh Discovery would produce.
     # Falls back to the static MOCK_IPAM_TREE if the engine can't run.
-    try:
-        cache.set(IPAM_TREE_CACHE_KEY, _build_ipam_tree_from_mocks(), LONG)
-    except Exception:
-        cache.set(IPAM_TREE_CACHE_KEY, MOCK_IPAM_TREE, LONG)
+    if DEV_IPAM_LARGE:
+        cache.set(IPAM_TREE_CACHE_KEY, generate_large_ipam_tree(), LONG)
+    else:
+        try:
+            cache.set(IPAM_TREE_CACHE_KEY, _build_ipam_tree_from_mocks(), LONG)
+        except Exception:
+            cache.set(IPAM_TREE_CACHE_KEY, MOCK_IPAM_TREE, LONG)
 
     for dev in MOCK_NEXUS_DEVICES:
         cache.set(f"config:nexus:{dev['hostname']}", MOCK_CONFIGS[dev['id']], LONG)

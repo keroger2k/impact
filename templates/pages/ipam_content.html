@@ -1,48 +1,60 @@
 <div class="animate-fade-in">
-  <div class="flex-between mb-4">
-    <div>
-      <h4 class="mb-1 font-weight-bold" style="color: var(--sidebar-bg)">Network Hierarchy Engine</h4>
-      <p class="text-muted small mb-0">Aggregated visibility across ACI, DNAC, Panorama, and Nexus</p>
-    </div>
-    <div class="d-flex gap-2">
-      <div class="btn-group shadow-sm">
-        <button class="btn btn-outline px-3" onclick="expandAllNodes(true)" title="Expand All"><i class="ph ph-folders"></i></button>
-        <button class="btn btn-outline px-3" onclick="expandAllNodes(false)" title="Collapse All"><i class="ph ph-folder"></i></button>
+  <div class="ipam-sticky-bar">
+    <div class="flex-between mb-4">
+      <div>
+        <h4 class="mb-1 font-weight-bold" style="color: var(--sidebar-bg)">Network Hierarchy Engine</h4>
+        <p class="text-muted small mb-0">Aggregated visibility across ACI, DNAC, Panorama, and Nexus</p>
       </div>
-      <button class="btn btn-outline" onclick="runIpamDebug()">
-        <i class="ph ph-bug me-1"></i> Debug Sources
-      </button>
-      <div class="dropdown">
-        <button class="btn btn-outline dropdown-toggle" type="button" data-bs-toggle="dropdown">
-          <i class="ph ph-arrows-clockwise me-1"></i> Refresh Discovery
+      <div class="d-flex gap-2">
+        <div class="btn-group shadow-sm">
+          <button class="btn btn-outline px-3" onclick="toggleAll(true)" title="Expand All"><i class="ph ph-folders"></i></button>
+          <button class="btn btn-outline px-3" onclick="toggleAll(false)" title="Collapse All"><i class="ph ph-folder"></i></button>
+        </div>
+        <button class="btn btn-outline px-3" onclick="toggleDensity()" title="Toggle Density"><i class="ph ph-list-dashes"></i></button>
+        <button class="btn btn-outline" onclick="runIpamDebug()">
+          <i class="ph ph-bug me-1"></i> Debug Sources
         </button>
-        <ul class="dropdown-menu dropdown-menu-end shadow-md border-0">
-          <li><a class="dropdown-item" href="#" onclick="runRefresh()">Refresh All</a></li>
-          <li><hr class="dropdown-divider"></li>
-          <li><a class="dropdown-item" href="#" onclick="runRefresh('aci')">Refresh ACI Only</a></li>
-          <li><a class="dropdown-item" href="#" onclick="runRefresh('dnac')">Refresh DNAC Only</a></li>
-          <li><a class="dropdown-item" href="#" onclick="runRefresh('nexus')">Refresh Nexus Only</a></li>
-          <li><a class="dropdown-item" href="#" onclick="runRefresh('panorama')">Refresh Panorama Only</a></li>
-        </ul>
+        <div class="dropdown">
+          <button class="btn btn-outline dropdown-toggle" type="button" data-bs-toggle="dropdown">
+            <i class="ph ph-arrows-clockwise me-1"></i> Refresh Discovery
+          </button>
+          <ul class="dropdown-menu dropdown-menu-end shadow-md border-0">
+            <li><a class="dropdown-item" href="#" onclick="runRefresh()">Refresh All</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="#" onclick="runRefresh('aci')">Refresh ACI Only</a></li>
+            <li><a class="dropdown-item" href="#" onclick="runRefresh('dnac')">Refresh DNAC Only</a></li>
+            <li><a class="dropdown-item" href="#" onclick="runRefresh('nexus')">Refresh Nexus Only</a></li>
+            <li><a class="dropdown-item" href="#" onclick="runRefresh('panorama')">Refresh Panorama Only</a></li>
+          </ul>
+        </div>
+        <a href="/api/ipam/export" class="btn btn-primary">
+          <i class="ph ph-file-csv me-1"></i> Export SolarWinds CSV
+        </a>
       </div>
-      <a href="/api/ipam/export" class="btn btn-primary">
-        <i class="ph ph-file-csv me-1"></i> Export SolarWinds CSV
-      </a>
     </div>
-  </div>
 
-  <div class="row mb-4">
-    <div class="col-md-6">
-        <div class="position-relative">
-            <label for="ipam-filter" class="visually-hidden">Filter IPAM</label>
-            <span class="position-absolute top-50 start-0 translate-middle-y ps-3 text-muted">
-                <i class="ph ph-magnifying-glass"></i>
-            </span>
-            <input type="text" id="ipam-filter" class="form-control ps-5" placeholder="Filter by CIDR, Site, or Device...">
-        </div>
-        <div class="mt-2 text-muted small ms-1">
-            <i class="ph ph-info me-1"></i> Examples: 10.5.3.27 | site:ATL | device:core1 | type:tunnel | vlan:200
-        </div>
+    <div id="ipam-stats" class="ipam-stats-strip d-none">
+        <!-- Stats populated by JS -->
+    </div>
+
+    <div class="row align-items-center">
+      <div class="col-md-6">
+          <div class="position-relative">
+              <label for="ipam-filter" class="visually-hidden">Filter IPAM</label>
+              <span class="position-absolute top-50 start-0 translate-middle-y ps-3 text-muted">
+                  <i class="ph ph-magnifying-glass"></i>
+              </span>
+              <input type="text" id="ipam-filter" class="form-control ps-5" placeholder="Filter by CIDR, Site, or Device... (Press / to focus)">
+          </div>
+      </div>
+      <div class="col-md-6 text-end">
+          <div id="ipam-filter-info" class="text-muted small d-none">
+              <!-- Result count here -->
+          </div>
+          <div id="ipam-default-info" class="text-muted small">
+              <i class="ph ph-info me-1"></i> site:ATL | device:core1 | type:tunnel | vlan:200
+          </div>
+      </div>
     </div>
   </div>
 
@@ -73,21 +85,531 @@
     </div>
   </div>
 
-  <div id="ipam-results"
-       {% if not initial_ipam_tree %}
-       hx-get="/api/ipam/tree" hx-trigger="load" hx-target="this"
-       hx-on:htmx:response-error="onIpamLoadError(event)"
-       {% endif %}
-       class="table-container shadow-md">
-    <!-- Tree will be rendered here by JS -->
-    <div class="text-center my-5 py-5">
-        <i class="ph ph-network ph-3x text-light mb-3" style="font-size: 3rem; opacity: 0.2"></i>
-        <p class="text-muted">Loading hierarchical IPAM view...</p>
+  <div class="position-relative">
+    <div id="ipam-sticky-parent">
+        <!-- Sticky ancestor breadcrumb/row -->
+    </div>
+    <div id="ipam-viewport" class="shadow-md">
+        <div class="ipam-spacer"></div>
+        <div id="ipam-rows-container">
+            <div class="text-center my-5 py-5">
+                <i class="ph ph-network ph-3x text-light mb-3" style="font-size: 3rem; opacity: 0.2"></i>
+                <p class="text-muted">Loading hierarchical IPAM view...</p>
+            </div>
+        </div>
     </div>
   </div>
 </div>
 
 <script>
+    // --- State & Constants ---
+    let fullData = null;
+    let searchIndex = [];
+    let flatVisibleNodes = [];
+    let expandedPaths = new Set(JSON.parse(sessionStorage.getItem('ipam_expanded_paths') || '[]'));
+    let initialExpandDone = sessionStorage.getItem('ipam_initial_expand_done') === 'true';
+    let currentFilter = '';
+
+    const ROW_HEIGHT = 38;
+    const OVERSCAN = 20;
+    const VIEWPORT = document.getElementById('ipam-viewport');
+    const CONTAINER = document.getElementById('ipam-rows-container');
+    const SPACER = document.querySelector('.ipam-spacer');
+    const STICKY_PARENT = document.getElementById('ipam-sticky-parent');
+
+    const getRowHeight = () => VIEWPORT.classList.contains('ipam-density-dense') ? 34 : 38;
+
+    function toggleDensity() {
+        VIEWPORT.classList.toggle('ipam-density-dense');
+        processTree();
+        render();
+    }
+
+    // --- Utilities ---
+    const esc = (str) => {
+        if (str === null || str === undefined) return '';
+        return String(str).replace(/[&<>"']/g, m => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
+        }[m]));
+    };
+
+    // --- Data Loading ---
+    function showSkeleton() {
+        CONTAINER.innerHTML = '';
+        const h = getRowHeight();
+        const count = Math.ceil(VIEWPORT.clientHeight / h) + 5;
+        SPACER.style.height = (count * h) + 'px';
+        for (let i = 0; i < count; i++) {
+            const div = document.createElement('div');
+            div.className = 'ipam-row';
+            div.style.top = (i * h) + 'px';
+            div.innerHTML = '<div class="ipam-skeleton rounded-md" style="height: 18px; width: 60%; margin-left: 24px"></div>';
+            CONTAINER.appendChild(div);
+        }
+    }
+
+    async function loadIPAM() {
+        showSkeleton();
+        try {
+            const res = await fetch('/api/ipam/tree');
+            if (res.status === 404) {
+                onIpamLoadError({ detail: { xhr: { status: 404 } } });
+                return;
+            }
+            fullData = await res.json();
+            buildSearchIndex();
+
+            if (!initialExpandDone) {
+                initialExpandDone = true;
+                sessionStorage.setItem('ipam_initial_expand_done', 'true');
+                sessionStorage.setItem('ipam_expanded_paths', JSON.stringify([...expandedPaths]));
+            }
+
+            updateStats();
+            processTree();
+            render();
+        } catch (e) {
+            console.error("Failed to load IPAM data", e);
+        }
+    }
+
+    async function updateStats() {
+        try {
+            const res = await fetch('/api/ipam/stats');
+            const stats = await res.json();
+            const el = document.getElementById('ipam-stats');
+            el.classList.remove('d-none');
+
+            let sourceHtml = Object.entries(stats.source_counts)
+                .map(([src, count]) => `<span class="ipam-stats-item">${src}: <b>${count.toLocaleString()}</b></span>`)
+                .join(' · ');
+
+            const timeStr = stats.last_refresh_at ? new Date(stats.last_refresh_at * 1000).toLocaleString() : 'Never';
+
+            el.innerHTML = `
+                <div class="ipam-stats-item">IPv4: <b>${stats.ipv4_node_count.toLocaleString()}</b></div>
+                <div class="ipam-stats-item">IPv6: <b>${stats.ipv6_node_count.toLocaleString()}</b></div>
+                <div class="ms-auto d-flex gap-3">
+                    ${sourceHtml}
+                    <div class="ipam-stats-item border-start ps-3">Refreshed: <b>${timeStr}</b></div>
+                </div>
+            `;
+        } catch (e) {}
+    }
+
+    // --- Search Indexing & Logic ---
+    function buildSearchIndex() {
+        searchIndex = [];
+        const walk = (nodes, parentPath = []) => {
+            nodes.forEach(n => {
+                const path = [...parentPath, n.cidr];
+                const pathStr = path.join('>>>');
+
+                // Default expansion: Roots (/8 etc) and their direct children (/16s)
+                if (!initialExpandDone) {
+                    const isRoot = parentPath.length === 0;
+                    const isV16 = parentPath.length === 1 && n.cidr.endsWith('/16');
+                    if (isRoot || isV16) {
+                        expandedPaths.add(pathStr);
+                    }
+                }
+
+                const record = {
+                    node: n,
+                    path: path,
+                    searchStr: `${n.cidr} ${n.display_name} ${n.site} ${n.device} ${n.interface_name} ${n.source}`.toLowerCase(),
+                    cidr: n.cidr,
+                    site: (n.site || '').toLowerCase(),
+                    device: (n.device || '').toLowerCase(),
+                    source: (n.source || '').toLowerCase(),
+                    type: (n.interface_type || '').toLowerCase(),
+                    vlan: String(n.vlan_id || '').toLowerCase()
+                };
+
+                // Precompute IP containment for IPv4
+                if (n.cidr && !n.cidr.includes(':')) {
+                    const [ip, bits] = n.cidr.split('/');
+                    record.v4 = { long: ipToLong(ip), mask: bitsToMask(parseInt(bits)) };
+                } else if (n.cidr && n.cidr.includes(':')) {
+                    const [ip, bits] = n.cidr.split('/');
+                    record.v6 = { big: ip6ToBigInt(ip), mask: bitsToMask6(parseInt(bits)) };
+                }
+
+                searchIndex.push(record);
+                if (n.children) walk(n.children, path);
+            });
+        };
+        walk(fullData.ipv4 || []);
+        walk(fullData.ipv6 || []);
+    }
+
+    function ipToLong(ip) {
+        return ip.split('.').reduce((acc, octet) => (acc << 8) + parseInt(octet, 10), 0) >>> 0;
+    }
+    function bitsToMask(bits) {
+        return bits === 0 ? 0 : (~(Math.pow(2, 32 - bits) - 1)) >>> 0;
+    }
+
+    function ip6ToBigInt(ip) {
+        let full = ip;
+        if (ip.includes('::')) {
+            const [head, tail] = ip.split('::');
+            const hPart = head ? head.split(':') : [];
+            const tPart = tail ? tail.split(':') : [];
+            const missing = 8 - (hPart.length + tPart.length);
+            full = [...hPart, ...Array(missing).fill('0'), ...tPart].join(':');
+        } else if (ip.split(':').length < 8) {
+             full = [...ip.split(':'), ...Array(8 - ip.split(':').length).fill('0')].join(':');
+        }
+        return full.split(':').reduce((acc, part) => (acc << 16n) + BigInt(parseInt(part, 16) || 0), 0n);
+    }
+    function bitsToMask6(bits) {
+        return bits === 0 ? 0n : (~((1n << BigInt(128 - bits)) - 1n));
+    }
+
+    function parseQuery(query) {
+        const tokens = query.split(/\s+/);
+        const scoped = {};
+        const free = [];
+        tokens.forEach(t => {
+            if (t.includes(':')) {
+                const [k, v] = t.split(':');
+                if (['site', 'device', 'source', 'type', 'vlan', 'cidr'].includes(k)) {
+                    if (!scoped[k]) scoped[k] = [];
+                    scoped[k].push(v.toLowerCase());
+                } else free.push(t.toLowerCase());
+            } else if (t) free.push(t.toLowerCase());
+        });
+        return { scoped, free: free.join(' ') };
+    }
+
+    // --- Tree Flattening & Filtering ---
+    function processTree() {
+        const query = document.getElementById('ipam-filter').value.trim();
+        const resultsInfo = document.getElementById('ipam-filter-info');
+        const defaultInfo = document.getElementById('ipam-default-info');
+        const h = getRowHeight();
+
+        if (!query) {
+            resultsInfo.classList.add('d-none');
+            defaultInfo.classList.remove('d-none');
+            flatVisibleNodes = flatten(fullData.ipv4 || [], 0);
+            flatVisibleNodes.push(...flatten(fullData.ipv6 || [], 0));
+            SPACER.style.height = (flatVisibleNodes.length * h) + 'px';
+            return;
+        }
+
+        resultsInfo.classList.remove('d-none');
+        defaultInfo.classList.add('d-none');
+
+        const { scoped, free } = parseQuery(query);
+        const matches = new Set();
+        const ancestors = new Set();
+
+        const isIp = /^[0-9a-fA-F:\.]+$/.test(free) && (free.includes('.') || free.includes(':'));
+        let qV4 = null, qV6 = null;
+        if (isIp) {
+            if (free.includes('.')) {
+                qV4 = ipToLong(free);
+            } else {
+                qV6 = ip6ToBigInt(free);
+            }
+        }
+
+        searchIndex.forEach(rec => {
+            let selfMatches = true;
+
+            // match:exact handling
+            const isExact = scoped.match && scoped.match.includes('exact');
+
+            // Scoped filters
+            for (const [k, vals] of Object.entries(scoped)) {
+                if (k === 'match') continue;
+                if (!vals.some(v => rec[k].includes(v))) { selfMatches = false; break; }
+            }
+            if (!selfMatches) return;
+
+            // Free text / IP / Prefix length
+            if (free) {
+                if (isIp) {
+                    if (isExact) {
+                        selfMatches = rec.cidr.split('/')[0] === free;
+                    } else if (qV4 && rec.v4) {
+                        selfMatches = (qV4 & rec.v4.mask) === (rec.v4.long & rec.v4.mask);
+                    } else if (qV6 && rec.v6) {
+                        selfMatches = (qV6 & rec.v6.mask) === (rec.v6.big & rec.v6.mask);
+                    } else {
+                        selfMatches = false;
+                    }
+                } else if (free.startsWith('/') && !isNaN(free.slice(1))) {
+                    // Bare prefix length search: /8, /16, etc.
+                    const bits = free.slice(1);
+                    selfMatches = rec.cidr.endsWith('/' + bits);
+                } else if (isExact) {
+                    selfMatches = rec.cidr === free || rec.display_name.toLowerCase() === free;
+                } else {
+                    selfMatches = rec.searchStr.includes(free);
+                }
+            }
+
+            if (selfMatches) {
+                matches.add(rec.node);
+                // All ancestors of a match must be visible
+                for (let i = 0; i < rec.path.length - 1; i++) {
+                    ancestors.add(rec.path.slice(0, i + 1).join('>>>'));
+                }
+            }
+        });
+
+        // Build flat array of visible nodes (matches + their ancestors)
+        const filteredFlat = [];
+        const walk = (nodes, depth, parentPath = []) => {
+            nodes.forEach(n => {
+                const pathStr = [...parentPath, n.cidr].join('>>>');
+                const isMatch = matches.has(n);
+                const isAnc = ancestors.has(pathStr);
+
+                if (isMatch || isAnc) {
+                    filteredFlat.push({ node: n, depth, isMatch, isAncestor: !isMatch, pathStr });
+                    if (n.children) walk(n.children, depth + 1, [...parentPath, n.cidr]);
+                }
+            });
+        };
+        walk(fullData.ipv4 || [], 0);
+        walk(fullData.ipv6 || [], 0);
+
+        flatVisibleNodes = filteredFlat;
+        resultsInfo.innerHTML = `Showing <b>${matches.size.toLocaleString()}</b> matches · <a href="#" onclick="clearFilter(event)">Clear</a>`;
+        SPACER.style.height = (flatVisibleNodes.length * h) + 'px';
+    }
+
+    function flatten(nodes, depth, parentPath = []) {
+        const res = [];
+        nodes.forEach(n => {
+            const pathStr = [...parentPath, n.cidr].join('>>>');
+            const isExpanded = expandedPaths.has(pathStr);
+            res.push({ node: n, depth, pathStr });
+            if (isExpanded && n.children) {
+                res.push(...flatten(n.children, depth + 1, [...parentPath, n.cidr]));
+            }
+        });
+        return res;
+    }
+
+    // --- Rendering ---
+    function render() {
+        const scrollTop = VIEWPORT.scrollTop;
+        const viewportHeight = VIEWPORT.clientHeight;
+        const h = getRowHeight();
+
+        const startIdx = Math.max(0, Math.floor(scrollTop / h) - OVERSCAN);
+        const endIdx = Math.min(flatVisibleNodes.length, Math.ceil((scrollTop + viewportHeight) / h) + OVERSCAN);
+
+        const fragment = document.createDocumentFragment();
+
+        let ancestors = [];
+
+        for (let i = startIdx; i < endIdx; i++) {
+            const item = flatVisibleNodes[i];
+            const el = createRowElement(item, i);
+            fragment.appendChild(el);
+
+            // For sticky context: find full ancestor path of the first truly visible row
+            if (ancestors.length === 0 && (i * h) >= scrollTop && item.depth > 0) {
+                 let currentDepth = item.depth;
+                 for (let j = i - 1; j >= 0; j--) {
+                     if (flatVisibleNodes[j].depth < currentDepth) {
+                         ancestors.unshift(flatVisibleNodes[j]);
+                         currentDepth = flatVisibleNodes[j].depth;
+                         if (currentDepth === 0) break;
+                     }
+                 }
+            }
+        }
+
+        CONTAINER.innerHTML = '';
+        if (flatVisibleNodes.length === 0) {
+            CONTAINER.innerHTML = '<div class="p-5 text-center text-muted">No results found matching your filter.</div>';
+        } else {
+            CONTAINER.appendChild(fragment);
+        }
+
+        updateStickyParent(ancestors);
+    }
+
+    function createRowElement(item, index) {
+        const n = item.node;
+        const row = document.createElement('div');
+        row.className = `ipam-row ${item.isAncestor ? 'is-ancestor' : ''} ${item.isMatch ? 'is-match' : ''}`;
+        row.style.top = (index * getRowHeight()) + 'px';
+        row.tabIndex = 0; // Make reachable in tab order
+
+        const hasChildren = n.children && n.children.length > 0;
+        const isExpanded = expandedPaths.has(item.pathStr);
+
+        // Guide lines
+        let guides = '';
+        for (let i = 0; i < item.depth; i++) {
+            guides += `<div class="ipam-guide-line"></div>`;
+        }
+
+        // Icon mapping
+        let icon = '<i class="ph ph-hash"></i>';
+        if (n.role === 'tunnel_group') icon = '<i class="ph ph-circle-nodes text-indigo"></i>';
+        else if (n.role === 'loopback_group' || n.role === 'host_route_group') icon = '<i class="ph ph-folders"></i>';
+        else if (n.interface_type === 'Group' || n.interface_type === 'Supernet' || (hasChildren && !n.host_ip)) icon = '<i class="ph ph-folder"></i>';
+
+        let cidrDisplay = esc(n.cidr);
+        if (n.role === 'endpoint' && n.host_ip) {
+            cidrDisplay = `${esc(n.host_ip)} <span class="text-muted fw-normal" style="font-size:0.8em">(${esc(n.cidr)})</span>`;
+        }
+
+        // Conflicts/Overlaps indicators
+        let warningHtml = '';
+        if (n.conflicts?.length > 0) {
+            warningHtml += `<i class="ph ph-warning-circle text-danger ms-1" title="Conflicts: ${esc(n.conflicts.join(' | '))}"></i>`;
+        }
+        if (n.overlaps?.length > 0) {
+            warningHtml += `<i class="ph ph-info text-warning ms-1" title="Overlaps: ${esc(n.overlaps.join(' | '))}"></i>`;
+        }
+
+        // Metadata consolidation
+        let metaHtml = '';
+        if (n.site && n.site !== 'Unknown' && n.site !== 'N/A') metaHtml += `<span>${esc(n.site)}</span>`;
+        if (n.device && n.device !== 'Unknown' && n.device !== 'N/A') metaHtml += `<span> · ${esc(n.device)}</span>`;
+
+        const typeColors = { tunnel: '#6366f1', svi: '#14b8a6', vip: '#f59e0b', management: '#a855f7', p2p: '#64748b' };
+        const dotColor = typeColors[n.interface_type] || '#cbd5e1';
+
+        row.innerHTML = `
+            <div class="ipam-guides">${guides}</div>
+            <div class="ipam-content-wrapper" style="--ipam-indent: ${item.depth * 14}px">
+                <div class="ipam-left">
+                    <div class="ipam-toggle">
+                        ${hasChildren ? `<i class="ph ph-caret-${isExpanded || currentFilter ? 'down' : 'right'}"></i>` : ''}
+                    </div>
+                    <div class="ipam-icon">${icon}</div>
+                    <div class="ipam-cidr">${cidrDisplay}${warningHtml}</div>
+                    <div class="ipam-label">${esc(n.display_name) || 'System'}</div>
+                    ${n.role === 'tunnel_group' ? `<span class="badge bg-indigo-soft text-indigo ms-1" style="font-size:9px">${n.children.length} ep</span>` : ''}
+                </div>
+                <div class="ipam-right">
+                    <div class="ipam-meta-main">
+                        <div class="ipam-type-dot" style="background: ${dotColor}" title="${esc(n.interface_type)}"></div>
+                        ${metaHtml}
+                    </div>
+                    <div class="ipam-source-pill">${esc(n.source)}</div>
+                    <div class="row-actions">
+                        <button class="btn-action btn-search" title="Search in Configs">
+                            <i class="ph ph-magnifying-glass"></i>
+                        </button>
+                        <button class="btn-action btn-lookup" title="IP Lookup">
+                            <i class="ph ph-map-pin"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        row.onclick = (e) => {
+            if (!hasChildren || currentFilter) return;
+            toggleExpand(item);
+        };
+
+        row.onkeydown = (e) => {
+            if (e.key === 'Enter') {
+                if (hasChildren && !currentFilter) toggleExpand(item);
+            }
+        };
+
+        row.querySelector('.btn-search').addEventListener('click', (e) => {
+            e.stopPropagation();
+            htmx.ajax('GET', '/config-search?q='+encodeURIComponent(n.cidr), {target:'#content', pushUrl:true});
+        });
+        row.querySelector('.btn-lookup').addEventListener('click', (e) => {
+            e.stopPropagation();
+            htmx.ajax('GET', '/ip-lookup?q='+encodeURIComponent(n.cidr), {target:'#content', pushUrl:true});
+        });
+
+        return row;
+    }
+
+    function toggleExpand(item) {
+        const isExpanded = expandedPaths.has(item.pathStr);
+        if (isExpanded) expandedPaths.delete(item.pathStr);
+        else expandedPaths.add(item.pathStr);
+
+        sessionStorage.setItem('ipam_expanded_paths', JSON.stringify([...expandedPaths]));
+        processTree();
+        render();
+    }
+
+    function updateStickyParent(ancestors) {
+        if (!ancestors || ancestors.length === 0 || currentFilter) {
+            STICKY_PARENT.style.display = 'none';
+            return;
+        }
+        STICKY_PARENT.style.display = 'flex';
+
+        const crumbs = ancestors.map(anc => `
+            <span class="ipam-cidr">${esc(anc.node.cidr)}</span>
+            <span class="ipam-label ms-1 me-2">${esc(anc.node.display_name)}</span>
+        `).join('<i class="ph ph-caret-right text-light mx-1"></i>');
+
+        STICKY_PARENT.innerHTML = `
+            <div class="text-muted small me-2"><i class="ph ph-arrow-elbow-down-right"></i></div>
+            <div class="d-flex align-items-center overflow-hidden whitespace-nowrap">
+                ${crumbs}
+            </div>
+            <div class="ms-auto text-muted small ps-3">${esc(ancestors[ancestors.length-1].node.site)}</div>
+        `;
+    }
+
+    // --- Event Handlers ---
+    VIEWPORT.addEventListener('scroll', () => {
+        requestAnimationFrame(render);
+    });
+
+    let _filterDebounce;
+    document.getElementById('ipam-filter').addEventListener('input', (e) => {
+        currentFilter = e.target.value.trim();
+        clearTimeout(_filterDebounce);
+        _filterDebounce = setTimeout(() => {
+            processTree();
+            VIEWPORT.scrollTop = 0;
+            render();
+        }, 100);
+    });
+
+    function clearFilter(e) {
+        if (e) e.preventDefault();
+        document.getElementById('ipam-filter').value = '';
+        currentFilter = '';
+        processTree();
+        render();
+    }
+
+    function toggleAll(expand) {
+        if (expand) {
+            searchIndex.forEach(rec => {
+                if (rec.node.children && rec.node.children.length > 0) expandedPaths.add(rec.path.join('>>>'));
+            });
+        } else {
+            expandedPaths.clear();
+        }
+        sessionStorage.setItem('ipam_expanded_paths', JSON.stringify([...expandedPaths]));
+        processTree();
+        render();
+    }
+
+    window.addEventListener('keydown', (e) => {
+        if (e.key === '/' && document.activeElement.tagName !== 'INPUT') {
+            e.preventDefault();
+            document.getElementById('ipam-filter').focus();
+        }
+    });
+
+    // --- Boilerplate Keep-as-is ---
     async function runIpamDebug() {
         const panel = document.getElementById('ipam-debug-panel');
         const content = document.getElementById('ipam-debug-content');
@@ -147,11 +669,11 @@
 
     function onIpamLoadError(event) {
         if (event.detail.xhr.status === 404) {
-            document.getElementById('ipam-results').innerHTML = `
+            CONTAINER.innerHTML = `
                 <div class="text-center py-5">
                     <div class="spinner-border text-primary mb-3" style="width:2.5rem;height:2.5rem"></div>
                     <h6 class="font-weight-bold mb-1">Building IPAM Cache</h6>
-                    <p class="text-muted small mb-0">IPAM data is not cached yet — rebuilding automatically.<br>This may take a minute.</p>
+                    <p class="text-muted small mb-0">IPAM data is not cached yet — rebuilding automatically.</p>
                 </div>`;
             runRefresh();
         }
@@ -162,12 +684,9 @@
         const log = document.getElementById('ipam-refresh-log');
         overlay.classList.remove('d-none');
         log.innerHTML = '';
-
         let url = '/api/ipam/refresh';
         if (source) url += `?sources=${source}`;
-
         const eventSource = new EventSource(url, { withCredentials: true });
-
         eventSource.onmessage = function(event) {
             const data = JSON.parse(event.data);
             const line = document.createElement('div');
@@ -175,17 +694,9 @@
             line.textContent = `> ${data.message}`;
             log.appendChild(line);
             log.scrollTop = log.scrollHeight;
-
             if (data.type === 'complete') {
                 eventSource.close();
-                htmx.trigger('#ipam-results', 'load');
-                setTimeout(() => {
-                    const status = document.createElement('div');
-                    status.className = 'mt-2 text-info fw-bold';
-                    status.textContent = '--- TREE REGENERATED ---';
-                    log.appendChild(status);
-                    log.scrollTop = log.scrollHeight;
-                }, 500);
+                loadIPAM();
             }
         };
 
@@ -202,364 +713,21 @@
         document.getElementById('ipam-refresh-overlay').classList.add('d-none');
     }
 
-    document.body.addEventListener('htmx:afterOnLoad', function(evt) {
-        if (evt.detail.target.id === 'ipam-results') {
-            if (evt.detail.xhr.status !== 200) return;
-            try {
-                const data = JSON.parse(evt.detail.xhr.responseText);
-                renderIPAMTree(data);
-            } catch (e) {
-                console.error("Failed to parse IPAM tree data", e);
-            }
-        }
-    });
-
+    // Initial load
     var currentIPAMData = {{ initial_ipam_tree | tojson | safe if initial_ipam_tree else 'null' }};
-
-    function renderIPAMTree(data) {
-        if (!data) return;
-        currentIPAMData = data;
-        const container = document.getElementById('ipam-results');
-        container.innerHTML = '';
-
-        const v4Card = createTreeCard("Global IPv4 Space (RFC1918 & Public)", data.ipv4);
-        const v6Card = createTreeCard("Global IPv6 Space (ULA & Public)", data.ipv6);
-
-        container.appendChild(v4Card);
-        container.appendChild(v6Card);
-    }
-
-    // If we have initial data from backend, render it immediately
     if (currentIPAMData) {
-        renderIPAMTree(currentIPAMData);
+        fullData = currentIPAMData;
+        buildSearchIndex();
+        if (!initialExpandDone) {
+            initialExpandDone = true;
+            sessionStorage.setItem('ipam_initial_expand_done', 'true');
+            sessionStorage.setItem('ipam_expanded_paths', JSON.stringify([...expandedPaths]));
+        }
+        updateStats();
+        processTree();
+        render();
+    } else {
+        loadIPAM();
     }
 
-    var _filterDebounce;
-    document.getElementById('ipam-filter').addEventListener('input', () => {
-        clearTimeout(_filterDebounce);
-        _filterDebounce = setTimeout(filterIPAMTree, 250);
-    });
-
-    function filterIPAMTree() {
-        if (!currentIPAMData) return;
-        const query = document.getElementById('ipam-filter').value.toLowerCase();
-
-        const filteredData = {
-            ipv4: filterNodes(currentIPAMData.ipv4 || [], query),
-            ipv6: filterNodes(currentIPAMData.ipv6 || [], query)
-        };
-
-        const container = document.getElementById('ipam-results');
-        container.innerHTML = '';
-        container.appendChild(createTreeCard("Global IPv4 Space (RFC1918 & Public)", filteredData.ipv4));
-        container.appendChild(createTreeCard("Global IPv6 Space (ULA & Public)", filteredData.ipv6));
-    }
-
-    function parseQuery(query) {
-        const tokens = query.split(/\s+/);
-        const scoped = {};
-        const freeTextTokens = [];
-
-        tokens.forEach(t => {
-            if (t.includes(':')) {
-                const [key, val] = t.split(':');
-                if (['site', 'device', 'source', 'type', 'vlan', 'cidr'].includes(key)) {
-                    if (!scoped[key]) scoped[key] = [];
-                    scoped[key].push(val.toLowerCase());
-                } else {
-                    freeTextTokens.push(t.toLowerCase());
-                }
-            } else if (t) {
-                freeTextTokens.push(t.toLowerCase());
-            }
-        });
-
-        return { scoped, freeText: freeTextTokens.join(' ') };
-    }
-
-    function ipToLong(ip) {
-        const parts = ip.split('.');
-        if (parts.length !== 4) return null;
-        return ((+parts[0]) << 24) + ((+parts[1]) << 16) + ((+parts[2]) << 8) + (+parts[3]) >>> 0;
-    }
-
-    function isIpInCidr(ip, cidr) {
-        if (ip.includes(':') || cidr.includes(':')) {
-            // Basic IPv6 substring match as fallback for containment
-            return cidr.includes(ip);
-        }
-        if (!cidr.includes('/')) return false;
-        const [range, bits] = cidr.split('/');
-        const mask = bits == 0 ? 0 : ~( (1 << (32 - bits)) - 1 );
-        return (ipToLong(ip) & mask) === (ipToLong(range) & mask);
-    }
-
-    function filterNodes(nodes, query, forceMatchChildren = false) {
-        if (!Array.isArray(nodes)) return [];
-        if (!query) return nodes;
-
-        const { scoped, freeText } = parseQuery(query);
-
-        return nodes.map(n => {
-            let selfMatchesScoped = true;
-            for (const [key, values] of Object.entries(scoped)) {
-                let fieldVal = '';
-                if (key === 'type') fieldVal = n.interface_type || '';
-                else if (key === 'vlan') fieldVal = String(n.vlan_id || '');
-                else fieldVal = String(n[key] || '');
-
-                const fieldMatch = values.some(v => fieldVal.toLowerCase().includes(v));
-                if (!fieldMatch) {
-                    selfMatchesScoped = false;
-                    break;
-                }
-            }
-
-            let selfMatchesFree = true;
-            if (freeText) {
-                const isIp = /^[0-9a-fA-F:\.]+$/.test(freeText) && (freeText.includes('.') || freeText.includes(':'));
-                if (isIp) {
-                    selfMatchesFree = isIpInCidr(freeText, n.cidr || '');
-                } else {
-                    selfMatchesFree = (n.cidr || '').toLowerCase().includes(freeText) ||
-                                      (n.site || '').toLowerCase().includes(freeText) ||
-                                      (n.device || '').toLowerCase().includes(freeText) ||
-                                      (n.display_name || '').toLowerCase().includes(freeText) ||
-                                      (n.interface_name || '').toLowerCase().includes(freeText);
-                }
-            }
-
-            const isMatch = (selfMatchesScoped && selfMatchesFree) || forceMatchChildren;
-            // If parent matches, all descendants should be included (forceMatchChildren = true)
-            const filteredChildren = filterNodes(n.children || [], query, isMatch);
-
-            if (isMatch || filteredChildren.length > 0) {
-                return {
-                    ...n,
-                    children: filteredChildren,
-                    _match: isMatch,
-                    _is_ancestor: !isMatch && filteredChildren.length > 0
-                };
-            }
-            return null;
-        }).filter(n => n !== null);
-    }
-
-    function expandAllNodes(expand = true) {
-        document.querySelectorAll('.sub-nodes').forEach(el => {
-            const item = el.closest('.ipam-node-item');
-            const icon = item.querySelector('.toggle-icon i');
-
-            if (expand) {
-                el.classList.remove('d-none');
-                if (icon) icon.className = 'ph ph-caret-down';
-            } else {
-                el.classList.add('d-none');
-                if (icon) icon.className = 'ph ph-caret-right';
-            }
-        });
-    }
-
-    function createTreeCard(title, nodes) {
-        const card = document.createElement('div');
-        card.className = 'mb-0';
-
-        const header = document.createElement('div');
-        header.className = 'bg-light py-3 px-4 fw-bold small text-uppercase letter-spacing-05 border-bottom';
-        header.style.color = 'var(--text-muted)';
-        header.innerHTML = `<i class="ph ph-tree-structure me-2"></i>${title}`;
-        card.appendChild(header);
-
-        const body = document.createElement('div');
-        body.className = 'p-0';
-
-        if (!nodes || nodes.length === 0) {
-            body.innerHTML = '<div class="p-5 text-center text-muted">No data discovered in this space.</div>';
-        } else {
-            const list = document.createElement('div');
-            nodes.forEach(node => {
-                list.appendChild(createNodeElement(node));
-            });
-            body.appendChild(list);
-        }
-
-        card.appendChild(body);
-        return card;
-    }
-
-    function createNodeElement(node, depth = 0) {
-        const item = document.createElement('div');
-        item.className = 'ipam-node-item';
-        if (node._is_ancestor) {
-            item.style.opacity = '0.55';
-        }
-
-        const content = document.createElement('div');
-        content.className = 'd-flex align-items-center justify-content-between py-3 px-4 cursor-pointer border-bottom hover-bg';
-        content.style.paddingLeft = (depth * 2 + 1.5) + 'rem';
-
-        const hasChildren = node.children && node.children.length > 0;
-
-        if (hasChildren) {
-            content.onclick = (e) => {
-                const sub = item.querySelector('.sub-nodes');
-                const icon = item.querySelector('.toggle-icon i');
-                const isCollapsed = sub.classList.contains('d-none');
-
-                if (isCollapsed) {
-                    sub.classList.remove('d-none');
-                    if (icon) icon.className = 'ph ph-caret-down';
-                } else {
-                    sub.classList.add('d-none');
-                    if (icon) icon.className = 'ph ph-caret-right';
-                }
-            };
-        }
-
-        // Left side: Icon + Name + CIDR
-        const left = document.createElement('div');
-        left.className = 'd-flex align-items-center gap-3';
-
-        const toggle = document.createElement('span');
-        toggle.className = 'text-muted toggle-icon';
-        toggle.style.width = '20px';
-        toggle.style.display = 'inline-flex';
-        toggle.style.justifyContent = 'center';
-        if (hasChildren) {
-            toggle.innerHTML = '<i class="ph ph-caret-right"></i>';
-        }
-
-        const icon = document.createElement('span');
-        icon.className = 'me-1';
-        if (node.role === 'tunnel_group') {
-            icon.innerHTML = '<i class="ph ph-circle-nodes text-indigo"></i>';
-        } else if (node.role === 'loopback_group' || node.role === 'host_route_group') {
-            icon.innerHTML = '<i class="ph ph-folders text-muted"></i>';
-        } else if (node.type === 'Group' || node.type === 'Supernet') {
-            icon.innerHTML = '<i class="ph ph-folder text-muted"></i>';
-        } else {
-            icon.innerHTML = '<i class="ph ph-hash text-muted" style="font-size: 0.85rem"></i>';
-        }
-
-        const info = document.createElement('div');
-        let labelClass = "badge badge-muted ms-2";
-        let labelText = node.display_name || 'System-Generated';
-
-        let cidrText = `<span class="font-weight-bold" style="color: var(--sidebar-bg)">${node.cidr}</span>`;
-        if (node.role === 'endpoint' && node.host_ip) {
-            cidrText = `<span class="font-weight-bold" style="color: var(--sidebar-bg)">${node.host_ip}</span> <span class="text-muted small">(${node.cidr})</span>`;
-        }
-
-        info.innerHTML = `
-            <div class="d-flex align-items-center">
-                ${cidrText}
-                <span class="${labelClass}">${labelText}</span>
-                ${node.role === 'tunnel_group' ? `<span class="badge bg-indigo-soft text-indigo ms-2">${node.children.length} endpoints</span>` : ''}
-            </div>
-        `;
-
-        const conflicts = Array.isArray(node.conflicts) ? node.conflicts : [];
-        const overlaps = Array.isArray(node.overlaps) ? node.overlaps : [];
-        if (conflicts.length > 0) {
-            info.innerHTML += `<div class="text-danger small mt-1 font-weight-bold">⚠️ ${conflicts.join('<br>⚠️ ')}</div>`;
-        }
-        if (overlaps.length > 0) {
-            info.innerHTML += `<div class="text-warning small mt-1">📝 ${overlaps.join('<br>📝 ')}</div>`;
-        }
-
-        left.appendChild(toggle);
-        left.appendChild(icon);
-        left.appendChild(info);
-
-        // Right side: Metadata + Actions
-        const right = document.createElement('div');
-        right.className = 'd-flex align-items-center gap-2';
-
-        if (node.site && node.site !== 'Unknown' && node.site !== '' && node.site !== 'N/A') {
-            right.innerHTML += `<span class="badge badge-info">${node.site}</span>`;
-        }
-
-        if (node.device && node.device !== 'Unknown' && node.device !== '' && node.device !== 'N/A') {
-            right.innerHTML += `<span class="badge badge-muted">${node.device}</span>`;
-        }
-
-        if (node.interface_type && node.interface_type !== 'unknown') {
-            const colors = {
-                tunnel: 'indigo',
-                loopback: 'gray',
-                svi: 'teal',
-                vip: 'amber',
-                p2p: 'slate',
-                management: 'purple',
-                physical: 'secondary'
-            };
-            const color = colors[node.interface_type] || 'secondary';
-            right.innerHTML += `<span class="badge bg-${color}-soft text-${color} text-capitalize">${node.interface_type}</span>`;
-        }
-
-        if (node.source && node.source !== 'Unknown') {
-            right.innerHTML += `<span class="badge badge-muted" style="background: #F8FAFC">${node.source}</span>`;
-        }
-
-        // Action buttons
-        const actions = document.createElement('div');
-        actions.className = 'row-actions ms-3';
-
-        // Link to config search for this CIDR
-        const searchBtn = document.createElement('button');
-        searchBtn.className = 'btn-action';
-        searchBtn.title = 'Search in Configs';
-        searchBtn.innerHTML = '<i class="ph ph-magnifying-glass"></i>';
-        searchBtn.onclick = (e) => {
-            e.stopPropagation();
-            htmx.ajax('GET', '/config-search?q=' + encodeURIComponent(node.cidr), { target: '#content', pushUrl: true });
-        };
-
-        // Link to IP Lookup for this CIDR
-        const lookupBtn = document.createElement('button');
-        lookupBtn.className = 'btn-action';
-        lookupBtn.title = 'IP Lookup';
-        lookupBtn.innerHTML = '<i class="ph ph-map-pin"></i>';
-        lookupBtn.onclick = (e) => {
-            e.stopPropagation();
-            htmx.ajax('GET', '/ip-lookup?q=' + encodeURIComponent(node.cidr), { target: '#content', pushUrl: true });
-        };
-
-        actions.appendChild(searchBtn);
-        actions.appendChild(lookupBtn);
-        right.appendChild(actions);
-
-        content.appendChild(left);
-        content.appendChild(right);
-        item.appendChild(content);
-
-        if (node.children && node.children.length > 0) {
-            const subNodes = document.createElement('div');
-            const shouldExpand = node._match || node._is_ancestor;
-            const show = shouldExpand ? '' : 'd-none';
-            subNodes.className = `sub-nodes ${show}`;
-
-            if (shouldExpand) {
-                setTimeout(() => {
-                    const icon = item.querySelector('.toggle-icon i');
-                    if (icon) icon.className = 'ph ph-caret-down';
-                }, 0);
-            }
-
-            node.children.forEach(child => {
-                subNodes.appendChild(createNodeElement(child, depth + 1));
-            });
-            item.appendChild(subNodes);
-        }
-
-        return item;
-    }
 </script>
-
-<style>
-    .cursor-pointer { cursor: pointer; }
-    .hover-bg:hover { background-color: #F8FAFC; }
-    .letter-spacing-05 { letter-spacing: 0.05em; }
-    .row-actions { opacity: 0; transition: opacity var(--transition); }
-    .hover-bg:hover .row-actions { opacity: 1; }
-</style>

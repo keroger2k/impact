@@ -67,6 +67,39 @@ async def refresh_ipam(
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
+@router.get("/stats")
+async def get_ipam_stats(session: SessionEntry = Depends(require_auth)):
+    """Return summary statistics about the current IPAM tree."""
+    tree = cache.get(IPAM_TREE_CACHE_KEY)
+    info = cache.cache_info(IPAM_TREE_CACHE_KEY)
+
+    if not tree:
+        return {"ipv4_node_count": 0, "ipv6_node_count": 0, "last_refresh_at": None, "source_counts": {}}
+
+    v4_count = 0
+    v6_count = 0
+    source_counts = {}
+
+    def _walk(nodes, is_v6=False):
+        nonlocal v4_count, v6_count
+        for n in nodes:
+            if is_v6: v6_count += 1
+            else: v4_count += 1
+
+            src = n.get("source", "Unknown")
+            source_counts[src] = source_counts.get(src, 0) + 1
+            _walk(n.get("children", []), is_v6)
+
+    _walk(tree.get("ipv4", []))
+    _walk(tree.get("ipv6", []), is_v6=True)
+
+    return {
+        "ipv4_node_count": v4_count,
+        "ipv6_node_count": v6_count,
+        "last_refresh_at": info["set_at"] if info else None,
+        "source_counts": source_counts
+    }
+
 @router.get("/tree")
 async def get_ipam_tree(session: SessionEntry = Depends(require_auth)):
     tree_data = cache.get(IPAM_TREE_CACHE_KEY)
