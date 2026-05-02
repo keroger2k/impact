@@ -189,13 +189,6 @@ async def test_16_download_endpoint(mock_request, mock_session):
         assert "H1,1.1.1.1,P,5,1,L1" in content
 
 @pytest.mark.asyncio
-async def test_17_csrf_missing(mock_request):
-    # This actually requires running the app with middleware, but we can check our logic
-    # In IMPACT II, CSRF is handled by CSRFMiddleware.
-    # We've verified manually and with Playwright that tokens are required.
-    pass
-
-@pytest.mark.asyncio
 async def test_18_malformed_json(mock_request, mock_session):
     mock_form = MagicMock()
     mock_form.get = lambda k: "invalid json" if k == "groups_json" else None
@@ -257,3 +250,65 @@ async def test_19_cache_hit_verification(mock_request, mock_session):
             session=mock_session
         )
         assert mock_search.call_count == 2 # Incremented, re-ran
+
+
+def test_20_search_cache_key_ignores_context_lines_and_max_devices():
+    """
+    Regression test: the UI request uses context_lines=5 and max_devices=None,
+    while the download request forces context_lines=0 and max_devices=None.
+    Both should derive the same cache key so the download path can find the
+    UI's stored result. Previously the key included these transient fields,
+    causing the download cache lookup to always miss.
+    """
+    base_groups = [SearchGroup(rules=[SearchRuleV2(value="snmp")])]
+
+    ui_req = ConfigSearchRequestV2(groups=base_groups, context_lines=5, max_devices=None)
+    dl_req = ConfigSearchRequestV2(groups=base_groups, context_lines=0, max_devices=None)
+    assert _search_cache_key(ui_req) == _search_cache_key(dl_req)
+
+    # Sanity: a different filter still produces a different key.
+    other = ConfigSearchRequestV2(groups=base_groups, hostname="switch-01")
+    assert _search_cache_key(ui_req) != _search_cache_key(other)
+
+
+@pytest.mark.asyncio
+async def test_21_download_reuses_ui_cached_result(mock_request, mock_session):
+    """
+    End-to-end version of the cache-hit path that uses a real dict-backed
+    cache so the actual key derivation in _search_cache_key gets exercised.
+    """
+    groups = [SearchGroup(rules=[SearchRuleV2(value="snmp")])]
+    groups_json = json.dumps([g.model_dump() for g in groups])
+
+    mock_form = MagicMock()
+    mock_form.get = lambda k: groups_json if k == "groups_json" else None
+    mock_request.form = AsyncMock(return_value=mock_form)
+
+    store = {}
+    fake_cache = MagicMock()
+    fake_cache.get.side_effect = lambda k: store.get(k)
+    fake_cache.set.side_effect = lambda k, v, ttl=None: store.__setitem__(k, v)
+
+    results = {"results": [], "total_matches": 0}
+
+    with patch("routers.dnac._get_dnac"), \
+         patch("routers.dnac.config_search", return_value=results) as mock_search, \
+         patch("routers.dnac.cache", fake_cache):
+
+        await config_search_ui(
+            mock_request,
+            hostname=None, ip=None, platform=None, role=None,
+            device_family=None, reachability="Reachable", tag=None,
+            context_lines=5, session=mock_session
+        )
+        assert mock_search.call_count == 1
+        assert len(store) == 1  # UI populated cache
+
+        await config_search_download(
+            mock_request,
+            hostname=None, ip=None, platform=None, role=None,
+            device_family=None, reachability="Reachable", tag=None,
+            session=mock_session
+        )
+        # Same logical query → same key → no second search.
+        assert mock_search.call_count == 1

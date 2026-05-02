@@ -83,10 +83,6 @@
           <button type="submit" id="search-btn" class="btn btn-primary w-100 py-2 fw-bold shadow-sm" disabled>
             <i class=" ph ph-magnifying-glass me-1"></i> Search Configs
           </button>
-
-          <div class="mt-2 text-center">
-             <small class="text-muted">// TODO(saved-searches)</small>
-          </div>
         </form>
         <div id="search-loading" class="htmx-indicator mt-4 text-center">
           <div class="spinner spinner-md"></div>
@@ -255,16 +251,24 @@
         });
       }
     });
-    document.getElementById('groups_json').value = JSON.stringify(groups);
+    const json = JSON.stringify(groups);
+    document.getElementById('groups_json').value = json;
+    // htmx has already snapshotted form params by the time this fires —
+    // mutate event.detail.parameters so the value reaches the server.
+    if (event && event.detail && event.detail.parameters) {
+      event.detail.parameters.groups_json = json;
+    }
   }
 
-  // Initialize first group
-  document.addEventListener('DOMContentLoaded', () => {
+  // Initialize first group. This script runs both on initial page load and
+  // when htmx swaps the partial in via the nav link, so don't rely on
+  // DOMContentLoaded — that has already fired on the parent page.
+  (function initConfigSearch() {
     if (document.getElementById('search-groups-container').children.length === 0) {
       addGroup();
 
       // If there is a pre-filled query from URL, inject it into the first rule
-      const initialQuery = "{{ query|safe }}";
+      const initialQuery = {{ query|tojson }};
       if (initialQuery) {
         const firstInput = document.querySelector('.rule-value');
         if (firstInput) {
@@ -273,5 +277,5 @@
         }
       }
     }
-  });
+  })();
 </script>

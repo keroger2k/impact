@@ -12,19 +12,19 @@ from typing import Optional, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, Depends, Form
 from fastapi.responses import HTMLResponse, StreamingResponse
-from pydantic import BaseModel, field_validator, ValidationInfo
+from pydantic import BaseModel, ValidationError, field_validator, ValidationInfo
 
 import clients.dnac as dc
 import clients.panorama as pc
 import auth as auth_module
 from auth import SessionEntry, require_auth
-from cache import cache, TTL_DEVICES, TTL_SITES
+from cache import cache, TTL_DEVICES, TTL_SITES, TTL_CONFIG_SEARCH_RESULT
 from logger_config import run_with_context
+from templates_module import templates
 
 DEVICE_PAGE_LIMIT = 500
 DEVICE_PAGE_MAX = 5000
 CONFIG_SEARCH_WORKERS = 20
-CONFIG_SEARCH_RESULT_TTL = 300
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -167,7 +167,6 @@ async def list_devices(
     )
     
     if request.headers.get("HX-Request"):
-        from templates_module import templates
         return templates.TemplateResponse(request, "partials/devices_list.html", data)
 
     return data
@@ -233,7 +232,6 @@ async def get_device_detail_partial(
         if not device:
              raise HTTPException(404, "Device not found")
 
-        from templates_module import templates
         return templates.TemplateResponse(request, "partials/device_detail.html", {
             "d": device,
             "site_name": device.get("siteName")
@@ -257,7 +255,6 @@ async def get_device_detail_partial(
     dev_site_map = cache.get("device_site_map") or {}
     site_name = dev_site_map.get(device_id, "Unknown Site")
 
-    from templates_module import templates
     return templates.TemplateResponse(request, "partials/device_detail.html", {
         "d": enriched,
         "site_name": site_name
@@ -283,7 +280,6 @@ async def get_device_config(
 
         if config:
             if request.headers.get("HX-Request"):
-                from templates_module import templates
                 return templates.TemplateResponse(request, "partials/device_config.html", {
                     "config": config,
                     "cached": True
@@ -302,7 +298,6 @@ async def get_device_config(
         raise HTTPException(404, "Config not available for this device")
 
     if request.headers.get("HX-Request"):
-        from templates_module import templates
         return templates.TemplateResponse(request, "partials/device_config.html", {
             "config": config,
             "cached": True # With get_or_set, it's effectively always potentially from cache
@@ -418,7 +413,6 @@ async def ip_lookup_handler(ip: str, session: SessionEntry = Depends(require_aut
 @router.get("/ip-lookup/ui", response_class=HTMLResponse)
 async def ip_lookup_ui(request: Request, ip: str, session: SessionEntry = Depends(require_auth)):
     results = await ip_lookup_handler(ip, session)
-    from templates_module import templates
     return templates.TemplateResponse(request, "partials/ip_lookup_results.html", {"r": results})
 
 
@@ -560,31 +554,38 @@ def evaluate_groups(lines: list[str], groups: list[SearchGroup], compiled_regexe
     rule_hits = [[False] * len(g.rules) for g in groups]
     rule_match_indices = [[set() for _ in range(len(g.rules))] for g in groups]
 
+    # Pre-compute the per-rule needle once so the inner loop only does the comparison.
+    # Each entry is the rule plus its prepared value, so we don't re-strip / re-lowercase per line.
+    prepared = []
+    for gi, group in enumerate(groups):
+        for ri, rule in enumerate(group.rules):
+            if rule.op == "contains":
+                needle = rule.value if rule.case_sensitive else rule.value.lower()
+            elif rule.op == "exact_line":
+                stripped = rule.value.strip()
+                needle = stripped if rule.case_sensitive else stripped.lower()
+            else:  # regex
+                needle = compiled_regexes.get((gi, ri))
+            prepared.append((gi, ri, rule.op, rule.case_sensitive, needle))
+
     for li, line in enumerate(lines):
         line_lower = line.lower()
         line_strip = line.strip()
         line_strip_lower = line_strip.lower()
 
-        for gi, group in enumerate(groups):
-            for ri, rule in enumerate(group.rules):
-                match = False
-                if rule.op == "contains":
-                    val = rule.value if rule.case_sensitive else rule.value.lower()
-                    match = val in (line if rule.case_sensitive else line_lower)
-                elif rule.op == "exact_line":
-                    val = rule.value.strip()
-                    if not rule.case_sensitive:
-                        match = line_strip_lower == val.lower()
-                    else:
-                        match = line_strip == val
-                elif rule.op == "regex":
-                    pattern = compiled_regexes.get((gi, ri))
-                    if pattern:
-                        match = bool(pattern.search(line))
+        for gi, ri, op, case_sensitive, needle in prepared:
+            match = False
+            if op == "contains":
+                match = needle in (line if case_sensitive else line_lower)
+            elif op == "exact_line":
+                match = (line_strip if case_sensitive else line_strip_lower) == needle
+            elif op == "regex":
+                if needle is not None:
+                    match = bool(needle.search(line))
 
-                if match:
-                    rule_hits[gi][ri] = True
-                    rule_match_indices[gi][ri].add(li)
+            if match:
+                rule_hits[gi][ri] = True
+                rule_match_indices[gi][ri].add(li)
 
     all_match_indices = set()
     matched_group_indices = []
@@ -805,8 +806,10 @@ async def config_search(req: ConfigSearchRequestV2, session: SessionEntry = Depe
 
 
 def _search_cache_key(req: ConfigSearchRequestV2) -> str:
-    payload = req.model_dump_json()
-    return f"config_search_result:{hashlib.sha256(payload.encode()).hexdigest()}"
+    # Exclude fields that differ between UI (context_lines=5) and download
+    # (context_lines=0, max_devices=None) so both paths share the same key.
+    payload = req.model_dump_json(exclude={"context_lines", "max_devices"})
+    return f"dnac_config_search_result:{hashlib.sha256(payload.encode()).hexdigest()}"
 
 @router.post("/config-search/ui", response_class=HTMLResponse)
 async def config_search_ui(
@@ -827,15 +830,13 @@ async def config_search_ui(
     try:
         groups_raw = json.loads(groups_json) if groups_json else []
         groups = [SearchGroup(**g) for g in groups_raw]
-    except (json.JSONDecodeError, Exception) as e:
-        from templates_module import templates
+    except (json.JSONDecodeError, ValidationError, TypeError) as e:
         return templates.TemplateResponse(request, "partials/config_search_results.html", {
             "results": {"total_matches": 0, "results": []},
             "error": f"Invalid groups payload: {e}"
         })
 
     if not groups:
-        from templates_module import templates
         return templates.TemplateResponse(request, "partials/config_search_results.html", {
             "results": {"total_matches": 0, "results": []},
             "error": "At least one search group is required."
@@ -853,8 +854,7 @@ async def config_search_ui(
             tag=tag,
             context_lines=context_lines
         )
-    except Exception as e:
-        from templates_module import templates
+    except ValidationError as e:
         return templates.TemplateResponse(request, "partials/config_search_results.html", {
             "results": {"total_matches": 0, "results": []},
             "error": str(e)
@@ -864,9 +864,8 @@ async def config_search_ui(
 
     # Stash results in cache for download
     cache_key = _search_cache_key(req)
-    cache.set(cache_key, results, CONFIG_SEARCH_RESULT_TTL)
+    cache.set(cache_key, results, TTL_CONFIG_SEARCH_RESULT)
 
-    from templates_module import templates
     return templates.TemplateResponse(request, "partials/config_search_results.html", {
         "results": results, "groups": groups
     })
@@ -889,24 +888,27 @@ async def config_search_download(
     try:
         groups_raw = json.loads(groups_json) if groups_json else []
         groups = [SearchGroup(**g) for g in groups_raw]
-    except (json.JSONDecodeError, Exception) as e:
-         raise HTTPException(400, f"Invalid groups payload: {e}")
+    except (json.JSONDecodeError, ValidationError, TypeError) as e:
+        raise HTTPException(400, f"Invalid groups payload: {e}")
 
     if not groups:
         raise HTTPException(400, "At least one search group is required")
 
-    req = ConfigSearchRequestV2(
-        groups=groups,
-        hostname=hostname,
-        ip=ip,
-        platform=platform,
-        role=role,
-        device_family=device_family,
-        reachability=reachability,
-        tag=tag,
-        max_devices=None, # Download all matches
-        context_lines=0    # Don't need context for download
-    )
+    try:
+        req = ConfigSearchRequestV2(
+            groups=groups,
+            hostname=hostname,
+            ip=ip,
+            platform=platform,
+            role=role,
+            device_family=device_family,
+            reachability=reachability,
+            tag=tag,
+            max_devices=None,   # Download all matches
+            context_lines=0,    # Don't need context for download
+        )
+    except ValidationError as e:
+        raise HTTPException(400, str(e))
 
     # Try to get from cache first
     cache_key = _search_cache_key(req)
@@ -986,7 +988,6 @@ async def path_trace_result_ui(request: Request, flow_id: str, session: SessionE
             </div>
         """)
     hops = result.get("response", {}).get("networkElementsInfo", [])
-    from templates_module import templates
     return templates.TemplateResponse(request, "partials/path_trace_result.html", {
         "hops": hops,
         "source": result.get("response", {}).get("request", {}).get("sourceIP"),
@@ -999,5 +1000,4 @@ async def device_select_partial(request: Request, session: SessionEntry = Depend
     dnac = _get_dnac(session)
     devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "devices", lambda: dc.get_all_devices(dnac), TTL_DEVICES)
     devices = devices or []
-    from templates_module import templates
     return templates.TemplateResponse(request, "partials/device_select.html", {"devices": devices})

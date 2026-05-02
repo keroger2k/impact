@@ -27,12 +27,6 @@
   {% endif %}
 </div>
 
-{% if error %}
-<div class="alert alert-warning animate-fade-in">
-  <i class="ph ph-warning me-2"></i> {{ error }}
-</div>
-{% endif %}
-
 {% if results and results.total_matches > 0 %}
   {% for r in results.results %}
   <div class="card shadow-sm border-0 mb-4 animate-fade-in device-result-card">

@@ -3,7 +3,12 @@ import asyncio
 import os
 import uuid
 import json
+import warnings
 from contextlib import asynccontextmanager
+
+# diskcache opens a sqlite3 connection per thread; ThreadPoolExecutor workers
+# die during normal operation and their connections get GC'd without close().
+warnings.filterwarnings("ignore", category=ResourceWarning, module="sqlite3")
 from pathlib import Path
 from fastapi import Depends, FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -48,6 +53,10 @@ async def lifespan(app: FastAPI):
 
     yield
     logger.info("IMPACT II shutting down.")
+    import auth_persist
+    cache._cache.close()
+    if auth_persist._store is not None:
+        auth_persist._store.close()
 
 app = FastAPI(
     title="IMPACT II Network Operations",
