@@ -24,9 +24,12 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 # Run production server
 uvicorn main:app --host 0.0.0.0 --port 8000
+
+# Run tests
+pytest tests/
 ```
 
-No test framework or linter is configured. No CSS build step is required — the project uses Bootstrap v5 (vendored at `static/bootstrap/`) with custom overrides in `static/app.css`.
+Tests live in `tests/` and use `pytest` + `pytest-asyncio` (declared in `requirements.txt`). No linter is configured. No CSS build step is required — the project uses Bootstrap v5 (vendored at `static/bootstrap/`) with custom overrides in `static/app.css`.
 
 ## Architecture
 
@@ -55,9 +58,11 @@ Default TTLs are defined as constants in `cache.py:21-30` and each is overridabl
 | `TTL_PAN_INTERFACES` | 48h | `IMPACT_TTL_PAN_INTERFACES` | Panorama firewall interface inventory (`pan_interfaces`) |
 | `TTL_PAN_POLICY` | 1h | `IMPACT_TTL_PAN_POLICY` | Panorama policy/inventory data: `pan_rules`, `pan_device_groups`, `pan_managed_devices`, `pan_addr`, `pan_svc` (re-exported as `PAN_TTL` from `routers/firewall.py`) |
 | `TTL_DNAC_INTERFACES` | 4h | `IMPACT_TTL_DNAC_INTERFACES` | DNAC per-device interface inventory |
+| `TTL_CONFIG_SEARCH_RESULT` | 5m | `IMPACT_TTL_CONFIG_SEARCH_RESULT` | DNAC `dnac_config_search_result:*` — cached search results so the CSV download endpoint doesn't re-run the search |
 
 Naming conventions for cache keys:
 - `devices` / `sites` / `device_site_map` — DNAC top-level, pre-warmed at startup
+- `dnac_config_search_result:{sha256}` — cached config-search results, keyed by hash of the request payload (excluding `context_lines` / `max_devices`)
 - `pan_*` — Panorama (rules, device_groups, address_objects, services, interfaces, firewalls)
 - `ise_*` — ISE (stable lists, plus `ise_auth_rules_{policy_set_id}` per policy set)
 - `aci_{fabric_id}_{suffix}` — ACI, namespaced per fabric (`_fkey(fabric_id, suffix)` in `routers/aci.py`). Per-L3Out route-table entries are stored under `aci_{fabric_id}_l3out_route_table:{quoted_dn}`.
@@ -103,7 +108,7 @@ See `.env.template`. Required vars:
 - `ACI_FABRICS` — Comma-separated fabric IDs (e.g., `dc1,dc2`)
 - `ACI_{ID}_URL` / `ACI_{ID}_DOMAIN` / `ACI_{ID}_LABEL` — per-fabric settings
 
-Optional cache TTL overrides (seconds — see the Cache layer table above for defaults and which keys each one governs): `IMPACT_TTL_DEFAULT`, `IMPACT_TTL_DEVICES`, `IMPACT_TTL_SITES`, `IMPACT_TTL_ISE_POLICIES`, `IMPACT_TTL_ACI_STATUS`, `IMPACT_TTL_ACI_ROUTE_TABLE`, `IMPACT_TTL_STATUS`, `IMPACT_TTL_PAN_INTERFACES`, `IMPACT_TTL_PAN_POLICY`, `IMPACT_TTL_DNAC_INTERFACES`.
+Optional cache TTL overrides (seconds — see the Cache layer table above for defaults and which keys each one governs): `IMPACT_TTL_DEFAULT`, `IMPACT_TTL_DEVICES`, `IMPACT_TTL_SITES`, `IMPACT_TTL_ISE_POLICIES`, `IMPACT_TTL_ACI_STATUS`, `IMPACT_TTL_ACI_ROUTE_TABLE`, `IMPACT_TTL_STATUS`, `IMPACT_TTL_PAN_INTERFACES`, `IMPACT_TTL_PAN_POLICY`, `IMPACT_TTL_DNAC_INTERFACES`, `IMPACT_TTL_CONFIG_SEARCH_RESULT`.
 
 Other optional vars:
 - `DEV_MODE` — when `true`, seeds mock fixtures into cache on every startup (deterministic dev mode). Disables LDAP and APIC/DNAC/ISE/Panorama calls.

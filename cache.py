@@ -28,6 +28,7 @@ TTL_STATUS              = int(os.getenv("IMPACT_TTL_STATUS",              "300")
 TTL_PAN_INTERFACES      = int(os.getenv("IMPACT_TTL_PAN_INTERFACES",   "172800"))  # 48 hours
 TTL_PAN_POLICY          = int(os.getenv("IMPACT_TTL_PAN_POLICY",         "3600"))  # 1 hour
 TTL_DNAC_INTERFACES     = int(os.getenv("IMPACT_TTL_DNAC_INTERFACES",   "14400"))  # 4 hours
+TTL_CONFIG_SEARCH_RESULT = int(os.getenv("IMPACT_TTL_CONFIG_SEARCH_RESULT", "300"))  # 5 minutes
 
 IPAM_TREE_CACHE_KEY = "ipam_tree_v3" # Bumped — DNAC now contributes full interfaces (was v2)
 

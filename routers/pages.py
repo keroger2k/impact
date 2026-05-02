@@ -1,5 +1,5 @@
 import os
-from fastapi import APIRouter, Request, Depends, Form, HTTPException
+from fastapi import APIRouter, Request, Depends, Form, HTTPException, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from templates_module import templates
 import auth as auth_module
@@ -233,13 +233,16 @@ async def import_page(request: Request, user: SessionEntry = Depends(get_current
     return templates.TemplateResponse(request, "import.html", context)
 
 @router.get("/config-search", response_class=HTMLResponse)
-async def config_search_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
+async def config_search_page(request: Request, response: Response, user: SessionEntry = Depends(get_current_user_from_cookie)):
     if not user: return RedirectResponse(url="/login")
+    from utils.csrf import set_csrf_cookie
+    set_csrf_cookie(response)
     context = {
         "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
         "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
         "active_page": "config-search",
-        "username": user.username
+        "username": user.username,
+        "query": request.query_params.get("q", "")
     }
     if request.headers.get("HX-Request"):
         return templates.TemplateResponse(request, "pages/config_search_content.html", context)
