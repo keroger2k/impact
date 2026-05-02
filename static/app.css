@@ -715,3 +715,196 @@ table.data-table th.data-table-no-filter .data-table-filter-input { display: non
    filter scripts on the same table compose with AND semantics. */
 table.data-table tr.dt-filter-hidden { display: none !important; }
 
+
+/* ============================================================
+   IPAM DASHBOARD — High-Density Network Hierarchy
+   ============================================================ */
+
+:root {
+  --ipam-row-h: 38px;
+  --ipam-row-h-dense: 34px;
+  --ipam-guide-w: 14px;
+  --ipam-guide-color: #E2E8F0;
+}
+
+#ipam-viewport {
+  height: calc(100vh - 280px); /* Adjust based on topbars/filters */
+  overflow-y: auto;
+  position: relative;
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
+}
+
+.ipam-spacer {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  pointer-events: none;
+}
+
+.ipam-row {
+  position: absolute;
+  left: 0; right: 0;
+  height: var(--ipam-row-h);
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  border-bottom: 1px solid #F1F5F9;
+  background: #fff;
+  transition: background 150ms;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.ipam-row:hover { background: #F8FAFC; }
+.ipam-row.is-ancestor { opacity: 0.65; }
+.ipam-row.is-match { background: rgba(59, 130, 246, 0.03); }
+
+/* Tree Guide Lines */
+.ipam-guides {
+  display: flex;
+  height: 100%;
+  position: absolute;
+  left: 24px;
+}
+
+.ipam-guide-line {
+  width: var(--ipam-guide-w);
+  height: 100%;
+  border-left: 1px solid var(--ipam-guide-color);
+}
+
+.ipam-content-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding-left: var(--ipam-indent);
+}
+
+.ipam-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.ipam-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+
+.ipam-toggle {
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.ipam-icon {
+  width: 16px;
+  color: var(--text-light);
+  display: flex;
+  justify-content: center;
+}
+
+.ipam-cidr {
+  font-weight: 600;
+  color: var(--sidebar-bg);
+  white-space: nowrap;
+}
+
+.ipam-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: #F1F5F9;
+  padding: 1px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.ipam-meta-main {
+  font-size: 12px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ipam-type-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Metadata Consolidation */
+.ipam-source-pill {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-light);
+  border: 1px solid var(--border-subtle);
+  padding: 0 6px;
+  border-radius: 4px;
+}
+
+.ipam-row .row-actions {
+  opacity: 0;
+  display: flex;
+  gap: 4px;
+  margin-left: 12px;
+}
+.ipam-row:hover .row-actions { opacity: 1; }
+
+/* Sticky Header & Filter */
+.ipam-sticky-bar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: var(--bg-main);
+  padding-bottom: 16px;
+}
+
+.ipam-stats-strip {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: #fff;
+  padding: 8px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+}
+
+.ipam-stats-item b { color: var(--sidebar-bg); }
+
+/* Density Switcher */
+.ipam-density-dense .ipam-row { height: var(--ipam-row-h-dense); font-size: 12px; }
+
+/* Sticky Parent Strip */
+#ipam-sticky-parent {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: var(--ipam-row-h);
+  background: #F8FAFC;
+  border-bottom: 1px solid var(--border-subtle);
+  z-index: 10;
+  display: none;
+  align-items: center;
+  padding: 0 24px;
+  box-shadow: var(--shadow-sm);
+  font-weight: 600;
+}
+
+/* Skeleton Shimmer */
+.ipam-skeleton {
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #f0f0f0 25%, #f8f8f8 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
