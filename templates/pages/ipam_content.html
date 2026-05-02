@@ -121,6 +121,7 @@
 
     function toggleDensity() {
         VIEWPORT.classList.toggle('ipam-density-dense');
+        processTree();
         render();
     }
 
@@ -136,7 +137,8 @@
     function showSkeleton() {
         CONTAINER.innerHTML = '';
         const h = getRowHeight();
-        const count = Math.ceil(VIEWPORT.clientHeight / h) + 2;
+        const count = Math.ceil(VIEWPORT.clientHeight / h) + 5;
+        SPACER.style.height = (count * h) + 'px';
         for (let i = 0; i < count; i++) {
             const div = document.createElement('div');
             div.className = 'ipam-row';
@@ -465,10 +467,10 @@
         // Conflicts/Overlaps indicators
         let warningHtml = '';
         if (n.conflicts?.length > 0) {
-            warningHtml += `<i class="ph ph-warning-circle text-danger ms-1" title="Conflicts:\n${esc(n.conflicts.join('\n'))}"></i>`;
+            warningHtml += `<i class="ph ph-warning-circle text-danger ms-1" title="Conflicts: ${esc(n.conflicts.join(' | '))}"></i>`;
         }
         if (n.overlaps?.length > 0) {
-            warningHtml += `<i class="ph ph-info text-warning ms-1" title="Overlaps:\n${esc(n.overlaps.join('\n'))}"></i>`;
+            warningHtml += `<i class="ph ph-info text-warning ms-1" title="Overlaps: ${esc(n.overlaps.join(' | '))}"></i>`;
         }
 
         // Metadata consolidation
