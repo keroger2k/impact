@@ -306,15 +306,21 @@
         const matches = new Set();
         const ancestors = new Set();
 
-        const isIp = /^[0-9a-fA-F:\.]+$/.test(free) && (free.includes('.') || free.includes(':'));
+        const hasV4Chars = /^[0-9.]+$/.test(free) && free.includes('.');
+        const hasV6Chars = /^[0-9a-fA-F:]+$/.test(free) && free.includes(':');
+        const v4Octets = hasV4Chars ? free.split('.') : [];
+        // Partial IPv4: trailing dot, fewer than 4 octets, or any empty/non-numeric octet.
+        // Treated as a CIDR string-prefix match so "10.100." lists every 10.100.x.y subnet.
+        const isPartialV4 = hasV4Chars && (
+            free.endsWith('.') ||
+            v4Octets.length < 4 ||
+            v4Octets.some(o => o === '' || isNaN(parseInt(o, 10)))
+        );
+        const isCompleteV4 = hasV4Chars && !isPartialV4;
+        const isIp = isCompleteV4 || hasV6Chars;
         let qV4 = null, qV6 = null;
-        if (isIp) {
-            if (free.includes('.')) {
-                qV4 = ipToLong(free);
-            } else {
-                qV6 = ip6ToBigInt(free);
-            }
-        }
+        if (isCompleteV4) qV4 = ipToLong(free);
+        else if (hasV6Chars) qV6 = ip6ToBigInt(free);
 
         searchIndex.forEach(rec => {
             let selfMatches = true;
@@ -331,7 +337,9 @@
 
             // Free text / IP / Prefix length
             if (free) {
-                if (isIp) {
+                if (isPartialV4) {
+                    selfMatches = rec.cidr.startsWith(free);
+                } else if (isIp) {
                     if (isExact) {
                         selfMatches = rec.cidr.split('/')[0] === free;
                     } else if (qV4 && rec.v4) {
