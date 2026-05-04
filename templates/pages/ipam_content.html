@@ -643,6 +643,26 @@
             html += `<div class="text-info">▸ DNAC: ${dn.devices_cached} devices, ${dn.sites_cached} sites, ${dn.sitemap_entries} site-map entries</div>`;
             html += `<div class="text-info">▸ ACI Nodes: ${data.aci_nodes_cached} cached</div>`;
 
+            // DNAC interfaces — IPv4 vs IPv6 coverage
+            html += `<div class="fw-bold mt-3 mb-1">DNAC interfaces (dnac_interfaces cache — ${dn.interfaces_cached || 0}):</div>`;
+            if (!dn.interfaces_cached) {
+                html += '<div class="text-danger">⚠ dnac_interfaces cache is EMPTY — refresh DNAC first</div>';
+            } else {
+                html += `<div class="${dn.interfaces_with_ipv4 > 0 ? 'text-success' : 'text-danger'}">  ${dn.interfaces_with_ipv4} interfaces with IPv4 address</div>`;
+                html += `<div class="${dn.interfaces_with_ipv6_field > 0 ? 'text-success' : 'text-warning'}">  ${dn.interfaces_with_ipv6_field} interfaces with any IPv6-shaped field</div>`;
+                if (dn.interfaces_with_ipv6_field > 0) {
+                    const fieldList = Object.entries(dn.ipv6_field_names || {})
+                        .map(([k, c]) => `<code>${esc(k)}</code>×${c}`).join(', ');
+                    html += `<div class="text-muted ms-2">  field names seen: ${fieldList}</div>`;
+                    for (const s of (dn.ipv6_samples || [])) {
+                        html += `<div class="text-success ms-2">  ${esc(s.device)} / ${esc(s.port)}:</div>`;
+                        html += `<div class="text-muted ms-4"><pre class="mb-1" style="font-size:11px">${esc(JSON.stringify(s.v6_fields, null, 2))}</pre></div>`;
+                    }
+                } else {
+                    html += '<div class="text-muted ms-2">  No interfaces have ipv6AddressList / ipv6Address / similar fields populated.</div>';
+                }
+            }
+
             // Panorama
             const pan = data.panorama;
             html += `<div class="fw-bold mt-3 mb-1">Panorama (pan_interfaces cache — ${pan.devices_in_cache} devices):</div>`;

@@ -151,6 +151,30 @@ async def debug_ipam_sources(session: SessionEntry = Depends(require_auth)):
     devices = cache.get("devices") or []
     sites   = cache.get("sites") or []
     sitemap = cache.get("device_site_map") or {}
+    dnac_ifaces = cache.get("dnac_interfaces") or []
+
+    # Inventory IPv4/IPv6 coverage on the DNAC interfaces and dump a few raw
+    # samples that have IPv6-shaped fields so we can see exactly what schema
+    # DNAC returned (the SDK validator is loose; field names vary by version).
+    dnac_v4_count = 0
+    dnac_v6_count = 0
+    dnac_v6_field_names: dict = {}
+    dnac_v6_samples: list = []
+    for iface in dnac_ifaces:
+        if iface.get("ipv4Address") and iface.get("ipv4Mask"):
+            dnac_v4_count += 1
+        # Any field whose name contains "v6" (case-insensitive) and has a non-empty value.
+        v6_hits = {k: v for k, v in iface.items() if "v6" in k.lower() and v not in (None, "", [], {})}
+        if v6_hits:
+            dnac_v6_count += 1
+            for k in v6_hits:
+                dnac_v6_field_names[k] = dnac_v6_field_names.get(k, 0) + 1
+            if len(dnac_v6_samples) < 5:
+                dnac_v6_samples.append({
+                    "device": iface.get("deviceName") or iface.get("deviceId"),
+                    "port": iface.get("portName"),
+                    "v6_fields": v6_hits,
+                })
 
     # ── ACI ───────────────────────────────────────────────────────────────────
     # Real keys are aci_{fabric_id}_nodes; aggregate across fabrics for the count.
@@ -184,7 +208,16 @@ async def debug_ipam_sources(session: SessionEntry = Depends(require_auth)):
             "v6_roots": tree_v6,
             "source_counts": source_counts,
         },
-        "dnac": {"devices_cached": len(devices), "sites_cached": len(sites), "sitemap_entries": len(sitemap)},
+        "dnac": {
+            "devices_cached": len(devices),
+            "sites_cached": len(sites),
+            "sitemap_entries": len(sitemap),
+            "interfaces_cached": len(dnac_ifaces),
+            "interfaces_with_ipv4": dnac_v4_count,
+            "interfaces_with_ipv6_field": dnac_v6_count,
+            "ipv6_field_names": dnac_v6_field_names,
+            "ipv6_samples": dnac_v6_samples,
+        },
         "aci_nodes_cached": len(aci_nodes.get("imdata", [])),
         "panorama": {
             "devices_in_cache": len(pan_ifaces),
