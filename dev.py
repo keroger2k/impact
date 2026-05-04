@@ -94,10 +94,14 @@ for _d in MOCK_DEVICES:
 
 _SITE_OCTET = {"TSA-DCA-HQ": 10, "TSA-BOS-T1": 20, "TSA-LAX-T1": 30, "TSA-ORD-T1": 40, "TSA-JFK-T1": 50}
 
-def _dnac_iface(dev_id, host, port, addr, mask, vlan=None, desc=""):
+def _dnac_iface(dev_id, host, port, addr, mask, vlan=None, desc="", ipv6_list=None):
+    """ipv6_list: list of either CIDR strings ("2001::1/64") or dicts
+    ({"address":"2001::1","prefix":"64"}) — exercises both shapes the
+    DNAC interface API can return for ipv6AddressList."""
     MOCK_DNAC_INTERFACES.append({
         "deviceId": dev_id, "deviceName": host,
         "portName": port, "ipv4Address": addr, "ipv4Mask": mask,
+        "ipv6AddressList": ipv6_list or [],
         "macAddress": "00:00:00:00:00:00", "vlanId": vlan,
         "description": desc, "adminStatus": "UP", "status": "up", "speed": "1000000",
     })
@@ -110,12 +114,30 @@ for _i, (_site, _d) in enumerate(_CORE_PRIMARY.items()):
 
     # Management
     _dnac_iface(_id, _host, "mgmt0", _d["managementIpAddress"], "255.255.255.0", desc="Management")
-    # Transit uplink — per-site /24
-    _dnac_iface(_id, _host, "GigabitEthernet1/0/1", f"10.{_octet}.100.1", "255.255.255.0", desc="Uplink")
+    # Transit uplink — per-site /24, dual-stack
+    _dnac_iface(
+        _id, _host, "GigabitEthernet1/0/1",
+        f"10.{_octet}.100.1", "255.255.255.0",
+        desc="Uplink",
+        ipv6_list=[f"2001:db8:{_octet:x}:100::1/64"],
+    )
     # Loopback0 — unique /32 per CORE device (5 hosts collapse into a host-route group)
-    _dnac_iface(_id, _host, "Loopback0", f"10.99.100.{_n}", "255.255.255.255", desc="Router ID")
-    # Per-site SVI
-    _dnac_iface(_id, _host, "Vlan10", f"10.{_octet}.10.1", "255.255.255.0", vlan="10", desc="Users VLAN")
+    # Plus an IPv6 /128 router-id so we can verify v6 host-route handling.
+    _dnac_iface(
+        _id, _host, "Loopback0",
+        f"10.99.100.{_n}", "255.255.255.255",
+        desc="Router ID",
+        ipv6_list=[{"address": f"2001:db8:99:100::{_n}", "prefix": "128"}],
+    )
+    # Per-site SVI — dual-stack (use dict shape here to exercise both paths)
+    _dnac_iface(
+        _id, _host, "Vlan10",
+        f"10.{_octet}.10.1", "255.255.255.0", vlan="10", desc="Users VLAN",
+        ipv6_list=[
+            {"address": f"2001:db8:{_octet:x}:10::1", "prefix": "64", "addressType": "GLOBAL"},
+            "fe80::1/10",  # link-local — should be filtered by is_excluded
+        ],
+    )
     # Tunnel10 — DMVPN-style hub/spoke: all CORE devices share 10.99.3.0/24 so
     # IPAM should render a single tunnel_group with 5 endpoints.
     _dnac_iface(_id, _host, "Tunnel10", f"10.99.3.{_n}", "255.255.255.0", desc=f"DMVPN endpoint {_n}")

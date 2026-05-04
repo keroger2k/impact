@@ -36,6 +36,32 @@ RFC1918_SUPERNETS = [
 # Regex patterns for interfaces/links to exclude (HA, keepalives, etc.)
 HA_PATTERNS = re.compile(r"KEEPALIVE|FAILOVER|HA-LINK|HEARTBEAT", re.IGNORECASE)
 
+def _normalize_ipv6_entry(entry) -> Optional[str]:
+    """Coerce a DNAC ipv6 entry into a 'addr/prefix' CIDR string.
+
+    Handles three shapes seen across DNAC versions:
+      - "2001:db8::1/64"                                  (string with prefix)
+      - "2001:db8::1"                                     (string, no prefix — assume /64)
+      - {"address": "2001:db8::1", "prefix": "64", ...}   (dict with prefix or prefixLength)
+    """
+    if not entry:
+        return None
+    if isinstance(entry, str):
+        return entry if "/" in entry else f"{entry}/64"
+    if isinstance(entry, dict):
+        addr = entry.get("address") or entry.get("ipAddress") or entry.get("ip")
+        if not addr:
+            return None
+        prefix = (
+            entry.get("prefix")
+            or entry.get("prefixLength")
+            or entry.get("mask")
+            or 64
+        )
+        return f"{addr}/{prefix}"
+    return None
+
+
 def classify_interface(name: str | None, cidr: netaddr.IPNetwork) -> Tuple[str, Optional[int]]:
     """
     Classifies an interface and extracts VLAN ID if applicable.
@@ -226,35 +252,65 @@ class IPAMEngine:
             devices_with_iface: Set[str] = set()
 
             for iface in interfaces:
-                addr = iface.get('ipv4Address')
-                mask = iface.get('ipv4Mask')
-                if not addr or not mask:
-                    continue
                 port_name = iface.get('portName') or ''
                 desc = iface.get('description') or ''
-                try:
-                    net = netaddr.IPNetwork(f"{addr}/{mask}")
-                except Exception:
-                    continue
-                if self.is_excluded(net, port_name, desc):
-                    continue
-
                 dev_id = iface.get('deviceId')
                 dev = id_to_dev.get(dev_id) or {}
-                devices_with_iface.add(dev_id)
                 hostname = dev.get('hostname') or iface.get('deviceName') or 'Unknown'
 
-                node = IPAMNode(str(net.cidr), source="DNAC")
-                node.display_name = port_name or hostname
-                node.site = dev_site_map.get(dev_id, "Unknown")
-                node.device = hostname
-                node.host_ip = str(net.ip)
-                node.interface_name = port_name
-                node.interface_type, node.vlan_id = classify_interface(port_name, net)
-                if node.interface_type == "loopback":
-                    node.role = "host_route"
+                # IPv4
+                addr = iface.get('ipv4Address')
+                mask = iface.get('ipv4Mask')
+                if addr and mask:
+                    try:
+                        net = netaddr.IPNetwork(f"{addr}/{mask}")
+                        if not self.is_excluded(net, port_name, desc):
+                            devices_with_iface.add(dev_id)
+                            node = IPAMNode(str(net.cidr), source="DNAC")
+                            node.display_name = port_name or hostname
+                            node.site = dev_site_map.get(dev_id, "Unknown")
+                            node.device = hostname
+                            node.host_ip = str(net.ip)
+                            node.interface_name = port_name
+                            node.interface_type, node.vlan_id = classify_interface(port_name, net)
+                            if node.interface_type == "loopback":
+                                node.role = "host_route"
+                            self.subnets.append(node)
+                    except Exception:
+                        pass
 
-                self.subnets.append(node)
+                # IPv6 — DNAC returns ipv6AddressList as a list of either strings
+                # ("2001:db8::1/64") or dicts ({"address": "2001:db8::1", "prefix": "64", ...}).
+                # Some firmware versions also populate a single-address ipv6Address field.
+                v6_entries = []
+                v6_list = iface.get('ipv6AddressList')
+                if isinstance(v6_list, list):
+                    v6_entries.extend(v6_list)
+                v6_single = iface.get('ipv6Address')
+                if v6_single:
+                    v6_entries.append(v6_single)
+
+                for entry in v6_entries:
+                    cidr_str = _normalize_ipv6_entry(entry)
+                    if not cidr_str:
+                        continue
+                    try:
+                        net = netaddr.IPNetwork(cidr_str)
+                    except Exception:
+                        continue
+                    if self.is_excluded(net, port_name, desc):
+                        continue
+                    devices_with_iface.add(dev_id)
+                    node = IPAMNode(str(net.cidr), source="DNAC")
+                    node.display_name = port_name or hostname
+                    node.site = dev_site_map.get(dev_id, "Unknown")
+                    node.device = hostname
+                    node.host_ip = str(net.ip)
+                    node.interface_name = port_name
+                    node.interface_type, node.vlan_id = classify_interface(port_name, net)
+                    if node.interface_type == "loopback":
+                        node.role = "host_route"
+                    self.subnets.append(node)
 
             # Fallback: device has a management IP but no interface entry came
             # back for it — keep the /24 management approximation so the device

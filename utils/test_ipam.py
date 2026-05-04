@@ -1,6 +1,37 @@
 import unittest
 import netaddr
-from utils.ipam_engine import IPAMEngine, IPAMNode, classify_interface
+from utils.ipam_engine import IPAMEngine, IPAMNode, classify_interface, _normalize_ipv6_entry
+
+
+class TestIPv6Normalizer(unittest.TestCase):
+    def test_string_with_prefix(self):
+        self.assertEqual(_normalize_ipv6_entry("2001:db8::1/64"), "2001:db8::1/64")
+
+    def test_string_without_prefix_defaults_to_64(self):
+        self.assertEqual(_normalize_ipv6_entry("2001:db8::1"), "2001:db8::1/64")
+
+    def test_dict_with_prefix(self):
+        e = {"address": "2001:db8::1", "prefix": "64", "addressType": "GLOBAL"}
+        self.assertEqual(_normalize_ipv6_entry(e), "2001:db8::1/64")
+
+    def test_dict_with_prefix_length_field(self):
+        e = {"address": "2001:db8::1", "prefixLength": "48"}
+        self.assertEqual(_normalize_ipv6_entry(e), "2001:db8::1/48")
+
+    def test_dict_without_prefix_defaults_to_64(self):
+        self.assertEqual(_normalize_ipv6_entry({"address": "2001:db8::1"}), "2001:db8::1/64")
+
+    def test_dict_alternate_address_keys(self):
+        self.assertEqual(_normalize_ipv6_entry({"ipAddress": "2001:db8::1", "prefix": "48"}),
+                         "2001:db8::1/48")
+        self.assertEqual(_normalize_ipv6_entry({"ip": "2001:db8::1", "prefix": "48"}),
+                         "2001:db8::1/48")
+
+    def test_empty_or_unrecognized(self):
+        self.assertIsNone(_normalize_ipv6_entry(None))
+        self.assertIsNone(_normalize_ipv6_entry(""))
+        self.assertIsNone(_normalize_ipv6_entry({}))
+        self.assertIsNone(_normalize_ipv6_entry(42))
 
 class TestIPAMEngine(unittest.TestCase):
     def setUp(self):
