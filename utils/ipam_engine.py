@@ -150,6 +150,7 @@ class IPAMEngine:
             "dnac":            self._discover_dnac,
             "dnac_summaries":  self._discover_dnac_summaries,
             "dnac_pools":      self._discover_dnac_pools,
+            "dnac_iface_v6":   self._discover_dnac_iface_v6,
             "nexus":           self._discover_nexus,
             "panorama":        self._discover_panorama,
         }
@@ -340,63 +341,84 @@ class IPAMEngine:
         except Exception as e:
             logger.error(f"DNAC discovery failed: {e}")
 
+    async def _load_dnac_device_metadata(self, session, loop):
+        """Shared loader for device list, site list, and device->site map.
+        Returns (devices, dev_site_map, id_to_dev) — all from cache where possible.
+        """
+        from cache import cache, TTL_DEVICES, TTL_SITES
+        import clients.dnac as dc
+
+        dnac = auth_module.get_dnac_for_session(session) if session else None
+
+        def _loader_or_empty(loader):
+            return (lambda: loader()) if dnac else (lambda: None)
+
+        devices = await loop.run_in_executor(
+            None, run_with_context(cache.get_or_set),
+            "devices", _loader_or_empty(lambda: dc.get_all_devices(dnac)), TTL_DEVICES
+        ) or []
+        sites = await loop.run_in_executor(
+            None, run_with_context(cache.get_or_set),
+            "sites", _loader_or_empty(lambda: dc.get_site_cache(dnac)), TTL_SITES
+        ) or []
+        dev_site_map = await loop.run_in_executor(
+            None, run_with_context(cache.get_or_set),
+            "device_site_map", _loader_or_empty(lambda: dc.build_device_site_map(dnac, sites)), TTL_SITES
+        ) or {}
+
+        return devices, dev_site_map, {d.get("id"): d for d in devices}
+
+    async def _load_dnac_device_configs(self, session, loop, devices):
+        """Shared loader for DNAC running-configs across routers + switches.
+        Cached as a single dict {device_id: config_str} under 'dnac_device_configs'.
+        Both EIGRP summary discovery and IPv6 interface discovery consume this.
+        """
+        from cache import cache, TTL_DNAC_ROUTER_CONFIGS
+        import clients.dnac as dc
+
+        dnac = auth_module.get_dnac_for_session(session) if session else None
+
+        # Routers + switches — both can carry IPv6 interface addresses, and
+        # switches sometimes carry classic-mode summary-address on SVIs too.
+        target_families = {"routers", "switches and hubs"}
+        targets = [d for d in devices if (d.get("family") or "").lower() in target_families]
+
+        def _fetch_all_configs():
+            if not dnac:
+                return {}
+            from concurrent.futures import ThreadPoolExecutor
+            results: Dict[str, str] = {}
+            with ThreadPoolExecutor(max_workers=20) as ex:
+                futures = {ex.submit(dc.get_device_config, dnac, d["id"]): d["id"] for d in targets}
+                for fut in futures:
+                    dev_id = futures[fut]
+                    try:
+                        results[dev_id] = fut.result() or ""
+                    except Exception as e:
+                        logger.warning(f"Config fetch failed for {dev_id}: {e}")
+                        results[dev_id] = ""
+            return results
+
+        configs = await loop.run_in_executor(
+            None, run_with_context(cache.get_or_set),
+            "dnac_device_configs", _fetch_all_configs, TTL_DNAC_ROUTER_CONFIGS
+        ) or {}
+        return configs
+
     async def _discover_dnac_summaries(self, session, loop):
-        """Parse EIGRP `summary-address` statements from DNAC router configs.
+        """Parse EIGRP `summary-address` statements from DNAC device configs.
         These represent the real per-site IP allocations (advertised aggregates),
         which our interface-IP discovery can't see directly.
         """
         try:
-            from cache import cache, TTL_DEVICES, TTL_SITES, TTL_DNAC_ROUTER_CONFIGS
             from utils.ipam_config_parser import parse_eigrp_summaries
-            import clients.dnac as dc
 
-            dnac = auth_module.get_dnac_for_session(session) if session else None
-
-            def _loader_or_empty(loader):
-                return (lambda: loader()) if dnac else (lambda: None)
-
-            devices = await loop.run_in_executor(
-                None, run_with_context(cache.get_or_set),
-                "devices", _loader_or_empty(lambda: dc.get_all_devices(dnac)), TTL_DEVICES
-            ) or []
-            sites = await loop.run_in_executor(
-                None, run_with_context(cache.get_or_set),
-                "sites", _loader_or_empty(lambda: dc.get_site_cache(dnac)), TTL_SITES
-            ) or []
-            dev_site_map = await loop.run_in_executor(
-                None, run_with_context(cache.get_or_set),
-                "device_site_map", _loader_or_empty(lambda: dc.build_device_site_map(dnac, sites)), TTL_SITES
-            ) or {}
-
-            # Filter to routers only — that's where summary-address lives.
-            routers = [d for d in devices if (d.get("family") or "").lower() == "routers"]
-            if not routers:
-                logger.info("No DNAC routers found; skipping EIGRP summary discovery.")
+            devices, dev_site_map, id_to_dev = await self._load_dnac_device_metadata(session, loop)
+            if not devices:
+                logger.info("No DNAC devices cached; skipping EIGRP summary discovery.")
                 return
 
-            # Fetch all router configs in parallel, cached as a single dict.
-            def _fetch_all_configs():
-                if not dnac:
-                    return {}
-                from concurrent.futures import ThreadPoolExecutor
-                results: Dict[str, str] = {}
-                with ThreadPoolExecutor(max_workers=20) as ex:
-                    futures = {ex.submit(dc.get_device_config, dnac, d["id"]): d["id"] for d in routers}
-                    for fut in futures:
-                        dev_id = futures[fut]
-                        try:
-                            results[dev_id] = fut.result() or ""
-                        except Exception as e:
-                            logger.warning(f"Config fetch failed for {dev_id}: {e}")
-                            results[dev_id] = ""
-                return results
-
-            configs = await loop.run_in_executor(
-                None, run_with_context(cache.get_or_set),
-                "dnac_router_configs", _fetch_all_configs, TTL_DNAC_ROUTER_CONFIGS
-            ) or {}
-
-            id_to_dev = {d.get("id"): d for d in routers}
+            configs = await self._load_dnac_device_configs(session, loop, devices)
 
             for dev_id, cfg in configs.items():
                 if not cfg:
@@ -427,6 +449,51 @@ class IPAMEngine:
                     self.subnets.append(node)
         except Exception as e:
             logger.error(f"DNAC summary discovery failed: {e}")
+
+    async def _discover_dnac_iface_v6(self, session, loop):
+        """Parse IPv6 interface addresses (`ipv6 address X/Y`) from DNAC device
+        configs. DNAC's interface inventory API doesn't ship IPv6 in many
+        deployments, so configs are the only authoritative source.
+        Reuses the shared dnac_device_configs cache populated by the EIGRP
+        summary discovery, so calling either source is sufficient.
+        """
+        try:
+            from utils.ipam_config_parser import parse_ipv6_addresses
+
+            devices, dev_site_map, id_to_dev = await self._load_dnac_device_metadata(session, loop)
+            if not devices:
+                logger.info("No DNAC devices cached; skipping IPv6 interface discovery.")
+                return
+
+            configs = await self._load_dnac_device_configs(session, loop, devices)
+
+            for dev_id, cfg in configs.items():
+                if not cfg:
+                    continue
+                dev = id_to_dev.get(dev_id) or {}
+                hostname = dev.get("hostname") or "Unknown"
+                site = dev_site_map.get(dev_id, "Unknown")
+
+                for entry in parse_ipv6_addresses(cfg):
+                    try:
+                        net = netaddr.IPNetwork(entry["cidr"])
+                    except Exception:
+                        continue
+                    if self.is_excluded(net, entry["interface"]):
+                        continue
+
+                    node = IPAMNode(str(net.cidr), source="DNAC")
+                    node.display_name = entry["interface"] or hostname
+                    node.site = site
+                    node.device = hostname
+                    node.host_ip = str(net.ip)
+                    node.interface_name = entry["interface"]
+                    node.interface_type, node.vlan_id = classify_interface(entry["interface"], net)
+                    if node.interface_type == "loopback":
+                        node.role = "host_route"
+                    self.subnets.append(node)
+        except Exception as e:
+            logger.error(f"DNAC IPv6 interface discovery failed: {e}")
 
     async def _discover_dnac_pools(self, session, loop):
         """Pull DNAC's configured IP pools — the authoritative IPAM allocations.

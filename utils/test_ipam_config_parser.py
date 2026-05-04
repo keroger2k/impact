@@ -1,6 +1,76 @@
 import unittest
 
-from utils.ipam_config_parser import parse_eigrp_summaries
+from utils.ipam_config_parser import parse_eigrp_summaries, parse_ipv6_addresses
+
+
+IPV6_INTERFACE_CONFIG = """!
+hostname rtr-test-01
+!
+interface GigabitEthernet0/1
+ description Uplink
+ ip address 10.0.0.1 255.255.255.0
+ ipv6 address 2001:db8:0:100::1/64
+ ipv6 address fe80::1 link-local
+!
+interface GigabitEthernet0/2
+ ipv6 address 2001:db8:0:200::/64 eui-64
+ ipv6 address autoconfig
+ ipv6 address dhcp
+!
+interface Loopback0
+ ipv6 address 2001:db8:99::1/128
+!
+interface Vlan100
+ ipv6 address 2001:db8:1:100::1/64
+!
+end
+"""
+
+
+class TestIPv6AddressParser(unittest.TestCase):
+    def test_extracts_static_addresses(self):
+        results = parse_ipv6_addresses(IPV6_INTERFACE_CONFIG)
+        cidrs = [r["cidr"] for r in results]
+        # Four static addresses with explicit prefix; link-local/autoconfig/dhcp are excluded.
+        self.assertEqual(len(results), 4)
+        self.assertIn("2001:db8:0:100::1/64", cidrs)
+        self.assertIn("2001:db8:0:200::/64", cidrs)  # eui-64 form keeps the prefix
+        self.assertIn("2001:db8:99::1/128", cidrs)
+        self.assertIn("2001:db8:1:100::1/64", cidrs)
+
+    def test_attributes_to_correct_interface(self):
+        results = parse_ipv6_addresses(IPV6_INTERFACE_CONFIG)
+        by_iface = {r["interface"]: r for r in results}
+        self.assertEqual(by_iface["GigabitEthernet0/1"]["address"], "2001:db8:0:100::1")
+        self.assertEqual(by_iface["GigabitEthernet0/1"]["prefix_length"], 64)
+        self.assertEqual(by_iface["Loopback0"]["prefix_length"], 128)
+        self.assertEqual(by_iface["Vlan100"]["address"], "2001:db8:1:100::1")
+
+    def test_link_local_is_skipped(self):
+        # `ipv6 address fe80::1 link-local` has no /prefix and shouldn't match.
+        results = parse_ipv6_addresses(IPV6_INTERFACE_CONFIG)
+        self.assertNotIn("fe80::1", [r["address"] for r in results])
+
+    def test_autoconfig_and_dhcp_skipped(self):
+        cfg = """!
+interface Gi0/1
+ ipv6 address autoconfig
+ ipv6 address dhcp
+!
+"""
+        self.assertEqual(parse_ipv6_addresses(cfg), [])
+
+    def test_empty_config(self):
+        self.assertEqual(parse_ipv6_addresses(""), [])
+        self.assertEqual(parse_ipv6_addresses(None), [])
+
+    def test_ipv6_outside_interface_block_is_ignored(self):
+        # An ipv6 address line at indent 0 (i.e., not inside an interface) shouldn't be picked up.
+        cfg = """!
+ipv6 address 2001:db8::1/64
+!
+"""
+        self.assertEqual(parse_ipv6_addresses(cfg), [])
 
 
 NAMED_MODE_CONFIG = """!

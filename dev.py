@@ -1381,6 +1381,7 @@ def _build_ipam_tree_from_mocks() -> dict:
             engine = IPAMEngine()
             loop.run_until_complete(engine._discover_dnac(None, loop))
             loop.run_until_complete(engine._discover_dnac_summaries(None, loop))
+            loop.run_until_complete(engine._discover_dnac_iface_v6(None, loop))
             loop.run_until_complete(engine._discover_dnac_pools(None, loop))
             loop.run_until_complete(engine._discover_nexus(None, None))
             loop.run_until_complete(engine._discover_panorama(None, None))
@@ -1485,11 +1486,14 @@ def seed_cache(cache) -> None:
     cache.set("nexus_vpcs",          MOCK_NEXUS_VPCS,           LONG)
     cache.set("nexus_vlans",         MOCK_NEXUS_VLANS,          LONG)
 
-    # DNAC router configs — keyed by device id, consumed by the IPAM EIGRP
-    # summary discovery (must be seeded before _build_ipam_tree_from_mocks runs).
+    # DNAC device configs — keyed by device id, consumed by both the EIGRP
+    # summary discovery and the IPv6-from-configs discovery. Includes routers
+    # AND switches (must be seeded before _build_ipam_tree_from_mocks runs).
     cache.set(
-        "dnac_router_configs",
-        {dev["id"]: MOCK_CONFIGS[dev["id"]] for dev in MOCK_DEVICES if dev.get("family") == "Routers"},
+        "dnac_device_configs",
+        {dev["id"]: MOCK_CONFIGS[dev["id"]]
+         for dev in MOCK_DEVICES
+         if dev.get("family") in ("Routers", "Switches and Hubs")},
         LONG,
     )
 
@@ -1530,16 +1534,25 @@ def _mock_dnac_config(dev: dict) -> str:
     """Build a mock IOS-XE running-config for a DNAC device.
     Routers (family='Routers') get a named-mode EIGRP block with a per-site
     summary-address advertised on Tunnel5000, so the IPAM summary discovery
-    has something to chew on in DEV_MODE.
+    has something to chew on in DEV_MODE. Both routers and switches get an
+    ipv6 address on the uplink interface so the IPv6-from-configs source
+    has data too.
     """
+    site = MOCK_DEVICE_SITE_MAP.get(dev["id"], "")
+    site_octet = next((int(p.split(".")[1]) for s, p in _SITES if s == site), 99)
+    last_octet = int(dev["managementIpAddress"].rsplit(".", 1)[1])
     base = f"""!
 hostname {dev['hostname']}
 !
 interface GigabitEthernet0/1
  description Primary Uplink
  ip address {dev['managementIpAddress']} 255.255.255.0
+ ipv6 address 2001:db8:{site_octet:x}:ce0::{last_octet:x}/64
  speed 1000
  duplex full
+!
+interface Loopback0
+ ipv6 address 2001:db8:99:ce0::{last_octet:x}/128
 !
 snmp-server community TSA-RO RO
 snmp-server community TSA-RW RW

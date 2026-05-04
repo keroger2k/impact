@@ -247,7 +247,7 @@ async def debug_ipam_sources(session: SessionEntry = Depends(require_auth)):
                 for k in (
                     "dnac_global_pools",
                     "dnac_reserve_subpools",
-                    "dnac_router_configs",
+                    "dnac_device_configs",
                     "dnac_interfaces",
                     "devices",
                 )
