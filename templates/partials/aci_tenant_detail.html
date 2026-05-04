@@ -1,0 +1,64 @@
+<div class="card shadow-sm border-0 animate-fade-in">
+    <div class="card-header bg-white py-3">
+        <div class="d-flex align-items-center justify-content-between">
+            <div class="d-flex align-items-center gap-3">
+                <button class="btn btn-sm btn-outline-secondary" hx-get="/api/aci/tenants" hx-vals='js:{fabric: "{{ fabric }}" || window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading">
+                    <i class="ph ph-arrow-left me-1"></i>Back to Tenants
+                </button>
+                <h5 class="mb-0 text-navy fw-bold"><i class="ph ph-buildings me-2"></i>Tenant: {{ tenant }}</h5>
+            </div>
+            <span class="badge bg-light text-navy border">Fabric: {{ fabric }}</span>
+        </div>
+    </div>
+    <div class="card-body p-0">
+        <ul class="nav nav-tabs px-4 pt-3 bg-light border-bottom-0" id="tenantTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="vrfs-tab" data-bs-toggle="tab" data-bs-target="#vrfs-pane" type="button" role="tab"
+                        hx-get="/api/aci/vrfs?tenant={{ tenant }}&fabric={{ fabric }}" hx-target="#vrfs-pane" hx-trigger="load, click">
+                    <i class="ph ph-tree-structure me-1"></i>VRFs
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="bds-tab" data-bs-toggle="tab" data-bs-target="#bds-pane" type="button" role="tab"
+                        hx-get="/api/aci/bridge-domains?tenant={{ tenant }}&fabric={{ fabric }}" hx-target="#bds-pane" hx-trigger="click">
+                    <i class="ph ph-bridge me-1"></i>Bridge Domains
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="aps-tab" data-bs-toggle="tab" data-bs-target="#aps-pane" type="button" role="tab"
+                        hx-get="/api/aci/app-profiles?tenant={{ tenant }}&fabric={{ fabric }}" hx-target="#aps-pane" hx-trigger="click">
+                    <i class="ph ph-stack me-1"></i>App Profiles
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="contracts-tab" data-bs-toggle="tab" data-bs-target="#contracts-pane" type="button" role="tab"
+                        hx-get="/api/aci/contracts?tenant={{ tenant }}&fabric={{ fabric }}" hx-target="#contracts-pane" hx-trigger="click">
+                    <i class="ph ph-handshake me-1"></i>Contracts
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="filters-tab" data-bs-toggle="tab" data-bs-target="#filters-pane" type="button" role="tab"
+                        hx-get="/api/aci/filters?tenant={{ tenant }}&fabric={{ fabric }}" hx-target="#filters-pane" hx-trigger="click">
+                    <i class="ph ph-funnel me-1"></i>Filters
+                </button>
+            </li>
+        </ul>
+        <div class="tab-content" id="tenantTabsContent">
+            <div class="tab-pane fade show active" id="vrfs-pane" role="tabpanel" tabindex="0">
+                <div class="p-5 text-center"><div class="spinner-border text-primary"></div></div>
+            </div>
+            <div class="tab-pane fade" id="bds-pane" role="tabpanel" tabindex="0">
+                <div class="p-5 text-center"><div class="spinner-border text-primary"></div></div>
+            </div>
+            <div class="tab-pane fade" id="aps-pane" role="tabpanel" tabindex="0">
+                <div class="p-5 text-center"><div class="spinner-border text-primary"></div></div>
+            </div>
+            <div class="tab-pane fade" id="contracts-pane" role="tabpanel" tabindex="0">
+                <div class="p-5 text-center"><div class="spinner-border text-primary"></div></div>
+            </div>
+            <div class="tab-pane fade" id="filters-pane" role="tabpanel" tabindex="0">
+                <div class="p-5 text-center"><div class="spinner-border text-primary"></div></div>
+            </div>
+        </div>
+    </div>
+</div>

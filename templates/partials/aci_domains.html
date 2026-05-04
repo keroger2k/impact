@@ -1,0 +1,42 @@
+<div class="card shadow-sm border-0 animate-fade-in">
+    <script id="aci-domains-raw" type="application/json">{{ raw_json|tojson }}</script>
+    <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <div class="d-flex align-items-center gap-3">
+            <span class="fw-bold text-navy"><i class="ph ph-globe me-1"></i>Domains</span>
+            <button class="btn btn-xs btn-outline-navy" onclick="showRawData('aci-domains-raw')">
+                <i class="ph ph-code me-1"></i>Raw
+            </button>
+        </div>
+        <span class="badge bg-secondary">{{ items|length }} Domains</span>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive sticky-header" style="max-height: calc(100vh - 250px);">
+            <table class="table table-hover align-middle mb-0 data-table">
+                <thead>
+                    <tr>
+                        {% if items[0] and items[0].fabric_label %}<th class="ps-4">Fabric</th>{% endif %}
+                        <th class="{% if not (items[0] and items[0].fabric_label) %}ps-4{% endif %}">Name</th>
+                        <th>Type</th>
+                        <th class="pe-4">VLAN Pool</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for d in items %}
+                    <tr>
+                        {% if d.fabric_label %}<td class="ps-4"><span class="badge bg-light text-navy border">{{ d.fabric_label }}</span></td>{% endif %}
+                        <td class="{% if not d.fabric_label %}ps-4{% endif %} fw-bold text-navy">{{ d.name }}</td>
+                        <td><span class="badge bg-secondary">{{ d.type }}</span></td>
+                        <td class="pe-4 small text-muted font-monospace">{{ d.vlan_pool }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% if not items %}
+        <div class="p-5 text-center text-muted">
+            <i class="ph ph-empty display-4 d-block mb-3"></i>
+            <div>No domains found on this fabric.</div>
+        </div>
+        {% endif %}
+    </div>
+</div>

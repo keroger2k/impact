@@ -1,0 +1,92 @@
+<div class="card shadow-sm border-0 animate-fade-in">
+    <script id="aci-pg-detail-raw" type="application/json">{{ raw_json|tojson }}</script>
+    <div class="card-header bg-white py-3">
+        <div class="d-flex align-items-center justify-content-between">
+            <div class="d-flex align-items-center gap-3">
+                <button class="btn btn-sm btn-outline-secondary" hx-get="/api/aci/access/policy-groups" hx-target="#aci-results" hx-indicator="#aci-loading">
+                    <i class="ph ph-arrow-left me-1"></i>Back
+                </button>
+                <h5 class="mb-0 text-navy fw-bold"><i class="ph ph-package me-2"></i>Policy Group: {{ res.policy_group.name }}</h5>
+                <button class="btn btn-xs btn-outline-navy" onclick="showRawData('aci-pg-detail-raw')">
+                    <i class="ph ph-code me-1"></i>Raw
+                </button>
+            </div>
+            <div class="d-flex gap-2">
+                <span class="badge bg-light text-navy border">Kind: {{ res.policy_group.kind }}</span>
+                {% if res.policy_group.lag_t %}<span class="badge bg-light text-navy border">LAG: {{ res.policy_group.lag_t }}</span>{% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="card-body p-4">
+        <div class="row g-4">
+            <!-- Bound Policies -->
+            <div class="col-lg-6">
+                <div class="card border shadow-none h-100">
+                    <div class="card-header bg-light fw-bold text-navy"><i class="ph ph-sliders me-2"></i>Bound Interface Policies</div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-sm table-hover mb-0 align-middle">
+                                <thead class="bg-light small text-muted">
+                                    <tr><th class="ps-3">Type</th><th>Policy Name</th><th class="pe-3">Settings Summary</th></tr>
+                                </thead>
+                                <tbody>
+                                    {% for p in res.bound_policies %}
+                                    <tr>
+                                        <td class="ps-3 fw-bold small text-navy">{{ p.type }}</td>
+                                        <td><span class="small">{{ p.name }}</span></td>
+                                        <td class="pe-3"><code class="small text-muted">{{ p.settings|tojson }}</code></td>
+                                    </tr>
+                                    {% endfor %}
+                                    {% if not res.bound_policies %}<tr><td colspan="3" class="text-center p-3 text-muted">No policies bound.</td></tr>{% endif %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- AAEP & Connectivity -->
+            <div class="col-lg-6">
+                <div class="card border shadow-none mb-4">
+                    <div class="card-header bg-light fw-bold text-navy"><i class="ph ph-link me-2"></i>AAEP Association</div>
+                    <div class="card-body">
+                        {% if res.aaep.name %}
+                        <div class="d-flex justify-content-between align-items-center">
+                            <span class="fw-bold text-navy">{{ res.aaep.name }}</span>
+                            <button class="btn btn-xs btn-outline-navy" hx-get="/api/aci/access/aaeps/detail?dn={{ res.aaep.dn|urlencode }}" hx-target="#aci-results">
+                                <i class="ph ph-info me-1"></i>AAEP Detail
+                            </button>
+                        </div>
+                        {% else %}
+                        <span class="text-muted">No AAEP bound.</span>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <div class="card border shadow-none">
+                    <div class="card-header bg-light fw-bold text-navy"><i class="ph ph-hard-drives me-2"></i>Where Used (Active Topology)</div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive" style="max-height: 300px;">
+                            <table class="table table-sm table-hover mb-0">
+                                <thead class="bg-light small text-muted">
+                                    <tr><th class="ps-3">Node ID</th><th class="pe-3">Port</th></tr>
+                                </thead>
+                                <tbody>
+                                    {% for u in res.where_used %}
+                                    <tr>
+                                        <td class="ps-3 fw-bold">{{ u.node }}</td>
+                                        <td class="pe-3 font-monospace">
+                                            {% if u.fex_id %}fex-{{ u.fex_id }}/{% endif %}{{ u.port }}
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                    {% if not res.where_used %}<tr><td colspan="2" class="text-center p-3 text-muted">Not applied to any ports.</td></tr>{% endif %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

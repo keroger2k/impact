@@ -1,0 +1,126 @@
+<div class="card shadow-sm border-0 animate-fade-in">
+    <script id="aci-epg-detail-raw" type="application/json">{{ raw_json|tojson }}</script>
+    <div class="card-header bg-white py-3">
+        <div class="d-flex align-items-center justify-content-between">
+            <div class="d-flex align-items-center gap-3">
+                <button class="btn btn-sm btn-outline-secondary" hx-get="/api/aci/traffic/epgs" hx-target="#aci-results" hx-indicator="#aci-loading">
+                    <i class="ph ph-arrow-left me-1"></i>Back
+                </button>
+                <h5 class="mb-0 text-navy fw-bold"><i class="ph ph-stack me-2"></i>EPG: {{ res.epg.name }}</h5>
+                <button class="btn btn-xs btn-outline-navy" onclick="showRawData('aci-epg-detail-raw')">
+                    <i class="ph ph-code me-1"></i>Raw
+                </button>
+            </div>
+            <div class="d-flex gap-2">
+                <span class="badge bg-light text-navy border">Tenant: {{ res.epg.tenant }}</span>
+                <span class="badge bg-light text-navy border">App Prof: {{ res.epg.ap }}</span>
+            </div>
+        </div>
+    </div>
+    <div class="card-body p-0">
+        <ul class="nav nav-tabs px-4 pt-3 bg-light border-bottom-0" id="epgTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="epg-contracts-tab" data-bs-toggle="tab" data-bs-target="#epg-contracts-pane" type="button" role="tab">
+                    <i class="ph ph-handshake me-1"></i>Contracts
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="epg-paths-tab" data-bs-toggle="tab" data-bs-target="#epg-paths-pane" type="button" role="tab">
+                    <i class="ph ph-hard-drives me-1"></i>Static Paths
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="epg-domains-tab" data-bs-toggle="tab" data-bs-target="#epg-domains-pane" type="button" role="tab">
+                    <i class="ph ph-globe me-1"></i>Domains
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="epg-subnets-tab" data-bs-toggle="tab" data-bs-target="#epg-subnets-pane" type="button" role="tab">
+                    <i class="ph ph-list-numbers me-1"></i>Subnets
+                </button>
+            </li>
+        </ul>
+        <div class="tab-content" id="epgTabsContent">
+            <!-- Contracts -->
+            <div class="tab-pane fade show active" id="epg-contracts-pane" role="tabpanel">
+                <div class="row p-4">
+                    <div class="col-md-6">
+                        <h6 class="fw-bold text-navy mb-3">Provided Contracts</h6>
+                        <div class="list-group">
+                            {% for c in res.provided_contracts %}
+                            <div class="list-group-item d-flex justify-content-between align-items-center">
+                                <span><i class="ph ph-handshake me-2 text-success"></i>{{ c.name }}</span>
+                                <button class="btn btn-xs btn-outline-navy" hx-get="/api/aci/contracts/detail?dn={{ c.dn|urlencode }}" hx-target="#aci-results">
+                                    <i class="ph ph-info"></i>
+                                </button>
+                            </div>
+                            {% endfor %}
+                            {% if not res.provided_contracts %}<div class="text-muted small p-3 border rounded bg-light">None</div>{% endif %}
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <h6 class="fw-bold text-navy mb-3">Consumed Contracts</h6>
+                        <div class="list-group">
+                            {% for c in res.consumed_contracts %}
+                            <div class="list-group-item d-flex justify-content-between align-items-center">
+                                <span><i class="ph ph-handshake me-2 text-primary"></i>{{ c.name }}</span>
+                                <button class="btn btn-xs btn-outline-navy" hx-get="/api/aci/contracts/detail?dn={{ c.dn|urlencode }}" hx-target="#aci-results">
+                                    <i class="ph ph-info"></i>
+                                </button>
+                            </div>
+                            {% endfor %}
+                            {% if not res.consumed_contracts %}<div class="text-muted small p-3 border rounded bg-light">None</div>{% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- Static Paths -->
+            <div class="tab-pane fade" id="epg-paths-pane" role="tabpanel">
+                <div class="p-4">
+                    <table class="table table-sm table-hover border">
+                        <thead class="bg-light">
+                            <tr><th>Path</th><th>Encap</th><th>Mode</th></tr>
+                        </thead>
+                        <tbody>
+                            {% for p in res.static_paths %}
+                            <tr><td class="small font-monospace">{{ p.path }}</td><td><span class="badge bg-info">{{ p.encap }}</span></td><td>{{ p.mode }}</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% if not res.static_paths %}<div class="text-center text-muted p-4">No static paths.</div>{% endif %}
+                </div>
+            </div>
+            <!-- Domains -->
+            <div class="tab-pane fade" id="epg-domains-pane" role="tabpanel">
+                <div class="p-4">
+                    <div class="list-group">
+                        {% for d in res.domains %}
+                        <div class="list-group-item d-flex justify-content-between align-items-center">
+                            <span class="small font-monospace">{{ d.tdn }}</span>
+                            <div>
+                                <span class="badge bg-secondary me-1">Instr: {{ d.instrImedcy }}</span>
+                                <span class="badge bg-secondary">Res: {{ d.resImedcy }}</span>
+                            </div>
+                        </div>
+                        {% endfor %}
+                        {% if not res.domains %}<div class="text-center text-muted p-4">No domain associations.</div>{% endif %}
+                    </div>
+                </div>
+            </div>
+            <!-- Subnets -->
+            <div class="tab-pane fade" id="epg-subnets-pane" role="tabpanel">
+                <div class="p-4">
+                    <div class="list-group">
+                        {% for s in res.subnets %}
+                        <div class="list-group-item">
+                            <span class="fw-bold text-navy me-3">{{ s.ip }}</span>
+                            <span class="badge bg-light text-muted border">Scope: {{ s.scope }}</span>
+                        </div>
+                        {% endfor %}
+                        {% if not res.subnets %}<div class="text-center text-muted p-4">No EPG-specific subnets.</div>{% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

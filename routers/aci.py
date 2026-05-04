@@ -65,22 +65,41 @@ def _validate_dn(dn: str):
     if not dn or not ACI_DN_RE.match(dn):
         raise HTTPException(400, f"Invalid DN format: {dn!r}")
 
-def _parse_l3out_from_dn(dn: str) -> Dict[str, Optional[str]]:
-    """Pull tenant / l3out / vrf / node / pod from any ACI DN. Returns {} keys
-    as None when not present. Used wherever we currently do
-    next((p.replace('out-', '') for p in dn.split('/') if p.startswith('out-')), None)
-    style one-liners.
-    """
+def _parse_dn(dn: str) -> Dict[str, Optional[str]]:
+    """General ACI DN parser. Returns tenant, vrf, bd, ap, epg, out, brc, flt, subj, entry."""
     parts = (dn or "").split('/')
     def _find(prefix):
         return next((p[len(prefix):] for p in parts if p.startswith(prefix)), None)
     return {
         "tenant": _find("tn-"),
-        "l3out":  _find("out-"),
-        "vrf":    _find("dom-") or _find("ctx-"),
+        "vrf":    _find("ctx-") or _find("dom-"),
+        "bd":     _find("BD-"),
+        "ap":     _find("ap-"),
+        "epg":    _find("epg-"),
+        "out":    _find("out-"),
+        "brc":    _find("brc-"),
+        "flt":    _find("flt-"),
+        "subj":   _find("subj-"),
+        "entry":  _find("e-"),
         "node":   _find("node-"),
         "pod":    _find("pod-"),
     }
+
+def _parse_l3out_from_dn(dn: str) -> Dict[str, Optional[str]]:
+    """Pull tenant / l3out / vrf / node / pod from any ACI DN."""
+    res = _parse_dn(dn)
+    return {
+        "tenant": res["tenant"],
+        "l3out":  res["out"],
+        "vrf":    res["vrf"],
+        "node":   res["node"],
+        "pod":    res["pod"],
+    }
+
+def _parent_epg_dn(dn: str) -> str:
+    """Strips the trailing /rsprov-X or /rscons-X segment from an EPG relation DN."""
+    if not dn: return ""
+    return "/".join(dn.split("/")[:-1])
 
 def get_fabric_id(request: Request) -> str:
     """
@@ -116,7 +135,13 @@ ACI_CACHE_KEYS = [
     "ospf_peers", "epgs", "faults", "subnets",
     "health_overall", "health_tenants", "health_pods",
     "bgp_doms_all", "bgp_map", "ospf_map", "l3out_vrf",
-    "l3out_route_table"
+    "l3out_route_table",
+    "tenants", "vrfs", "bridge_domains", "subnets_bd",
+    "app_profiles", "contracts", "filters",
+    "epg_relations", "access_pgs", "aaeps", "domains", "vlan_pools",
+    "if_pol_cdp", "if_pol_lldp", "if_pol_lacp", "if_pol_link",
+    "if_pol_mcp", "if_pol_stp", "if_pol_l2", "if_pol_stormctrl",
+    "access_topology"
 ]
 
 def _fkey(fabric_id: str, suffix: str) -> str:
@@ -2147,3 +2172,1018 @@ async def list_faults_logic(session: SessionEntry, fabric_id: str, severity: Opt
             "created": attr.get('created')
         })
     return processed, raw
+
+# ── Tenant Policies ───────────────────────────────────────────────────────────
+
+@router.get("/tenants")
+async def list_tenants(
+    request: Request,
+    session: SessionEntry = Depends(require_auth),
+    fabric_id: str = Depends(get_fabric_id)
+):
+    """Lists tenants with summary counts from multiple caches."""
+    import clients.aci_registry as reg
+    loop = asyncio.get_event_loop()
+
+    async def _process_for_fabric(aci: ac.ACIClient, loop, fid, flabel=None):
+        # 1. Concurrent fetch of all relevant classes to compute counts
+        # Tenants, VRFs, BDs, App Profiles, EPGs, Contracts, Filters
+        results = await asyncio.gather(
+            loop.run_in_executor(None, run_with_context(_cached), _fkey(fid, "tenants"), aci.get_tenants),
+            loop.run_in_executor(None, run_with_context(_cached), _fkey(fid, "vrfs"), aci.get_vrfs),
+            loop.run_in_executor(None, run_with_context(_cached), _fkey(fid, "bridge_domains"), aci.get_bridge_domains),
+            loop.run_in_executor(None, run_with_context(_cached), _fkey(fid, "app_profiles"), aci.get_app_profiles),
+            loop.run_in_executor(None, run_with_context(_cached), _fkey(fid, "epgs"), aci.get_epgs),
+            loop.run_in_executor(None, run_with_context(_cached), _fkey(fid, "contracts"), aci.get_contracts),
+            loop.run_in_executor(None, run_with_context(_cached), _fkey(fid, "filters"), aci.get_filters),
+        )
+        t_raw, vrfs, bds, aps, epgs, contracts, filters = results
+
+        # 2. Count by tenant
+        def _count_by_tn(data, cls):
+            counts = defaultdict(int)
+            for item in data.get("imdata", []):
+                dn = item.get(cls, {}).get("attributes", {}).get("dn", "")
+                tn = _parse_dn(dn)["tenant"]
+                if tn: counts[tn] += 1
+            return counts
+
+        vrf_counts = _count_by_tn(vrfs, "fvCtx")
+        bd_counts = _count_by_tn(bds, "fvBD")
+        ap_counts = _count_by_tn(aps, "fvAp")
+        epg_counts = _count_by_tn(epgs, "fvAEPg")
+        contract_counts = _count_by_tn(contracts, "vzBrCP")
+        filter_counts = _count_by_tn(filters, "vzFilter")
+
+        # 3. Process tenants
+        items = []
+        for item in t_raw.get("imdata", []):
+            attr = item["fvTenant"]["attributes"]
+            name = attr.get("name")
+            items.append({
+                "name": name,
+                "descr": attr.get("descr") or "",
+                "dn": attr.get("dn"),
+                "vrf_count": vrf_counts.get(name, 0),
+                "bd_count": bd_counts.get(name, 0),
+                "ap_count": ap_counts.get(name, 0),
+                "epg_count": epg_counts.get(name, 0),
+                "contract_count": contract_counts.get(name, 0),
+                "filter_count": filter_counts.get(name, 0),
+                "fabric_id": fid,
+                "fabric_label": flabel
+            })
+        return items, t_raw
+
+    if request.query_params.get("fabric") == "all":
+        async def _fetch_single(f):
+            try:
+                aci = await _get_aci_async(session, f.id)
+                return await _process_for_fabric(aci, loop, f.id, f.label)
+            except Exception:
+                return [], {"imdata": []}
+        results = await asyncio.gather(*[_fetch_single(f) for f in reg.list_fabrics()])
+        items = []
+        merged_imdata = []
+        for p, raw in results:
+            items.extend(p)
+            merged_imdata.extend(raw.get("imdata", []))
+        raw_json = {"imdata": merged_imdata}
+    else:
+        aci = await _get_aci_async(session, fabric_id)
+        items, raw_json = await _process_for_fabric(aci, loop, fabric_id)
+
+    items.sort(key=lambda x: x["name"].lower())
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/aci_tenants.html", {
+            "items": items,
+            "raw_json": raw_json
+        })
+    return {"items": items, "raw": raw_json}
+
+@router.get("/tenants/{tenant}/detail")
+async def get_tenant_detail(
+    request: Request,
+    tenant: str,
+    session: SessionEntry = Depends(require_auth),
+    fabric_id: str = Depends(get_fabric_id)
+):
+    """Drill-down for a single tenant."""
+    aci = await _get_aci_async(session, fabric_id)
+    # The detail page uses multiple partials, this endpoint returns the shell
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/aci_tenant_detail.html", {
+            "tenant": tenant,
+            "fabric": fabric_id
+        })
+    return {"tenant": tenant}
+
+@router.get("/vrfs")
+async def list_vrfs(
+    request: Request,
+    tenant: Optional[str] = None,
+    session: SessionEntry = Depends(require_auth),
+    fabric_id: str = Depends(get_fabric_id)
+):
+    """Flat list of all VRFs."""
+    import clients.aci_registry as reg
+    loop = asyncio.get_event_loop()
+
+    async def _process_for_fabric(aci: ac.ACIClient, loop, fid, flabel=None):
+        raw = await loop.run_in_executor(None, run_with_context(_cached), _fkey(fid, "vrfs"), lambda: aci.get_vrfs(tenant))
+        items = []
+        for item in raw.get("imdata", []):
+            attr = item.get("fvCtx", {}).get("attributes", {})
+            dn = attr.get("dn")
+            items.append({
+                "name": attr.get("name"),
+                "tenant": _parse_dn(dn)["tenant"],
+                "dn": dn,
+                "policy_enforcement": attr.get("pcEnfPref"),
+                "enforcement_direction": attr.get("pcEnfDir"),
+                "bd_enforce": attr.get("bdEnforcedEnable"),
+                "descr": attr.get("descr") or "",
+                "fabric_id": fid,
+                "fabric_label": flabel
+            })
+        return items, raw
+
+    if request.query_params.get("fabric") == "all":
+        async def _fetch_single(f):
+            try:
+                aci = await _get_aci_async(session, f.id)
+                return await _process_for_fabric(aci, loop, f.id, f.label)
+            except Exception: return [], {"imdata": []}
+        results = await asyncio.gather(*[_fetch_single(f) for f in reg.list_fabrics()])
+        items = [x for r in results for x in r[0]]
+        raw_json = {"imdata": [x for r in results for x in r[1].get("imdata", [])]}
+    else:
+        aci = await _get_aci_async(session, fabric_id)
+        items, raw_json = await _process_for_fabric(aci, loop, fabric_id)
+
+    items.sort(key=lambda x: (x["tenant"].lower(), x["name"].lower()))
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/aci_vrfs.html", {"items": items, "raw_json": raw_json})
+    return {"items": items, "raw": raw_json}
+
+@router.get("/bridge-domains")
+async def list_bridge_domains(
+    request: Request,
+    session: SessionEntry = Depends(require_auth),
+    fabric_id: str = Depends(get_fabric_id)
+):
+    """Lists BDs with inline subnets, VRF, and L3Out bindings."""
+    import clients.aci_registry as reg
+    loop = asyncio.get_event_loop()
+
+    async def _process_for_fabric(aci: ac.ACIClient, loop, fid, flabel=None):
+        raw = await loop.run_in_executor(None, run_with_context(_cached), _fkey(fid, "bridge_domains"), aci.get_bridge_domains)
+        items = []
+        for item in raw.get("imdata", []):
+            bd = item["fvBD"]
+            attr = bd["attributes"]
+            dn = attr.get("dn")
+            subnets = []
+            vrf = None
+            l3outs = []
+            for c in bd.get("children", []):
+                if "fvSubnet" in c:
+                    s = c["fvSubnet"]["attributes"]
+                    subnets.append({"ip": s.get("ip"), "scope": s.get("scope"), "descr": s.get("descr")})
+                elif "fvRsCtx" in c:
+                    vrf = c["fvRsCtx"]["attributes"].get("tnFvCtxName")
+                elif "fvRsBDToOut" in c:
+                    l3outs.append(c["fvRsBDToOut"]["attributes"].get("tnL3extOutName"))
+
+            items.append({
+                "name": attr.get("name"),
+                "tenant": _parse_dn(dn)["tenant"],
+                "dn": dn,
+                "vrf": vrf,
+                "subnets": subnets,
+                "l3outs": l3outs,
+                "unicast_routing": attr.get("unicastRoute"),
+                "arp_flood": attr.get("arpFlood"),
+                "unk_mac_action": attr.get("unkMacUcastAct"),
+                "ip_learning": attr.get("ipLearning"),
+                "type": attr.get("type"),
+                "mac": attr.get("mac"),
+                "descr": attr.get("descr") or "",
+                "fabric_id": fid,
+                "fabric_label": flabel
+            })
+        return items, raw
+
+    if request.query_params.get("fabric") == "all":
+        async def _fetch_single(f):
+            try:
+                aci = await _get_aci_async(session, f.id)
+                return await _process_for_fabric(aci, loop, f.id, f.label)
+            except Exception: return [], {"imdata": []}
+        results = await asyncio.gather(*[_fetch_single(f) for f in reg.list_fabrics()])
+        items = [x for r in results for x in r[0]]
+        raw_json = {"imdata": [x for r in results for x in r[1].get("imdata", [])]}
+    else:
+        aci = await _get_aci_async(session, fabric_id)
+        items, raw_json = await _process_for_fabric(aci, loop, fabric_id)
+
+    items.sort(key=lambda x: (x["tenant"].lower(), x["name"].lower()))
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/aci_bridge_domains.html", {"items": items, "raw_json": raw_json})
+    return {"items": items, "raw": raw_json}
+
+@router.get("/app-profiles")
+async def list_app_profiles(
+    request: Request,
+    session: SessionEntry = Depends(require_auth),
+    fabric_id: str = Depends(get_fabric_id)
+):
+    """Flat list of App Profiles."""
+    import clients.aci_registry as reg
+    loop = asyncio.get_event_loop()
+
+    async def _process_for_fabric(aci: ac.ACIClient, loop, fid, flabel=None):
+        raw = await loop.run_in_executor(None, run_with_context(_cached), _fkey(fid, "app_profiles"), aci.get_app_profiles)
+        items = []
+        for item in raw.get("imdata", []):
+            attr = item["fvAp"]["attributes"]
+            dn = attr.get("dn")
+            # moCount child if present
+            epg_count = 0
+            for c in item["fvAp"].get("children", []):
+                if "moCount" in c:
+                    epg_count = int(c["moCount"]["attributes"].get("count", 0))
+
+            items.append({
+                "name": attr.get("name"),
+                "tenant": _parse_dn(dn)["tenant"],
+                "dn": dn,
+                "epg_count": epg_count,
+                "descr": attr.get("descr") or "",
+                "fabric_id": fid,
+                "fabric_label": flabel
+            })
+        return items, raw
+
+    if request.query_params.get("fabric") == "all":
+        async def _fetch_single(f):
+            try:
+                aci = await _get_aci_async(session, f.id)
+                return await _process_for_fabric(aci, loop, f.id, f.label)
+            except Exception: return [], {"imdata": []}
+        results = await asyncio.gather(*[_fetch_single(f) for f in reg.list_fabrics()])
+        items = [x for r in results for x in r[0]]
+        raw_json = {"imdata": [x for r in results for x in r[1].get("imdata", [])]}
+    else:
+        aci = await _get_aci_async(session, fabric_id)
+        items, raw_json = await _process_for_fabric(aci, loop, fabric_id)
+
+    items.sort(key=lambda x: (x["tenant"].lower(), x["name"].lower()))
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/aci_app_profiles.html", {"items": items, "raw_json": raw_json})
+    return {"items": items, "raw": raw_json}
+
+@router.get("/epgs/detail")
+async def get_epg_detail(
+    request: Request,
+    dn: str,
+    session: SessionEntry = Depends(require_auth),
+    fabric_id: str = Depends(get_fabric_id)
+):
+    """Drill-down on one EPG."""
+    _validate_dn(dn)
+    aci = await _get_aci_async(session, fabric_id)
+    loop = asyncio.get_event_loop()
+
+    raw = await loop.run_in_executor(
+        None, run_with_context(_cached),
+        _fkey(fabric_id, f"epg_detail:{quote(dn)}"),
+        lambda: aci.get_epg_detail(dn)
+    )
+
+    parsed = _parse_dn(dn)
+    res = {
+        "epg": {"name": parsed["epg"], "tenant": parsed["tenant"], "ap": parsed["ap"], "dn": dn},
+        "provided_contracts": [],
+        "consumed_contracts": [],
+        "static_paths": [],
+        "domains": [],
+        "subnets": [],
+    }
+
+    for item in raw.get("imdata", []):
+        cls = next(iter(item))
+        attr = item[cls]["attributes"]
+        if cls == "fvRsProv":
+            res["provided_contracts"].append({"name": attr.get("tnVzBrCPName"), "dn": attr.get("tDn")})
+        elif cls == "fvRsCons":
+            res["consumed_contracts"].append({"name": attr.get("tnVzBrCPName"), "dn": attr.get("tDn")})
+        elif cls == "fvRsPathAtt":
+            res["static_paths"].append({"path": attr.get("tDn"), "encap": attr.get("encap"), "mode": attr.get("mode")})
+        elif cls == "fvRsDomAtt":
+            res["domains"].append({"tdn": attr.get("tDn"), "instrImedcy": attr.get("instrImedcy"), "resImedcy": attr.get("resImedcy")})
+        elif cls == "fvSubnet":
+            res["subnets"].append({"ip": attr.get("ip"), "scope": attr.get("scope")})
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/aci_epg_detail.html", {"res": res, "raw_json": raw})
+    return res
+
+@router.get("/contracts")
+async def list_contracts(
+    request: Request,
+    session: SessionEntry = Depends(require_auth),
+    fabric_id: str = Depends(get_fabric_id)
+):
+    """Lists contracts with provider/consumer counts."""
+    import clients.aci_registry as reg
+    loop = asyncio.get_event_loop()
+
+    async def _process_for_fabric(aci: ac.ACIClient, loop, fid, flabel=None):
+        results = await asyncio.gather(
+            loop.run_in_executor(None, run_with_context(_cached), _fkey(fid, "contracts"), aci.get_contracts),
+            loop.run_in_executor(None, run_with_context(_cached), _fkey(fid, "epg_relations"), aci.get_epg_relations),
+        )
+        c_raw, epg_rel = results
+
+        prov_map = defaultdict(list)
+        cons_map = defaultdict(list)
+        for r in epg_rel.get("prov", {}).get("imdata", []):
+            a = r["fvRsProv"]["attributes"]
+            prov_map[a["tDn"]].append(_parent_epg_dn(a["dn"]))
+        for r in epg_rel.get("cons", {}).get("imdata", []):
+            a = r["fvRsCons"]["attributes"]
+            cons_map[a["tDn"]].append(_parent_epg_dn(a["dn"]))
+
+        items = []
+        for item in c_raw.get("imdata", []):
+            attr = item["vzBrCP"]["attributes"]
+            dn = attr["dn"]
+            subjects = [c["vzSubj"]["attributes"]["name"] for c in item["vzBrCP"].get("children", []) if "vzSubj" in c]
+
+            items.append({
+                "name": attr.get("name"),
+                "tenant": _parse_dn(dn)["tenant"],
+                "scope": attr.get("scope"),
+                "dn": dn,
+                "subjects": subjects,
+                "provider_count": len(prov_map.get(dn, [])),
+                "consumer_count": len(cons_map.get(dn, [])),
+                "descr": attr.get("descr") or "",
+                "fabric_id": fid,
+                "fabric_label": flabel
+            })
+        return items, c_raw
+
+    if request.query_params.get("fabric") == "all":
+        async def _fetch_single(f):
+            try:
+                aci = await _get_aci_async(session, f.id)
+                return await _process_for_fabric(aci, loop, f.id, f.label)
+            except Exception: return [], {"imdata": []}
+        results = await asyncio.gather(*[_fetch_single(f) for f in reg.list_fabrics()])
+        items = [x for r in results for x in r[0]]
+        raw_json = {"imdata": [x for r in results for x in r[1].get("imdata", [])]}
+    else:
+        aci = await _get_aci_async(session, fabric_id)
+        items, raw_json = await _process_for_fabric(aci, loop, fabric_id)
+
+    items.sort(key=lambda x: (x["tenant"].lower(), x["name"].lower()))
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/aci_contracts.html", {"items": items, "raw_json": raw_json})
+    return {"items": items, "raw": raw_json}
+
+@router.get("/contracts/detail")
+async def get_contract_detail(
+    request: Request,
+    dn: str,
+    session: SessionEntry = Depends(require_auth),
+    fabric_id: str = Depends(get_fabric_id)
+):
+    """Contract drill-down: subjects, filters, providers, consumers."""
+    _validate_dn(dn)
+    aci = await _get_aci_async(session, fabric_id)
+    loop = asyncio.get_event_loop()
+
+    # 1. Fetch data
+    results = await asyncio.gather(
+        loop.run_in_executor(None, run_with_context(_cached), _fkey(fabric_id, f"contract_detail:{quote(dn)}"),
+                             lambda: aci.get(f"api/node/mo/{ac._quote_dn(dn)}.json?rsp-subtree=full")),
+        loop.run_in_executor(None, run_with_context(_cached), _fkey(fabric_id, "filters"), aci.get_filters),
+        loop.run_in_executor(None, run_with_context(_cached), _fkey(fabric_id, "epg_relations"), aci.get_epg_relations),
+    )
+    c_raw, filters_raw, epg_rel = results
+
+    # 2. Build lookups
+    filter_map = {f["vzFilter"]["attributes"]["dn"]: f["vzFilter"] for f in filters_raw.get("imdata", [])}
+
+    def _resolve_epgs(rel_data, contract_dn):
+        epgs = []
+        for r in rel_data.get("imdata", []):
+            cls = next(iter(r))
+            attr = r[cls]["attributes"]
+            if attr.get("tDn") == contract_dn:
+                epg_dn = _parent_epg_dn(attr["dn"])
+                p = _parse_dn(epg_dn)
+                epgs.append({"name": p["epg"], "tenant": p["tenant"], "ap": p["ap"], "dn": epg_dn})
+        return epgs
+
+    # 3. Process contract
+    if not c_raw.get("imdata"): raise HTTPException(404, "Contract not found")
+    obj = c_raw["imdata"][0]["vzBrCP"]
+    attr = obj["attributes"]
+
+    res = {
+        "contract": {"name": attr.get("name"), "tenant": _parse_dn(dn)["tenant"], "scope": attr.get("scope"), "dn": dn, "descr": attr.get("descr", "")},
+        "subjects": [],
+        "providers": _resolve_epgs(epg_rel["prov"], dn),
+        "consumers": _resolve_epgs(epg_rel["cons"], dn),
+    }
+
+    for c in obj.get("children", []):
+        if "vzSubj" in c:
+            s_attr = c["vzSubj"]["attributes"]
+            subj = {
+                "name": s_attr.get("name"),
+                "rev_filter_ports": s_attr.get("revFltPorts"),
+                "filters": []
+            }
+            for sc in c["vzSubj"].get("children", []):
+                if "vzRsSubjFiltAtt" in sc:
+                    f_name = sc["vzRsSubjFiltAtt"]["attributes"].get("tnVzFilterName")
+                    # Try to resolve full filter from map
+                    f_dn = f"uni/tn-{res['contract']['tenant']}/flt-{f_name}"
+                    f_obj = filter_map.get(f_dn)
+                    if not f_obj: # Fallback to common
+                        f_dn_common = f"uni/tn-common/flt-{f_name}"
+                        f_obj = filter_map.get(f_dn_common)
+
+                    f_item = {"name": f_name, "tenant": _parse_dn(f_dn)["tenant"] if f_obj else "?", "entries": []}
+                    if f_obj:
+                        for ec in f_obj.get("children", []):
+                            if "vzEntry" in ec:
+                                ea = ec["vzEntry"]["attributes"]
+                                f_item["entries"].append({
+                                    "name": ea.get("name"), "ether_type": ea.get("etherT"), "protocol": ea.get("prot"),
+                                    "dst_from_port": ea.get("dFromPort"), "dst_to_port": ea.get("dToPort"),
+                                    "src_from_port": ea.get("sFromPort"), "src_to_port": ea.get("sToPort"),
+                                    "stateful": ea.get("stateful")
+                                })
+                    subj["filters"].append(f_item)
+            res["subjects"].append(subj)
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/aci_contract_detail.html", {"res": res, "raw_json": c_raw})
+    return res
+
+@router.get("/filters")
+async def list_filters(
+    request: Request,
+    session: SessionEntry = Depends(require_auth),
+    fabric_id: str = Depends(get_fabric_id)
+):
+    """Lists filters with entries inline."""
+    import clients.aci_registry as reg
+    loop = asyncio.get_event_loop()
+
+    async def _process_for_fabric(aci: ac.ACIClient, loop, fid, flabel=None):
+        raw = await loop.run_in_executor(None, run_with_context(_cached), _fkey(fid, "filters"), aci.get_filters)
+        items = []
+        for item in raw.get("imdata", []):
+            attr = item["vzFilter"]["attributes"]
+            dn = attr["dn"]
+            entries = []
+            for c in item["vzFilter"].get("children", []):
+                if "vzEntry" in c:
+                    ea = c["vzEntry"]["attributes"]
+                    def _fmt_p(f, t): return f if f == t else f"{f}-{t}"
+                    d_port = _fmt_p(ea.get("dFromPort"), ea.get("dToPort"))
+                    s_port = _fmt_p(ea.get("sFromPort"), ea.get("sToPort"))
+                    entries.append({
+                        "name": ea.get("name"),
+                        "proto": ea.get("prot"),
+                        "descr": f"{ea.get('prot')}/{d_port}" if d_port != "unspecified" else ea.get("prot")
+                    })
+
+            items.append({
+                "name": attr.get("name"),
+                "tenant": _parse_dn(dn)["tenant"],
+                "dn": dn,
+                "entries": entries,
+                "descr": attr.get("descr") or "",
+                "fabric_id": fid,
+                "fabric_label": flabel
+            })
+        return items, raw
+
+    if request.query_params.get("fabric") == "all":
+        async def _fetch_single(f):
+            try:
+                aci = await _get_aci_async(session, f.id)
+                return await _process_for_fabric(aci, loop, f.id, f.label)
+            except Exception: return [], {"imdata": []}
+        results = await asyncio.gather(*[_fetch_single(f) for f in reg.list_fabrics()])
+        items = [x for r in results for x in r[0]]
+        raw_json = {"imdata": [x for r in results for x in r[1].get("imdata", [])]}
+    else:
+        aci = await _get_aci_async(session, fabric_id)
+        items, raw_json = await _process_for_fabric(aci, loop, fabric_id)
+
+    items.sort(key=lambda x: (x["tenant"].lower(), x["name"].lower()))
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/aci_filters.html", {"items": items, "raw_json": raw_json})
+    return {"items": items, "raw": raw_json}
+
+# ── Access Policies ───────────────────────────────────────────────────────────
+
+def _summarize_pol(cls, attr):
+    if cls == "cdpIfPol":
+        return f"adminSt={attr.get('adminSt')}"
+    if cls == "lldpIfPol":
+        return f"rx={attr.get('adminRxSt')}, tx={attr.get('adminTxSt')}"
+    if cls == "lacpLagPol":
+        return f"mode={attr.get('mode')}, ctrl={attr.get('ctrl')}"
+    if cls == "fabricHIfPol":
+        return f"speed={attr.get('speed')}, autoNeg={attr.get('autoNeg')}, fec={attr.get('fecMode')}"
+    if cls == "mcpIfPol":
+        return f"adminSt={attr.get('adminSt')}"
+    if cls == "stpIfPol":
+        return f"ctrl={attr.get('ctrl')}"
+    if cls == "l2IfPol":
+        return f"qinq={attr.get('qinq')}, vlanScope={attr.get('vlanScope')}"
+    if cls == "stormctrlIfPol":
+        return f"bcRate={attr.get('bcRate')}, mcRate={attr.get('mcRate')}, uucRate={attr.get('uucRate')}"
+    return ""
+
+def _process_pg(item, pg_kind):
+    obj = item[pg_kind]
+    attr = obj["attributes"]
+    rels = {}
+    for c in obj.get("children", []):
+        for cls, val in c.items():
+            v = val["attributes"]
+            # Prioritize tDn, fall back to name-based fields
+            rels[cls] = v.get("tDn") or v.get("tnCdpIfPolName") or v.get("tnLldpIfPolName") \
+                        or v.get("tnLacpLagPolName") or v.get("tnFabricHIfPolName") \
+                        or v.get("tnMcpIfPolName") or v.get("tnStpIfPolName") \
+                        or v.get("tnL2IfPolName") or v.get("tnInfraAttEntityPName") \
+                        or v.get("tnStormctrlIfPolName")
+    return {
+        "name": attr.get("name"),
+        "kind": "Access" if pg_kind == "infraAccPortGrp" else "Bundle",
+        "lag_t": attr.get("lagT") if pg_kind == "infraAccBndlGrp" else None,
+        "dn": attr.get("dn"),
+        "aaep": rels.get("infraRsAttEntP"),
+        "cdp": rels.get("infraRsCdpIfPol"),
+        "lldp": rels.get("infraRsLldpIfPol"),
+        "lacp": rels.get("infraRsLacpPol"),
+        "link": rels.get("infraRsHIfPol"),
+        "mcp": rels.get("infraRsMcpIfPol"),
+        "stp": rels.get("infraRsStpIfPol"),
+        "l2": rels.get("infraRsL2IfPol"),
+        "stormctrl": rels.get("infraRsStormctrlIfPol"),
+        "descr": attr.get("descr") or "",
+    }
+
+def build_pg_to_ports(access_topology_imdata):
+    """Returns dict: pg_dn -> [(node_id, port, fex_id), ...]"""
+    by_class = defaultdict(dict)
+    children_of = defaultdict(list)
+    for item in access_topology_imdata:
+        cls = next(iter(item))
+        attrs = item[cls]["attributes"]
+        dn = attrs.get("dn", "")
+        by_class[cls][dn] = attrs
+        parent = "/".join(dn.split("/")[:-1])
+        children_of[parent].append((cls, dn, attrs))
+
+    iprof_to_blocks = defaultdict(list)
+    for hports_dn, hattrs in by_class.get("infraHPortS", {}).items():
+        try:
+            ipname = hports_dn.split("/accportprof-")[1].split("/")[0]
+        except IndexError: continue
+        pg_dn = None
+        blocks = []
+        for cls, child_dn, child_attrs in children_of.get(hports_dn, []):
+            if cls == "infraRsAccBaseGrp":
+                pg_dn = child_attrs.get("tDn")
+                fex_id = child_attrs.get("fexId")
+                if fex_id == "101": fex_id = None
+            elif cls == "infraPortBlk":
+                blocks.append(child_attrs)
+        if not pg_dn or not blocks: continue
+        for blk in blocks:
+            iprof_to_blocks[ipname].append({
+                "pg_dn": pg_dn,
+                "fex_id": fex_id,
+                "fromCard": int(blk.get("fromCard", "1")),
+                "toCard":   int(blk.get("toCard", blk.get("fromCard", "1"))),
+                "fromPort": int(blk.get("fromPort", "0")),
+                "toPort":   int(blk.get("toPort", blk.get("fromPort", "0"))),
+            })
+
+    pg_to_ports = defaultdict(set)
+    for nprof_dn, nattrs in by_class.get("infraNodeP", {}).items():
+        node_ids = []
+        ipnames = []
+        for cls, child_dn, child_attrs in children_of.get(nprof_dn, []):
+            if cls == "infraLeafS":
+                for cls2, dn2, a2 in children_of.get(child_dn, []):
+                    if cls2 == "infraNodeBlk":
+                        try:
+                            f, t = int(a2.get("from_")), int(a2.get("to_"))
+                            node_ids.extend(range(f, t + 1))
+                        except (TypeError, ValueError): pass
+            elif cls == "infraRsAccPortP":
+                tdn = child_attrs.get("tDn", "")
+                if "/accportprof-" in tdn:
+                    ipnames.append(tdn.split("/accportprof-")[-1])
+
+        for ipname in ipnames:
+            for blk in iprof_to_blocks.get(ipname, []):
+                for nid in node_ids:
+                    for card in range(blk["fromCard"], blk["toCard"] + 1):
+                        for port in range(blk["fromPort"], blk["toPort"] + 1):
+                            pg_to_ports[blk["pg_dn"]].add((str(nid), f"eth{card}/{port}", blk["fex_id"]))
+
+    return {k: sorted(list(v)) for k, v in pg_to_ports.items()}
+
+@router.get("/access/policy-groups")
+async def list_policy_groups(
+    request: Request,
+    session: SessionEntry = Depends(require_auth),
+    fabric_id: str = Depends(get_fabric_id)
+):
+    """Lists every infraAccPortGrp and infraAccBndlGrp."""
+    import clients.aci_registry as reg
+    loop = asyncio.get_event_loop()
+
+    async def _process_for_fabric(aci: ac.ACIClient, loop, fid, flabel=None):
+        raw = await loop.run_in_executor(None, run_with_context(_cached), _fkey(fid, "access_pgs"), aci.get_access_policy_groups)
+        items = []
+        for item in raw.get("access", {}).get("imdata", []):
+            items.append({**_process_pg(item, "infraAccPortGrp"), "fabric_id": fid, "fabric_label": flabel})
+        for item in raw.get("bundle", {}).get("imdata", []):
+            items.append({**_process_pg(item, "infraAccBndlGrp"), "fabric_id": fid, "fabric_label": flabel})
+        return items, raw
+
+    if request.query_params.get("fabric") == "all":
+        async def _fetch_single(f):
+            try:
+                aci = await _get_aci_async(session, f.id)
+                return await _process_for_fabric(aci, loop, f.id, f.label)
+            except Exception: return [], {"imdata": []}
+        results = await asyncio.gather(*[_fetch_single(f) for f in reg.list_fabrics()])
+        items = [x for r in results for x in r[0]]
+        raw_json = {"access": {"imdata": [x for r in results for x in r[1].get("access", {}).get("imdata", [])]},
+                    "bundle": {"imdata": [x for r in results for x in r[1].get("bundle", {}).get("imdata", [])]}}
+    else:
+        aci = await _get_aci_async(session, fabric_id)
+        items, raw_json = await _process_for_fabric(aci, loop, fabric_id)
+
+    items.sort(key=lambda x: x["name"].lower())
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/aci_policy_groups.html", {"items": items, "raw_json": raw_json})
+    return {"items": items, "raw": raw_json}
+
+@router.get("/access/policy-groups/detail")
+async def get_policy_group_detail(
+    request: Request,
+    dn: str,
+    session: SessionEntry = Depends(require_auth),
+    fabric_id: str = Depends(get_fabric_id)
+):
+    """Policy group drill-down: bound policies, AAEP, where used."""
+    _validate_dn(dn)
+    aci = await _get_aci_async(session, fabric_id)
+    loop = asyncio.get_event_loop()
+
+    # 1. Fetch data
+    classes = ("infraRsAttEntP,infraRsCdpIfPol,infraRsLldpIfPol,"
+               "infraRsLacpPol,infraRsHIfPol,infraRsMcpIfPol,"
+               "infraRsStpIfPol,infraRsL2IfPol,infraRsStormctrlIfPol")
+    pg_raw = await loop.run_in_executor(None, run_with_context(_cached), _fkey(fabric_id, f"pg_detail:{quote(dn)}"),
+                                       lambda: aci.get(f"api/node/mo/{ac._quote_dn(dn)}.json?rsp-subtree=children&rsp-subtree-class={classes}"))
+
+    # Pre-load all interface policy caches
+    pol_classes = ["cdpIfPol", "lldpIfPol", "lacpLagPol", "fabricHIfPol", "mcpIfPol", "stpIfPol", "l2IfPol", "stormctrlIfPol"]
+    await asyncio.gather(*[loop.run_in_executor(None, run_with_context(_cached), _fkey(fabric_id, f"if_pol_{c.split('If')[0].lower().replace('lag', 'lacp').replace('fabrich', 'link')}"),
+                                               lambda c=c: aci.get_interface_policy_class(c)) for c in pol_classes])
+
+    topo_raw = await loop.run_in_executor(None, run_with_context(_cached), _fkey(fabric_id, "access_topology"), aci.get_access_topology)
+    pg_to_ports = build_pg_to_ports(topo_raw.get("imdata", []))
+
+    if not pg_raw.get("imdata"): raise HTTPException(404, "Policy Group not found")
+    kind = next(iter(pg_raw["imdata"][0]))
+    pg_data = _process_pg(pg_raw["imdata"][0], kind)
+
+    # Resolve bound policies
+    bound = []
+    pol_map = {
+        "cdp": ("CDP", "cdpIfPol", "if_pol_cdp"),
+        "lldp": ("LLDP", "lldpIfPol", "if_pol_lldp"),
+        "lacp": ("LACP", "lacpLagPol", "if_pol_lacp"),
+        "link": ("Link", "fabricHIfPol", "if_pol_link"),
+        "mcp": ("MCP", "mcpIfPol", "if_pol_mcp"),
+        "stp": ("STP", "stpIfPol", "if_pol_stp"),
+        "l2": ("L2", "l2IfPol", "if_pol_l2"),
+        "stormctrl": ("Storm", "stormctrlIfPol", "if_pol_stormctrl"),
+    }
+    for key, (label, cls, ckey) in pol_map.items():
+        pol_name = pg_data.get(key)
+        if pol_name:
+            # Resolve name from DN if it's a full DN
+            name_only = pol_name.split("/")[-1].split("-", 1)[-1] if "/" in pol_name else pol_name
+            pols = cache.get(_fkey(fabric_id, ckey))
+            settings = {}
+            if pols:
+                for p in pols.get("imdata", []):
+                    if p[cls]["attributes"]["name"] == name_only:
+                        settings = p[cls]["attributes"]
+                        break
+            bound.append({"type": label, "name": name_only, "settings": settings})
+
+    res = {
+        "policy_group": pg_data,
+        "bound_policies": bound,
+        "aaep": {"name": pg_data["aaep"].split("/")[-1].replace("attentp-", "") if pg_data["aaep"] else None, "dn": pg_data["aaep"]},
+        "where_used": [{"node": nid, "port": p, "fex_id": fex} for nid, p, fex in pg_to_ports.get(dn, [])]
+    }
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/aci_policy_group_detail.html", {"res": res, "raw_json": pg_raw})
+    return res
+
+@router.get("/access/aaeps")
+async def list_aaeps(
+    request: Request,
+    session: SessionEntry = Depends(require_auth),
+    fabric_id: str = Depends(get_fabric_id)
+):
+    """Lists AAEPs."""
+    import clients.aci_registry as reg
+    loop = asyncio.get_event_loop()
+
+    async def _process_for_fabric(aci: ac.ACIClient, loop, fid, flabel=None):
+        raw = await loop.run_in_executor(None, run_with_context(_cached), _fkey(fid, "aaeps"), aci.get_aaeps)
+        items = []
+        for item in raw.get("imdata", []):
+            attr = item["infraAttEntityP"]["attributes"]
+            domains = []
+            for c in item["infraAttEntityP"].get("children", []):
+                if "infraRsDomP" in c:
+                    tdn = c["infraRsDomP"]["attributes"].get("tDn", "")
+                    d_type = "Physical" if "phys-" in tdn else "L3" if "l3dom-" in tdn else "VMM" if "vmmp-" in tdn else "Unknown"
+                    d_name = tdn.split("/")[-1].split("-", 1)[-1]
+                    domains.append(f"{d_name} ({d_type})")
+            items.append({
+                "name": attr.get("name"),
+                "dn": attr.get("dn"),
+                "domains": domains,
+                "descr": attr.get("descr") or "",
+                "fabric_id": fid,
+                "fabric_label": flabel
+            })
+        return items, raw
+
+    if request.query_params.get("fabric") == "all":
+        async def _fetch_single(f):
+            try:
+                aci = await _get_aci_async(session, f.id)
+                return await _process_for_fabric(aci, loop, f.id, f.label)
+            except Exception: return [], {"imdata": []}
+        results = await asyncio.gather(*[_fetch_single(f) for f in reg.list_fabrics()])
+        items = [x for r in results for x in r[0]]
+        raw_json = {"imdata": [x for r in results for x in r[1].get("imdata", [])]}
+    else:
+        aci = await _get_aci_async(session, fabric_id)
+        items, raw_json = await _process_for_fabric(aci, loop, fabric_id)
+
+    items.sort(key=lambda x: x["name"].lower())
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/aci_aaeps.html", {"items": items, "raw_json": raw_json})
+    return {"items": items, "raw": raw_json}
+
+@router.get("/access/aaeps/detail")
+async def get_aaep_detail(
+    request: Request,
+    dn: str,
+    session: SessionEntry = Depends(require_auth),
+    fabric_id: str = Depends(get_fabric_id)
+):
+    """AAEP drill-down: linked domains, static EPG bindings."""
+    _validate_dn(dn)
+    aci = await _get_aci_async(session, fabric_id)
+    loop = asyncio.get_event_loop()
+
+    raw = await loop.run_in_executor(None, run_with_context(_cached), _fkey(fabric_id, f"aaep_detail:{quote(dn)}"),
+                                   lambda: aci.get(f"api/node/mo/{ac._quote_dn(dn)}.json?rsp-subtree=full"))
+
+    if not raw.get("imdata"): raise HTTPException(404, "AAEP not found")
+    obj = raw["imdata"][0]["infraAttEntityP"]
+    attr = obj["attributes"]
+
+    res = {
+        "name": attr.get("name"),
+        "dn": dn,
+        "domains": [],
+        "static_epgs": []
+    }
+
+    for c in obj.get("children", []):
+        if "infraRsDomP" in c:
+            tdn = c["infraRsDomP"]["attributes"].get("tDn", "")
+            d_type = "Physical" if "phys-" in tdn else "L3" if "l3dom-" in tdn else "VMM" if "vmmp-" in tdn else "Unknown"
+            d_name = tdn.split("/")[-1].split("-", 1)[-1]
+            res["domains"].append({"name": d_name, "type": d_type, "dn": tdn})
+        elif "infraGeneric" in c:
+            for gc in c["infraGeneric"].get("children", []):
+                if "infraRsFuncToEpg" in gc:
+                    ga = gc["infraRsFuncToEpg"]["attributes"]
+                    p = _parse_dn(ga.get("tDn", ""))
+                    res["static_epgs"].append({
+                        "epg": p["epg"], "tenant": p["tenant"], "ap": p["ap"], "dn": ga.get("tDn"),
+                        "encap": ga.get("encap"), "mode": ga.get("mode")
+                    })
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/aci_aaep_detail.html", {"res": res, "raw_json": raw})
+    return res
+
+@router.get("/access/domains")
+async def list_domains(
+    request: Request,
+    session: SessionEntry = Depends(require_auth),
+    fabric_id: str = Depends(get_fabric_id)
+):
+    """Combined list of all domain types."""
+    import clients.aci_registry as reg
+    loop = asyncio.get_event_loop()
+
+    async def _process_for_fabric(aci: ac.ACIClient, loop, fid, flabel=None):
+        results = await asyncio.gather(
+            loop.run_in_executor(None, run_with_context(_cached), _fkey(fid, "domains_phys"), aci.get_physical_domains),
+            loop.run_in_executor(None, run_with_context(_cached), _fkey(fid, "domains_l3"), aci.get_l3_domains),
+            loop.run_in_executor(None, run_with_context(_cached), _fkey(fid, "domains_vmm"), aci.get_vmm_domains),
+        )
+        phys, l3, vmm = results
+        items = []
+        for d_list, d_type, d_cls in [(phys, "Physical", "physDomP"), (l3, "L3 External", "l3extDomP"), (vmm, "VMM", "vmmDomP")]:
+            for item in d_list.get("imdata", []):
+                attr = item[d_cls]["attributes"]
+                v_pool = "None"
+                for c in item[d_cls].get("children", []):
+                    if "infraRsVlanNs" in c:
+                        v_pool = c["infraRsVlanNs"]["attributes"].get("tDn", "").split("/")[-1].replace("vlanns-[", "").replace("]", "")
+                items.append({
+                    "name": attr.get("name"), "type": d_type, "vlan_pool": v_pool, "dn": attr.get("dn"),
+                    "fabric_id": fid, "fabric_label": flabel
+                })
+        return items, {"physical": phys, "l3": l3, "vmm": vmm}
+
+    if request.query_params.get("fabric") == "all":
+        async def _fetch_single(f):
+            try:
+                aci = await _get_aci_async(session, f.id)
+                return await _process_for_fabric(aci, loop, f.id, f.label)
+            except Exception: return [], {}
+        results = await asyncio.gather(*[_fetch_single(f) for f in reg.list_fabrics()])
+        items = [x for r in results for x in r[0]]
+        raw_json = {"fabrics": [r[1] for r in results]}
+    else:
+        aci = await _get_aci_async(session, fabric_id)
+        items, raw_json = await _process_for_fabric(aci, loop, fabric_id)
+
+    items.sort(key=lambda x: (x["type"], x["name"].lower()))
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/aci_domains.html", {"items": items, "raw_json": raw_json})
+    return {"items": items, "raw": raw_json}
+
+@router.get("/access/vlan-pools")
+async def list_vlan_pools(
+    request: Request,
+    session: SessionEntry = Depends(require_auth),
+    fabric_id: str = Depends(get_fabric_id)
+):
+    """Lists VLAN pools with inline blocks."""
+    import clients.aci_registry as reg
+    loop = asyncio.get_event_loop()
+
+    async def _process_for_fabric(aci: ac.ACIClient, loop, fid, flabel=None):
+        raw = await loop.run_in_executor(None, run_with_context(_cached), _fkey(fid, "vlan_pools"), aci.get_vlan_pools)
+        items = []
+        for item in raw.get("imdata", []):
+            attr = item["fvnsVlanInstP"]["attributes"]
+            blocks = []
+            for c in item["fvnsVlanInstP"].get("children", []):
+                if "fvnsEncapBlk" in c:
+                    ba = c["fvnsEncapBlk"]["attributes"]
+                    blocks.append({"from": ba.get("from"), "to": ba.get("to"), "role": ba.get("role")})
+            items.append({
+                "name": attr.get("name"), "alloc_mode": attr.get("allocMode"), "dn": attr.get("dn"),
+                "blocks": blocks, "fabric_id": fid, "fabric_label": flabel
+            })
+        return items, raw
+
+    if request.query_params.get("fabric") == "all":
+        async def _fetch_single(f):
+            try:
+                aci = await _get_aci_async(session, f.id)
+                return await _process_for_fabric(aci, loop, f.id, f.label)
+            except Exception: return [], {"imdata": []}
+        results = await asyncio.gather(*[_fetch_single(f) for f in reg.list_fabrics()])
+        items = [x for r in results for x in r[0]]
+        raw_json = {"imdata": [x for r in results for x in r[1].get("imdata", [])]}
+    else:
+        aci = await _get_aci_async(session, fabric_id)
+        items, raw_json = await _process_for_fabric(aci, loop, fabric_id)
+
+    items.sort(key=lambda x: x["name"].lower())
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/aci_vlan_pools.html", {"items": items, "raw_json": raw_json})
+    return {"items": items, "raw": raw_json}
+
+@router.get("/access/interface-policies")
+async def list_interface_policies(
+    request: Request,
+    type: Optional[str] = None,
+    session: SessionEntry = Depends(require_auth),
+    fabric_id: str = Depends(get_fabric_id)
+):
+    """Combined table for all interface policy classes."""
+    import clients.aci_registry as reg
+    loop = asyncio.get_event_loop()
+
+    cls_map = {
+        "cdp": ("CDP", "cdpIfPol"), "lldp": ("LLDP", "lldpIfPol"),
+        "lacp": ("LACP", "lacpLagPol"), "link": ("Link", "fabricHIfPol"),
+        "mcp": ("MCP", "mcpIfPol"), "stp": ("STP", "stpIfPol"),
+        "l2": ("L2", "l2IfPol"), "stormctrl": ("Storm", "stormctrlIfPol")
+    }
+
+    async def _process_for_fabric(aci: ac.ACIClient, loop, fid, flabel=None):
+        targets = [type] if type and type in cls_map else cls_map.keys()
+        tasks = []
+        for t in targets:
+            label, a_cls = cls_map[t]
+            tasks.append((label, a_cls, loop.run_in_executor(None, run_with_context(_cached), _fkey(fid, f"if_pol_{t}"),
+                                                           lambda a_cls=a_cls: aci.get_interface_policy_class(a_cls))))
+
+        items = []
+        raw_data = {}
+        for label, a_cls, task in tasks:
+            raw = await task
+            raw_data[a_cls] = raw
+            for item in raw.get("imdata", []):
+                attr = item[a_cls]["attributes"]
+                items.append({
+                    "type": label, "name": attr.get("name"), "dn": attr.get("dn"),
+                    "settings": _summarize_pol(a_cls, attr), "raw_attrs": attr,
+                    "fabric_id": fid, "fabric_label": flabel
+                })
+        return items, raw_data
+
+    if request.query_params.get("fabric") == "all":
+        async def _fetch_single(f):
+            try:
+                aci = await _get_aci_async(session, f.id)
+                return await _process_for_fabric(aci, loop, f.id, f.label)
+            except Exception: return [], {}
+        results = await asyncio.gather(*[_fetch_single(f) for f in reg.list_fabrics()])
+        items = [x for r in results for x in r[0]]
+        raw_json = {"fabrics": [r[1] for r in results]}
+    else:
+        aci = await _get_aci_async(session, fabric_id)
+        items, raw_json = await _process_for_fabric(aci, loop, fabric_id)
+
+    items.sort(key=lambda x: (x["type"], x["name"].lower()))
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/aci_interface_policies.html", {"items": items, "raw_json": raw_json})
+    return {"items": items, "raw": raw_json}

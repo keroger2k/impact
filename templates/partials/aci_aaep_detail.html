@@ -1,0 +1,55 @@
+<div class="card shadow-sm border-0 animate-fade-in">
+    <script id="aci-aaep-detail-raw" type="application/json">{{ raw_json|tojson }}</script>
+    <div class="card-header bg-white py-3">
+        <div class="d-flex align-items-center justify-content-between">
+            <div class="d-flex align-items-center gap-3">
+                <button class="btn btn-sm btn-outline-secondary" hx-get="/api/aci/access/aaeps" hx-target="#aci-results" hx-indicator="#aci-loading">
+                    <i class="ph ph-arrow-left me-1"></i>Back
+                </button>
+                <h5 class="mb-0 text-navy fw-bold"><i class="ph ph-link me-2"></i>AAEP: {{ res.name }}</h5>
+                <button class="btn btn-xs btn-outline-navy" onclick="showRawData('aci-aaep-detail-raw')">
+                    <i class="ph ph-code me-1"></i>Raw
+                </button>
+            </div>
+        </div>
+    </div>
+    <div class="card-body p-4">
+        <div class="row g-4">
+            <div class="col-md-5">
+                <h6 class="fw-bold text-navy mb-3">Linked Domains</h6>
+                <div class="list-group shadow-sm">
+                    {% for d in res.domains %}
+                    <div class="list-group-item d-flex justify-content-between align-items-center">
+                        <span class="fw-bold">{{ d.name }}</span>
+                        <span class="badge bg-secondary">{{ d.type }}</span>
+                    </div>
+                    {% endfor %}
+                    {% if not res.domains %}<div class="list-group-item text-muted small bg-light">No domains linked.</div>{% endif %}
+                </div>
+            </div>
+            <div class="col-md-7">
+                <h6 class="fw-bold text-navy mb-3">Static EPG Bindings (Generic)</h6>
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover border">
+                        <thead class="bg-light">
+                            <tr><th>EPG</th><th>Encap</th><th>Mode</th></tr>
+                        </thead>
+                        <tbody>
+                            {% for s in res.static_epgs %}
+                            <tr>
+                                <td>
+                                    <div class="fw-bold small text-navy">{{ s.epg }}</div>
+                                    <div class="small text-muted">{{ s.tenant }} / {{ s.ap }}</div>
+                                </td>
+                                <td><span class="badge bg-info">{{ s.encap }}</span></td>
+                                <td><span class="small">{{ s.mode }}</span></td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% if not res.static_epgs %}<div class="text-center text-muted p-4 border rounded bg-light">No static EPG bindings.</div>{% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

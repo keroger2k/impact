@@ -666,6 +666,129 @@ MOCK_ACI_HEALTH_PODS = [
     {"fabricPod": {"attributes": {"id": "1"}, "children": [{"healthInst": {"attributes": {"cur": "92"}}}]}}
 ]
 
+# ── ACI Policy Mocks ─────────────────────────────────────────────────────────
+
+MOCK_ACI_TENANTS = [
+    {"fvTenant": {"attributes": {"name": "PROD", "dn": "uni/tn-PROD", "descr": "Production Tenant"}}},
+    {"fvTenant": {"attributes": {"name": "DEV", "dn": "uni/tn-DEV", "descr": "Development Tenant"}}},
+    {"fvTenant": {"attributes": {"name": "common", "dn": "uni/tn-common", "descr": "Shared Services"}}},
+]
+
+MOCK_ACI_VRFS = [
+    {"fvCtx": {"attributes": {"name": "VRF-1", "dn": "uni/tn-PROD/ctx-VRF-1", "pcEnfPref": "enforced", "pcEnfDir": "ingress", "bdEnforcedEnable": "no"}}},
+    {"fvCtx": {"attributes": {"name": "VRF-2", "dn": "uni/tn-PROD/ctx-VRF-2", "pcEnfPref": "unenforced", "pcEnfDir": "ingress", "bdEnforcedEnable": "no"}}},
+    {"fvCtx": {"attributes": {"name": "VRF-1", "dn": "uni/tn-DEV/ctx-VRF-1", "pcEnfPref": "enforced", "pcEnfDir": "ingress", "bdEnforcedEnable": "no"}}},
+]
+
+MOCK_ACI_BDS = [
+    {"fvBD": {"attributes": {"name": "BD-WEB", "dn": "uni/tn-PROD/BD-BD-WEB", "unicastRoute": "yes", "arpFlood": "yes", "unkMacUcastAct": "proxy", "ipLearning": "yes", "type": "regular"}, "children": [
+        {"fvSubnet": {"attributes": {"ip": "10.10.10.1/24", "scope": "public", "descr": "Web Subnet"}}},
+        {"fvRsCtx": {"attributes": {"tnFvCtxName": "VRF-1"}}}
+    ]}},
+    {"fvBD": {"attributes": {"name": "BD-DB", "dn": "uni/tn-PROD/BD-BD-DB", "unicastRoute": "yes", "arpFlood": "no", "unkMacUcastAct": "proxy", "ipLearning": "yes", "type": "regular"}, "children": [
+        {"fvSubnet": {"attributes": {"ip": "10.10.20.1/24", "scope": "public", "descr": "DB Subnet"}}},
+        {"fvRsCtx": {"attributes": {"tnFvCtxName": "VRF-1"}}}
+    ]}},
+    {"fvBD": {"attributes": {"name": "BD-TEST", "dn": "uni/tn-DEV/BD-BD-TEST", "unicastRoute": "yes", "arpFlood": "yes", "unkMacUcastAct": "proxy", "ipLearning": "yes", "type": "regular"}, "children": [
+        {"fvSubnet": {"attributes": {"ip": "10.20.10.1/24", "scope": "public", "descr": "Test Subnet"}}},
+        {"fvRsCtx": {"attributes": {"tnFvCtxName": "VRF-1"}}}
+    ]}},
+]
+
+MOCK_ACI_APP_PROFILES = [
+    {"fvAp": {"attributes": {"name": "APP1", "dn": "uni/tn-PROD/ap-APP1"}, "children": [{"moCount": {"attributes": {"count": "2"}}}]}},
+    {"fvAp": {"attributes": {"name": "APP1", "dn": "uni/tn-DEV/ap-APP1"}, "children": [{"moCount": {"attributes": {"count": "1"}}}]}},
+]
+
+MOCK_ACI_CONTRACTS = [
+    {"vzBrCP": {"attributes": {"name": "WEB-to-DB", "dn": "uni/tn-PROD/brc-WEB-to-DB", "scope": "context"}, "children": [
+        {"vzSubj": {"attributes": {"name": "Web-Subj", "revFltPorts": "yes", "consMatchT": "AtleastOne", "provMatchT": "AtleastOne"}, "children": [
+            {"vzRsSubjFiltAtt": {"attributes": {"tnVzFilterName": "ALLOW-HTTPS"}}}
+        ]}}
+    ]}}
+]
+
+MOCK_ACI_FILTERS = [
+    {"vzFilter": {"attributes": {"name": "ALLOW-HTTPS", "dn": "uni/tn-PROD/flt-ALLOW-HTTPS"}, "children": [
+        {"vzEntry": {"attributes": {"name": "tcp443", "etherT": "ip", "prot": "tcp", "dFromPort": "443", "dToPort": "443", "sFromPort": "unspecified", "sToPort": "unspecified", "stateful": "yes", "applyToFrag": "no"}}}
+    ]}}
+]
+
+MOCK_ACI_FV_RSPROV = [
+    {"fvRsProv": {"attributes": {"dn": "uni/tn-PROD/ap-APP1/epg-WEB/rsprov-WEB-to-DB", "tDn": "uni/tn-PROD/brc-WEB-to-DB", "tnVzBrCPName": "WEB-to-DB"}}}
+]
+
+MOCK_ACI_FV_RSCONS = [
+    {"fvRsCons": {"attributes": {"dn": "uni/tn-PROD/ap-APP1/epg-DB/rscons-WEB-to-DB", "tDn": "uni/tn-PROD/brc-WEB-to-DB", "tnVzBrCPName": "WEB-to-DB"}}}
+]
+
+MOCK_ACI_ACCESS_PG = [
+    {"infraAccPortGrp": {"attributes": {"name": "PG-Server-Access", "dn": "uni/infra/funcprof/accportgrp-PG-Server-Access"}, "children": [
+        {"infraRsCdpIfPol": {"attributes": {"tnCdpIfPolName": "CDP-ON"}}},
+        {"infraRsLldpIfPol": {"attributes": {"tnLldpIfPolName": "LLDP-ENABLED"}}},
+        {"infraRsAttEntP": {"attributes": {"tnInfraAttEntityPName": "AAEP-PROD"}}}
+    ]}}
+]
+
+MOCK_ACI_BUNDLE_PG = [
+    {"infraAccBndlGrp": {"attributes": {"name": "PG-Server-VPC", "dn": "uni/infra/funcprof/accbundle-PG-Server-VPC", "lagT": "node"}, "children": [
+        {"infraRsLacpPol": {"attributes": {"tnLacpLagPolName": "LACP-ACTIVE"}}},
+        {"infraRsHIfPol": {"attributes": {"tnFabricHIfPolName": "10G-AUTO"}}},
+        {"infraRsAttEntP": {"attributes": {"tnInfraAttEntityPName": "AAEP-PROD"}}}
+    ]}}
+]
+
+MOCK_ACI_AAEPS = [
+    {"infraAttEntityP": {"attributes": {"name": "AAEP-PROD", "dn": "uni/infra/attentp-AAEP-PROD"}, "children": [
+        {"infraRsDomP": {"attributes": {"tDn": "uni/phys-PHYS-DOM"}}},
+        {"infraGeneric": {"children": [
+            {"infraRsFuncToEpg": {"attributes": {"tDn": "uni/tn-PROD/ap-APP1/epg-WEB", "encap": "vlan-100", "mode": "regular"}}}
+        ]}}
+    ]}}
+]
+
+MOCK_ACI_PHYS_DOMAINS = [
+    {"physDomP": {"attributes": {"name": "PHYS-DOM", "dn": "uni/phys-PHYS-DOM"}, "children": [
+        {"infraRsVlanNs": {"attributes": {"tDn": "uni/infra/vlanns-[VLAN-POOL-PROD]-static"}}}
+    ]}}
+]
+
+MOCK_ACI_L3_DOMAINS = [
+    {"l3extDomP": {"attributes": {"name": "L3-DOM", "dn": "uni/l3dom-L3-DOM"}}}
+]
+
+MOCK_ACI_VMM_DOMAINS = [
+    {"vmmDomP": {"attributes": {"name": "VC1", "dn": "uni/vmmp-VMware/dom-VC1"}}}
+]
+
+MOCK_ACI_VLAN_POOLS = [
+    {"fvnsVlanInstP": {"attributes": {"name": "VLAN-POOL-PROD", "dn": "uni/infra/vlanns-[VLAN-POOL-PROD]-static", "allocMode": "static"}, "children": [
+        {"fvnsEncapBlk": {"attributes": {"from": "vlan-100", "to": "vlan-200", "role": "external"}}}
+    ]}}
+]
+
+MOCK_ACI_CDP_POLS = [{"cdpIfPol": {"attributes": {"name": "CDP-ON", "dn": "uni/infra/cdpIfP-CDP-ON", "adminSt": "enabled"}}}]
+MOCK_ACI_LLDP_POLS = [{"lldpIfPol": {"attributes": {"name": "LLDP-ENABLED", "dn": "uni/infra/lldpIfP-LLDP-ENABLED", "adminRxSt": "enabled", "adminTxSt": "enabled"}}}]
+MOCK_ACI_LACP_POLS = [{"lacpLagPol": {"attributes": {"name": "LACP-ACTIVE", "dn": "uni/infra/lacpLagP-LACP-ACTIVE", "mode": "active", "ctrl": "fast-sel-hot-stdby"}}}]
+MOCK_ACI_LINK_POLS = [{"fabricHIfPol": {"attributes": {"name": "10G-AUTO", "dn": "uni/infra/hintfpol-10G-AUTO", "speed": "10G", "autoNeg": "on", "fecMode": "inherit"}}}]
+MOCK_ACI_MCP_POLS = [{"mcpIfPol": {"attributes": {"name": "MCP-ENABLED", "dn": "uni/infra/mcpIfP-MCP-ENABLED", "adminSt": "enabled"}}}]
+MOCK_ACI_STP_POLS = [{"stpIfPol": {"attributes": {"name": "BPDU-GUARD", "dn": "uni/infra/stpIfPol-BPDU-GUARD", "ctrl": "bpdu-guard"}}}]
+MOCK_ACI_L2_POLS = [{"l2IfPol": {"attributes": {"name": "L2-DEFAULT", "dn": "uni/infra/l2IfP-L2-DEFAULT", "qinq": "disabled", "vlanScope": "global"}}}]
+MOCK_ACI_STORMCTRL_POLS = [{"stormctrlIfPol": {"attributes": {"name": "STORM-DEFAULT", "dn": "uni/infra/stormctrlIfPol-STORM-DEFAULT", "bcRate": "10.0", "mcRate": "10.0", "uucRate": "10.0"}}}]
+
+MOCK_ACI_ACCESS_TOPOLOGY = [
+    # Node Profile
+    {"infraNodeP": {"attributes": {"name": "Leaf101-102", "dn": "uni/infra/nprof-Leaf101-102"}}},
+    {"infraLeafS": {"attributes": {"name": "Leaf101-102-Sel", "dn": "uni/infra/nprof-Leaf101-102/leaves-Leaf101-102-Sel-typ-range"}}},
+    {"infraNodeBlk": {"attributes": {"name": "blk1", "dn": "uni/infra/nprof-Leaf101-102/leaves-Leaf101-102-Sel-typ-range/nodeblk-blk1", "from_": "101", "to_": "102"}}},
+    {"infraRsAccPortP": {"attributes": {"dn": "uni/infra/nprof-Leaf101-102/rsaccPortP-[uni/infra/accportprof-IPROF-VPC]", "tDn": "uni/infra/accportprof-IPROF-VPC"}}},
+    # Interface Profile
+    {"infraAccPortP": {"attributes": {"name": "IPROF-VPC", "dn": "uni/infra/accportprof-IPROF-VPC"}}},
+    {"infraHPortS": {"attributes": {"name": "Port15-16", "dn": "uni/infra/accportprof-IPROF-VPC/hports-Port15-16-typ-range"}}},
+    {"infraPortBlk": {"attributes": {"name": "blk1", "dn": "uni/infra/accportprof-IPROF-VPC/hports-Port15-16-typ-range/portblk-blk1", "fromCard": "1", "toCard": "1", "fromPort": "15", "toPort": "16"}}},
+    {"infraRsAccBaseGrp": {"attributes": {"dn": "uni/infra/accportprof-IPROF-VPC/hports-Port15-16-typ-range/rsaccBaseGrp", "tDn": "uni/infra/funcprof/accbundle-PG-Server-VPC"}}},
+]
+
 MOCK_ACI_URIBV4_ROUTES = [
     {
         "uribv4Route": {
@@ -1472,6 +1595,30 @@ def seed_cache(cache) -> None:
         "uribv6_routes":   {"imdata": MOCK_ACI_URIBV6_ROUTES},
         "ospf_adj_ep":     {"imdata": MOCK_ACI_OSPF_ADJ_EP},
         "l3ext_rs_ectx":   {"imdata": MOCK_ACI_L3EXT_RS_ECTX},
+        "tenants":         {"imdata": MOCK_ACI_TENANTS},
+        "vrfs":            {"imdata": MOCK_ACI_VRFS},
+        "bridge_domains":  {"imdata": MOCK_ACI_BDS},
+        "app_profiles":    {"imdata": MOCK_ACI_APP_PROFILES},
+        "contracts":       {"imdata": MOCK_ACI_CONTRACTS},
+        "filters":         {"imdata": MOCK_ACI_FILTERS},
+        "epg_relations":   {"prov": {"imdata": MOCK_ACI_FV_RSPROV},
+                            "cons": {"imdata": MOCK_ACI_FV_RSCONS}},
+        "access_pgs":      {"access": {"imdata": MOCK_ACI_ACCESS_PG},
+                            "bundle": {"imdata": MOCK_ACI_BUNDLE_PG}},
+        "aaeps":           {"imdata": MOCK_ACI_AAEPS},
+        "domains":         {"physical": {"imdata": MOCK_ACI_PHYS_DOMAINS},
+                            "l3": {"imdata": MOCK_ACI_L3_DOMAINS},
+                            "vmm": {"imdata": MOCK_ACI_VMM_DOMAINS}},
+        "vlan_pools":      {"imdata": MOCK_ACI_VLAN_POOLS},
+        "if_pol_cdp":       {"imdata": MOCK_ACI_CDP_POLS},
+        "if_pol_lldp":      {"imdata": MOCK_ACI_LLDP_POLS},
+        "if_pol_lacp":      {"imdata": MOCK_ACI_LACP_POLS},
+        "if_pol_link":      {"imdata": MOCK_ACI_LINK_POLS},
+        "if_pol_mcp":       {"imdata": MOCK_ACI_MCP_POLS},
+        "if_pol_stp":       {"imdata": MOCK_ACI_STP_POLS},
+        "if_pol_l2":        {"imdata": MOCK_ACI_L2_POLS},
+        "if_pol_stormctrl": {"imdata": MOCK_ACI_STORMCTRL_POLS},
+        "access_topology":  {"imdata": MOCK_ACI_ACCESS_TOPOLOGY},
     }
     for f in reg.list_fabrics():
         for suffix, value in aci_fabric_data.items():

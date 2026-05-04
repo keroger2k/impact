@@ -18,31 +18,69 @@
             </div>
         </div>
       </div>
-      <div class="card-body p-0">
+      <div class="card-body p-0 overflow-auto" style="max-height: calc(100vh - 200px);">
         <div class="list-group list-group-flush">
-          <button class="list-group-item list-group-item-action py-3 px-4 active" hx-get="/api/aci/fabric/nodes" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+          <div class="px-4 py-2 small text-muted text-uppercase fw-bold bg-light border-bottom">Operational</div>
+          <button class="list-group-item list-group-item-action py-2 px-4 active" hx-get="/api/aci/fabric/nodes" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
             <i class="ph ph-hard-drives me-2"></i> Fabric Nodes
           </button>
-          <button class="list-group-item list-group-item-action py-3 px-4" hx-get="/api/aci/l3outs" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+          <button class="list-group-item list-group-item-action py-2 px-4" hx-get="/api/aci/l3outs" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
             <i class="ph ph-globe-hemisphere-east me-2"></i> L3Out Visibility
           </button>
-          <button class="list-group-item list-group-item-action py-3 px-4" hx-get="/api/aci/bgp/peers" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+          <button class="list-group-item list-group-item-action py-2 px-4" hx-get="/api/aci/bgp/peers" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
             <i class="ph ph-plugs-connected me-2"></i> BGP Peers
           </button>
-          <button class="list-group-item list-group-item-action py-3 px-4" hx-get="/api/aci/bgp/map" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+          <button class="list-group-item list-group-item-action py-2 px-4" hx-get="/api/aci/bgp/map" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
             <i class="ph ph-share-network me-2"></i> BGP Map
           </button>
-          <button class="list-group-item list-group-item-action py-3 px-4" hx-get="/api/aci/ospf/peers" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+          <button class="list-group-item list-group-item-action py-2 px-4" hx-get="/api/aci/ospf/peers" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
             <i class="ph ph-plugs-connected me-2"></i> OSPF Peers
           </button>
-          <button class="list-group-item list-group-item-action py-3 px-4" hx-get="/api/aci/ospf/map" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+          <button class="list-group-item list-group-item-action py-2 px-4" hx-get="/api/aci/ospf/map" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
             <i class="ph ph-tree-structure me-2"></i> OSPF Map
           </button>
-          <button class="list-group-item list-group-item-action py-3 px-4" hx-get="/api/aci/traffic/epgs" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+          <button class="list-group-item list-group-item-action py-2 px-4" hx-get="/api/aci/traffic/epgs" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
             <i class="ph ph-chart-line-up me-2"></i> Traffic Analysis (EPGs)
           </button>
-          <button class="list-group-item list-group-item-action py-3 px-4" hx-get="/api/aci/traffic/faults" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+          <button class="list-group-item list-group-item-action py-2 px-4 border-bottom" hx-get="/api/aci/traffic/faults" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
             <i class="ph ph-warning-circle me-2"></i> Operational Faults
+          </button>
+
+          <div class="px-4 py-2 small text-muted text-uppercase fw-bold bg-light border-bottom">Tenant Policies</div>
+          <button class="list-group-item list-group-item-action py-2 px-4" hx-get="/api/aci/tenants" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-buildings me-2"></i> Tenants
+          </button>
+          <button class="list-group-item list-group-item-action py-2 px-4" hx-get="/api/aci/vrfs" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-tree-structure me-2"></i> VRFs
+          </button>
+          <button class="list-group-item list-group-item-action py-2 px-4" hx-get="/api/aci/bridge-domains" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-bridge me-2"></i> Bridge Domains
+          </button>
+          <button class="list-group-item list-group-item-action py-2 px-4" hx-get="/api/aci/app-profiles" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-stack me-2"></i> Application Profiles
+          </button>
+          <button class="list-group-item list-group-item-action py-2 px-4" hx-get="/api/aci/contracts" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-handshake me-2"></i> Contracts
+          </button>
+          <button class="list-group-item list-group-item-action py-2 px-4 border-bottom" hx-get="/api/aci/filters" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-funnel me-2"></i> Filters
+          </button>
+
+          <div class="px-4 py-2 small text-muted text-uppercase fw-bold bg-light border-bottom">Access Policies</div>
+          <button class="list-group-item list-group-item-action py-2 px-4" hx-get="/api/aci/access/policy-groups" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-package me-2"></i> Policy Groups
+          </button>
+          <button class="list-group-item list-group-item-action py-2 px-4" hx-get="/api/aci/access/aaeps" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-link me-2"></i> AAEPs
+          </button>
+          <button class="list-group-item list-group-item-action py-2 px-4" hx-get="/api/aci/access/domains" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-globe me-2"></i> Domains
+          </button>
+          <button class="list-group-item list-group-item-action py-2 px-4" hx-get="/api/aci/access/vlan-pools" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-list-numbers me-2"></i> VLAN Pools
+          </button>
+          <button class="list-group-item list-group-item-action py-2 px-4" hx-get="/api/aci/access/interface-policies" hx-vals='js:{fabric: window.currentFabric}' hx-target="#aci-results" hx-indicator="#aci-loading" onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-sliders me-2"></i> Interface Policies
           </button>
         </div>
       </div>

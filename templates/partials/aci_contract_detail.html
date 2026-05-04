@@ -1,0 +1,118 @@
+<div class="card shadow-sm border-0 animate-fade-in">
+    <script id="aci-contract-detail-raw" type="application/json">{{ raw_json|tojson }}</script>
+    <div class="card-header bg-white py-3">
+        <div class="d-flex align-items-center justify-content-between">
+            <div class="d-flex align-items-center gap-3">
+                <button class="btn btn-sm btn-outline-secondary" hx-get="/api/aci/contracts" hx-target="#aci-results" hx-indicator="#aci-loading">
+                    <i class="ph ph-arrow-left me-1"></i>Back
+                </button>
+                <h5 class="mb-0 text-navy fw-bold"><i class="ph ph-handshake me-2"></i>Contract: {{ res.contract.name }}</h5>
+                <button class="btn btn-xs btn-outline-navy" onclick="showRawData('aci-contract-detail-raw')">
+                    <i class="ph ph-code me-1"></i>Raw
+                </button>
+            </div>
+            <div class="d-flex gap-2">
+                <span class="badge bg-light text-navy border">Tenant: {{ res.contract.tenant }}</span>
+                <span class="badge bg-light text-navy border">Scope: {{ res.contract.scope }}</span>
+            </div>
+        </div>
+    </div>
+    <div class="card-body p-4">
+        <div class="row g-4">
+            <!-- Subjects & Filters -->
+            <div class="col-lg-8">
+                <h6 class="fw-bold text-navy mb-3"><i class="ph ph-funnel me-2"></i>Subjects & Filters</h6>
+                <div class="accordion" id="subjAccordion">
+                    {% for s in res.subjects %}
+                    <div class="accordion-item border-0 shadow-sm mb-3 rounded overflow-hidden">
+                        <h2 class="accordion-header">
+                            <button class="accordion-button bg-light text-navy fw-bold" type="button" data-bs-toggle="collapse" data-bs-target="#subj-{{ loop.index }}">
+                                {{ s.name }}
+                                <span class="badge bg-white text-muted border ms-3 small">Reverse Filter: {{ s.rev_filter_ports }}</span>
+                            </button>
+                        </h2>
+                        <div id="subj-{{ loop.index }}" class="accordion-collapse collapse show">
+                            <div class="accordion-body p-0">
+                                <div class="table-responsive">
+                                    <table class="table table-sm table-hover mb-0 align-middle">
+                                        <thead class="bg-light small text-muted">
+                                            <tr>
+                                                <th class="ps-4">Filter / Entry</th>
+                                                <th>Protocol</th>
+                                                <th>Source</th>
+                                                <th>Destination</th>
+                                                <th class="pe-4">Stateful</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for f in s.filters %}
+                                            <tr class="table-info bg-opacity-10">
+                                                <td colspan="5" class="ps-4 fw-bold text-navy">
+                                                    <i class="ph ph-funnel me-2"></i>{{ f.name }}
+                                                    <span class="badge bg-white text-muted border ms-2 small fw-normal">Tenant: {{ f.tenant }}</span>
+                                                </td>
+                                            </tr>
+                                            {% for e in f.entries %}
+                                            <tr>
+                                                <td class="ps-5 small text-navy font-monospace">{{ e.name }}</td>
+                                                <td><span class="badge bg-light text-dark border">{{ e.protocol }}</span></td>
+                                                <td class="small">
+                                                    {% if e.src_from_port == 'unspecified' %}any{% else %}{{ e.src_from_port }}{% if e.src_from_port != e.src_to_port %}-{{ e.src_to_port }}{% endif %}{% endif %}
+                                                </td>
+                                                <td class="small">
+                                                    {% if e.dst_from_port == 'unspecified' %}any{% else %}{{ e.dst_from_port }}{% if e.dst_from_port != e.dst_to_port %}-{{ e.dst_to_port }}{% endif %}{% endif %}
+                                                </td>
+                                                <td class="pe-4"><span class="badge {% if e.stateful == 'yes' %}bg-success{% else %}bg-secondary{% endif %} small">{{ e.stateful }}</span></td>
+                                            </tr>
+                                            {% endfor %}
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- EPGs -->
+            <div class="col-lg-4">
+                <div class="mb-4">
+                    <h6 class="fw-bold text-success mb-3"><i class="ph ph-arrow-circle-right me-2"></i>Providers</h6>
+                    <div class="list-group shadow-sm">
+                        {% for p in res.providers %}
+                        <div class="list-group-item d-flex justify-content-between align-items-center">
+                            <div>
+                                <div class="fw-bold text-navy">{{ p.name }}</div>
+                                <div class="small text-muted">{{ p.tenant }} / {{ p.ap }}</div>
+                            </div>
+                            <button class="btn btn-xs btn-outline-navy" hx-get="/api/aci/epgs/detail?dn={{ p.dn|urlencode }}" hx-target="#aci-results">
+                                <i class="ph ph-eye"></i>
+                            </button>
+                        </div>
+                        {% endfor %}
+                        {% if not res.providers %}<div class="list-group-item text-muted small bg-light">None</div>{% endif %}
+                    </div>
+                </div>
+                <div>
+                    <h6 class="fw-bold text-primary mb-3"><i class="ph ph-arrow-circle-left me-2"></i>Consumers</h6>
+                    <div class="list-group shadow-sm">
+                        {% for c in res.consumers %}
+                        <div class="list-group-item d-flex justify-content-between align-items-center">
+                            <div>
+                                <div class="fw-bold text-navy">{{ c.name }}</div>
+                                <div class="small text-muted">{{ c.tenant }} / {{ c.ap }}</div>
+                            </div>
+                            <button class="btn btn-xs btn-outline-navy" hx-get="/api/aci/epgs/detail?dn={{ c.dn|urlencode }}" hx-target="#aci-results">
+                                <i class="ph ph-eye"></i>
+                            </button>
+                        </div>
+                        {% endfor %}
+                        {% if not res.consumers %}<div class="list-group-item text-muted small bg-light">None</div>{% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
