@@ -23,6 +23,7 @@
             <li><hr class="dropdown-divider"></li>
             <li><a class="dropdown-item" href="#" onclick="runRefresh('aci')">Refresh ACI Only</a></li>
             <li><a class="dropdown-item" href="#" onclick="runRefresh('dnac')">Refresh DNAC Only</a></li>
+            <li><a class="dropdown-item" href="#" onclick="runRefresh('dnac_summaries')">Refresh DNAC Summaries Only</a></li>
             <li><a class="dropdown-item" href="#" onclick="runRefresh('nexus')">Refresh Nexus Only</a></li>
             <li><a class="dropdown-item" href="#" onclick="runRefresh('panorama')">Refresh Panorama Only</a></li>
           </ul>
@@ -464,6 +465,7 @@
         // Icon mapping
         let icon = '<i class="ph ph-hash"></i>';
         if (n.role === 'tunnel_group') icon = '<i class="ph ph-circle-nodes text-indigo"></i>';
+        else if (n.role === 'aggregate') icon = '<i class="ph ph-tree-structure text-success"></i>';
         else if (n.role === 'loopback_group' || n.role === 'host_route_group') icon = '<i class="ph ph-folders"></i>';
         else if (n.interface_type === 'Group' || n.interface_type === 'Supernet' || (hasChildren && !n.host_ip)) icon = '<i class="ph ph-folder"></i>';
 
@@ -486,7 +488,7 @@
         if (n.site && n.site !== 'Unknown' && n.site !== 'N/A') metaHtml += `<span>${esc(n.site)}</span>`;
         if (n.device && n.device !== 'Unknown' && n.device !== 'N/A') metaHtml += `<span> · ${esc(n.device)}</span>`;
 
-        const typeColors = { tunnel: '#6366f1', svi: '#14b8a6', vip: '#f59e0b', management: '#a855f7', p2p: '#64748b' };
+        const typeColors = { tunnel: '#6366f1', svi: '#14b8a6', vip: '#f59e0b', management: '#a855f7', p2p: '#64748b', aggregate: '#10b981' };
         const dotColor = typeColors[n.interface_type] || '#cbd5e1';
 
         row.innerHTML = `

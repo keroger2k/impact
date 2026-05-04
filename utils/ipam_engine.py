@@ -120,10 +120,11 @@ class IPAMEngine:
         self.subnets: List[IPAMNode] = []
         self.tree: Dict[str, List[Dict]] = {"ipv4": [], "ipv6": []}
         self.source_map = {
-            "aci":       self._discover_aci,
-            "dnac":      self._discover_dnac,
-            "nexus":     self._discover_nexus,
-            "panorama":  self._discover_panorama,
+            "aci":             self._discover_aci,
+            "dnac":            self._discover_dnac,
+            "dnac_summaries":  self._discover_dnac_summaries,
+            "nexus":           self._discover_nexus,
+            "panorama":        self._discover_panorama,
         }
 
     def is_excluded(self, net: netaddr.IPNetwork, name: str = "", desc: str = "") -> bool:
@@ -282,6 +283,94 @@ class IPAMEngine:
         except Exception as e:
             logger.error(f"DNAC discovery failed: {e}")
 
+    async def _discover_dnac_summaries(self, session, loop):
+        """Parse EIGRP `summary-address` statements from DNAC router configs.
+        These represent the real per-site IP allocations (advertised aggregates),
+        which our interface-IP discovery can't see directly.
+        """
+        try:
+            from cache import cache, TTL_DEVICES, TTL_SITES, TTL_DNAC_ROUTER_CONFIGS
+            from utils.ipam_config_parser import parse_eigrp_summaries
+            import clients.dnac as dc
+
+            dnac = auth_module.get_dnac_for_session(session) if session else None
+
+            def _loader_or_empty(loader):
+                return (lambda: loader()) if dnac else (lambda: None)
+
+            devices = await loop.run_in_executor(
+                None, run_with_context(cache.get_or_set),
+                "devices", _loader_or_empty(lambda: dc.get_all_devices(dnac)), TTL_DEVICES
+            ) or []
+            sites = await loop.run_in_executor(
+                None, run_with_context(cache.get_or_set),
+                "sites", _loader_or_empty(lambda: dc.get_site_cache(dnac)), TTL_SITES
+            ) or []
+            dev_site_map = await loop.run_in_executor(
+                None, run_with_context(cache.get_or_set),
+                "device_site_map", _loader_or_empty(lambda: dc.build_device_site_map(dnac, sites)), TTL_SITES
+            ) or {}
+
+            # Filter to routers only — that's where summary-address lives.
+            routers = [d for d in devices if (d.get("family") or "").lower() == "routers"]
+            if not routers:
+                logger.info("No DNAC routers found; skipping EIGRP summary discovery.")
+                return
+
+            # Fetch all router configs in parallel, cached as a single dict.
+            def _fetch_all_configs():
+                if not dnac:
+                    return {}
+                from concurrent.futures import ThreadPoolExecutor
+                results: Dict[str, str] = {}
+                with ThreadPoolExecutor(max_workers=20) as ex:
+                    futures = {ex.submit(dc.get_device_config, dnac, d["id"]): d["id"] for d in routers}
+                    for fut in futures:
+                        dev_id = futures[fut]
+                        try:
+                            results[dev_id] = fut.result() or ""
+                        except Exception as e:
+                            logger.warning(f"Config fetch failed for {dev_id}: {e}")
+                            results[dev_id] = ""
+                return results
+
+            configs = await loop.run_in_executor(
+                None, run_with_context(cache.get_or_set),
+                "dnac_router_configs", _fetch_all_configs, TTL_DNAC_ROUTER_CONFIGS
+            ) or {}
+
+            id_to_dev = {d.get("id"): d for d in routers}
+
+            for dev_id, cfg in configs.items():
+                if not cfg:
+                    continue
+                dev = id_to_dev.get(dev_id) or {}
+                hostname = dev.get("hostname") or "Unknown"
+                site = dev_site_map.get(dev_id, "Unknown")
+
+                for s in parse_eigrp_summaries(cfg):
+                    cidr_str = f"{s['network']}/{s['prefix_length']}"
+                    try:
+                        net = netaddr.IPNetwork(cidr_str)
+                    except Exception:
+                        continue
+                    if self.is_excluded(net):
+                        continue
+
+                    node = IPAMNode(str(net.cidr), source="DNAC-Config")
+                    node.display_name = f"EIGRP Summary ({s['af_interface']})"
+                    node.site = site
+                    node.device = hostname
+                    node.interface_name = s["af_interface"]
+                    node.interface_type = "aggregate"
+                    node.role = "aggregate"
+                    node.logical_container = (
+                        f"eigrp:{s['eigrp_process'] or s['eigrp_as']}"
+                    )
+                    self.subnets.append(node)
+        except Exception as e:
+            logger.error(f"DNAC summary discovery failed: {e}")
+
     async def _discover_panorama(self, session, loop):
         try:
             from cache import cache
@@ -361,7 +450,7 @@ class IPAMEngine:
 
     def build_tree(self):
         """Construct a recursive hierarchy from the flat subnets list."""
-        priority = ["ACI", "DNAC", "Nexus", "Panorama"]
+        priority = ["DNAC-Config", "ACI", "DNAC", "Nexus", "Panorama"]
         unique_nets: Dict[str, IPAMNode] = {}
         tunnel_endpoints: Dict[str, List[IPAMNode]] = {}
 

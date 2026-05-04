@@ -53,12 +53,15 @@ for _si, (_site, _subnet) in enumerate(_SITES):
         _reach = "Unreachable" if _idx % 7 == 0 else "Reachable"
         _id    = _uid(f"device-{_idx}")
         _role  = _ROLES[_di % len(_ROLES)]
+        _platform = _PLATFORM[_di % len(_PLATFORM)]
+        _family = "Routers" if _platform.startswith("ISR") else "Switches and Hubs"
         _host  = f"SW-{_site.split('-')[1]}-{_di+1:02d}" if _role == "ACCESS" else f"CORE-{_site.split('-')[1]}-{_di+1:02d}"
         _dev   = {
             "id":                    _id,
             "hostname":              _host,
             "managementIpAddress":   f"{_subnet}.{_di+1}.1",
-            "platformId":            _PLATFORM[_di % len(_PLATFORM)],
+            "platformId":            _platform,
+            "family":                _family,
             "softwareVersion":       _VERSION[_di % len(_VERSION)],
             "role":                  _role,
             "serialNumber":          f"FCW{2300+_idx:04d}A{_si:02d}",
@@ -1307,20 +1310,39 @@ def _build_ipam_tree_from_mocks() -> dict:
     DNAC discovery uses ``loop.run_in_executor`` internally so we need a real
     event loop. Session is None because the loaders are never invoked — the
     caches are already populated by seed_cache.
+
+    seed_cache is itself called from FastAPI's async lifespan, so we run the
+    loop in a worker thread to avoid the "loop already running" RuntimeError.
     """
     import asyncio
+    import threading
     from utils.ipam_engine import IPAMEngine
 
-    engine = IPAMEngine()
-    loop = asyncio.new_event_loop()
-    try:
-        loop.run_until_complete(engine._discover_dnac(None, loop))
-        loop.run_until_complete(engine._discover_nexus(None, None))
-        loop.run_until_complete(engine._discover_panorama(None, None))
-    finally:
-        loop.close()
-    engine.build_tree()
-    return engine.get_tree()
+    result: dict = {}
+    error: list = []
+
+    def _worker():
+        loop = asyncio.new_event_loop()
+        try:
+            engine = IPAMEngine()
+            loop.run_until_complete(engine._discover_dnac(None, loop))
+            loop.run_until_complete(engine._discover_dnac_summaries(None, loop))
+            loop.run_until_complete(engine._discover_nexus(None, None))
+            loop.run_until_complete(engine._discover_panorama(None, None))
+            engine.build_tree()
+            result.update(engine.get_tree())
+        except Exception as e:
+            error.append(e)
+        finally:
+            loop.close()
+
+    t = threading.Thread(target=_worker)
+    t.start()
+    t.join()
+
+    if error:
+        raise error[0]
+    return result
 
 
 def seed_cache(cache) -> None:
@@ -1408,6 +1430,14 @@ def seed_cache(cache) -> None:
     cache.set("nexus_vpcs",          MOCK_NEXUS_VPCS,           LONG)
     cache.set("nexus_vlans",         MOCK_NEXUS_VLANS,          LONG)
 
+    # DNAC router configs — keyed by device id, consumed by the IPAM EIGRP
+    # summary discovery (must be seeded before _build_ipam_tree_from_mocks runs).
+    cache.set(
+        "dnac_router_configs",
+        {dev["id"]: MOCK_CONFIGS[dev["id"]] for dev in MOCK_DEVICES if dev.get("family") == "Routers"},
+        LONG,
+    )
+
     # IPAM — compute the tree from the same source caches the live engine
     # consumes, so initial render matches what Refresh Discovery would produce.
     # Falls back to the static MOCK_IPAM_TREE if the engine can't run.
@@ -1436,6 +1466,52 @@ def create_dev_session() -> None:
     with auth_module._store_lock:
         auth_module._sessions[DEV_TOKEN] = entry
 
+def _mock_dnac_config(dev: dict) -> str:
+    """Build a mock IOS-XE running-config for a DNAC device.
+    Routers (family='Routers') get a named-mode EIGRP block with a per-site
+    summary-address advertised on Tunnel5000, so the IPAM summary discovery
+    has something to chew on in DEV_MODE.
+    """
+    base = f"""!
+hostname {dev['hostname']}
+!
+interface GigabitEthernet0/1
+ description Primary Uplink
+ ip address {dev['managementIpAddress']} 255.255.255.0
+ speed 1000
+ duplex full
+!
+snmp-server community TSA-RO RO
+snmp-server community TSA-RW RW
+!
+router eigrp 1
+ network {dev['managementIpAddress'].rsplit('.', 1)[0]}.0 0.0.0.255
+!
+"""
+    if dev.get("family") == "Routers":
+        site = MOCK_DEVICE_SITE_MAP.get(dev["id"], "")
+        # _SITES maps site -> "10.NN" prefix; advertise that as a /16 summary.
+        site_prefix = next((p for s, p in _SITES if s == site), None)
+        if site_prefix:
+            base += f"""!
+router eigrp TSA-EIGRP
+ !
+ address-family ipv4 unicast autonomous-system 22
+  !
+  af-interface Tunnel5000
+   summary-address {site_prefix}.0.0 255.255.0.0
+   authentication mode md5
+   authentication key-chain RoutePW
+  exit-af-interface
+  !
+  topology base
+  exit-af-topology
+ exit-address-family
+!
+"""
+    return base + "end\n"
+
+
 MOCK_CONFIGS = {
     **{
         dev["id"]: f"""!
@@ -1455,23 +1531,7 @@ end
         for dev in MOCK_NEXUS_DEVICES
     },
     **{
-        dev["id"]: f"""!
-hostname {dev['hostname']}
-!
-interface GigabitEthernet0/1
- description Primary Uplink
- ip address {dev['managementIpAddress']} 255.255.255.0
- speed 1000
- duplex full
-!
-snmp-server community TSA-RO RO
-snmp-server community TSA-RW RW
-!
-router eigrp 1
- network {dev['managementIpAddress'].rsplit('.', 1)[0]}.0 0.0.0.255
-!
-end
-"""
+        dev["id"]: _mock_dnac_config(dev)
         for dev in MOCK_DEVICES
     }
 }
