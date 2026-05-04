@@ -664,6 +664,17 @@
                 }
             }
 
+            // Surface any silent loader failures from the cache so the user
+            // doesn't have to grep server logs to find an SDK type-check or auth issue.
+            const errs = dn.last_errors || {};
+            if (Object.keys(errs).length > 0) {
+                html += `<div class="fw-bold text-danger mt-3 mb-1">⚠ Recent cache loader failures:</div>`;
+                for (const [k, e] of Object.entries(errs)) {
+                    const when = new Date(e.at * 1000).toLocaleString();
+                    html += `<div class="text-danger ms-2"><code>${esc(k)}</code> @ ${esc(when)}: ${esc(e.message)}</div>`;
+                }
+            }
+
             // DNAC IP pools
             html += `<div class="fw-bold mt-3 mb-1">DNAC IP Pools (global + reserve-subpool):</div>`;
             html += `<div class="text-info">  ${dn.global_pools_cached || 0} global pools, ${dn.reserve_subpools_cached || 0} reserved subpools cached</div>`;

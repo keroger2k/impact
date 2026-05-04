@@ -242,6 +242,17 @@ async def debug_ipam_sources(session: SessionEntry = Depends(require_auth)):
             "pool_v4_count": pool_v4,
             "pool_v6_count": pool_v6,
             "pool_samples": pool_samples,
+            "last_errors": {
+                k: cache.last_error(k)
+                for k in (
+                    "dnac_global_pools",
+                    "dnac_reserve_subpools",
+                    "dnac_router_configs",
+                    "dnac_interfaces",
+                    "devices",
+                )
+                if cache.last_error(k)
+            },
         },
         "aci_nodes_cached": len(aci_nodes.get("imdata", [])),
         "panorama": {

@@ -40,6 +40,9 @@ class AppCache:
     def __init__(self, directory: Path = CACHE_DIR):
         directory.mkdir(parents=True, exist_ok=True)
         self._cache = diskcache.Cache(str(directory))
+        # Track the most-recent loader failure per key so the UI can surface
+        # silent fetch errors without the user having to grep server logs.
+        self._last_errors: dict = {}
 
     def get(self, key: str) -> Any:
         """Standard get from cache. Returns only if not logically expired."""
@@ -78,9 +81,11 @@ class AppCache:
                 new_data = loader()
                 if new_data is not None:
                     self.set(key, new_data, ttl)
+                    self._last_errors.pop(key, None)
                     return new_data
             except Exception as e:
                 logger.error(f"Cache revalidation failed for key '{key}', returning stale data: {e}")
+                self._last_errors[key] = {"at": time.time(), "message": str(e)[:500]}
                 return data # Return stale data
 
         # Cache miss (truly missing)
@@ -88,11 +93,17 @@ class AppCache:
             new_data = loader()
             if new_data is not None:
                 self.set(key, new_data, ttl)
+                self._last_errors.pop(key, None)
                 return new_data
         except Exception as e:
             logger.error(f"Cache loader failed for new key '{key}': {e}")
+            self._last_errors[key] = {"at": time.time(), "message": str(e)[:500]}
 
         return None
+
+    def last_error(self, key: str) -> Optional[dict]:
+        """Return the most recent loader failure for a key (or None if last load succeeded)."""
+        return self._last_errors.get(key)
 
     def cache_result(self, ttl: int = TTL_DEFAULT):
         """Decorator for caching function results."""
