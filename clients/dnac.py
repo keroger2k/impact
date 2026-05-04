@@ -181,16 +181,63 @@ def get_reserve_ip_subpools(dnac) -> list[dict]:
     """Return every DNAC site-reserved IP subpool (carved from global pools,
     attributed to a specific site). Each entry typically contains an inner
     `ipPools` list with one or two pools (IPv4 and/or IPv6).
-    Pages through /dna/intent/api/v1/reserve-ip-subpool.
+
+    DNAC versions disagree on what query parameters this endpoint accepts:
+      - some require siteId or ignoreInheritedGroups to be present
+      - some return 400 when ignoreInheritedGroups=false is sent
+      - some accept a bare GET and return everything
+
+    Try strategies in order until one succeeds.
     """
-    # ignoreInheritedGroups=false returns all subpools across sites. We send
-    # the literal string the REST endpoint expects, sidestepping the SDK's
-    # version-dependent bool/str type-check.
-    return _paginated_get(
-        dnac, "/dna/intent/api/v1/reserve-ip-subpool",
-        params={"ignoreInheritedGroups": "false"},
-        page_size=500, log_label="Reserve subpool",
-    )
+    strategies = [
+        ("bare",                {}),
+        ("ignoreInheritedGroups=true",  {"ignoreInheritedGroups": "true"}),
+        ("ignoreInheritedGroups=false", {"ignoreInheritedGroups": "false"}),
+    ]
+    last_err = None
+    for label, params in strategies:
+        try:
+            pools = _paginated_get(
+                dnac, "/dna/intent/api/v1/reserve-ip-subpool",
+                params=params, page_size=500,
+                log_label=f"Reserve subpool ({label})",
+            )
+            logger.info(f"Reserve subpool fetch succeeded with strategy '{label}': {len(pools)} pools")
+            return pools
+        except Exception as e:
+            last_err = e
+            logger.warning(f"Reserve subpool strategy '{label}' failed: {e}")
+            continue
+
+    # All flat strategies failed — fall back to per-top-level-site iteration.
+    # DNAC sites are hierarchical; querying parent sites returns all child
+    # subpools too, so we only iterate the shallowest (≤1 "/" in the name).
+    # This caps us at a handful of API calls instead of one-per-leaf-site.
+    logger.warning("All flat strategies failed for reserve-ip-subpool; falling back to top-level-site iteration")
+    sites = get_site_cache(dnac)
+    top_level = [s for s in sites if s.get("name", "").count("/") <= 1]
+
+    from concurrent.futures import ThreadPoolExecutor
+    aggregated: list[dict] = []
+
+    def _fetch_one(site):
+        try:
+            return _paginated_get(
+                dnac, "/dna/intent/api/v1/reserve-ip-subpool",
+                params={"siteId": site["id"]}, page_size=500,
+                log_label=f"Reserve subpool (site={site.get('name','?')})",
+            )
+        except Exception as e:
+            logger.debug(f"Per-site reserve subpool fetch failed for {site.get('id')}: {e}")
+            return []
+
+    with ThreadPoolExecutor(max_workers=10) as ex:
+        for batch in ex.map(_fetch_one, top_level):
+            aggregated.extend(batch)
+
+    if aggregated:
+        return aggregated
+    raise last_err if last_err else RuntimeError("reserve-ip-subpool: all strategies failed")
 
 
 def find_best_site_match(site_cache: list, term: str) -> tuple[str | None, str | None]:
