@@ -24,6 +24,15 @@ EXCLUDED_RANGES = [
     netaddr.IPNetwork("ff00::/8"),           # v6 Multicast
 ]
 
+# RFC1918 aggregate supernets synthesized as tree roots when descendants exist
+# but the supernet itself isn't reported by any source — keeps e.g. 172.17.x.x
+# nested under 172.16.0.0/12 instead of dangling at top level.
+RFC1918_SUPERNETS = [
+    netaddr.IPNetwork("10.0.0.0/8"),
+    netaddr.IPNetwork("172.16.0.0/12"),
+    netaddr.IPNetwork("192.168.0.0/16"),
+]
+
 # Regex patterns for interfaces/links to exclude (HA, keepalives, etc.)
 HA_PATTERNS = re.compile(r"KEEPALIVE|FAILOVER|HA-LINK|HEARTBEAT", re.IGNORECASE)
 
@@ -431,11 +440,31 @@ class IPAMEngine:
                     e.role = "endpoint"
                     existing.children_nodes.append(e)
 
-        # 5. Sort and build tree
+        # 5. Synthesize RFC1918 supernet roots so children group cleanly
+        # (e.g. 172.17.0.0/16 nests under 172.16.0.0/12 instead of being a top-level root).
+        for supernet in RFC1918_SUPERNETS:
+            cidr = str(supernet)
+            if cidr in unique_nets:
+                continue
+            has_descendants = any(
+                n.version == 4 and n.network in supernet
+                for n in unique_nets.values()
+            )
+            if has_descendants:
+                synth = IPAMNode(cidr, source="Aggregate")
+                synth.role = "supernet"
+                synth.interface_type = "Supernet"
+                synth.display_name = "RFC1918 Aggregate"
+                unique_nets[cidr] = synth
+
+        # 6. Sort by IP first (then prefixlen) and build tree.
+        # IP-first sort gives users true numeric ordering at every depth (10.2 before
+        # 10.100), while the prefixlen tiebreaker keeps parent supernets ahead of
+        # children with the same start address (10.0.0.0/8 before 10.0.0.0/16).
         v4_nets = sorted([n for n in unique_nets.values() if n.version == 4],
-                         key=lambda x: (x.prefixlen, x.ip_int))
+                         key=lambda x: (x.ip_int, x.prefixlen))
         v6_nets = sorted([n for n in unique_nets.values() if n.version == 6],
-                         key=lambda x: (x.prefixlen, x.ip_int))
+                         key=lambda x: (x.ip_int, x.prefixlen))
 
         self.tree["ipv4"] = self._recursive_build(v4_nets)
         self.tree["ipv6"] = self._recursive_build(v6_nets)
@@ -486,6 +515,10 @@ class IPAMEngine:
     def _node_to_dict_recursive(self, node: IPAMNode) -> Dict:
         d = node.to_dict()
         if node.children_nodes:
+            # Sort by IP first so VIPs / tunnel groups / late-appended siblings
+            # all land in numeric order rather than insertion order.
+            node.children_nodes.sort(key=lambda x: (x.ip_int, x.prefixlen))
+
             # Check for loopback collapsing
             loopbacks = [n for n in node.children_nodes if n.interface_type == "loopback" and n.prefixlen == (32 if n.version == 4 else 128)]
             others = [n for n in node.children_nodes if n not in loopbacks]
