@@ -1,0 +1,65 @@
+<div class="card shadow-sm border-0 animate-fade-in">
+    <script id="aci-pgs-raw" type="application/json">{{ raw_json|tojson }}</script>
+    <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <div class="d-flex align-items-center gap-3">
+            <span class="fw-bold text-navy"><i class="ph ph-package me-1"></i>Policy Groups</span>
+            <button class="btn btn-xs btn-outline-navy" onclick="showRawData('aci-pgs-raw')">
+                <i class="ph ph-code me-1"></i>Raw
+            </button>
+        </div>
+        <span class="badge bg-secondary">{{ items|length }} Groups</span>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive sticky-header" style="max-height: calc(100vh - 250px);">
+            <table class="table table-hover align-middle mb-0 data-table">
+                <thead>
+                    <tr>
+                        {% if items[0] and items[0].fabric_label %}<th class="ps-4">Fabric</th>{% endif %}
+                        <th class="{% if not (items[0] and items[0].fabric_label) %}ps-4{% endif %}">Name</th>
+                        <th>Type</th>
+                        <th>AAEP</th>
+                        <th>CDP</th>
+                        <th>LLDP</th>
+                        <th>LACP</th>
+                        <th class="text-end pe-4" data-no-sort data-no-filter>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in items %}
+                    <tr>
+                        {% if p.fabric_label %}<td class="ps-4"><span class="badge bg-light text-navy border">{{ p.fabric_label }}</span></td>{% endif %}
+                        <td class="{% if not p.fabric_label %}ps-4{% endif %} fw-bold text-navy">{{ p.name }}</td>
+                        <td>
+                            {% if p.kind == 'Bundle' %}
+                            <span class="badge bg-primary">{% if p.lag_t == 'node' %}vPC{% else %}PC{% endif %}</span>
+                            {% else %}
+                            <span class="badge bg-secondary">Access</span>
+                            {% endif %}
+                        </td>
+                        <td><span class="small text-muted">{{ p.aaep.split('/')[-1] if p.aaep else '-' }}</span></td>
+                        <td><span class="badge {% if p.cdp %}bg-success{% else %}bg-light text-muted border{% endif %} small">{{ 'ON' if p.cdp else 'OFF' }}</span></td>
+                        <td><span class="badge {% if p.lldp %}bg-success{% else %}bg-light text-muted border{% endif %} small">{{ 'ON' if p.lldp else 'OFF' }}</span></td>
+                        <td><span class="small text-muted">{{ p.lacp.split('/')[-1] if p.lacp else '-' }}</span></td>
+                        <td class="text-end pe-4">
+                            <button class="btn btn-xs btn-outline-navy"
+                                    hx-get="/api/aci/access/policy-groups/detail?dn={{ p.dn|urlencode }}"
+                                    hx-vals='js:{fabric: "{{ p.fabric_id if p.fabric_id else "" }}" || window.currentFabric}'
+                                    hx-target="#aci-results"
+                                    hx-indicator="#aci-loading"
+                                    title="Group details">
+                                <i class="ph ph-info"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% if not items %}
+        <div class="p-5 text-center text-muted">
+            <i class="ph ph-empty display-4 d-block mb-3"></i>
+            <div>No policy groups found on this fabric.</div>
+        </div>
+        {% endif %}
+    </div>
+</div>

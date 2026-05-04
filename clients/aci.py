@@ -123,9 +123,64 @@ class ACIClient:
                 MOCK_ACI_BGP_ADJ_RIB_IN, MOCK_ACI_BGP_ADJ_RIB_OUT,
                 MOCK_ACI_NODE_INTERFACES, MOCK_ACI_NODE_208_INTERFACES,
                 MOCK_ACI_URIBV4_ROUTES, MOCK_ACI_URIBV6_ROUTES,
-                MOCK_ACI_OSPF_ADJ_EP, MOCK_ACI_L3EXT_RS_ECTX
+                MOCK_ACI_OSPF_ADJ_EP, MOCK_ACI_L3EXT_RS_ECTX,
+                MOCK_ACI_TENANTS, MOCK_ACI_VRFS, MOCK_ACI_BDS,
+                MOCK_ACI_APP_PROFILES, MOCK_ACI_CONTRACTS, MOCK_ACI_FILTERS,
+                MOCK_ACI_FV_RSPROV, MOCK_ACI_FV_RSCONS, MOCK_ACI_ACCESS_PG,
+                MOCK_ACI_BUNDLE_PG, MOCK_ACI_AAEPS, MOCK_ACI_PHYS_DOMAINS,
+                MOCK_ACI_L3_DOMAINS, MOCK_ACI_VMM_DOMAINS, MOCK_ACI_VLAN_POOLS,
+                MOCK_ACI_CDP_POLS, MOCK_ACI_LLDP_POLS, MOCK_ACI_LACP_POLS,
+                MOCK_ACI_LINK_POLS, MOCK_ACI_MCP_POLS, MOCK_ACI_STP_POLS,
+                MOCK_ACI_L2_POLS, MOCK_ACI_STORMCTRL_POLS, MOCK_ACI_ACCESS_TOPOLOGY
             )
             if "fabricNode" in path: return {"imdata": MOCK_ACI_NODES}
+            if "fvTenant" in path and "fvCtx" not in path and "fvAEPg" not in path: return {"imdata": MOCK_ACI_TENANTS}
+            if "fvCtx" in path: return {"imdata": MOCK_ACI_VRFS}
+            if "fvBD" in path: return {"imdata": MOCK_ACI_BDS}
+            if "fvAp" in path: return {"imdata": MOCK_ACI_APP_PROFILES}
+            if "vzBrCP" in path:
+                if "api/node/mo/" in path:
+                    # Single contract lookup
+                    dn_part = path.split(".json")[0].split("api/node/mo/")[1]
+                    from urllib.parse import unquote
+                    target_dn = unquote(dn_part)
+                    match = [c for c in MOCK_ACI_CONTRACTS if c["vzBrCP"]["attributes"]["dn"] == target_dn]
+                    return {"imdata": match}
+                return {"imdata": MOCK_ACI_CONTRACTS}
+            if "vzFilter" in path: return {"imdata": MOCK_ACI_FILTERS}
+            if "fvRsProv" in path: return {"imdata": MOCK_ACI_FV_RSPROV}
+            if "fvRsCons" in path: return {"imdata": MOCK_ACI_FV_RSCONS}
+            if "infraAccPortGrp" in path:
+                if "api/node/mo/" in path:
+                    dn_part = path.split(".json")[0].split("api/node/mo/")[1]
+                    from urllib.parse import unquote
+                    target_dn = unquote(dn_part)
+                    match = [p for p in MOCK_ACI_ACCESS_PG if p["infraAccPortGrp"]["attributes"]["dn"] == target_dn]
+                    return {"imdata": match}
+                return {"imdata": MOCK_ACI_ACCESS_PG}
+            if "infraAccBndlGrp" in path:
+                if "api/node/mo/" in path:
+                    dn_part = path.split(".json")[0].split("api/node/mo/")[1]
+                    from urllib.parse import unquote
+                    target_dn = unquote(dn_part)
+                    match = [p for p in MOCK_ACI_BUNDLE_PG if p["infraAccBndlGrp"]["attributes"]["dn"] == target_dn]
+                    return {"imdata": match}
+                return {"imdata": MOCK_ACI_BUNDLE_PG}
+            if "infraAttEntityP" in path: return {"imdata": MOCK_ACI_AAEPS}
+            if "physDomP" in path: return {"imdata": MOCK_ACI_PHYS_DOMAINS}
+            if "l3extDomP" in path: return {"imdata": MOCK_ACI_L3_DOMAINS}
+            if "vmmDomP" in path: return {"imdata": MOCK_ACI_VMM_DOMAINS}
+            if "fvnsVlanInstP" in path: return {"imdata": MOCK_ACI_VLAN_POOLS}
+            if "cdpIfPol" in path: return {"imdata": MOCK_ACI_CDP_POLS}
+            if "lldpIfPol" in path: return {"imdata": MOCK_ACI_LLDP_POLS}
+            if "lacpLagPol" in path: return {"imdata": MOCK_ACI_LACP_POLS}
+            if "fabricHIfPol" in path: return {"imdata": MOCK_ACI_LINK_POLS}
+            if "mcpIfPol" in path: return {"imdata": MOCK_ACI_MCP_POLS}
+            if "stpIfPol" in path: return {"imdata": MOCK_ACI_STP_POLS}
+            if "l2IfPol" in path: return {"imdata": MOCK_ACI_L2_POLS}
+            if "stormctrlIfPol" in path: return {"imdata": MOCK_ACI_STORMCTRL_POLS}
+            if "uni/infra.json" in path and "infraNodeP" in path: return {"imdata": MOCK_ACI_ACCESS_TOPOLOGY}
+
             if "l3extOut" in path:
                 if "rsp-subtree=full" in path:
                     return {
@@ -395,6 +450,136 @@ class ACIClient:
         """Fetch pod list. The ?rsp-subtree-include=health modifier 400s on this
         APIC version, so we skip it; per-pod health is unavailable."""
         return self.get("api/node/class/fabricPod.json")
+
+    # ── Tenant Model ──────────────────────────────────────────────────────────
+
+    def get_tenants(self):
+        """List all fvTenant objects."""
+        return self.get("api/node/class/fvTenant.json", action="FETCH_ACI_TENANTS")
+
+    def get_vrfs(self, tenant=None):
+        """List VRFs (fvCtx). Optionally scoped to a tenant."""
+        if tenant:
+            path = f"api/node/mo/uni/tn-{_quote_dn(tenant)}.json?query-target=subtree&target-subtree-class=fvCtx"
+        else:
+            path = "api/node/class/fvCtx.json"
+        return self.get(path, action="FETCH_ACI_VRFS")
+
+    def get_bridge_domains(self):
+        """List Bridge Domains with subnets, VRF binding, and L3Out bindings."""
+        path = ("api/node/class/fvBD.json"
+                "?rsp-subtree=children&rsp-subtree-class=fvSubnet,fvRsCtx,fvRsBDToOut")
+        return self.get(path, action="FETCH_ACI_BDS")
+
+    def get_app_profiles(self):
+        """List Application Profiles with their EPG count via subtree count."""
+        path = "api/node/class/fvAp.json?rsp-subtree-include=count"
+        return self.get(path, action="FETCH_ACI_APP_PROFILES")
+
+    def get_contracts(self):
+        """List Contracts with full subject+filter tree.
+
+        rsp-subtree=full pulls vzSubj children, including vzRsSubjFiltAtt
+        (filter binding). We separately resolve filter contents via
+        get_filters() — APIC won't follow the relation cross-MO.
+        """
+        path = "api/node/class/vzBrCP.json?rsp-subtree=full"
+        return self.get(path, action="FETCH_ACI_CONTRACTS")
+
+    def get_filters(self):
+        """List all Filters with their entries (vzEntry) inline."""
+        path = "api/node/class/vzFilter.json?rsp-subtree=children&rsp-subtree-class=vzEntry"
+        return self.get(path, action="FETCH_ACI_FILTERS")
+
+    def get_epg_relations(self):
+        """Fetch every fvRsProv + fvRsCons in the fabric so we can build a
+        contract-to-EPG (provider/consumer) map without per-EPG fan-out.
+
+        Each fvRsProv/fvRsCons attribute has:
+          dn: .../tn-X/ap-Y/epg-Z/rsprov-W   (or rscons-W)
+          tDn: uni/tn-X/brc-W                (the contract being prov'd/cons'd)
+          tnVzBrCPName: W
+        """
+        prov = self.get("api/node/class/fvRsProv.json", action="FETCH_ACI_EPG_PROV")
+        cons = self.get("api/node/class/fvRsCons.json", action="FETCH_ACI_EPG_CONS")
+        return {"prov": prov, "cons": cons}
+
+    def get_epg_detail(self, dn):
+        """Drill-down for a single EPG: provided/consumed contracts,
+        static path bindings, domain associations."""
+        classes = "fvRsProv,fvRsCons,fvRsPathAtt,fvRsDomAtt,fvSubnet"
+        path = f"api/node/mo/{_quote_dn(dn)}.json?query-target=subtree&target-subtree-class={classes}"
+        return self.get(path, action="FETCH_ACI_EPG_DETAIL")
+
+    # ── Access Model ──────────────────────────────────────────────────────────
+
+    def get_access_policy_groups(self):
+        """List both Access (single-port) and Bundle (PC/vPC) policy groups,
+        plus their child relation MOs in one call so the response can be
+        flattened by the router without further fan-out."""
+        children = ("infraRsAttEntP,infraRsCdpIfPol,infraRsLldpIfPol,"
+                    "infraRsLacpPol,infraRsHIfPol,infraRsMcpIfPol,"
+                    "infraRsStpIfPol,infraRsL2IfPol,infraRsStormctrlIfPol")
+        access = self.get(
+            f"api/node/class/infraAccPortGrp.json?rsp-subtree=children&rsp-subtree-class={children}",
+            action="FETCH_ACI_ACCESS_PG")
+        bundle = self.get(
+            f"api/node/class/infraAccBndlGrp.json?rsp-subtree=children&rsp-subtree-class={children}",
+            action="FETCH_ACI_BUNDLE_PG")
+        return {"access": access, "bundle": bundle}
+
+    def get_aaeps(self):
+        """List AAEPs (infraAttEntityP) with domain links and per-EPG
+        static-bind generic config."""
+        path = ("api/node/class/infraAttEntityP.json"
+                "?rsp-subtree=children&rsp-subtree-class=infraRsDomP,infraGeneric")
+        return self.get(path, action="FETCH_ACI_AAEPS")
+
+    def get_physical_domains(self):
+        return self.get(
+            "api/node/class/physDomP.json?rsp-subtree=children&rsp-subtree-class=infraRsVlanNs",
+            action="FETCH_ACI_PHYS_DOMAINS")
+
+    def get_l3_domains(self):
+        return self.get(
+            "api/node/class/l3extDomP.json?rsp-subtree=children&rsp-subtree-class=infraRsVlanNs",
+            action="FETCH_ACI_L3_DOMAINS")
+
+    def get_vmm_domains(self):
+        return self.get(
+            "api/node/class/vmmDomP.json?rsp-subtree=children&rsp-subtree-class=infraRsVlanNs",
+            action="FETCH_ACI_VMM_DOMAINS")
+
+    def get_vlan_pools(self):
+        """fvnsVlanInstP with their fvnsEncapBlk children (the actual ranges)."""
+        path = ("api/node/class/fvnsVlanInstP.json"
+                "?rsp-subtree=children&rsp-subtree-class=fvnsEncapBlk")
+        return self.get(path, action="FETCH_ACI_VLAN_POOLS")
+
+    def get_interface_policy_class(self, cls):
+        """Generic fetch for one interface-policy class. cls in:
+        cdpIfPol, lldpIfPol, lacpLagPol, fabricHIfPol, mcpIfPol,
+        stpIfPol, l2IfPol, stormctrlIfPol.
+        """
+        return self.get(f"api/node/class/{cls}.json", action=f"FETCH_ACI_{cls.upper()}")
+
+    def get_access_topology(self):
+        """Pull every MO needed to build the policy-group → (node, port) map
+        in one fan-out call. The router joins these.
+
+        - infraNodeP        (Switch Profile)
+        - infraLeafS        (leaf selector, with fromCard/fromPort)
+        - infraNodeBlk      (range of node IDs)
+        - infraRsAccPortP   (Switch Profile → Interface Profile)
+        - infraAccPortP     (Interface Profile)
+        - infraHPortS       (port selector)
+        - infraPortBlk      (range of port IDs)
+        - infraRsAccBaseGrp (Port selector → Policy Group)
+        """
+        classes = ("infraNodeP,infraLeafS,infraNodeBlk,infraRsAccPortP,"
+                   "infraAccPortP,infraHPortS,infraPortBlk,infraRsAccBaseGrp")
+        path = f"api/node/mo/uni/infra.json?query-target=subtree&target-subtree-class={classes}"
+        return self.get(path, action="FETCH_ACI_ACCESS_TOPOLOGY")
 
 def connectivity_check(client: ACIClient) -> bool:
     """Verify APIC is reachable using the existing session token."""

@@ -40,9 +40,14 @@
                             </div>
                         </td>
                         <td>
-                            <button class="btn btn-outline-primary btn-sm" hx-get="/api/aci/traffic/epg-health?dn={{ e.dn | urlencode }}" hx-target="#aci-results" hx-indicator="#aci-loading">
-                                <i class=" ph ph-chart-line"></i> Stats
-                            </button>
+                            <div class="btn-group">
+                                <button class="btn btn-xs btn-outline-navy" hx-get="/api/aci/epgs/detail?dn={{ e.dn | urlencode }}" hx-target="#aci-results" hx-indicator="#aci-loading" title="EPG details">
+                                    <i class="ph ph-info"></i>
+                                </button>
+                                <button class="btn btn-xs btn-outline-primary" hx-get="/api/aci/traffic/epg-health?dn={{ e.dn | urlencode }}" hx-target="#aci-results" hx-indicator="#aci-loading" title="View health stats">
+                                    <i class=" ph ph-chart-line"></i>
+                                </button>
+                            </div>
                         </td>
                     </tr>
                     {% endfor %}

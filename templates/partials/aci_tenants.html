@@ -1,0 +1,63 @@
+<div class="card shadow-sm border-0 animate-fade-in">
+    <script id="aci-tenants-raw" type="application/json">{{ raw_json|tojson }}</script>
+    <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <div class="d-flex align-items-center gap-3">
+            <span class="fw-bold text-navy"><i class="ph ph-buildings me-1"></i>Tenants</span>
+            <button class="btn btn-xs btn-outline-navy" onclick="showRawData('aci-tenants-raw')">
+                <i class="ph ph-code me-1"></i>Raw
+            </button>
+        </div>
+        <span class="badge bg-secondary">{{ items|length }} Tenants</span>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive sticky-header" style="max-height: calc(100vh - 250px);">
+            <table class="table table-hover align-middle mb-0 data-table">
+                <thead>
+                    <tr>
+                        {% if items[0] and items[0].fabric_label %}<th class="ps-4">Fabric</th>{% endif %}
+                        <th class="{% if not (items[0] and items[0].fabric_label) %}ps-4{% endif %}">Name</th>
+                        <th>VRFs</th>
+                        <th>BDs</th>
+                        <th>App Profiles</th>
+                        <th>EPGs</th>
+                        <th>Contracts</th>
+                        <th>Filters</th>
+                        <th>Description</th>
+                        <th class="text-end pe-4" data-no-sort data-no-filter>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for t in items %}
+                    <tr>
+                        {% if t.fabric_label %}<td class="ps-4"><span class="badge bg-light text-navy border">{{ t.fabric_label }}</span></td>{% endif %}
+                        <td class="{% if not t.fabric_label %}ps-4{% endif %} fw-bold text-navy">{{ t.name }}</td>
+                        <td><span class="badge bg-light text-muted border">{{ t.vrf_count }}</span></td>
+                        <td><span class="badge bg-light text-muted border">{{ t.bd_count }}</span></td>
+                        <td><span class="badge bg-light text-muted border">{{ t.ap_count }}</span></td>
+                        <td><span class="badge bg-light text-muted border">{{ t.epg_count }}</span></td>
+                        <td><span class="badge bg-light text-muted border">{{ t.contract_count }}</span></td>
+                        <td><span class="badge bg-light text-muted border">{{ t.filter_count }}</span></td>
+                        <td class="small text-muted text-truncate" style="max-width: 250px;" title="{{ t.descr }}">{{ t.descr }}</td>
+                        <td class="text-end pe-4">
+                            <button class="btn btn-xs btn-outline-navy"
+                                    hx-get="/api/aci/tenants/{{ t.name }}/detail"
+                                    hx-vals='js:{fabric: "{{ t.fabric_id if t.fabric_id else "" }}" || window.currentFabric}'
+                                    hx-target="#aci-results"
+                                    hx-indicator="#aci-loading"
+                                    title="Tenant details">
+                                <i class="ph ph-info"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% if not items %}
+        <div class="p-5 text-center text-muted">
+            <i class="ph ph-empty display-4 d-block mb-3"></i>
+            <div>No tenants found on this fabric.</div>
+        </div>
+        {% endif %}
+    </div>
+</div>
