@@ -149,6 +149,7 @@ class IPAMEngine:
             "aci":             self._discover_aci,
             "dnac":            self._discover_dnac,
             "dnac_summaries":  self._discover_dnac_summaries,
+            "dnac_pools":      self._discover_dnac_pools,
             "nexus":           self._discover_nexus,
             "panorama":        self._discover_panorama,
         }
@@ -427,6 +428,87 @@ class IPAMEngine:
         except Exception as e:
             logger.error(f"DNAC summary discovery failed: {e}")
 
+    async def _discover_dnac_pools(self, session, loop):
+        """Pull DNAC's configured IP pools — the authoritative IPAM allocations.
+        Two endpoints:
+          - global-pool         : DNAC-wide pools (both v4 and v6, e.g. 10/8 or 2001:db8::/32)
+          - reserve-ip-subpool  : per-site reserved subpools carved from globals;
+                                  this is where the real per-site IPv6 allocations live.
+        """
+        try:
+            from cache import cache, TTL_DNAC_IP_POOLS
+            import clients.dnac as dc
+
+            dnac = auth_module.get_dnac_for_session(session) if session else None
+
+            def _loader_or_empty(loader):
+                return (lambda: loader()) if dnac else (lambda: None)
+
+            global_pools = await loop.run_in_executor(
+                None, run_with_context(cache.get_or_set),
+                "dnac_global_pools", _loader_or_empty(lambda: dc.get_global_ip_pools(dnac)),
+                TTL_DNAC_IP_POOLS
+            ) or []
+
+            subpools = await loop.run_in_executor(
+                None, run_with_context(cache.get_or_set),
+                "dnac_reserve_subpools", _loader_or_empty(lambda: dc.get_reserve_ip_subpools(dnac)),
+                TTL_DNAC_IP_POOLS
+            ) or []
+
+            # Global pools — single CIDR per row, no site attribution.
+            for p in global_pools:
+                cidr_str = p.get("ipPoolCidr") or p.get("cidr")
+                if not cidr_str:
+                    continue
+                try:
+                    net = netaddr.IPNetwork(cidr_str)
+                except Exception:
+                    continue
+                if self.is_excluded(net):
+                    continue
+
+                node = IPAMNode(str(net.cidr), source="DNAC-Pool")
+                node.display_name = f"Global Pool: {p.get('ipPoolName') or p.get('groupName') or 'Unnamed'}"
+                node.site = "Global"
+                node.interface_type = "aggregate"
+                node.role = "aggregate"
+                node.logical_container = "global-pool"
+                self.subnets.append(node)
+
+            # Subpools — each entry has a siteName and an inner ipPools list with
+            # one or two pools (typically v4 + v6 dual-stack).
+            for sp in subpools:
+                site_name = sp.get("siteName") or sp.get("groupName") or "Unknown"
+                group_name = sp.get("groupName") or ""
+                inner_pools = sp.get("ipPools") or []
+                if not isinstance(inner_pools, list):
+                    inner_pools = [inner_pools]
+
+                for ip in inner_pools:
+                    cidr_str = ip.get("ipPoolCidr") or ip.get("cidr")
+                    if not cidr_str:
+                        continue
+                    try:
+                        net = netaddr.IPNetwork(cidr_str)
+                    except Exception:
+                        continue
+                    if self.is_excluded(net):
+                        continue
+
+                    pool_name = ip.get("ipPoolName") or group_name or "Reserved Pool"
+                    is_v6 = bool(ip.get("ipv6")) or net.version == 6
+
+                    node = IPAMNode(str(net.cidr), source="DNAC-Pool")
+                    node.display_name = f"Site Pool ({'v6' if is_v6 else 'v4'}): {pool_name}"
+                    node.site = site_name
+                    node.interface_type = "aggregate"
+                    node.role = "aggregate"
+                    node.logical_container = f"site-pool:{group_name}" if group_name else "site-pool"
+                    self.subnets.append(node)
+        except Exception as e:
+            logger.error(f"DNAC IP pool discovery failed: {e}")
+
     async def _discover_panorama(self, session, loop):
         try:
             from cache import cache
@@ -506,7 +588,7 @@ class IPAMEngine:
 
     def build_tree(self):
         """Construct a recursive hierarchy from the flat subnets list."""
-        priority = ["DNAC-Config", "ACI", "DNAC", "Nexus", "Panorama"]
+        priority = ["DNAC-Pool", "DNAC-Config", "ACI", "DNAC", "Nexus", "Panorama"]
         unique_nets: Dict[str, IPAMNode] = {}
         tunnel_endpoints: Dict[str, List[IPAMNode]] = {}
 

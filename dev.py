@@ -148,6 +148,38 @@ if len(_pair) == 2:
     _dnac_iface(_pair[0]["id"], _pair[0]["hostname"], "Tunnel20", "10.99.4.1", "255.255.255.252", desc="P2P to BOS")
     _dnac_iface(_pair[1]["id"], _pair[1]["hostname"], "Tunnel20", "10.99.4.2", "255.255.255.252", desc="P2P to DCA")
 
+# ── Mock DNAC IP Pools ────────────────────────────────────────────────────────
+# Mirrors what /dna/intent/api/v1/global-pool and /reserve-ip-subpool return.
+# Provides authoritative dual-stack site allocations for IPAM (especially IPv6,
+# which the interface inventory endpoint typically doesn't ship).
+MOCK_DNAC_GLOBAL_POOLS = [
+    {"id": "gp-v4", "ipPoolName": "TSA-Global-v4", "ipPoolCidr": "10.0.0.0/8", "ipv6": False},
+    {"id": "gp-v6", "ipPoolName": "TSA-Global-v6", "ipPoolCidr": "2001:db8::/32", "ipv6": True},
+]
+
+MOCK_DNAC_RESERVE_SUBPOOLS = []
+for _site, _prefix in _SITES:
+    _site_octet = int(_prefix.split(".")[1])  # "10.10" -> 10
+    MOCK_DNAC_RESERVE_SUBPOOLS.append({
+        "id": f"sp-{_site}",
+        "groupName": f"{_site}-Allocation",
+        "siteName": _site,
+        "ipPools": [
+            {
+                "ipPoolName": f"{_site}-v4",
+                "ipPoolCidr": f"{_prefix}.0.0/16",
+                "ipv6": False,
+                "gateway": f"{_prefix}.0.1",
+            },
+            {
+                "ipPoolName": f"{_site}-v6",
+                "ipPoolCidr": f"2001:db8:{_site_octet:x}::/48",
+                "ipv6": True,
+                "gateway": f"2001:db8:{_site_octet:x}::1",
+            },
+        ],
+    })
+
 MOCK_NEXUS_DEVICES = [
     {
         "id": f"nexus_N9K-DCA-{i+1:02d}",
@@ -1349,6 +1381,7 @@ def _build_ipam_tree_from_mocks() -> dict:
             engine = IPAMEngine()
             loop.run_until_complete(engine._discover_dnac(None, loop))
             loop.run_until_complete(engine._discover_dnac_summaries(None, loop))
+            loop.run_until_complete(engine._discover_dnac_pools(None, loop))
             loop.run_until_complete(engine._discover_nexus(None, None))
             loop.run_until_complete(engine._discover_panorama(None, None))
             engine.build_tree()
@@ -1459,6 +1492,11 @@ def seed_cache(cache) -> None:
         {dev["id"]: MOCK_CONFIGS[dev["id"]] for dev in MOCK_DEVICES if dev.get("family") == "Routers"},
         LONG,
     )
+
+    # DNAC IP pools — global and per-site reserved subpools. Where the
+    # authoritative IPv6 allocations actually live.
+    cache.set("dnac_global_pools",     MOCK_DNAC_GLOBAL_POOLS,     LONG)
+    cache.set("dnac_reserve_subpools", MOCK_DNAC_RESERVE_SUBPOOLS, LONG)
 
     # IPAM — compute the tree from the same source caches the live engine
     # consumes, so initial render matches what Refresh Discovery would produce.

@@ -152,6 +152,26 @@ async def debug_ipam_sources(session: SessionEntry = Depends(require_auth)):
     sites   = cache.get("sites") or []
     sitemap = cache.get("device_site_map") or {}
     dnac_ifaces = cache.get("dnac_interfaces") or []
+    dnac_global_pools = cache.get("dnac_global_pools") or []
+    dnac_subpools = cache.get("dnac_reserve_subpools") or []
+
+    # Count v4 vs v6 pools so the user can immediately see whether IPv6 pools exist.
+    pool_v4 = pool_v6 = 0
+    pool_samples: list = []
+    for p in dnac_global_pools:
+        cidr = p.get("ipPoolCidr") or p.get("cidr") or ""
+        if ":" in cidr: pool_v6 += 1
+        elif "." in cidr: pool_v4 += 1
+        if len(pool_samples) < 5:
+            pool_samples.append({"site": "GLOBAL", "name": p.get("ipPoolName"), "cidr": cidr, "v6": ":" in cidr})
+    for sp in dnac_subpools:
+        site = sp.get("siteName") or sp.get("groupName") or "?"
+        for ip in (sp.get("ipPools") or []):
+            cidr = ip.get("ipPoolCidr") or ip.get("cidr") or ""
+            if ":" in cidr: pool_v6 += 1
+            elif "." in cidr: pool_v4 += 1
+            if len(pool_samples) < 10:
+                pool_samples.append({"site": site, "name": ip.get("ipPoolName"), "cidr": cidr, "v6": ":" in cidr})
 
     # Inventory IPv4/IPv6 coverage on the DNAC interfaces and dump a few raw
     # samples that have IPv6-shaped fields so we can see exactly what schema
@@ -217,6 +237,11 @@ async def debug_ipam_sources(session: SessionEntry = Depends(require_auth)):
             "interfaces_with_ipv6_field": dnac_v6_count,
             "ipv6_field_names": dnac_v6_field_names,
             "ipv6_samples": dnac_v6_samples,
+            "global_pools_cached": len(dnac_global_pools),
+            "reserve_subpools_cached": len(dnac_subpools),
+            "pool_v4_count": pool_v4,
+            "pool_v6_count": pool_v6,
+            "pool_samples": pool_samples,
         },
         "aci_nodes_cached": len(aci_nodes.get("imdata", [])),
         "panorama": {

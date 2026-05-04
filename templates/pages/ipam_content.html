@@ -24,6 +24,7 @@
             <li><a class="dropdown-item" href="#" onclick="runRefresh('aci')">Refresh ACI Only</a></li>
             <li><a class="dropdown-item" href="#" onclick="runRefresh('dnac')">Refresh DNAC Only</a></li>
             <li><a class="dropdown-item" href="#" onclick="runRefresh('dnac_summaries')">Refresh DNAC Summaries Only</a></li>
+            <li><a class="dropdown-item" href="#" onclick="runRefresh('dnac_pools')">Refresh DNAC IP Pools Only</a></li>
             <li><a class="dropdown-item" href="#" onclick="runRefresh('nexus')">Refresh Nexus Only</a></li>
             <li><a class="dropdown-item" href="#" onclick="runRefresh('panorama')">Refresh Panorama Only</a></li>
           </ul>
@@ -661,6 +662,19 @@
                 } else {
                     html += '<div class="text-muted ms-2">  No interfaces have ipv6AddressList / ipv6Address / similar fields populated.</div>';
                 }
+            }
+
+            // DNAC IP pools
+            html += `<div class="fw-bold mt-3 mb-1">DNAC IP Pools (global + reserve-subpool):</div>`;
+            html += `<div class="text-info">  ${dn.global_pools_cached || 0} global pools, ${dn.reserve_subpools_cached || 0} reserved subpools cached</div>`;
+            html += `<div class="${(dn.pool_v4_count || 0) > 0 ? 'text-success' : 'text-warning'}">  ${dn.pool_v4_count || 0} IPv4 pools</div>`;
+            html += `<div class="${(dn.pool_v6_count || 0) > 0 ? 'text-success' : 'text-warning'}">  ${dn.pool_v6_count || 0} IPv6 pools</div>`;
+            if ((dn.pool_v4_count || 0) === 0 && (dn.pool_v6_count || 0) === 0 && (dn.global_pools_cached || 0) === 0) {
+                html += '<div class="text-warning ms-2">  No pools cached yet — click "Refresh DNAC IP Pools Only" to fetch.</div>';
+            }
+            for (const p of (dn.pool_samples || [])) {
+                const cls = p.v6 ? 'text-info' : 'text-muted';
+                html += `<div class="${cls} ms-2">  [${p.v6 ? 'v6' : 'v4'}] ${esc(p.site)} / ${esc(p.name || '')}: ${esc(p.cidr)}</div>`;
             }
 
             // Panorama

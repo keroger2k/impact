@@ -141,6 +141,57 @@ def get_managed_ips(dnac) -> set:
     return {d.get("managementIpAddress") for d in get_all_devices(dnac) if d.get("managementIpAddress")}
 
 
+def get_global_ip_pools(dnac) -> list[dict]:
+    """Return every DNAC global IP pool (both IPv4 and IPv6).
+    Pages through /dna/intent/api/v1/global-pool.
+    """
+    pools, limit, offset = [], 25, 1
+    while True:
+        try:
+            page = dnac.network_settings.get_global_pool(offset=offset, limit=limit)
+            items = page.response if hasattr(page, "response") else page
+            if not items:
+                break
+            pools.extend([_dictify(p) for p in items])
+            if len(items) < limit:
+                break
+            offset += limit
+        except Exception as e:
+            logger.error(f"Global pool fetch failed at offset {offset}: {e}")
+            if not pools:
+                raise
+            break
+    return pools
+
+
+def get_reserve_ip_subpools(dnac) -> list[dict]:
+    """Return every DNAC site-reserved IP subpool (carved from global pools,
+    attributed to a specific site). Each entry typically contains an inner
+    `ipPools` list with one or two pools (IPv4 and/or IPv6).
+    Pages through /dna/intent/api/v1/reserve-ip-subpool.
+    """
+    pools, limit, offset = [], 500, 1
+    while True:
+        try:
+            # ignoreInheritedGroups=false returns all subpools across sites.
+            page = dnac.network_settings.get_reserve_ip_subpool(
+                offset=offset, limit=limit, ignore_inherited_groups="false"
+            )
+            items = page.response if hasattr(page, "response") else page
+            if not items:
+                break
+            pools.extend([_dictify(p) for p in items])
+            if len(items) < limit:
+                break
+            offset += limit
+        except Exception as e:
+            logger.error(f"Reserve subpool fetch failed at offset {offset}: {e}")
+            if not pools:
+                raise
+            break
+    return pools
+
+
 def find_best_site_match(site_cache: list, term: str) -> tuple[str | None, str | None]:
     for site in site_cache:
         if term.lower() in site["name"].lower():
