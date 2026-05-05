@@ -1,51 +1,282 @@
 import csv
 import io
-from typing import List
+import netaddr
+from typing import List, Dict, Any, Optional
 
-def generate_solarwinds_csv(nodes: List[dict]) -> str:
+def generate_solarwinds_csv(tree_data: Dict[str, List[Dict]]) -> str:
     """
-    Generates a SolarWinds-compatible CSV for Subnet Import with extended fields.
+    Generates a SolarWinds-compatible CSV for Subnet Import matching Phase 2 requirements.
+
+    Required CSV column order:
+    1. Id (sequential int starting at 1)
+    2. Address (IP only, no /prefix; blank for Group rows)
+    3. CIDR (just the prefix length number; blank for Group rows)
+    4. Type (one of: Group, Supernet, Subnet, GlobalPrefix, PrefixAggregate, IPv6Subnet)
+    5. Display Name
+    6. ParentId (Id of parent row, 0 for top-level)
+    7. Group Description
+    8. Node Expunge Interval
+    9. Retain User Data (False)
+    10. Transient Period
+    11. Disable Auto Scanning (False)
+    12. Disable Neighbor Scanning (True for Group/Supernet/GlobalPrefix/PrefixAggregate; False for Subnet/IPv6Subnet)
+    13. VLAN
+    14. Location
+    15. Scan Interval
+    16. Neighbor Scan Address
+    17. Neighbor Scan Interval
     """
+    # 1. Pre-scan for all "real" CIDRs (source != "Aggregate") to support host-route rollup dedupe
+    real_cidrs = set()
+    def scan_real(nodes):
+        for n in nodes:
+            if n.get("source") != "Aggregate":
+                real_cidrs.add(n.get("cidr"))
+            scan_real(n.get("children", []))
+
+    scan_real(tree_data.get("ipv4", []))
+    scan_real(tree_data.get("ipv6", []))
+
+    emitted_rows = []
+    next_id = 1
+
+    # Define Roots
+    # Id=1: IPv4 Group, Id=2: IPv6 Group
+    emitted_rows.append({
+        "Id": 1, "ParentId": 0, "Type": "Group", "Display Name": "IPv4 Group",
+        "Address": "", "CIDR": "", "node": {}, "is_synthesized": False, "is_v6": False, "network": None
+    })
+    emitted_rows.append({
+        "Id": 2, "ParentId": 0, "Type": "Group", "Display Name": "IPv6 Group",
+        "Address": "", "CIDR": "", "node": {}, "is_synthesized": False, "is_v6": True, "network": None
+    })
+    next_id = 3
+
+    ipv4_group_id = 1
+    ipv6_group_id = 2
+
+    synthesized_rollups = {} # (parent_id, rollup_cidr) -> row_id
+    absorbed_nodes = {} # row_id -> list of node dicts
+
+    def process_tree(nodes, current_parent_id, is_v6):
+        nonlocal next_id
+        for n in nodes:
+            cidr = n.get("cidr", "")
+            source = n.get("source", "Unknown")
+            role = n.get("role", "subnet")
+
+            try:
+                # 8. Skip nodes with unparseable CIDR (but recurse children)
+                network = netaddr.IPNetwork(cidr)
+            except:
+                process_tree(n.get("children", []), current_parent_id, is_v6)
+                continue
+
+            # 5. Skip Aggregate source (but recurse children)
+            if source == "Aggregate":
+                process_tree(n.get("children", []), current_parent_id, is_v6)
+                continue
+
+            # 6. Skip synthetic groups (loopback_group, host_route_group)
+            if role in ("loopback_group", "host_route_group"):
+                process_tree(n.get("children", []), current_parent_id, is_v6)
+                continue
+
+            # 6. Skip absorbed roles (endpoint, vip) - they don't get their own row
+            if role in ("endpoint", "vip"):
+                absorbed_nodes.setdefault(current_parent_id, []).append(n)
+                continue
+
+            # 3. Host-route rollup logic
+            is_host_route = network.prefixlen == (128 if is_v6 else 32)
+            if is_host_route:
+                rollup_len = 64 if is_v6 else 24
+                rollup_net = network.supernet(rollup_len)[0]
+                rollup_cidr = str(rollup_net.cidr)
+
+                # If a real node with this rollup CIDR is in the tree, skip the host row (absorbed)
+                if rollup_cidr in real_cidrs:
+                    absorbed_nodes.setdefault(current_parent_id, []).append(n)
+                    continue
+
+                # If we've already synthesized this rollup for this parent, skip (absorbed)
+                key = (current_parent_id, rollup_cidr)
+                if key in synthesized_rollups:
+                    row_id = synthesized_rollups[key]
+                    absorbed_nodes.setdefault(row_id, []).append(n)
+                    continue
+
+                # Synthesize a new rollup row at /24 or /64
+                row_id = next_id
+                next_id += 1
+                synthesized_rollups[key] = row_id
+                absorbed_nodes.setdefault(row_id, []).append(n)
+
+                emitted_rows.append({
+                    "Id": row_id,
+                    "ParentId": current_parent_id,
+                    "Address": str(rollup_net.ip),
+                    "CIDR": str(rollup_net.prefixlen),
+                    "node": n, # Use this host node as template for metadata
+                    "is_synthesized": True,
+                    "is_v6": is_v6,
+                    "network": rollup_net
+                })
+                continue
+
+            # Regular emitted node (Subnet/Supernet/etc.)
+            row_id = next_id
+            next_id += 1
+
+            emitted_rows.append({
+                "Id": row_id,
+                "ParentId": current_parent_id,
+                "Address": str(network.ip),
+                "CIDR": str(network.prefixlen),
+                "node": n,
+                "is_synthesized": False,
+                "is_v6": is_v6,
+                "network": network
+            })
+
+            # 7. Tunnel groups: one row, don't recurse into children (absorbed instead)
+            if role == "tunnel_group":
+                for c in n.get("children", []):
+                    absorbed_nodes.setdefault(row_id, []).append(c)
+            else:
+                process_tree(n.get("children", []), row_id, is_v6)
+
+    # Walk both trees starting from respective roots
+    process_tree(tree_data.get("ipv4", []), ipv4_group_id, False)
+    process_tree(tree_data.get("ipv6", []), ipv6_group_id, True)
+
+    # Secondary pass to determine Types and build final field values
+    has_children_ids = {row["ParentId"] for row in emitted_rows}
+
     output = io.StringIO()
-    # Fields: cidr, host_ip, interface_type, interface_name, vlan_id, role, site, device, source, conflicts, notes
-    # We also keep some SolarWinds compatible names for backward compatibility if needed,
-    # but the prompt specifically asked for this list.
     fieldnames = [
-        "cidr", "host_ip", "interface_type", "interface_name",
-        "vlan_id", "role", "site", "device", "source", "conflicts", "notes"
+        "Id", "Address", "CIDR", "Type", "Display Name", "ParentId",
+        "Group Description", "Node Expunge Interval", "Retain User Data",
+        "Transient Period", "Disable Auto Scanning", "Disable Neighbor Scanning",
+        "VLAN", "Location", "Scan Interval", "Neighbor Scan Address", "Neighbor Scan Interval"
     ]
     writer = csv.DictWriter(output, fieldnames=fieldnames)
     writer.writeheader()
 
-    def flatten(node_list):
-        for node in node_list:
-            # Skip container rows for tunnel_group; we only want the endpoints
-            if node.get("role") == "tunnel_group":
-                if node.get("children"):
-                    flatten(node["children"])
-                continue
+    for row in emitted_rows:
+        row_id = row["Id"]
 
-            # Skip loopback_group and host_route_group as they are synthetic
-            if node.get("role") in ["loopback_group", "host_route_group"]:
-                if node.get("children"):
-                    flatten(node["children"])
-                continue
-
+        # Handle Root Groups
+        if row.get("Type") == "Group":
             writer.writerow({
-                "cidr": node.get("cidr", ""),
-                "host_ip": node.get("host_ip", ""),
-                "interface_type": node.get("interface_type", ""),
-                "interface_name": node.get("interface_name", ""),
-                "vlan_id": node.get("vlan_id", ""),
-                "role": node.get("role", ""),
-                "site": node.get("site", ""),
-                "device": node.get("device", ""),
-                "source": node.get("source", ""),
-                "conflicts": "; ".join(node.get("conflicts", [])) if isinstance(node.get("conflicts"), list) else "",
-                "notes": "; ".join(node.get("overlaps", [])) if isinstance(node.get("overlaps"), list) else ""
+                "Id": row_id,
+                "Address": "",
+                "CIDR": "",
+                "Type": "Group",
+                "Display Name": row["Display Name"],
+                "ParentId": 0,
+                "Node Expunge Interval": "",
+                "Retain User Data": "False",
+                "Transient Period": "",
+                "Disable Auto Scanning": "False",
+                "Disable Neighbor Scanning": "True",
+                "VLAN": "", "Location": "", "Scan Interval": "",
+                "Neighbor Scan Address": "", "Neighbor Scan Interval": ""
             })
-            if node.get("children"):
-                flatten(node["children"])
+            continue
 
-    flatten(nodes)
+        n = row["node"]
+        is_v6 = row["is_v6"]
+        network = row["network"]
+
+        # 2. Type Determination Logic
+        rtype = ""
+        if is_v6:
+            # IPv6 threshold rules
+            plen = network.prefixlen
+            if plen <= 48: rtype = "GlobalPrefix"
+            elif plen <= 63: rtype = "PrefixAggregate"
+            else: rtype = "IPv6Subnet"
+        else:
+            # IPv4 children rules
+            if row_id in has_children_ids: rtype = "Supernet"
+            else: rtype = "Subnet"
+
+        # 4. Display Name Composition
+        source = n.get("source", "")
+        disp = n.get("display_name", "")
+
+        # For synthesized rollups, if display_name is just the IP, use "Rollup"
+        if row["is_synthesized"]:
+            try:
+                netaddr.IPAddress(disp)
+                disp = "Rollup"
+            except:
+                pass
+
+        if source and disp:
+            dname = f"{source}: {disp}"
+        elif source:
+            dname = source
+        elif disp:
+            dname = disp
+        else:
+            dname = f"Imported {rtype}"
+
+        # 8. Group Description Composition
+        # Collect info from the node itself plus all absorbed nodes (endpoints, vips, hosts)
+        nodes_to_describe = [n] + absorbed_nodes.get(row_id, [])
+        devices, ifaces, conflicts, overlaps = [], [], [], []
+
+        for ad in nodes_to_describe:
+            d = ad.get("device")
+            if d and d not in devices: devices.append(d)
+            i = ad.get("interface_name")
+            if i and i not in ifaces: ifaces.append(i)
+
+            cfls = ad.get("conflicts", [])
+            if isinstance(cfls, str): cfls = [cfls]
+            for c in cfls:
+                if c and str(c) not in conflicts: conflicts.append(str(c))
+
+            ovls = ad.get("overlaps", [])
+            if isinstance(ovls, str): ovls = [ovls]
+            for o in ovls:
+                if o and str(o) not in overlaps: overlaps.append(str(o))
+
+        desc_parts = []
+        if devices: desc_parts.append(f"Device: {', '.join(devices)}")
+        if ifaces: desc_parts.append(f"Interface: {', '.join(ifaces)}")
+        if conflicts: desc_parts.append(f"Conflicts: {'; '.join(conflicts)}")
+        if overlaps: desc_parts.append(f"Overlaps: {'; '.join(overlaps)}")
+        gdesc = " | ".join(desc_parts)
+
+        # 8. Field Mapping (VLAN & Location)
+        vlan = n.get("vlan_id")
+        loc = n.get("site")
+        if loc == "Unknown": loc = ""
+
+        # 12. Neighbor Scanning rules
+        dns = "True" if rtype in ("Supernet", "GlobalPrefix", "PrefixAggregate") else "False"
+
+        writer.writerow({
+            "Id": row_id,
+            "Address": row["Address"],
+            "CIDR": row["CIDR"],
+            "Type": rtype,
+            "Display Name": dname,
+            "ParentId": row["ParentId"],
+            "Group Description": gdesc,
+            "Node Expunge Interval": "",
+            "Retain User Data": "False",
+            "Transient Period": "",
+            "Disable Auto Scanning": "False",
+            "Disable Neighbor Scanning": dns,
+            "VLAN": vlan if vlan is not None else "",
+            "Location": loc or "",
+            "Scan Interval": "",
+            "Neighbor Scan Address": "",
+            "Neighbor Scan Interval": ""
+        })
+
     return output.getvalue()
