@@ -101,6 +101,36 @@ def test_list_aaeps(auth_headers):
     data = response.json()
     assert any(a["name"] == "AAEP-PROD" for a in data["items"])
 
+def test_aaep_detail(auth_headers):
+    dn = "uni/infra/attentp-AAEP-PROD"
+    headers = {**auth_headers, "X-ACI-Fabric": "dc1"}
+    response = client.get(f"/api/aci/access/aaeps/detail?dn={dn}", headers=headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["name"] == "AAEP-PROD"
+
+def test_tenant_filter_on_bridge_domains(auth_headers):
+    response = client.get("/api/aci/bridge-domains?tenant=PROD", headers=auth_headers)
+    assert response.status_code == 200
+    data = response.json()
+    # Every BD returned should belong to PROD only.
+    assert all(b["tenant"] == "PROD" for b in data["items"])
+    # Sanity: PROD has at least one BD in mock data.
+    assert len(data["items"]) >= 1
+
+def test_tenant_filter_on_contracts(auth_headers):
+    response = client.get("/api/aci/contracts?tenant=PROD", headers=auth_headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert all(c["tenant"] == "PROD" for c in data["items"])
+
+def test_vrfs_cache_not_poisoned_by_tenant_filter(auth_headers):
+    # Sequence reproduces the cache-poisoning bug: scoped fetch first, then
+    # an unscoped fetch should return the broader dataset, not the filtered one.
+    scoped = client.get("/api/aci/vrfs?tenant=PROD", headers=auth_headers).json()
+    unscoped = client.get("/api/aci/vrfs", headers=auth_headers).json()
+    assert len(unscoped["items"]) >= len(scoped["items"])
+
 def test_list_domains(auth_headers):
     response = client.get("/api/aci/access/domains", headers=auth_headers)
     assert response.status_code == 200

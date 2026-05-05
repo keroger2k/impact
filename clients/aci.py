@@ -165,7 +165,10 @@ class ACIClient:
                 if "api/node/mo/" in path:
                     return {"imdata": _mo_lookup(MOCK_ACI_BUNDLE_PG, "infraAccBndlGrp")}
                 return {"imdata": MOCK_ACI_BUNDLE_PG}
-            if "infraAttEntityP" in path: return {"imdata": MOCK_ACI_AAEPS}
+            if "infraAttEntityP" in path or "/attentp-" in path:
+                if "api/node/mo/" in path:
+                    return {"imdata": _mo_lookup(MOCK_ACI_AAEPS, "infraAttEntityP")}
+                return {"imdata": MOCK_ACI_AAEPS}
             if "physDomP" in path: return {"imdata": MOCK_ACI_PHYS_DOMAINS}
             if "l3extDomP" in path: return {"imdata": MOCK_ACI_L3_DOMAINS}
             if "vmmDomP" in path: return {"imdata": MOCK_ACI_VMM_DOMAINS}

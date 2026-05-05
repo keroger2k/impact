@@ -2293,7 +2293,11 @@ async def list_vrfs(
     loop = asyncio.get_event_loop()
 
     async def _process_for_fabric(aci: ac.ACIClient, loop, fid, flabel=None):
-        raw = await loop.run_in_executor(None, run_with_context(_cached), _fkey(fid, "vrfs"), lambda: aci.get_vrfs(tenant))
+        # aci.get_vrfs(tenant) returns different data per-tenant, so the cache
+        # key must include the tenant filter — otherwise a tenant-scoped fetch
+        # poisons the unfiltered key (and vice versa).
+        cache_key = _fkey(fid, f"vrfs:{tenant}" if tenant else "vrfs")
+        raw = await loop.run_in_executor(None, run_with_context(_cached), cache_key, lambda: aci.get_vrfs(tenant))
         items = []
         for item in raw.get("imdata", []):
             attr = item.get("fvCtx", {}).get("attributes", {})
@@ -2334,10 +2338,13 @@ async def list_vrfs(
 @router.get("/bridge-domains")
 async def list_bridge_domains(
     request: Request,
+    tenant: Optional[str] = None,
     session: SessionEntry = Depends(require_auth),
     fabric_id: str = Depends(get_fabric_id)
 ):
-    """Lists BDs with inline subnets, VRF, and L3Out bindings."""
+    """Lists BDs with inline subnets, VRF, and L3Out bindings.
+    Optional `tenant` filter narrows results without invalidating the shared
+    cache (we fetch all BDs once, then filter at request time)."""
     import clients.aci_registry as reg
     loop = asyncio.get_event_loop()
 
@@ -2392,6 +2399,9 @@ async def list_bridge_domains(
         aci = await _get_aci_async(session, fabric_id)
         items, raw_json = await _process_for_fabric(aci, loop, fabric_id)
 
+    if tenant:
+        items = [i for i in items if i["tenant"] == tenant]
+
     items.sort(key=lambda x: (x["tenant"].lower(), x["name"].lower()))
 
     if request.headers.get("HX-Request"):
@@ -2402,10 +2412,11 @@ async def list_bridge_domains(
 @router.get("/app-profiles")
 async def list_app_profiles(
     request: Request,
+    tenant: Optional[str] = None,
     session: SessionEntry = Depends(require_auth),
     fabric_id: str = Depends(get_fabric_id)
 ):
-    """Flat list of App Profiles."""
+    """Flat list of App Profiles. Optional `tenant` filter."""
     import clients.aci_registry as reg
     loop = asyncio.get_event_loop()
 
@@ -2444,6 +2455,9 @@ async def list_app_profiles(
     else:
         aci = await _get_aci_async(session, fabric_id)
         items, raw_json = await _process_for_fabric(aci, loop, fabric_id)
+
+    if tenant:
+        items = [i for i in items if i["tenant"] == tenant]
 
     items.sort(key=lambda x: (x["tenant"].lower(), x["name"].lower()))
 
@@ -2502,10 +2516,11 @@ async def get_epg_detail(
 @router.get("/contracts")
 async def list_contracts(
     request: Request,
+    tenant: Optional[str] = None,
     session: SessionEntry = Depends(require_auth),
     fabric_id: str = Depends(get_fabric_id)
 ):
-    """Lists contracts with provider/consumer counts."""
+    """Lists contracts with provider/consumer counts. Optional `tenant` filter."""
     import clients.aci_registry as reg
     loop = asyncio.get_event_loop()
 
@@ -2557,6 +2572,9 @@ async def list_contracts(
     else:
         aci = await _get_aci_async(session, fabric_id)
         items, raw_json = await _process_for_fabric(aci, loop, fabric_id)
+
+    if tenant:
+        items = [i for i in items if i["tenant"] == tenant]
 
     items.sort(key=lambda x: (x["tenant"].lower(), x["name"].lower()))
 
@@ -2652,10 +2670,11 @@ async def get_contract_detail(
 @router.get("/filters")
 async def list_filters(
     request: Request,
+    tenant: Optional[str] = None,
     session: SessionEntry = Depends(require_auth),
     fabric_id: str = Depends(get_fabric_id)
 ):
-    """Lists filters with entries inline."""
+    """Lists filters with entries inline. Optional `tenant` filter."""
     import clients.aci_registry as reg
     loop = asyncio.get_event_loop()
 
@@ -2701,6 +2720,9 @@ async def list_filters(
     else:
         aci = await _get_aci_async(session, fabric_id)
         items, raw_json = await _process_for_fabric(aci, loop, fabric_id)
+
+    if tenant:
+        items = [i for i in items if i["tenant"] == tenant]
 
     items.sort(key=lambda x: (x["tenant"].lower(), x["name"].lower()))
 
