@@ -57,6 +57,10 @@ def generate_solarwinds_csv(tree_data: Dict[str, List[Dict]]) -> str:
 
     synthesized_rollups = {} # (parent_id, rollup_cidr) -> row_id
     absorbed_nodes = {} # row_id -> list of node dicts
+    # Host routes whose rollup /24 or /64 already exists somewhere in the tree
+    # as a real emitted row. Resolved after both walks complete, since the real
+    # row may not have been emitted yet when the host route is encountered.
+    deferred_host_absorptions = [] # list of (rollup_cidr, host_node)
 
     def process_tree(nodes, current_parent_id, is_v6):
         nonlocal next_id
@@ -68,7 +72,7 @@ def generate_solarwinds_csv(tree_data: Dict[str, List[Dict]]) -> str:
             try:
                 # 8. Skip nodes with unparseable CIDR (but recurse children)
                 network = netaddr.IPNetwork(cidr)
-            except:
+            except netaddr.AddrFormatError:
                 process_tree(n.get("children", []), current_parent_id, is_v6)
                 continue
 
@@ -90,13 +94,15 @@ def generate_solarwinds_csv(tree_data: Dict[str, List[Dict]]) -> str:
             # 3. Host-route rollup logic
             is_host_route = network.prefixlen == (128 if is_v6 else 32)
             if is_host_route:
-                rollup_len = 64 if is_v6 else 24
-                rollup_net = network.supernet(rollup_len)[0]
+                rollup_prefixlen = 64 if is_v6 else 24
+                rollup_net = network.supernet(rollup_prefixlen)[0]
                 rollup_cidr = str(rollup_net.cidr)
 
-                # If a real node with this rollup CIDR is in the tree, skip the host row (absorbed)
+                # If a real node with this rollup CIDR exists anywhere in the tree,
+                # defer absorption until after the walk so we can attach to the
+                # correct row_id rather than the (possibly root) current parent.
                 if rollup_cidr in real_cidrs:
-                    absorbed_nodes.setdefault(current_parent_id, []).append(n)
+                    deferred_host_absorptions.append((rollup_cidr, n))
                     continue
 
                 # If we've already synthesized this rollup for this parent, skip (absorbed)
@@ -106,11 +112,13 @@ def generate_solarwinds_csv(tree_data: Dict[str, List[Dict]]) -> str:
                     absorbed_nodes.setdefault(row_id, []).append(n)
                     continue
 
-                # Synthesize a new rollup row at /24 or /64
+                # Synthesize a new rollup row at /24 or /64.
+                # The seed node `n` is stored as the row template (`node`); the
+                # writer pass includes it via `[n] + absorbed_nodes[row_id]`, so
+                # do NOT also add it to absorbed_nodes here.
                 row_id = next_id
                 next_id += 1
                 synthesized_rollups[key] = row_id
-                absorbed_nodes.setdefault(row_id, []).append(n)
 
                 emitted_rows.append({
                     "Id": row_id,
@@ -149,6 +157,21 @@ def generate_solarwinds_csv(tree_data: Dict[str, List[Dict]]) -> str:
     # Walk both trees starting from respective roots
     process_tree(tree_data.get("ipv4", []), ipv4_group_id, False)
     process_tree(tree_data.get("ipv6", []), ipv6_group_id, True)
+
+    # Resolve deferred host absorptions: attach each host /32 (or /128) whose
+    # rollup CIDR matched an existing real row to that row's absorbed_nodes,
+    # so device/interface metadata is preserved instead of dropped at root.
+    cidr_to_row_id = {}
+    for row in emitted_rows:
+        if row.get("Type") == "Group":
+            continue
+        canonical = f"{row['Address']}/{row['CIDR']}"
+        cidr_to_row_id.setdefault(canonical, row["Id"])
+
+    for rollup_cidr, host_node in deferred_host_absorptions:
+        target_id = cidr_to_row_id.get(rollup_cidr)
+        if target_id is not None:
+            absorbed_nodes.setdefault(target_id, []).append(host_node)
 
     # Secondary pass to determine Types and build final field values
     has_children_ids = {row["ParentId"] for row in emitted_rows}
@@ -206,13 +229,19 @@ def generate_solarwinds_csv(tree_data: Dict[str, List[Dict]]) -> str:
         source = n.get("source", "")
         disp = n.get("display_name", "")
 
-        # For synthesized rollups, if display_name is just the IP, use "Rollup"
+        # For synthesized rollups, the seed node's display name is order-dependent
+        # when multiple hosts roll up. Use a deterministic count-based name in that
+        # case; preserve the seed's name when only one host rolled up.
         if row["is_synthesized"]:
-            try:
-                netaddr.IPAddress(disp)
-                disp = "Rollup"
-            except:
-                pass
+            host_count = 1 + len(absorbed_nodes.get(row_id, []))
+            if host_count > 1:
+                disp = f"Rollup ({host_count} hosts)"
+            else:
+                try:
+                    netaddr.IPAddress(disp)
+                    disp = "Rollup"
+                except (netaddr.AddrFormatError, ValueError):
+                    pass
 
         if source and disp:
             dname = f"{source}: {disp}"
