@@ -2424,11 +2424,17 @@ async def list_app_profiles(
         raw = await loop.run_in_executor(None, run_with_context(_cached), _fkey(fid, "app_profiles"), aci.get_app_profiles)
         items = []
         for item in raw.get("imdata", []):
-            attr = item["fvAp"]["attributes"]
+            # Defensive: APIC may interleave aggregate moCount records when
+            # count modifiers are in play — skip anything that isn't an fvAp
+            # record so we don't 500 the whole response.
+            ap = item.get("fvAp")
+            if not ap:
+                continue
+            attr = ap.get("attributes", {})
             dn = attr.get("dn")
-            # moCount child if present
+            # moCount child if present (per-AP fvAEPg count)
             epg_count = 0
-            for c in item["fvAp"].get("children", []):
+            for c in ap.get("children", []):
                 if "moCount" in c:
                     epg_count = int(c["moCount"]["attributes"].get("count", 0))
 

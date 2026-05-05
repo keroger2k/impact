@@ -474,8 +474,17 @@ class ACIClient:
         return self.get(path, action="FETCH_ACI_BDS")
 
     def get_app_profiles(self):
-        """List Application Profiles with their EPG count via subtree count."""
-        path = "api/node/class/fvAp.json?rsp-subtree-include=count"
+        """List Application Profiles with their EPG count.
+
+        With *only* `rsp-subtree-include=count`, APIC returns a single aggregate
+        moCount record instead of the fvAp MOs — useless to us. To get the
+        actual fvAp records *and* a per-AP child count we have to also ask for
+        the children we want counted (`rsp-subtree=children` with
+        `rsp-subtree-class=fvAEPg`). APIC then returns each fvAp with an
+        embedded moCount summarising its EPGs.
+        """
+        path = ("api/node/class/fvAp.json"
+                "?rsp-subtree=children&rsp-subtree-class=fvAEPg&rsp-subtree-include=count")
         return self.get(path, action="FETCH_ACI_APP_PROFILES")
 
     def get_contracts(self):

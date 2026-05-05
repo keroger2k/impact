@@ -95,6 +95,32 @@ def test_policy_group_detail(auth_headers):
     assert any(u["node"] == "101" and u["port"] == "eth1/15" for u in used)
     assert any(u["node"] == "102" and u["port"] == "eth1/16" for u in used)
 
+def test_list_app_profiles(auth_headers):
+    response = client.get("/api/aci/app-profiles", headers=auth_headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert any(a["name"] == "APP1" for a in data["items"])
+
+def test_list_app_profiles_survives_stray_mocount(auth_headers):
+    """Regression: APIC sometimes returns an aggregate moCount record
+    interleaved with the fvAp items (depending on the deployed APIC
+    version's rsp-subtree-include=count semantics). The endpoint must skip
+    non-fvAp items rather than KeyError-500 the whole response."""
+    from cache import cache
+    cache.set("aci_dc1_app_profiles", {
+        "imdata": [
+            {"moCount": {"attributes": {"count": "2", "moClassName": "fvAp"}}},
+            {"fvAp": {"attributes": {"name": "REAL-AP", "dn": "uni/tn-PROD/ap-REAL-AP"}, "children": []}},
+        ]
+    }, ttl=300)
+    try:
+        response = client.get("/api/aci/app-profiles", headers={**auth_headers, "X-ACI-Fabric": "dc1"})
+        assert response.status_code == 200
+        names = [a["name"] for a in response.json()["items"]]
+        assert "REAL-AP" in names
+    finally:
+        cache.invalidate("aci_dc1_app_profiles")
+
 def test_list_aaeps(auth_headers):
     response = client.get("/api/aci/access/aaeps", headers=auth_headers)
     assert response.status_code == 200
