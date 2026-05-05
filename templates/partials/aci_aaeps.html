@@ -1,0 +1,58 @@
+<div class="card shadow-sm border-0 animate-fade-in">
+    <script id="aci-aaeps-raw" type="application/json">{{ raw_json|tojson }}</script>
+    <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <div class="d-flex align-items-center gap-3">
+            <span class="fw-bold text-navy"><i class="ph ph-link me-1"></i>AAEPs</span>
+            <button class="btn btn-xs btn-outline-navy" onclick="showRawData('aci-aaeps-raw')">
+                <i class="ph ph-code me-1"></i>Raw
+            </button>
+        </div>
+        <span class="badge bg-secondary">{{ items|length }} AAEPs</span>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive sticky-header" style="max-height: calc(100vh - 250px);">
+            <table class="table table-hover align-middle mb-0 data-table">
+                <thead>
+                    <tr>
+                        {% if items[0] and items[0].fabric_label %}<th class="ps-4">Fabric</th>{% endif %}
+                        <th class="{% if not (items[0] and items[0].fabric_label) %}ps-4{% endif %}">Name</th>
+                        <th>Associated Domains</th>
+                        <th>Description</th>
+                        <th class="text-end pe-4" data-no-sort data-no-filter>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for a in items %}
+                    <tr>
+                        {% if a.fabric_label %}<td class="ps-4"><span class="badge bg-light text-navy border">{{ a.fabric_label }}</span></td>{% endif %}
+                        <td class="{% if not a.fabric_label %}ps-4{% endif %} fw-bold text-navy">{{ a.name }}</td>
+                        <td>
+                            {% for d in a.domains %}
+                            <span class="badge bg-light text-muted border mb-1">{{ d }}</span>
+                            {% endfor %}
+                            {% if not a.domains %}<span class="text-muted small">-</span>{% endif %}
+                        </td>
+                        <td class="small text-muted text-truncate" style="max-width: 300px;" title="{{ a.descr }}">{{ a.descr }}</td>
+                        <td class="text-end pe-4">
+                            <button class="btn btn-xs btn-outline-navy"
+                                    hx-get="/api/aci/access/aaeps/detail?dn={{ a.dn|urlencode }}"
+                                    hx-vals='js:{fabric: "{{ a.fabric_id if a.fabric_id else "" }}" || window.currentFabric}'
+                                    hx-target="#aci-results"
+                                    hx-indicator="#aci-loading"
+                                    title="AAEP details">
+                                <i class="ph ph-info"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% if not items %}
+        <div class="p-5 text-center text-muted">
+            <i class="ph ph-empty display-4 d-block mb-3"></i>
+            <div>No AAEPs found on this fabric.</div>
+        </div>
+        {% endif %}
+    </div>
+</div>
