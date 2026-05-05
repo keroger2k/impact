@@ -2760,6 +2760,16 @@ def _process_pg(item, pg_kind):
         "descr": attr.get("descr") or "",
     }
 
+_DN_SEGMENT_RE = re.compile(r'(?:[^/\[]+|\[[^\]]*\])+')
+
+def _dn_parent(dn: str) -> str:
+    """Return the parent DN, treating bracketed segments as atomic.
+    Naive `dn.rsplit('/', 1)[0]` breaks on RNs like `rsaccPortP-[uni/infra/...]`
+    where the bracketed target DN contains its own slashes.
+    """
+    segments = _DN_SEGMENT_RE.findall(dn or "")
+    return "/".join(segments[:-1])
+
 def build_pg_to_ports(access_topology_imdata):
     """Returns dict: pg_dn -> [(node_id, port, fex_id), ...]"""
     by_class = defaultdict(dict)
@@ -2769,7 +2779,7 @@ def build_pg_to_ports(access_topology_imdata):
         attrs = item[cls]["attributes"]
         dn = attrs.get("dn", "")
         by_class[cls][dn] = attrs
-        parent = "/".join(dn.split("/")[:-1])
+        parent = _dn_parent(dn)
         children_of[parent].append((cls, dn, attrs))
 
     iprof_to_blocks = defaultdict(list)

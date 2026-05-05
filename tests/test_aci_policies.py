@@ -6,14 +6,10 @@ from dev import DEV_TOKEN
 client = TestClient(app)
 
 @pytest.fixture(autouse=True)
-def setup_dev_mode(monkeypatch):
-    monkeypatch.setenv("DEV_MODE", "true")
-    monkeypatch.setenv("AD_LDAP_URL", "ldaps://localhost")
-    monkeypatch.setenv("ACI_FABRICS", "dc1")
-    monkeypatch.setenv("ACI_DC1_URL", "http://aci-dc1.local")
-    monkeypatch.setenv("ACI_DC1_LABEL", "DC1")
-
-    # Manually seed the session since lifespan doesn't run in TestClient with manual calls
+def setup_dev_mode():
+    # Env vars are set in tests/conftest.py before any imports. Here we just
+    # ensure the dev session exists, since lifespan doesn't run automatically
+    # when using TestClient with manual requests.
     from auth import SessionEntry, _sessions, _store_lock
     import time
     entry = SessionEntry(

@@ -7,6 +7,7 @@ import os
 import re
 import time
 import urllib.parse
+from urllib.parse import unquote
 import requests
 import urllib3
 from dotenv import load_dotenv
@@ -138,33 +139,31 @@ class ACIClient:
             if "fvCtx" in path: return {"imdata": MOCK_ACI_VRFS}
             if "fvBD" in path: return {"imdata": MOCK_ACI_BDS}
             if "fvAp" in path: return {"imdata": MOCK_ACI_APP_PROFILES}
-            if "vzBrCP" in path:
+            # Drill-down MO URLs (api/node/mo/<dn>.json) don't carry the class
+            # name in the path — only the RN prefix (`brc-`, `accbundle-`, etc.).
+            # So we match either the class name (for /class/<cls>.json fetches)
+            # OR the RN prefix (for /mo/<dn>.json drill-downs), and dispatch
+            # to a single shared lookup helper.
+            def _mo_lookup(mock_list, cls_key):
+                """For an api/node/mo/<dn>.json request, return only the matching record."""
+                dn_part = path.split(".json", 1)[0].split("api/node/mo/", 1)[1]
+                target_dn = unquote(dn_part)
+                return [m for m in mock_list if m[cls_key]["attributes"]["dn"] == target_dn]
+
+            if "vzBrCP" in path or "/brc-" in path:
                 if "api/node/mo/" in path:
-                    # Single contract lookup
-                    dn_part = path.split(".json")[0].split("api/node/mo/")[1]
-                    from urllib.parse import unquote
-                    target_dn = unquote(dn_part)
-                    match = [c for c in MOCK_ACI_CONTRACTS if c["vzBrCP"]["attributes"]["dn"] == target_dn]
-                    return {"imdata": match}
+                    return {"imdata": _mo_lookup(MOCK_ACI_CONTRACTS, "vzBrCP")}
                 return {"imdata": MOCK_ACI_CONTRACTS}
             if "vzFilter" in path: return {"imdata": MOCK_ACI_FILTERS}
             if "fvRsProv" in path: return {"imdata": MOCK_ACI_FV_RSPROV}
             if "fvRsCons" in path: return {"imdata": MOCK_ACI_FV_RSCONS}
-            if "infraAccPortGrp" in path:
+            if "infraAccPortGrp" in path or "/accportgrp-" in path:
                 if "api/node/mo/" in path:
-                    dn_part = path.split(".json")[0].split("api/node/mo/")[1]
-                    from urllib.parse import unquote
-                    target_dn = unquote(dn_part)
-                    match = [p for p in MOCK_ACI_ACCESS_PG if p["infraAccPortGrp"]["attributes"]["dn"] == target_dn]
-                    return {"imdata": match}
+                    return {"imdata": _mo_lookup(MOCK_ACI_ACCESS_PG, "infraAccPortGrp")}
                 return {"imdata": MOCK_ACI_ACCESS_PG}
-            if "infraAccBndlGrp" in path:
+            if "infraAccBndlGrp" in path or "/accbundle-" in path:
                 if "api/node/mo/" in path:
-                    dn_part = path.split(".json")[0].split("api/node/mo/")[1]
-                    from urllib.parse import unquote
-                    target_dn = unquote(dn_part)
-                    match = [p for p in MOCK_ACI_BUNDLE_PG if p["infraAccBndlGrp"]["attributes"]["dn"] == target_dn]
-                    return {"imdata": match}
+                    return {"imdata": _mo_lookup(MOCK_ACI_BUNDLE_PG, "infraAccBndlGrp")}
                 return {"imdata": MOCK_ACI_BUNDLE_PG}
             if "infraAttEntityP" in path: return {"imdata": MOCK_ACI_AAEPS}
             if "physDomP" in path: return {"imdata": MOCK_ACI_PHYS_DOMAINS}
