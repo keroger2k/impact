@@ -164,6 +164,12 @@ cython_debug/
 # Disk cache (persistent between restarts, not committed)
 data/cache/
 
+# Claude Code workspace (worktrees, transcripts, agent state)
+.claude/
+
+# Runtime logs
+logs/
+
 
 # PyCharm
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
