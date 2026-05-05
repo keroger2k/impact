@@ -276,9 +276,7 @@ async def export_ipam_csv(session: SessionEntry = Depends(require_auth)):
     if not tree_data:
         return JSONResponse(status_code=404, content={"message": "No IPAM data found. Please run refresh."})
 
-    # Flatten tree for CSV
-    all_nodes = tree_data["ipv4"] + tree_data["ipv6"]
-    csv_content = generate_solarwinds_csv(all_nodes)
+    csv_content = generate_solarwinds_csv(tree_data)
 
     return Response(
         content=csv_content,
