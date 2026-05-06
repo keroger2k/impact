@@ -333,7 +333,9 @@ def get_recent_auth_events(seconds: int = 300, username: str = None, password: s
                 rows = _xml_list_to_dicts(resp.text)
             logger.debug(f"Parsed {len(rows)} recent auth events")
             return rows
-        logger.warning(f"MNT AuthList returned {resp.status_code}")
+        logger.warning(f"MNT AuthList returned {resp.status_code}", extra={
+            "status": resp.status_code, "response_text": resp.text[:500] if resp.text else "empty"
+        })
         return []
     except Exception as e:
         logger.warning(f"MNT recent auth events: {e}")
