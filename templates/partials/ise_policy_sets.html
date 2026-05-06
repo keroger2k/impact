@@ -1,7 +1,13 @@
-<div class="card shadow-sm border-0 animate-fade-in">
-  <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center">
-    <span class="fw-bold">Policy Sets ({{ total }})</span>
-    <button class="btn btn-sm btn-outline-light px-2" hx-get="/api/ise/policy-sets" hx-target="#ise-results" hx-indicator="#ise-loading"><i class=" ph ph-arrows-clockwise"></i></button>
+<div class="card shadow-md border-0 animate-fade-in">
+  <div class="card-header bg-white border-bottom py-3 d-flex justify-content-between align-items-center">
+    <div class="d-flex align-items-center gap-2">
+      <i class="ph ph-scroll text-primary"></i>
+      <span class="fw-bold text-navy">Policy Sets ({{ total }})</span>
+    </div>
+    <button class="btn btn-sm btn-outline-secondary px-2"
+      hx-get="/api/ise/policy-sets" hx-target="#ise-results" hx-indicator="#ise-loading">
+      <i class="ph ph-arrows-clockwise"></i>
+    </button>
   </div>
   <div class="card-body p-0 overflow-auto" style="max-height: calc(100vh - 200px);">
     <table class="table table-hover table-striped mb-0 data-table">
@@ -28,7 +34,12 @@
           </td>
           <td>{{ 'Proxy' if item.isProxy else 'Standard' }}</td>
           <td>
-            <button class="btn btn-xs btn-outline-primary" hx-get="/api/ise/policy-sets/{{ item.id }}/auth-rules" hx-target="#ise-results" hx-indicator="#ise-loading">View Rules</button>
+            <button class="btn btn-xs btn-outline-primary me-1"
+              hx-get="/api/ise/policy-sets/{{ item.id }}/auth-rules"
+              hx-target="#ise-results" hx-indicator="#ise-loading">Auth Rules</button>
+            <button class="btn btn-xs btn-outline-secondary"
+              hx-get="/api/ise/policy-sets/{{ item.id }}/authz-rules"
+              hx-target="#ise-results" hx-indicator="#ise-loading">AuthZ Rules</button>
           </td>
         </tr>
         {% endfor %}

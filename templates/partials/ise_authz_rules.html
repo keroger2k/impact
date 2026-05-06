@@ -1,0 +1,48 @@
+<div class="card shadow-md border-0 animate-fade-in">
+  <div class="card-header bg-white border-bottom py-3 d-flex justify-content-between align-items-center">
+    <div class="d-flex align-items-center gap-2">
+      <i class="ph ph-check-square text-primary"></i>
+      <span class="fw-bold text-navy">Authorization Rules ({{ total }})</span>
+    </div>
+    <button class="btn btn-sm btn-outline-secondary"
+      onclick="history.back()" type="button">
+      <i class="ph ph-arrow-left me-1"></i> Back
+    </button>
+  </div>
+  <div class="card-body p-0 overflow-auto" style="max-height: calc(100vh - 200px);">
+    <table class="table table-hover table-striped mb-0 data-table">
+      <thead class="bg-light sticky-top">
+        <tr>
+          <th>Priority</th>
+          <th>Rule Name</th>
+          <th>State</th>
+          <th>Condition</th>
+          <th>Profiles</th>
+          <th>SGT</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in items %}
+        <tr>
+          <td class="text-muted small">{{ r.priority or '—' }}</td>
+          <td class="fw-bold text-navy">{{ r.name }}</td>
+          <td>
+            {% if r.state in ('enabled', 'ENABLED') %}
+            <span class="badge bg-success-subtle text-success">Enabled</span>
+            {% else %}
+            <span class="badge bg-secondary-subtle text-secondary">{{ r.state }}</span>
+            {% endif %}
+          </td>
+          <td class="small text-muted mono">{{ r.condition or '—' }}</td>
+          <td>
+            {% for p in (r.profiles or []) %}
+            <span class="badge bg-primary-subtle text-primary me-1">{{ p }}</span>
+            {% endfor %}
+          </td>
+          <td>{% if r.securityGroup %}<span class="badge bg-info-subtle text-info">{{ r.securityGroup }}</span>{% else %}—{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
