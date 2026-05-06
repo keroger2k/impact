@@ -760,10 +760,10 @@ class IPAMEngine:
         v6_nets = sorted([n for n in unique_nets.values() if n.version == 6],
                          key=lambda x: (x.ip_int, x.prefixlen))
 
-        self.tree["ipv4"] = self._recursive_build(v4_nets)
-        self.tree["ipv6"] = self._recursive_build(v6_nets)
+        self.tree["ipv4"] = self._recursive_build(v4_nets, is_top_level=True)
+        self.tree["ipv6"] = self._recursive_build(v6_nets, is_top_level=True)
 
-    def _recursive_build(self, nets: List[IPAMNode]) -> List[Dict]:
+    def _recursive_build(self, nets: List[IPAMNode], is_top_level: bool = False) -> List[Dict]:
         if not nets: return []
 
         roots: List[IPAMNode] = []
@@ -783,8 +783,15 @@ class IPAMEngine:
         site_host_routes: Dict[str, List[IPAMNode]] = {}
 
         for r in roots:
-            # Special case: if this is a /32 or /128 and it's a root, it might belong in "Host Routes"
-            if r.prefixlen == (32 if r.version == 4 else 128) and r.role in ["host_route", "subnet"]:
+            # Top-level orphan /32s (no containing supernet anywhere) get pulled
+            # into a per-site "Host Routes" pseudo group. At sub-levels we leave
+            # them in place — the parent's collapse logic groups them as
+            # "Loopbacks (n)" if there are 3+, otherwise inlines them.
+            if (
+                is_top_level
+                and r.prefixlen == (32 if r.version == 4 else 128)
+                and r.role in ["host_route", "subnet"]
+            ):
                 if r.site not in site_host_routes:
                     site_host_routes[r.site] = []
                 site_host_routes[r.site].append(r)
@@ -792,7 +799,7 @@ class IPAMEngine:
 
             result.append(self._node_to_dict_recursive(r))
 
-        # Add per-site Host Routes sections
+        # Add per-site Host Routes sections (top-level only)
         for site, host_nodes in site_host_routes.items():
             pseudo = {
                 "cidr": f"Host Routes ({site})",
@@ -813,29 +820,36 @@ class IPAMEngine:
             # all land in numeric order rather than insertion order.
             node.children_nodes.sort(key=lambda x: (x.ip_int, x.prefixlen))
 
-            # Check for loopback collapsing
-            loopbacks = [n for n in node.children_nodes if n.interface_type == "loopback" and n.prefixlen == (32 if n.version == 4 else 128)]
-            others = [n for n in node.children_nodes if n not in loopbacks]
+            # Build the full sub-hierarchy first (loopbacks included). This lets
+            # /32 loopbacks nest into the most-specific containing subnet —
+            # e.g. 10.4.30.10/32 lands under 10.4.16.0/20 instead of being
+            # hoisted to a single flat group at the /8 root.
+            children_dicts = self._recursive_build(node.children_nodes)
 
-            children_dicts = []
-            if len(loopbacks) >= 3: # Collapse if 3 or more
+            # Only collapse loopbacks that *remained* as direct children of this
+            # node (i.e. didn't nest into any sibling subnet). 3+ direct-child
+            # loopbacks at the same level get folded into a "Loopbacks (n)"
+            # pseudo group.
+            def _is_loopback_leaf(c: Dict) -> bool:
+                return (
+                    c.get("interface_type") == "loopback"
+                    and c.get("role") in ("host_route", "subnet")
+                )
+
+            loopbacks = [c for c in children_dicts if _is_loopback_leaf(c)]
+            others = [c for c in children_dicts if not _is_loopback_leaf(c)]
+
+            if len(loopbacks) >= 3:
                 pseudo = {
                     "cidr": f"Loopbacks ({len(loopbacks)})",
-                    "display_name": f"Collapsed Loopbacks",
+                    "display_name": "Collapsed Loopbacks",
                     "role": "loopback_group",
                     "interface_type": "loopback",
-                    "children": [self._node_to_dict_recursive(n) for n in loopbacks]
+                    "children": loopbacks,
                 }
-                children_dicts.append(pseudo)
+                d["children"] = [pseudo] + others
             else:
-                for lb in loopbacks:
-                    children_dicts.append(self._node_to_dict_recursive(lb))
-
-            # Recurse for non-loopback children or if not collapsed
-            # Actually we need to maintain hierarchy, so we call _recursive_build on 'others'
-            # Wait, others might have their own children.
-            children_dicts.extend(self._recursive_build(others))
-            d["children"] = children_dicts
+                d["children"] = children_dicts
 
         return d
 

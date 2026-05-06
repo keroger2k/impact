@@ -211,5 +211,119 @@ class TestIPAMEngine(unittest.TestCase):
         self.assertEqual(len(vips), 1)
         self.assertEqual(vips[0]["host_ip"], "10.1.1.254")
 
+    def _mk_loopback(self, cidr: str, site: str, device: str = "rtr") -> IPAMNode:
+        n = IPAMNode(cidr, source="DNAC")
+        n.interface_name = "Loopback0"
+        n.interface_type = "loopback"
+        n.role = "host_route"
+        n.site = site
+        n.device = device
+        n.host_ip = cidr.split("/")[0]
+        return n
+
+    def _find_node(self, tree, cidr):
+        """DFS for the first node with matching cidr (skipping pseudo groups)."""
+        for n in tree:
+            if n.get("cidr") == cidr:
+                return n
+            child = self._find_node(n.get("children", []), cidr)
+            if child is not None:
+                return child
+        return None
+
+    def test_loopback_nests_under_most_specific_subnet(self):
+        # Regression: a /32 loopback was being yanked out at the topmost level
+        # and dumped into a single "Loopbacks" pseudo group, even when a
+        # containing /20 (or other supernet) existed at a deeper level.
+        # The /32 should nest under the most-specific containing subnet.
+        summary = IPAMNode("10.4.16.0/20", source="DNAC-Config")
+        summary.display_name = "EIGRP Summary (Tunnel5000)"
+        summary.interface_type = "aggregate"
+        summary.role = "aggregate"
+        summary.site = "T489"
+
+        loop = self._mk_loopback("10.4.30.10/32", site="T489")
+
+        # An unrelated /32 outside the /20 — should NOT end up under it.
+        far_loop = self._mk_loopback("10.99.0.1/32", site="OTHER")
+
+        self.engine.subnets = [summary, loop, far_loop]
+        self.engine.build_tree()
+
+        # The /20 must contain the loopback, either directly or via a
+        # collapsed "Loopbacks (n)" pseudo group when 3+ siblings exist.
+        twenty = self._find_node(self.engine.tree["ipv4"], "10.4.16.0/20")
+        self.assertIsNotNone(twenty, "expected the /20 to be present in the tree")
+        nested = self._find_node(twenty.get("children", []), "10.4.30.10/32")
+        self.assertIsNotNone(
+            nested,
+            "10.4.30.10/32 must nest under 10.4.16.0/20, not be hoisted into a "
+            "top-level Loopbacks group",
+        )
+
+    def test_loopbacks_collapse_only_when_no_deeper_parent(self):
+        # 3+ loopbacks under a /20 with NO matching deeper subnet → they should
+        # collapse into a "Loopbacks (n)" pseudo at the /20.
+        # 3+ loopbacks under a /20 WITH a matching /24 → they should nest into
+        # the /24 instead, not be collapsed at the /20.
+        twenty = IPAMNode("10.5.0.0/20", source="DNAC-Config")
+        twenty.role = "aggregate"
+        twenty.interface_type = "aggregate"
+        twenty.site = "X"
+
+        # Three /32s at IPs that don't share any /24 with each other.
+        orphans = [
+            self._mk_loopback("10.5.0.1/32", "X"),
+            self._mk_loopback("10.5.4.1/32", "X"),
+            self._mk_loopback("10.5.8.1/32", "X"),
+        ]
+
+        self.engine.subnets = [twenty, *orphans]
+        self.engine.build_tree()
+
+        twenty_dict = self._find_node(self.engine.tree["ipv4"], "10.5.0.0/20")
+        self.assertIsNotNone(twenty_dict)
+        groups = [c for c in twenty_dict["children"] if c.get("role") == "loopback_group"]
+        self.assertEqual(len(groups), 1, "orphan loopbacks should collapse at /20")
+        self.assertEqual(len(groups[0]["children"]), 3)
+
+        # Now add a /24 that contains all 3 loopbacks — they should nest into
+        # the /24 instead of being collapsed at the /20.
+        self.engine = IPAMEngine()
+        twenty2 = IPAMNode("10.6.0.0/20", source="DNAC-Config")
+        twenty2.role = "aggregate"
+        twenty2.interface_type = "aggregate"
+        twenty2.site = "X"
+
+        twenty4 = IPAMNode("10.6.0.0/24", source="DNAC")
+        twenty4.interface_type = "physical"
+        twenty4.site = "X"
+
+        deep_loops = [
+            self._mk_loopback("10.6.0.1/32", "X"),
+            self._mk_loopback("10.6.0.2/32", "X"),
+            self._mk_loopback("10.6.0.3/32", "X"),
+        ]
+
+        self.engine.subnets = [twenty2, twenty4, *deep_loops]
+        self.engine.build_tree()
+
+        twenty2_dict = self._find_node(self.engine.tree["ipv4"], "10.6.0.0/20")
+        self.assertIsNotNone(twenty2_dict)
+        # /20 should have a /24 child, NOT a collapsed loopback_group.
+        roles = [c.get("role") for c in twenty2_dict["children"]]
+        self.assertNotIn("loopback_group", roles,
+                         "loopbacks that fit a deeper /24 must not be collapsed at /20")
+        twenty4_dict = self._find_node(twenty2_dict["children"], "10.6.0.0/24")
+        self.assertIsNotNone(twenty4_dict)
+        # The /24's children include the loopback group (3 collapse) or the 3
+        # /32s directly. Either way, the /32s must be reachable under the /24.
+        for cidr in ("10.6.0.1/32", "10.6.0.2/32", "10.6.0.3/32"):
+            self.assertIsNotNone(
+                self._find_node(twenty4_dict["children"], cidr),
+                f"{cidr} must be reachable under 10.6.0.0/24",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
