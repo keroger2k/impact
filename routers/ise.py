@@ -36,6 +36,18 @@ def _cached(key: str, loader, ttl: int = ISE_TTL):
     return cache.get_or_set(key, loader, ttl)
 
 
+async def _get_mapping_dicts(ise, loop):
+    """Fetch and return mapping dictionaries for endpoint groups and profiler profiles."""
+    groups = await loop.run_in_executor(None, run_with_context(_cached), "ise_endpoint_groups",
+                 lambda: ic.get_endpoint_groups(ise))
+    profiles = await loop.run_in_executor(None, run_with_context(_cached), "ise_profiling_policies",
+                   lambda: ic.get_profiling_policies(ise))
+
+    group_map = {g.get("id"): g.get("name") for g in groups if g.get("id") and g.get("name")}
+    profile_map = {p.get("id"): p.get("name") for p in profiles if p.get("id") and p.get("name")}
+    return group_map, profile_map
+
+
 # ── Cache management ──────────────────────────────────────────────────────────
 
 @router.get("/cache/info")
@@ -120,6 +132,14 @@ async def search_endpoints(request: Request, mac: str = Query(..., min_length=2)
         loop = asyncio.get_event_loop()
         endpoints = await loop.run_in_executor(None, run_with_context(ic.get_endpoints), ise, mac)
 
+        # Map IDs to names
+        group_map, profile_map = await _get_mapping_dicts(ise, loop)
+        for ep in endpoints:
+            if not ep.get("groupName") and ep.get("groupId") in group_map:
+                ep["groupName"] = group_map[ep["groupId"]]
+            if not ep.get("profileName") and ep.get("profileId") in profile_map:
+                ep["profileName"] = profile_map[ep["profileId"]]
+
     if request.headers.get("HX-Request"):
         from templates_module import templates
         return templates.TemplateResponse(request, "partials/ise_endpoint_results.html",
@@ -161,6 +181,13 @@ async def get_endpoint(request: Request, ep_id: str, session: SessionEntry = Dep
         if not detail:
             raise HTTPException(404, "Endpoint not found")
 
+        # Map IDs to names
+        group_map, profile_map = await _get_mapping_dicts(ise, loop)
+        if not detail.get("groupName") and detail.get("groupId") in group_map:
+            detail["groupName"] = group_map[detail["groupId"]]
+        if not detail.get("profileName") and detail.get("profileId") in profile_map:
+            detail["profileName"] = profile_map[detail["profileId"]]
+
         # Enrich with live session and auth history
         mac = detail.get("name") or detail.get("mac")
         if mac:
@@ -176,13 +203,32 @@ async def get_endpoint(request: Request, ep_id: str, session: SessionEntry = Dep
 
             # Merge live session attributes
             if live_sess:
+                # Map specific MNT names
+                mnt_mapping = {
+                    "psn_name": "ise_node",
+                    "authentication_method": "auth_method",
+                    "auth_acs_timestamp": "lastAuthTime"
+                }
+                for src, dst in mnt_mapping.items():
+                    if live_sess.get(src):
+                        live_sess[dst] = live_sess[src]
+
                 for k in ["nas_ip_address", "network_device_name", "nas_port_id", "endpoint_profile",
                           "identity_store", "identity_group", "ise_node", "auth_method", "vlan", "sgt"]:
                     if live_sess.get(k):
                         detail[k] = live_sess[k]
 
-                if live_sess.get("network_device_name") and live_sess.get("nas_port_id"):
-                    detail["connectedToDevice"] = f"{live_sess['network_device_name']} ({live_sess['nas_port_id']})"
+                # Fix 'defaultnetworkdevice'
+                nw_dev = detail.get("network_device_name", "")
+                if not nw_dev or nw_dev.lower() in ("default", "defaultnetworkdevice"):
+                    nas_ip = live_sess.get("nas_ip_address")
+                    if nas_ip:
+                        resolved = await loop.run_in_executor(None, run_with_context(ic.get_network_device_by_ip), ise, nas_ip)
+                        if resolved and resolved.get("name"):
+                            detail["network_device_name"] = resolved["name"]
+
+                if detail.get("network_device_name") and live_sess.get("nas_port_id"):
+                    detail["connectedToDevice"] = f"{detail['network_device_name']} ({live_sess['nas_port_id']})"
                 elif live_sess.get("nas_ip_address"):
                     detail["connectedToDevice"] = live_sess["nas_ip_address"]
 
@@ -190,8 +236,8 @@ async def get_endpoint(request: Request, ep_id: str, session: SessionEntry = Dep
             if history and isinstance(history, list) and len(history) > 0:
                 latest = history[0]
                 # Fallback for Auth Metadata
-                for k in ["authentication_method", "vlan", "sgt"]:
-                    target_k = "auth_method" if k == "authentication_method" else k
+                for k in ["authentication_method", "vlan", "sgt", "auth_acs_timestamp"]:
+                    target_k = "auth_method" if k == "authentication_method" else ("lastAuthTime" if k == "auth_acs_timestamp" else k)
                     if not detail.get(target_k) and latest.get(k):
                         detail[target_k] = latest[k]
 
@@ -261,7 +307,18 @@ async def get_auth_history(request: Request, mac: str = Query(..., min_length=4)
         events = MOCK_AUTH_HISTORY
     else:
         loop = asyncio.get_event_loop()
-        events = await loop.run_in_executor(None, run_with_context(ic.get_auth_history_by_mac), mac, 86400, 50, session.username, session.password)
+        # Use Session History API as requested
+        events = await loop.run_in_executor(None, run_with_context(ic.get_session_history_by_mac), mac, 86400, session.username, session.password)
+        if not events:
+            # Fallback to Auth Status if Session History is empty
+            events = await loop.run_in_executor(None, run_with_context(ic.get_auth_history_by_mac), mac, 86400, 50, session.username, session.password)
+
+        # Normalize fields for template compatibility
+        for e in events:
+            if not e.get("timestamp"):
+                e["timestamp"] = e.get("auth_acs_timestamp") or e.get("acct_start_time") or "—"
+            if not e.get("authentication_method"):
+                e["authentication_method"] = e.get("auth_method") or "—"
 
     if request.headers.get("HX-Request"):
         from templates_module import templates

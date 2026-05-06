@@ -48,9 +48,9 @@
             <dt class="col-5 text-muted">NAS IP</dt>
             <dd class="col-7 mono">{{ ep.nas_ip_address or '—' }}</dd>
             <dt class="col-5 text-muted">Connected To</dt>
-            <dd class="col-7">{{ ep.connectedToDevice or '—' }}</dd>
+            <dd class="col-7">{{ ep.connectedToDevice or ep.network_device_name or '—' }}</dd>
             <dt class="col-5 text-muted">Last Auth</dt>
-            <dd class="col-7 small">{{ ep.lastAuthTime or '—' }}</dd>
+            <dd class="col-7 small">{{ ep.lastAuthTime or ep.auth_acs_timestamp or '—' }}</dd>
             <dt class="col-5 text-muted">Static Profile</dt>
             <dd class="col-7">
               {% if ep.staticProfileAssignment %}

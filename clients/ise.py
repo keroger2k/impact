@@ -286,6 +286,40 @@ def get_auth_history_by_mac(mac: str, seconds: int = 86400, records: int = 50, u
         return []
 
 
+def get_session_history_by_mac(mac: str, duration: int = 86400, username: str = None, password: str = None) -> list:
+    """
+    Fetch session history for a specific MAC address from MNT API.
+    MNT endpoint: /admin/API/mnt/Session/History/MACAddress/{mac}/{duration}/all
+    """
+    mac_clean = mac.upper().replace("-", ":").replace(".", ":")
+    if ":" not in mac_clean and len(mac_clean) == 12:
+        mac_clean = ":".join(mac_clean[i:i+2] for i in range(0, 12, 2))
+    host = os.getenv("ISE_HOST")
+    if username is None:
+        username = os.getenv("DOMAIN_USERNAME")
+    if password is None:
+        password = os.getenv("DOMAIN_PASSWORD")
+    if not all([host, username, password]):
+        return []
+
+    url = f"https://{host}/admin/API/mnt/Session/History/MACAddress/{mac_clean}/{duration}/all"
+    try:
+        resp = _requests.get(
+            url,
+            auth    = (username, password),
+            verify  = os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
+            headers = {"Accept": "application/xml"},
+            timeout = 20,
+        )
+        if resp.status_code == 200 and resp.text:
+            # Session history wraps each row as <sessionHistory>
+            return _xml_list_to_dicts(resp.text, record_tag="sessionHistory")
+        return []
+    except Exception as e:
+        logger.warning(f"MNT session history lookup {mac_clean}: {e}")
+        return []
+
+
 def get_recent_auth_events(seconds: int = 300, username: str = None, password: str = None) -> list:
     """
     Fetch recent authentication events from the last N seconds.
@@ -567,6 +601,14 @@ def get_network_devices(ise, search: str = "") -> list:
             results = _ers_paginate(ise, "networkdevice", filter_str=f"ipaddress.CONTAINS.{search}")
         return results
     return _ers_paginate(ise, "networkdevice")
+
+
+def get_network_device_by_ip(ise, ip: str) -> dict:
+    """Fetch network device detail by IP address from ERS."""
+    results = _ers_paginate(ise, "networkdevice", filter_str=f"ipaddress.EQ.{ip}")
+    if results:
+        return get_network_device_detail(ise, results[0]["id"])
+    return {}
 
 
 def get_network_device_detail(ise, device_id: str) -> dict:
