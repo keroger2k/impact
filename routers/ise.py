@@ -177,10 +177,10 @@ async def get_active_sessions(request: Request, mac: Optional[str] = None, sessi
     else:
         loop = asyncio.get_event_loop()
         if mac:
-            result = await loop.run_in_executor(None, run_with_context(ic.get_session_by_mac), mac)
+            result = await loop.run_in_executor(None, run_with_context(ic.get_session_by_mac), mac, session.username, session.password)
             sessions = [result] if result else []
         else:
-            sessions = await loop.run_in_executor(None, run_with_context(ic.get_active_sessions))
+            sessions = await loop.run_in_executor(None, run_with_context(ic.get_active_sessions), 200, session.username, session.password)
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
@@ -196,7 +196,7 @@ async def get_auth_history(request: Request, mac: str = Query(..., min_length=4)
         events = MOCK_AUTH_HISTORY
     else:
         loop = asyncio.get_event_loop()
-        events = await loop.run_in_executor(None, run_with_context(ic.get_auth_history_by_mac), mac)
+        events = await loop.run_in_executor(None, run_with_context(ic.get_auth_history_by_mac), mac, 86400, 50, session.username, session.password)
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
@@ -213,7 +213,7 @@ async def get_recent_auth(request: Request, minutes: int = 5, session: SessionEn
         events = MOCK_RECENT_AUTH_EVENTS
     else:
         loop = asyncio.get_event_loop()
-        events = await loop.run_in_executor(None, run_with_context(ic.get_recent_auth_events), minutes * 60)
+        events = await loop.run_in_executor(None, run_with_context(ic.get_recent_auth_events), minutes * 60, session.username, session.password)
 
     if request.headers.get("HX-Request"):
         from templates_module import templates

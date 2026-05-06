@@ -143,17 +143,24 @@ def _xml_list_to_dicts(xml_text: str, record_tag: str | None = None) -> list:
 # MNT ACTIVE SESSIONS  /admin/API/mnt/Session/ActiveList
 # ──────────────────────────────────────────────────────────────────────────────
 
-def get_active_sessions(limit: int = 200) -> list:
+def get_active_sessions(limit: int = 200, username: str = None, password: str = None) -> list:
     """
     List active RADIUS/TACACS sessions from ISE MNT REST API.
     Returns list of session dicts with fields like:
       calling_station_id, user_name, nas_ip_address, nas_port_id,
       acct_session_id, framed_ip_address, endpoint_profile, vlan,
       auth_method, identity_store, identity_group, ise_node
+
+    Args:
+        limit: Max sessions to return
+        username: Optional; uses DOMAIN_USERNAME env var if not provided
+        password: Optional; uses DOMAIN_PASSWORD env var if not provided
     """
     host = os.getenv("ISE_HOST")
-    username = os.getenv("DOMAIN_USERNAME")
-    password = os.getenv("DOMAIN_PASSWORD")
+    if username is None:
+        username = os.getenv("DOMAIN_USERNAME")
+    if password is None:
+        password = os.getenv("DOMAIN_PASSWORD")
     if not all([host, username, password]):
         return []
     url = f"https://{host}/admin/API/mnt/Session/ActiveList"
@@ -187,32 +194,69 @@ def get_active_sessions(limit: int = 200) -> list:
         return []
 
 
-def get_session_by_mac(mac: str) -> dict:
+def get_session_by_mac(mac: str, username: str = None, password: str = None) -> dict:
     """
     Fetch active session details for a specific MAC address from MNT API.
     MNT endpoint: /admin/API/mnt/Session/MACAddress/{mac}
     MAC must be in XX:XX:XX:XX:XX:XX uppercase format.
+
+    Args:
+        mac: MAC address to look up
+        username: Optional; uses DOMAIN_USERNAME env var if not provided
+        password: Optional; uses DOMAIN_PASSWORD env var if not provided
     """
     mac_clean = mac.upper().replace("-", ":").replace(".", ":")
     if ":" not in mac_clean and len(mac_clean) == 12:
         mac_clean = ":".join(mac_clean[i:i+2] for i in range(0, 12, 2))
-    return _mnt_service_get(f"/admin/API/mnt/Session/MACAddress/{mac_clean}")
+
+    host = os.getenv("ISE_HOST")
+    if username is None:
+        username = os.getenv("DOMAIN_USERNAME")
+    if password is None:
+        password = os.getenv("DOMAIN_PASSWORD")
+    if not all([host, username, password]):
+        return {}
+
+    url = f"https://{host}/admin/API/mnt/Session/MACAddress/{mac_clean}"
+    try:
+        resp = _requests.get(
+            url,
+            auth    = (username, password),
+            verify  = os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
+            headers = {"Accept": "application/xml"},
+            timeout = 20,
+        )
+        if resp.status_code == 200 and resp.text:
+            return _xml_to_dict(resp.text)
+        return {}
+    except Exception as e:
+        logger.warning(f"MNT session lookup {mac_clean}: {e}")
+        return {}
 
 
-def get_auth_history_by_mac(mac: str, seconds: int = 86400, records: int = 50) -> list:
+def get_auth_history_by_mac(mac: str, seconds: int = 86400, records: int = 50, username: str = None, password: str = None) -> list:
     """
     Fetch authentication history for a specific MAC address.
 
     MNT endpoint: /admin/API/mnt/AuthStatus/MACAddress/<MAC>/<seconds>/<rec>/All
     The four positional parameters are required by ISE — without them the
     MNT API returns 400 / empty body, which is the original "empty results" bug.
+
+    Args:
+        mac: MAC address to look up
+        seconds: Time window in seconds (default 24h)
+        records: Max records to return
+        username: Optional; uses DOMAIN_USERNAME env var if not provided
+        password: Optional; uses DOMAIN_PASSWORD env var if not provided
     """
     mac_clean = mac.upper().replace("-", ":").replace(".", ":")
     if ":" not in mac_clean and len(mac_clean) == 12:
         mac_clean = ":".join(mac_clean[i:i+2] for i in range(0, 12, 2))
     host = os.getenv("ISE_HOST")
-    username = os.getenv("DOMAIN_USERNAME")
-    password = os.getenv("DOMAIN_PASSWORD")
+    if username is None:
+        username = os.getenv("DOMAIN_USERNAME")
+    if password is None:
+        password = os.getenv("DOMAIN_PASSWORD")
     if not all([host, username, password]):
         return []
     url = f"https://{host}/admin/API/mnt/AuthStatus/MACAddress/{mac_clean}/{seconds}/{records}/All"
@@ -242,7 +286,7 @@ def get_auth_history_by_mac(mac: str, seconds: int = 86400, records: int = 50) -
         return []
 
 
-def get_recent_auth_events(seconds: int = 300) -> list:
+def get_recent_auth_events(seconds: int = 300, username: str = None, password: str = None) -> list:
     """
     Fetch recent authentication events from the last N seconds.
 
@@ -250,10 +294,17 @@ def get_recent_auth_events(seconds: int = 300) -> list:
     which doesn't exist on ISE 3.x — the MNT API uses /Session/AuthList/<start>/<end>
     for time-window queries, where start/end are seconds-ago (or the literal
     string "null" for "from beginning of time").
+
+    Args:
+        seconds: Time window in seconds (default 5 minutes)
+        username: Optional; uses DOMAIN_USERNAME env var if not provided
+        password: Optional; uses DOMAIN_PASSWORD env var if not provided
     """
     host = os.getenv("ISE_HOST")
-    username = os.getenv("DOMAIN_USERNAME")
-    password = os.getenv("DOMAIN_PASSWORD")
+    if username is None:
+        username = os.getenv("DOMAIN_USERNAME")
+    if password is None:
+        password = os.getenv("DOMAIN_PASSWORD")
     if not all([host, username, password]):
         return []
     # AuthList expects /<startSeconds>/<endSeconds>. We want everything
