@@ -95,21 +95,42 @@ def _mnt_service_get(path: str) -> dict | list:
         return {}
 
 
-def _xml_list_to_dicts(xml_text: str, record_tag: str = "record") -> list:
+def _local_name(tag: str) -> str:
+    """Strip XML namespace from an ElementTree tag (e.g. '{ns}foo' -> 'foo')."""
+    return tag.split("}", 1)[-1] if "}" in tag else tag
+
+
+def _xml_list_to_dicts(xml_text: str, record_tag: str | None = None) -> list:
     """
     Parse ISE MNT XML list response into a list of flat dicts.
-    Example: <activeList><record><calling_station_id>...</calling_station_id>...</record></activeList>
+
+    ISE returns different per-record tag names depending on the endpoint:
+      Session/ActiveList            -> <activeList><activeSession>...</activeSession>...
+      Session/AuthList/<s>/<e>      -> <authList><authRecord>...</authRecord>...
+      AuthStatus/MACAddress/...     -> <authStatusOutputList><authStatusList>...
+
+    Pass `record_tag` to target a specific tag (matched namespace-agnostic),
+    or leave it None to walk every direct child of the root element.
     """
     results = []
     if not xml_text:
         return results
     try:
         root = _ET.fromstring(xml_text)
-        for record in root.iter(record_tag):
+        if record_tag:
+            iterable = [el for el in root.iter() if _local_name(el.tag) == record_tag]
+        else:
+            iterable = list(root)  # immediate children only
+        for record in iterable:
             item = {}
-            for child in record:
-                tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
-                item[tag] = child.text or ""
+            for child in record.iter():
+                if child is record:
+                    continue
+                if len(child) == 0:
+                    item[_local_name(child.tag)] = (child.text or "").strip()
+            # also pick up attributes on the record element itself
+            for k, v in record.attrib.items():
+                item.setdefault(_local_name(k), v)
             if item:
                 results.append(item)
     except _ET.ParseError as e:
@@ -150,7 +171,11 @@ def get_active_sessions(limit: int = 200) -> list:
             "status": resp.status_code, "duration_ms": duration,
         })
         if resp.status_code == 200 and resp.text:
-            sessions = _xml_list_to_dicts(resp.text, record_tag="record")
+            # ISE wraps each row as <activeSession> inside <activeList>
+            sessions = _xml_list_to_dicts(resp.text, record_tag="activeSession")
+            if not sessions:
+                # Fallback: walk every immediate child of the root element
+                sessions = _xml_list_to_dicts(resp.text)
             return sessions[:limit]
         return []
     except Exception as e:
@@ -170,11 +195,13 @@ def get_session_by_mac(mac: str) -> dict:
     return _mnt_service_get(f"/admin/API/mnt/Session/MACAddress/{mac_clean}")
 
 
-def get_auth_history_by_mac(mac: str) -> list:
+def get_auth_history_by_mac(mac: str, seconds: int = 86400, records: int = 50) -> list:
     """
     Fetch authentication history for a specific MAC address.
-    MNT endpoint: /admin/API/mnt/AuthStatus/MACAddress/{mac}
-    Returns list of auth attempt dicts with timestamp, result, policy, etc.
+
+    MNT endpoint: /admin/API/mnt/AuthStatus/MACAddress/<MAC>/<seconds>/<rec>/All
+    The four positional parameters are required by ISE — without them the
+    MNT API returns 400 / empty body, which is the original "empty results" bug.
     """
     mac_clean = mac.upper().replace("-", ":").replace(".", ":")
     if ":" not in mac_clean and len(mac_clean) == 12:
@@ -184,7 +211,7 @@ def get_auth_history_by_mac(mac: str) -> list:
     password = os.getenv("DOMAIN_PASSWORD")
     if not all([host, username, password]):
         return []
-    url = f"https://{host}/admin/API/mnt/AuthStatus/MACAddress/{mac_clean}"
+    url = f"https://{host}/admin/API/mnt/AuthStatus/MACAddress/{mac_clean}/{seconds}/{records}/All"
     start_time = time.time()
     try:
         resp = _requests.get(
@@ -200,7 +227,11 @@ def get_auth_history_by_mac(mac: str) -> list:
             "status": resp.status_code, "duration_ms": duration,
         })
         if resp.status_code == 200 and resp.text:
-            return _xml_list_to_dicts(resp.text, record_tag="record")
+            # ISE wraps each row inside <authStatusList>; root is <authStatusOutputList>.
+            rows = _xml_list_to_dicts(resp.text, record_tag="authStatusList")
+            if not rows:
+                rows = _xml_list_to_dicts(resp.text)
+            return rows
         return []
     except Exception as e:
         logger.warning(f"MNT auth history {mac_clean}: {e}")
@@ -210,15 +241,20 @@ def get_auth_history_by_mac(mac: str) -> list:
 def get_recent_auth_events(seconds: int = 300) -> list:
     """
     Fetch recent authentication events from the last N seconds.
-    MNT endpoint: /admin/API/mnt/AuthStatus/Duration/{seconds}
-    Used for the live auth feed panel.
+
+    The original implementation hit /admin/API/mnt/AuthStatus/Duration/<seconds>,
+    which doesn't exist on ISE 3.x — the MNT API uses /Session/AuthList/<start>/<end>
+    for time-window queries, where start/end are seconds-ago (or the literal
+    string "null" for "from beginning of time").
     """
     host = os.getenv("ISE_HOST")
     username = os.getenv("DOMAIN_USERNAME")
     password = os.getenv("DOMAIN_PASSWORD")
     if not all([host, username, password]):
         return []
-    url = f"https://{host}/admin/API/mnt/AuthStatus/Duration/{seconds}"
+    # AuthList expects /<startSeconds>/<endSeconds>. We want everything
+    # from `seconds` ago to "now", so start = seconds, end = 0.
+    url = f"https://{host}/admin/API/mnt/Session/AuthList/{seconds}/0"
     start_time = time.time()
     try:
         resp = _requests.get(
@@ -234,7 +270,12 @@ def get_recent_auth_events(seconds: int = 300) -> list:
             "status": resp.status_code, "duration_ms": duration,
         })
         if resp.status_code == 200 and resp.text:
-            return _xml_list_to_dicts(resp.text, record_tag="record")
+            # ISE wraps each row as <authRecord> inside <authList>.
+            rows = _xml_list_to_dicts(resp.text, record_tag="authRecord")
+            if not rows:
+                # Fallback: walk every immediate child of root
+                rows = _xml_list_to_dicts(resp.text)
+            return rows
         return []
     except Exception as e:
         logger.warning(f"MNT recent auth events: {e}")
@@ -272,7 +313,7 @@ def get_tacacs_auth_status(mac_or_user: str, by: str = "mac") -> list:
             timeout = 20,
         )
         if resp.status_code == 200 and resp.text:
-            return _xml_list_to_dicts(resp.text, record_tag="record")
+            return _xml_list_to_dicts(resp.text)
         return []
     except Exception as e:
         logger.warning(f"MNT TACACS status: {e}")
@@ -390,7 +431,15 @@ def _ers_by_id(ise, resource: str, rid: str) -> dict:
 
 
 def _openapi_get(ise, path: str, params: dict = None, action: str = "OPENAPI_GET") -> list | dict | None:
-    """Single OpenAPI GET with JSON headers. Returns plain Python object or None."""
+    """
+    Single OpenAPI GET with JSON headers. Returns plain Python object or None.
+
+    The ciscoisesdk wraps responses inconsistently across versions:
+      - call_api(...) sometimes returns the parsed body directly (dict / list)
+      - sometimes returns a RestResponse-like object whose .response holds the body
+    We probe both shapes so OpenAPI endpoints (policy sets, deployment nodes,
+    etc.) don't silently come back empty.
+    """
     url = _build_url(f"/api/v1/{path}", params or {})
     start_time = time.time()
     try:
@@ -402,11 +451,19 @@ def _openapi_get(ise, path: str, params: dict = None, action: str = "OPENAPI_GET
             "status": resp.status_code if hasattr(resp, "status_code") else 200,
             "duration_ms": duration
         })
-        raw  = getattr(resp, "response", None)
+
+        # Probe shapes: RestResponse-style (resp.response = body) vs raw body.
+        if isinstance(resp, (list, dict)):
+            raw = resp
+        else:
+            raw = getattr(resp, "response", None)
+            if raw is None:
+                # Some SDK builds expose the body as .data or .body
+                raw = getattr(resp, "data", None) or getattr(resp, "body", None)
         if raw is None:
+            logger.warning(f"OpenAPI GET {path}: empty/null response (resp type={type(resp).__name__})")
             return None
 
-        data = None
         if isinstance(raw, list):
             data = [_to_dict(i) if hasattr(i, "get") else i for i in raw]
         else:

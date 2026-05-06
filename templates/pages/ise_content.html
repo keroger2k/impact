@@ -7,8 +7,11 @@
           <span class="fw-bold text-navy">Cisco ISE Dashboard</span>
         </div>
         <!-- Endpoint quick-lookup -->
-        <form hx-get="/api/ise/endpoints" hx-target="#ise-results" hx-indicator="#ise-loading"
-              hx-on::after-request="this.closest('.list-group, .card-header') && document.querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active'))">
+        <form hx-get="/api/ise/endpoints"
+              hx-target="#ise-results"
+              hx-indicator="#ise-loading"
+              hx-trigger="submit"
+              onsubmit="document.querySelectorAll('#ise-sidebar .list-group-item').forEach(el => el.classList.remove('active'));">
           <label class="small text-muted fw-bold mb-1 d-block">ENDPOINT MAC LOOKUP</label>
           <div class="input-group input-group-sm">
             <span class="input-group-text bg-light border-end-0">
@@ -24,7 +27,7 @@
         </form>
       </div>
       <div class="card-body p-0 overflow-auto" style="max-height: calc(100vh - 230px);">
-        <div class="list-group list-group-flush">
+        <div id="ise-sidebar" class="list-group list-group-flush">
 
           <!-- OPERATIONAL -->
           <div class="px-4 py-2 small text-muted text-uppercase fw-bold bg-light border-bottom">Operational</div>
@@ -41,7 +44,7 @@
           <button class="list-group-item list-group-item-action py-2 px-4 border-bottom"
             hx-get="/api/ise/deployment-nodes" hx-target="#ise-results" hx-indicator="#ise-loading"
             onclick="setActive(this)">
-            <i class="ph ph-server me-2"></i> Deployment Nodes
+            <i class="ph ph-hard-drives me-2"></i> Deployment Nodes
           </button>
 
           <!-- NETWORK ACCESS -->
