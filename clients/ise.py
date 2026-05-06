@@ -118,16 +118,17 @@ def _xml_list_to_dicts(xml_text: str, record_tag: str | None = None) -> list:
     try:
         root = _ET.fromstring(xml_text)
         if record_tag:
-            iterable = [el for el in root.iter() if _local_name(el.tag) == record_tag]
+            # For named record_tag, use direct children only (more reliable than iter())
+            iterable = [el for el in root if _local_name(el.tag) == record_tag]
         else:
             iterable = list(root)  # immediate children only
         for record in iterable:
             item = {}
-            for child in record.iter():
-                if child is record:
-                    continue
-                if len(child) == 0:
-                    item[_local_name(child.tag)] = (child.text or "").strip()
+            # Extract direct children only (don't recurse)
+            for child in record:
+                tag = _local_name(child.tag)
+                text = (child.text or "").strip()
+                item[tag] = text
             # also pick up attributes on the record element itself
             for k, v in record.attrib.items():
                 item.setdefault(_local_name(k), v)
@@ -171,12 +172,15 @@ def get_active_sessions(limit: int = 200) -> list:
             "status": resp.status_code, "duration_ms": duration,
         })
         if resp.status_code == 200 and resp.text:
+            logger.debug(f"MNT ActiveList response (first 500 chars): {resp.text[:500]}")
             # ISE wraps each row as <activeSession> inside <activeList>
             sessions = _xml_list_to_dicts(resp.text, record_tag="activeSession")
             if not sessions:
                 # Fallback: walk every immediate child of the root element
                 sessions = _xml_list_to_dicts(resp.text)
+            logger.debug(f"Parsed {len(sessions)} active sessions")
             return sessions[:limit]
+        logger.warning(f"MNT ActiveList returned {resp.status_code}")
         return []
     except Exception as e:
         logger.warning(f"MNT active sessions: {e}")
@@ -270,12 +274,15 @@ def get_recent_auth_events(seconds: int = 300) -> list:
             "status": resp.status_code, "duration_ms": duration,
         })
         if resp.status_code == 200 and resp.text:
+            logger.debug(f"MNT AuthList response (first 500 chars): {resp.text[:500]}")
             # ISE wraps each row as <authRecord> inside <authList>.
             rows = _xml_list_to_dicts(resp.text, record_tag="authRecord")
             if not rows:
                 # Fallback: walk every immediate child of root
                 rows = _xml_list_to_dicts(resp.text)
+            logger.debug(f"Parsed {len(rows)} recent auth events")
             return rows
+        logger.warning(f"MNT AuthList returned {resp.status_code}")
         return []
     except Exception as e:
         logger.warning(f"MNT recent auth events: {e}")
@@ -647,6 +654,7 @@ def get_egress_matrix(ise) -> list:
 
 def get_policy_sets(ise) -> list:
     data = _openapi_get(ise, "policy/network-access/policy-set")
+    logger.debug(f"get_policy_sets returned: type={type(data).__name__}, value={data}")
     if isinstance(data, list):
         return data
     if isinstance(data, dict):
@@ -698,6 +706,7 @@ def get_profiling_policies(ise) -> list:
 
 def get_deployment_nodes(ise) -> list:
     data = _openapi_get(ise, "deployment/node")
+    logger.debug(f"get_deployment_nodes returned: type={type(data).__name__}, value={data}")
     if isinstance(data, list):
         return data
     if isinstance(data, dict):
