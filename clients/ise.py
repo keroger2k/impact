@@ -629,7 +629,7 @@ def get_endpoints(ise, mac_search: str = "") -> list:
         batch = _ers_paginate(
             ise, "endpoint",
             size=20,                             # MAC searches return few results
-            filter_str=f"mac.CONTAINS.{mac_variant}",
+            filter_str=f"mac.EQ.{mac_variant}",
         )
         for item in batch:
             ep_id = item.get("id")
