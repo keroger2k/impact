@@ -7,13 +7,13 @@
     <div class="d-flex gap-2">
       <!-- Auth history lookup button -->
       <button class="btn btn-sm btn-outline-primary"
-        hx-get="/api/ise/sessions/auth-history?mac={{ ep.name or ep.mac }}"
+        hx-get="/api/ise/sessions/auth-history?mac={{ (ep.name or ep.mac) | urlencode }}"
         hx-target="#ise-results"
         hx-indicator="#ise-loading">
         <i class="ph ph-clock-clockwise me-1"></i> Auth History
       </button>
       <button class="btn btn-sm btn-outline-secondary"
-        hx-get="/api/ise/sessions/active?mac={{ ep.name or ep.mac }}"
+        hx-get="/api/ise/sessions/active?mac={{ (ep.name or ep.mac) | urlencode }}"
         hx-target="#ise-results"
         hx-indicator="#ise-loading">
         <i class="ph ph-activity me-1"></i> Live Session
@@ -29,13 +29,13 @@
             <dt class="col-5 text-muted">MAC Address</dt>
             <dd class="col-7 mono fw-bold">{{ ep.name or ep.mac }}</dd>
             <dt class="col-5 text-muted">Profile</dt>
-            <dd class="col-7"><span class="badge bg-info-subtle text-info">{{ ep.profileName or '—' }}</span></dd>
+            <dd class="col-7"><span class="badge bg-info-subtle text-info">{{ ep.profileName or ep.endpoint_profile or '—' }}</span></dd>
             <dt class="col-5 text-muted">Group</dt>
             <dd class="col-7"><span class="badge bg-secondary-subtle text-secondary">{{ ep.groupName or '—' }}</span></dd>
             <dt class="col-5 text-muted">Identity Store</dt>
-            <dd class="col-7">{{ ep.identityStore or '—' }}</dd>
+            <dd class="col-7">{{ ep.identity_store or ep.identityStore or '—' }}</dd>
             <dt class="col-5 text-muted">Identity Group</dt>
-            <dd class="col-7">{{ ep.identityGroup or '—' }}</dd>
+            <dd class="col-7">{{ ep.identity_group or ep.identityGroup or '—' }}</dd>
           </dl>
         </div>
       </div>
@@ -44,15 +44,37 @@
           <div class="small text-muted fw-bold mb-2 text-uppercase">Network</div>
           <dl class="row mb-0 small">
             <dt class="col-5 text-muted">IP Address</dt>
-            <dd class="col-7 mono">{{ ep.ipAddress or ep.framed_ip_address or '—' }}</dd>
+            <dd class="col-7 mono">{{ ep.ipAddress or '—' }}</dd>
             <dt class="col-5 text-muted">NAS IP</dt>
             <dd class="col-7 mono">{{ ep.nas_ip_address or '—' }}</dd>
             <dt class="col-5 text-muted">Connected To</dt>
-            <dd class="col-7">{{ ep.connectedToDevice or ep.network_device_name or '—' }}</dd>
+            <dd class="col-7">{{ ep.connectedToDevice or '—' }}</dd>
             <dt class="col-5 text-muted">Last Auth</dt>
             <dd class="col-7 small">{{ ep.lastAuthTime or '—' }}</dd>
             <dt class="col-5 text-muted">Static Profile</dt>
-            <dd class="col-7">{{ 'Yes' if ep.staticProfileAssignment else 'No' }}</dd>
+            <dd class="col-7">
+              {% if ep.staticProfileAssignment %}
+              <span class="text-success fw-bold">Yes (Enabled)</span>
+              {% else %}
+              <span class="text-muted">No (Disabled)</span>
+              {% endif %}
+            </dd>
+            <dt class="col-5 text-muted">PSN Node</dt>
+            <dd class="col-7 small">{{ ep.ise_node or '—' }}</dd>
+            <dt class="col-5 text-muted">Auth Method</dt>
+            <dd class="col-7">
+              {% if ep.auth_method == 'dot1x' %}
+              <span class="badge bg-primary-subtle text-primary">802.1X</span>
+              {% elif ep.auth_method == 'mab' %}
+              <span class="badge bg-warning-subtle text-warning">MAB</span>
+              {% else %}
+              <span class="badge bg-secondary-subtle text-secondary">{{ ep.auth_method or '—' }}</span>
+              {% endif %}
+            </dd>
+            <dt class="col-5 text-muted">VLAN ID</dt>
+            <dd class="col-7"><span class="badge bg-light text-muted">{{ ep.vlan or '—' }}</span></dd>
+            <dt class="col-5 text-muted">SGT</dt>
+            <dd class="col-7">{% if ep.sgt %}<span class="badge bg-info-subtle text-info">SGT {{ ep.sgt }}</span>{% else %}—{% endif %}</dd>
           </dl>
         </div>
       </div>

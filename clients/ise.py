@@ -635,7 +635,9 @@ def get_endpoints(ise, mac_search: str = "") -> list:
             ep_id = item.get("id")
             if ep_id and ep_id not in seen_ids:
                 seen_ids.add(ep_id)
-                results.append(item)
+                # Fetch full detail so Profile/Group info is available for the results table
+                detail = get_endpoint_detail(ise, ep_id)
+                results.append(detail if detail else item)
 
     # If still empty, try without a filter on a small page and scan manually
     # This handles ISE instances that don't support CONTAINS on mac
@@ -646,7 +648,11 @@ def get_endpoints(ise, mac_search: str = "") -> list:
         for ep in all_eps:
             name = (ep.get("name") or "").upper().replace(":", "").replace("-", "").replace(".", "")
             if search_clean in name:
-                results.append(ep)
+                ep_id = ep.get("id")
+                if ep_id and ep_id not in seen_ids:
+                    seen_ids.add(ep_id)
+                    detail = get_endpoint_detail(ise, ep_id)
+                    results.append(detail if detail else ep)
 
     return results
 

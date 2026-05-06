@@ -131,15 +131,80 @@ async def search_endpoints(request: Request, mac: str = Query(..., min_length=2)
 async def get_endpoint(request: Request, ep_id: str, session: SessionEntry = Depends(require_auth)):
     from dev import DEV_MODE, MOCK_ENDPOINTS
     if DEV_MODE:
-        detail = next((e for e in MOCK_ENDPOINTS if e["id"] == ep_id), None)
-        if not detail:
+        raw_detail = next((e for e in MOCK_ENDPOINTS if e["id"] == ep_id), None)
+        if not raw_detail:
             raise HTTPException(404, "Endpoint not found")
+        detail = raw_detail.copy()
+
+        from dev import MOCK_ACTIVE_SESSIONS, MOCK_AUTH_HISTORY
+        mac = detail.get("name") or detail.get("mac")
+        s = mac.upper().replace(":", "").replace("-", "").replace(".", "")
+        live_sess = next((sess for sess in MOCK_ACTIVE_SESSIONS if s == sess.get("calling_station_id", "").upper().replace(":", "").replace("-", "")), None)
+        history = [ev for ev in MOCK_AUTH_HISTORY if s == ev.get("calling_station_id", "").upper().replace(":", "").replace("-", "")]
+
+        if live_sess:
+            for k in ["nas_ip_address", "network_device_name", "nas_port_id", "endpoint_profile",
+                      "identity_store", "identity_group", "ise_node", "auth_method", "vlan", "sgt"]:
+                if live_sess.get(k):
+                    detail[k] = live_sess[k]
+            if live_sess.get("framed_ip_address"):
+                detail["ipAddress"] = live_sess["framed_ip_address"]
+            if live_sess.get("network_device_name") and live_sess.get("nas_port_id"):
+                detail["connectedToDevice"] = f"{live_sess['network_device_name']} ({live_sess['nas_port_id']})"
+
+        if history and not detail.get("lastAuthTime"):
+            detail["lastAuthTime"] = history[0].get("timestamp")
     else:
         ise = _get_ise(session)
         loop = asyncio.get_event_loop()
         detail = await loop.run_in_executor(None, run_with_context(ic.get_endpoint_detail), ise, ep_id)
         if not detail:
             raise HTTPException(404, "Endpoint not found")
+
+        # Enrich with live session and auth history
+        mac = detail.get("name") or detail.get("mac")
+        if mac:
+            tasks = [
+                loop.run_in_executor(None, run_with_context(ic.get_session_by_mac), mac, session.username, session.password),
+                loop.run_in_executor(None, run_with_context(ic.get_auth_history_by_mac), mac, 86400, 5, session.username, session.password)
+            ]
+            live_sess, history = await asyncio.gather(*tasks)
+
+            # Prioritize live session IP
+            if live_sess and live_sess.get("framed_ip_address"):
+                detail["ipAddress"] = live_sess["framed_ip_address"]
+
+            # Merge live session attributes
+            if live_sess:
+                for k in ["nas_ip_address", "network_device_name", "nas_port_id", "endpoint_profile",
+                          "identity_store", "identity_group", "ise_node", "auth_method", "vlan", "sgt"]:
+                    if live_sess.get(k):
+                        detail[k] = live_sess[k]
+
+                if live_sess.get("network_device_name") and live_sess.get("nas_port_id"):
+                    detail["connectedToDevice"] = f"{live_sess['network_device_name']} ({live_sess['nas_port_id']})"
+                elif live_sess.get("nas_ip_address"):
+                    detail["connectedToDevice"] = live_sess["nas_ip_address"]
+
+            # Fallback for "Connected To", "Last Auth", and Auth Metadata using history
+            if history and isinstance(history, list) and len(history) > 0:
+                latest = history[0]
+                # Fallback for Auth Metadata
+                for k in ["authentication_method", "vlan", "sgt"]:
+                    target_k = "auth_method" if k == "authentication_method" else k
+                    if not detail.get(target_k) and latest.get(k):
+                        detail[target_k] = latest[k]
+
+                if not detail.get("connectedToDevice"):
+                    dev_name = latest.get("network_device_name")
+                    port = latest.get("nas_port_id")
+                    if dev_name and port:
+                        detail["connectedToDevice"] = f"{dev_name} ({port}) [stale]"
+                    elif dev_name or latest.get("nas_ip_address"):
+                        detail["connectedToDevice"] = f"{dev_name or latest.get('nas_ip_address')} [stale]"
+
+                if not detail.get("lastAuthTime"):
+                    detail["lastAuthTime"] = latest.get("timestamp")
 
     if request.headers.get("HX-Request"):
         from templates_module import templates

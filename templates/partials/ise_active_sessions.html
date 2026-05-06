@@ -54,7 +54,7 @@
           <td>
             {% if s.calling_station_id %}
             <button class="btn btn-xs btn-outline-primary"
-              hx-get="/api/ise/sessions/auth-history?mac={{ s.calling_station_id }}"
+              hx-get="/api/ise/sessions/auth-history?mac={{ s.calling_station_id | urlencode }}"
               hx-target="#ise-results"
               hx-indicator="#ise-loading">
               History
