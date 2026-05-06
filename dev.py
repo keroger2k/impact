@@ -358,12 +358,13 @@ for i in range(20):
 
 MOCK_NADS: list[dict] = [
     {
-        "id":          _uid(f"nad-{i}"),
-        "name":        dev["hostname"],
-        "description": f"{dev['role']} switch",
-        "ipaddress":   dev["managementIpAddress"],
-        "profileName": "Cisco",
-        "modelName":   dev["platformId"],
+        "id":              _uid(f"nad-{i}"),
+        "name":            dev["hostname"],
+        "description":     f"{dev['role']} switch",
+        "ipaddress":       dev["managementIpAddress"],
+        "profileName":     "Cisco",
+        "modelName":       dev["platformId"],
+        "softwareVersion": dev["softwareVersion"],
     }
     for i, dev in enumerate(MOCK_DEVICES[:10])
 ]
@@ -393,9 +394,9 @@ MOCK_SGTS: list[dict] = [
 ]
 
 MOCK_POLICY_SETS: list[dict] = [
-    {"id": _uid("ps-wired"),    "name": "Wired_MAB",   "description": "MAC Auth for wired devices", "isProxy": False},
-    {"id": _uid("ps-wireless"), "name": "Wireless_Dot1x", "description": "802.1X for wireless",    "isProxy": False},
-    {"id": _uid("ps-vpn"),      "name": "VPN_Access",  "description": "VPN user authentication",   "isProxy": False},
+    {"id": _uid("ps-wired"),    "name": "Wired_MAB",      "description": "MAC Auth for wired devices", "isProxy": False, "state": "ENABLED"},
+    {"id": _uid("ps-wireless"), "name": "Wireless_Dot1x", "description": "802.1X for wireless",        "isProxy": False, "state": "ENABLED"},
+    {"id": _uid("ps-vpn"),      "name": "VPN_Access",     "description": "VPN user authentication",    "isProxy": False, "state": "ENABLED"},
 ]
 
 MOCK_DEPLOYMENT_NODES: list[dict] = [

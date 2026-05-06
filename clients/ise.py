@@ -14,6 +14,9 @@ import threading
 import time
 from urllib.parse import urlencode
 
+import xml.etree.ElementTree as _ET
+
+import requests as _requests
 import urllib3
 from ciscoisesdk import IdentityServicesEngineAPI
 from dotenv import load_dotenv
@@ -655,10 +658,6 @@ def get_node_detail(ise, hostname: str) -> dict:
 # ──────────────────────────────────────────────────────────────────────────────
 # ACTIVE SESSIONS  /api/v1/session
 # ──────────────────────────────────────────────────────────────────────────────
-
-import xml.etree.ElementTree as _ET
-import requests as _requests
-
 
 def _xml_to_dict(xml_text: str) -> dict:
     """

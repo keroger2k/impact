@@ -38,7 +38,7 @@
             {% endif %}
           </td>
           <td class="small">
-            {% for p in item.profiles %}
+            {% for p in (item.profiles or []) %}
             <div class="badge bg-light text-muted">{{ p }}</div>
             {% endfor %}
           </td>

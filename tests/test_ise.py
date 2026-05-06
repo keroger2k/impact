@@ -127,7 +127,7 @@ def test_active_sessions_htmx(htmx_headers):
     r = client.get("/api/ise/sessions/active", headers=htmx_headers)
     assert r.status_code == 200
     assert b"Active Sessions" in r.content
-    assert b"calling_station_id" not in r.content  # rendered as HTML, not raw JSON
+    assert b"<table" in r.content  # rendered as HTML table, not raw JSON
 
 def test_active_sessions_mac_filter(auth_headers):
     r = client.get("/api/ise/sessions/active?mac=A4:C3", headers=auth_headers)
@@ -248,6 +248,20 @@ def test_profiling_policies_htmx(htmx_headers):
     r = client.get("/api/ise/profiling-policies", headers=htmx_headers)
     assert r.status_code == 200
     assert b"Cisco-IP-Phone" in r.content or b"Windows10" in r.content
+
+def test_profiling_policies_search(htmx_headers):
+    r = client.get("/api/ise/profiling-policies?search=phone", headers=htmx_headers)
+    assert r.status_code == 200
+    # "Cisco-IP-Phone" matches "phone"; "Windows10-Workstation" should not
+    assert b"Cisco-IP-Phone" in r.content
+    assert b"Windows10" not in r.content
+
+def test_profiling_policies_search_no_results(htmx_headers):
+    r = client.get("/api/ise/profiling-policies?search=zzznotexist", headers=htmx_headers)
+    assert r.status_code == 200
+    # Returns empty list, total 0 — still valid HTTP 200
+    data_check = client.get("/api/ise/profiling-policies?search=zzznotexist", headers={"Cookie": htmx_headers["Cookie"]})
+    assert data_check.json()["total"] == 0
 
 
 # ── Admin ─────────────────────────────────────────────────────────────────────

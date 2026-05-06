@@ -436,7 +436,7 @@ async def list_allowed_protocols(request: Request, session: SessionEntry = Depen
 # ── Profiling & Admin ─────────────────────────────────────────────────────────
 
 @router.get("/profiling-policies")
-async def list_profiling_policies(request: Request, session: SessionEntry = Depends(require_auth)):
+async def list_profiling_policies(request: Request, search: Optional[str] = None, session: SessionEntry = Depends(require_auth)):
     from dev import DEV_MODE, MOCK_PROFILING_POLICIES
     if DEV_MODE:
         policies = MOCK_PROFILING_POLICIES
@@ -445,6 +445,10 @@ async def list_profiling_policies(request: Request, session: SessionEntry = Depe
         loop = asyncio.get_event_loop()
         policies = await loop.run_in_executor(None, run_with_context(_cached), "ise_profiling_policies",
                        lambda: ic.get_profiling_policies(ise))
+
+    if search:
+        s = search.lower()
+        policies = [p for p in policies if s in (p.get("name", "") + p.get("description", "")).lower()]
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
