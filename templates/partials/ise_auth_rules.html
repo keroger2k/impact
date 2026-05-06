@@ -1,7 +1,13 @@
-<div class="card shadow-sm border-0 animate-fade-in mt-3">
-  <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center">
-    <span class="fw-bold">Authentication Rules ({{ total }})</span>
-    <button class="btn btn-sm btn-outline-light" hx-get="/api/ise/policy-sets" hx-target="#ise-results">Back to Policy Sets</button>
+<div class="card shadow-md border-0 animate-fade-in mt-3">
+  <div class="card-header bg-white border-bottom py-3 d-flex justify-content-between align-items-center">
+    <div class="d-flex align-items-center gap-2">
+      <i class="ph ph-shield-check text-primary"></i>
+      <span class="fw-bold text-navy">Authentication Rules ({{ total }})</span>
+    </div>
+    <button class="btn btn-sm btn-outline-secondary"
+      hx-get="/api/ise/policy-sets" hx-target="#ise-results" hx-indicator="#ise-loading">
+      <i class="ph ph-arrow-left me-1"></i> Policy Sets
+    </button>
   </div>
   <div class="card-body p-0 overflow-auto" style="max-height: 500px;">
     <table class="table table-hover table-striped mb-0 data-table">
@@ -32,7 +38,7 @@
             {% endif %}
           </td>
           <td class="small">
-            {% for p in item.profiles %}
+            {% for p in (item.profiles or []) %}
             <div class="badge bg-light text-muted">{{ p }}</div>
             {% endfor %}
           </td>

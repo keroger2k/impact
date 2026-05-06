@@ -1,0 +1,47 @@
+<div class="card shadow-md border-0 animate-fade-in">
+  <div class="card-header bg-white border-bottom py-3 d-flex justify-content-between align-items-center">
+    <div class="d-flex align-items-center gap-2">
+      <i class="ph ph-table text-primary"></i>
+      <span class="fw-bold text-navy">TrustSec Egress Policy Matrix ({{ total }} cells)</span>
+    </div>
+    <button class="btn btn-sm btn-outline-secondary px-2"
+      hx-get="/api/ise/egress-matrix" hx-target="#ise-results" hx-indicator="#ise-loading">
+      <i class="ph ph-arrows-clockwise"></i>
+    </button>
+  </div>
+  <div class="card-body p-0 overflow-auto" style="max-height: calc(100vh - 200px);">
+    <!-- Summary table -->
+    <table class="table table-hover table-striped mb-0 data-table">
+      <thead class="bg-light sticky-top">
+        <tr>
+          <th>Source SGT</th>
+          <th>Destination SGT</th>
+          <th>Policy</th>
+          <th>SGACLs Applied</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for cell in items %}
+        <tr>
+          <td><span class="badge bg-primary-subtle text-primary">{{ cell.sourceSgt or cell.sourceSgtId }}</span></td>
+          <td><span class="badge bg-warning-subtle text-warning">{{ cell.destinationSgt or cell.destinationSgtId }}</span></td>
+          <td class="fw-bold text-navy small">{{ cell.name or '—' }}</td>
+          <td>
+            {% for sgacl_id in (cell.sgaclIds or []) %}
+            <span class="badge bg-danger-subtle text-danger me-1 small">ACL</span>
+            {% endfor %}
+          </td>
+          <td>
+            {% if cell.matrixCellStatus == 'FINAL' %}
+            <span class="badge bg-success-subtle text-success">Final</span>
+            {% else %}
+            <span class="badge bg-secondary-subtle text-secondary">{{ cell.matrixCellStatus or '—' }}</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>

@@ -1,0 +1,34 @@
+<div class="card shadow-md border-0 animate-fade-in">
+  <div class="card-header bg-white border-bottom py-3 d-flex justify-content-between align-items-center">
+    <div class="d-flex align-items-center gap-2">
+      <i class="ph ph-fingerprint text-primary"></i>
+      <span class="fw-bold text-navy">Profiling Policies ({{ total }})</span>
+    </div>
+    <input type="text" class="form-control form-control-sm w-auto"
+      placeholder="Filter..."
+      hx-get="/api/ise/profiling-policies"
+      hx-trigger="keyup changed delay:400ms"
+      name="search"
+      hx-target="#ise-results">
+  </div>
+  <div class="card-body p-0 overflow-auto" style="max-height: calc(100vh - 200px);">
+    <table class="table table-hover table-striped mb-0 data-table">
+      <thead class="bg-light sticky-top">
+        <tr>
+          <th>Policy Name</th>
+          <th>Description</th>
+          <th>Min Certainty Factor</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in items %}
+        <tr>
+          <td class="fw-bold text-navy">{{ p.name }}</td>
+          <td class="small text-muted">{{ p.description or '—' }}</td>
+          <td><span class="badge bg-light text-muted">{{ p.minCertaintyFactor }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>

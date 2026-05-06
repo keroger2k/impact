@@ -1,0 +1,51 @@
+<div class="card shadow-md border-0 animate-fade-in">
+  <div class="card-header bg-white border-bottom py-3 d-flex justify-content-between align-items-center">
+    <div class="d-flex align-items-center gap-2">
+      <i class="ph ph-magnifying-glass text-primary"></i>
+      <span class="fw-bold text-navy">Endpoint Search — "{{ mac_query }}" ({{ total }} results)</span>
+    </div>
+  </div>
+  <div class="card-body p-0">
+    {% if total == 0 %}
+    <div class="text-center p-5 text-muted">
+      <i class="ph ph-warning-circle" style="font-size:2rem;"></i>
+      <p class="mt-2">No endpoints found for <code>{{ mac_query }}</code></p>
+      <p class="small">Try a partial MAC (e.g. <code>A4:C3</code>) or check the format.</p>
+    </div>
+    {% else %}
+    <div class="overflow-auto" style="max-height: calc(100vh - 200px);">
+      <table class="table table-hover table-striped mb-0 data-table">
+        <thead class="bg-light sticky-top">
+          <tr>
+            <th>MAC Address</th>
+            <th>Profile</th>
+            <th>Group</th>
+            <th>IP Address</th>
+            <th>Last Auth</th>
+            <th data-no-sort data-no-filter></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for ep in items %}
+          <tr>
+            <td class="fw-bold mono text-navy">{{ ep.name or ep.mac }}</td>
+            <td><span class="badge bg-info-subtle text-info">{{ ep.profileName or ep.endpointProfile or '—' }}</span></td>
+            <td><span class="badge bg-secondary-subtle text-secondary">{{ ep.groupName or '—' }}</span></td>
+            <td class="mono small">{{ ep.ipAddress or ep.framed_ip_address or '—' }}</td>
+            <td class="small text-muted">{{ ep.lastAuthTime or '—' }}</td>
+            <td>
+              <button class="btn btn-xs btn-outline-primary"
+                hx-get="/api/ise/endpoints/{{ ep.id }}"
+                hx-target="#ise-results"
+                hx-indicator="#ise-loading">
+                Details
+              </button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+</div>

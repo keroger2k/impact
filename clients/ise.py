@@ -14,6 +14,9 @@ import threading
 import time
 from urllib.parse import urlencode
 
+import xml.etree.ElementTree as _ET
+
+import requests as _requests
 import urllib3
 from ciscoisesdk import IdentityServicesEngineAPI
 from dotenv import load_dotenv
@@ -48,6 +51,232 @@ def create_client() -> IdentityServicesEngineAPI:
         debug            = False,
         uses_csrf_token  = False,
     )
+
+
+def _mnt_service_get(path: str) -> dict | list:
+    """
+    Call ISE MNT REST API with service-account credentials from env.
+    MNT API returns XML — we parse it to dict/list.
+    Returns {} or [] on any error.
+    """
+    host     = os.getenv("ISE_HOST")
+    username = os.getenv("DOMAIN_USERNAME")
+    password = os.getenv("DOMAIN_PASSWORD")
+    if not all([host, username, password]):
+        logger.warning("ISE_HOST / DOMAIN_USERNAME / DOMAIN_PASSWORD not set — MNT call skipped")
+        return {}
+    url = f"https://{host}{path}"
+    start_time = time.time()
+    try:
+        resp = _requests.get(
+            url,
+            auth    = (username, password),
+            verify  = os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
+            headers = {"Accept": "application/xml"},
+            timeout = 20,
+        )
+        duration = int((time.time() - start_time) * 1000)
+        logger.info(f"ISE MNT GET {path}", extra={
+            "target": "ISE", "action": "MNT_GET",
+            "status": resp.status_code, "duration_ms": duration,
+        })
+        if resp.status_code == 200 and resp.text:
+            return _xml_to_dict(resp.text)
+
+        # Graceful failure for 401/404
+        if resp.status_code in (401, 404):
+            logger.warning(f"MNT {path}: HTTP {resp.status_code} (Graceful failure)")
+            return {}
+
+        logger.warning(f"MNT {path}: HTTP {resp.status_code}")
+        return {}
+    except Exception as e:
+        logger.warning(f"MNT GET {path}: {e}")
+        return {}
+
+
+def _xml_list_to_dicts(xml_text: str, record_tag: str = "record") -> list:
+    """
+    Parse ISE MNT XML list response into a list of flat dicts.
+    Example: <activeList><record><calling_station_id>...</calling_station_id>...</record></activeList>
+    """
+    results = []
+    if not xml_text:
+        return results
+    try:
+        root = _ET.fromstring(xml_text)
+        for record in root.iter(record_tag):
+            item = {}
+            for child in record:
+                tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+                item[tag] = child.text or ""
+            if item:
+                results.append(item)
+    except _ET.ParseError as e:
+        logger.warning(f"XML list parse error: {e}")
+    return results
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# MNT ACTIVE SESSIONS  /admin/API/mnt/Session/ActiveList
+# ──────────────────────────────────────────────────────────────────────────────
+
+def get_active_sessions(limit: int = 200) -> list:
+    """
+    List active RADIUS/TACACS sessions from ISE MNT REST API.
+    Returns list of session dicts with fields like:
+      calling_station_id, user_name, nas_ip_address, nas_port_id,
+      acct_session_id, framed_ip_address, endpoint_profile, vlan,
+      auth_method, identity_store, identity_group, ise_node
+    """
+    host = os.getenv("ISE_HOST")
+    username = os.getenv("DOMAIN_USERNAME")
+    password = os.getenv("DOMAIN_PASSWORD")
+    if not all([host, username, password]):
+        return []
+    url = f"https://{host}/admin/API/mnt/Session/ActiveList"
+    start_time = time.time()
+    try:
+        resp = _requests.get(
+            url,
+            auth    = (username, password),
+            verify  = os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
+            headers = {"Accept": "application/xml"},
+            timeout = 25,
+        )
+        duration = int((time.time() - start_time) * 1000)
+        logger.info("ISE MNT active sessions", extra={
+            "target": "ISE", "action": "MNT_ACTIVE_SESSIONS",
+            "status": resp.status_code, "duration_ms": duration,
+        })
+        if resp.status_code == 200 and resp.text:
+            sessions = _xml_list_to_dicts(resp.text, record_tag="record")
+            return sessions[:limit]
+        return []
+    except Exception as e:
+        logger.warning(f"MNT active sessions: {e}")
+        return []
+
+
+def get_session_by_mac(mac: str) -> dict:
+    """
+    Fetch active session details for a specific MAC address from MNT API.
+    MNT endpoint: /admin/API/mnt/Session/MACAddress/{mac}
+    MAC must be in XX:XX:XX:XX:XX:XX uppercase format.
+    """
+    mac_clean = mac.upper().replace("-", ":").replace(".", ":")
+    if ":" not in mac_clean and len(mac_clean) == 12:
+        mac_clean = ":".join(mac_clean[i:i+2] for i in range(0, 12, 2))
+    return _mnt_service_get(f"/admin/API/mnt/Session/MACAddress/{mac_clean}")
+
+
+def get_auth_history_by_mac(mac: str) -> list:
+    """
+    Fetch authentication history for a specific MAC address.
+    MNT endpoint: /admin/API/mnt/AuthStatus/MACAddress/{mac}
+    Returns list of auth attempt dicts with timestamp, result, policy, etc.
+    """
+    mac_clean = mac.upper().replace("-", ":").replace(".", ":")
+    if ":" not in mac_clean and len(mac_clean) == 12:
+        mac_clean = ":".join(mac_clean[i:i+2] for i in range(0, 12, 2))
+    host = os.getenv("ISE_HOST")
+    username = os.getenv("DOMAIN_USERNAME")
+    password = os.getenv("DOMAIN_PASSWORD")
+    if not all([host, username, password]):
+        return []
+    url = f"https://{host}/admin/API/mnt/AuthStatus/MACAddress/{mac_clean}"
+    start_time = time.time()
+    try:
+        resp = _requests.get(
+            url,
+            auth    = (username, password),
+            verify  = os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
+            headers = {"Accept": "application/xml"},
+            timeout = 20,
+        )
+        duration = int((time.time() - start_time) * 1000)
+        logger.info(f"ISE MNT auth history for {mac_clean}", extra={
+            "target": "ISE", "action": "MNT_AUTH_HISTORY",
+            "status": resp.status_code, "duration_ms": duration,
+        })
+        if resp.status_code == 200 and resp.text:
+            return _xml_list_to_dicts(resp.text, record_tag="record")
+        return []
+    except Exception as e:
+        logger.warning(f"MNT auth history {mac_clean}: {e}")
+        return []
+
+
+def get_recent_auth_events(seconds: int = 300) -> list:
+    """
+    Fetch recent authentication events from the last N seconds.
+    MNT endpoint: /admin/API/mnt/AuthStatus/Duration/{seconds}
+    Used for the live auth feed panel.
+    """
+    host = os.getenv("ISE_HOST")
+    username = os.getenv("DOMAIN_USERNAME")
+    password = os.getenv("DOMAIN_PASSWORD")
+    if not all([host, username, password]):
+        return []
+    url = f"https://{host}/admin/API/mnt/AuthStatus/Duration/{seconds}"
+    start_time = time.time()
+    try:
+        resp = _requests.get(
+            url,
+            auth    = (username, password),
+            verify  = os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
+            headers = {"Accept": "application/xml"},
+            timeout = 25,
+        )
+        duration = int((time.time() - start_time) * 1000)
+        logger.info(f"ISE MNT recent auth events (last {seconds}s)", extra={
+            "target": "ISE", "action": "MNT_RECENT_AUTH",
+            "status": resp.status_code, "duration_ms": duration,
+        })
+        if resp.status_code == 200 and resp.text:
+            return _xml_list_to_dicts(resp.text, record_tag="record")
+        return []
+    except Exception as e:
+        logger.warning(f"MNT recent auth events: {e}")
+        return []
+
+
+def get_tacacs_auth_status(mac_or_user: str, by: str = "mac") -> list:
+    """
+    Fetch TACACS+ authentication status.
+    by="mac": /admin/API/mnt/TacacsAuthStatus/MACAddress/{mac}
+    by="user": /admin/API/mnt/TacacsAuthStatus/User/{username}
+    by="duration": /admin/API/mnt/TacacsAuthStatus/Duration/{seconds}
+    """
+    host = os.getenv("ISE_HOST")
+    username_env = os.getenv("DOMAIN_USERNAME")
+    password_env = os.getenv("DOMAIN_PASSWORD")
+    if not all([host, username_env, password_env]):
+        return []
+    if by == "mac":
+        mac_clean = mac_or_user.upper().replace("-", ":").replace(".", ":")
+        if ":" not in mac_clean and len(mac_clean) == 12:
+            mac_clean = ":".join(mac_clean[i:i+2] for i in range(0, 12, 2))
+        path = f"/admin/API/mnt/TacacsAuthStatus/MACAddress/{mac_clean}"
+    elif by == "user":
+        path = f"/admin/API/mnt/TacacsAuthStatus/User/{mac_or_user}"
+    else:
+        path = f"/admin/API/mnt/TacacsAuthStatus/Duration/{mac_or_user}"
+    url = f"https://{host}{path}"
+    try:
+        resp = _requests.get(
+            url,
+            auth    = (username_env, password_env),
+            verify  = os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
+            headers = {"Accept": "application/xml"},
+            timeout = 20,
+        )
+        if resp.status_code == 200 and resp.text:
+            return _xml_list_to_dicts(resp.text, record_tag="record")
+        return []
+    except Exception as e:
+        logger.warning(f"MNT TACACS status: {e}")
+        return []
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -429,10 +658,6 @@ def get_node_detail(ise, hostname: str) -> dict:
 # ──────────────────────────────────────────────────────────────────────────────
 # ACTIVE SESSIONS  /api/v1/session
 # ──────────────────────────────────────────────────────────────────────────────
-
-import xml.etree.ElementTree as _ET
-import requests as _requests
-
 
 def _xml_to_dict(xml_text: str) -> dict:
     """

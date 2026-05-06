@@ -1,0 +1,46 @@
+<div class="card shadow-md border-0 animate-fade-in">
+  <div class="card-header bg-white border-bottom py-3 d-flex justify-content-between align-items-center">
+    <div class="d-flex align-items-center gap-2">
+      <i class="ph ph-check-square text-primary"></i>
+      <span class="fw-bold text-navy">Authorization Profiles ({{ total }})</span>
+    </div>
+    <button class="btn btn-sm btn-outline-secondary px-2"
+      hx-get="/api/ise/authz-profiles" hx-target="#ise-results" hx-indicator="#ise-loading">
+      <i class="ph ph-arrows-clockwise"></i>
+    </button>
+  </div>
+  <div class="card-body p-0 overflow-auto" style="max-height: calc(100vh - 200px);">
+    <table class="table table-hover table-striped mb-0 data-table">
+      <thead class="bg-light sticky-top">
+        <tr>
+          <th>Name</th>
+          <th>Access Type</th>
+          <th>VLAN</th>
+          <th>DACL</th>
+          <th>Re-Auth (s)</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in items %}
+        <tr>
+          <td class="fw-bold text-navy">{{ p.name }}</td>
+          <td>
+            {% if p.accessType == 'ACCESS_ACCEPT' %}
+            <span class="badge bg-success-subtle text-success">Accept</span>
+            {% elif p.accessType == 'ACCESS_REJECT' %}
+            <span class="badge bg-danger-subtle text-danger">Reject</span>
+            {% else %}
+            <span class="badge bg-secondary-subtle text-secondary">{{ p.accessType }}</span>
+            {% endif %}
+          </td>
+          <td>{% if p.vlan %}<span class="badge bg-light text-muted">{{ p.vlan.nameID }}</span>{% else %}—{% endif %}</td>
+          <td class="mono small">{{ p.daclName or '—' }}</td>
+          <td class="small">{{ p.reAuthTimeout or '—' }}</td>
+          <td class="small text-muted">{{ p.description or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>

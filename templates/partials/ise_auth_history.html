@@ -1,0 +1,60 @@
+<div class="card shadow-md border-0 animate-fade-in">
+  <div class="card-header bg-white border-bottom py-3 d-flex justify-content-between align-items-center">
+    <div class="d-flex align-items-center gap-2">
+      <i class="ph ph-clock-clockwise text-primary"></i>
+      <span class="fw-bold text-navy">Auth History — <code class="small">{{ mac }}</code> ({{ total }} events)</span>
+    </div>
+    <button class="btn btn-sm btn-outline-secondary px-2"
+      hx-get="/api/ise/sessions/auth-history?mac={{ mac }}" hx-target="#ise-results" hx-indicator="#ise-loading">
+      <i class="ph ph-arrows-clockwise"></i>
+    </button>
+  </div>
+  <div class="card-body p-0 overflow-auto" style="max-height: calc(100vh - 200px);">
+    {% if total == 0 %}
+    <div class="text-center p-5 text-muted">
+      <p>No auth history found for <code>{{ mac }}</code>.</p>
+    </div>
+    {% else %}
+    <table class="table table-hover table-striped mb-0 data-table">
+      <thead class="bg-light sticky-top">
+        <tr>
+          <th>Timestamp</th>
+          <th>Result</th>
+          <th>Method</th>
+          <th>Protocol</th>
+          <th>NAS Device</th>
+          <th>Auth Rule</th>
+          <th>AuthZ Rule</th>
+          <th>VLAN</th>
+          <th>DACL</th>
+          <th>SGT</th>
+          <th>Failure Reason</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in items %}
+        <tr class="{{ 'table-danger' if e.passed == 'false' else '' }}">
+          <td class="small mono">{{ e.timestamp }}</td>
+          <td>
+            {% if e.passed == 'true' %}
+            <span class="badge bg-success-subtle text-success">Passed</span>
+            {% else %}
+            <span class="badge bg-danger-subtle text-danger">Failed</span>
+            {% endif %}
+          </td>
+          <td><span class="badge bg-secondary-subtle text-secondary small">{{ e.authentication_method or '—' }}</span></td>
+          <td class="small">{{ e.authentication_protocol or '—' }}</td>
+          <td class="small">{{ e.network_device_name or e.nas_ip_address or '—' }}</td>
+          <td class="small text-muted">{{ e.auth_policy_matched_rule or '—' }}</td>
+          <td class="small text-muted">{{ e.authz_policy_matched_rule or '—' }}</td>
+          <td><span class="badge bg-light text-muted">{{ e.vlan or '—' }}</span></td>
+          <td class="small mono">{{ e.dacl or '—' }}</td>
+          <td>{% if e.sgt %}<span class="badge bg-info-subtle text-info">{{ e.sgt }}</span>{% else %}—{% endif %}</td>
+          <td class="small text-danger">{{ e.failed_reason or '' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</div>

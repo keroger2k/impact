@@ -1,0 +1,35 @@
+<div class="card shadow-md border-0 animate-fade-in">
+  <div class="card-header bg-white border-bottom py-3 d-flex justify-content-between align-items-center">
+    <div class="d-flex align-items-center gap-2">
+      <i class="ph ph-plug text-primary"></i>
+      <span class="fw-bold text-navy">Allowed Protocols ({{ total }})</span>
+    </div>
+  </div>
+  <div class="card-body p-0 overflow-auto" style="max-height: calc(100vh - 200px);">
+    {% for proto in items %}
+    <div class="p-3 border-bottom">
+      <div class="d-flex justify-content-between align-items-start mb-2">
+        <div>
+          <span class="fw-bold text-navy">{{ proto.name }}</span>
+          <span class="small text-muted ms-2">{{ proto.description or '' }}</span>
+        </div>
+      </div>
+      <div class="d-flex flex-wrap gap-1">
+        {% set eap_methods = [
+          ('allowEapTls', 'EAP-TLS'), ('allowPeap', 'PEAP'), ('allowEapFast', 'EAP-FAST'),
+          ('allowEapTtls', 'EAP-TTLS'), ('allowTeap', 'TEAP'), ('allowEapMd5', 'EAP-MD5'),
+          ('allowLeap', 'LEAP'), ('allowMsChapV2', 'MSCHAPv2'), ('allowPapAscii', 'PAP/ASCII'),
+          ('processHostLookup', 'Host Lookup'),
+        ] %}
+        {% for field, label in eap_methods %}
+        {% if proto.get(field) %}
+        <span class="badge bg-success-subtle text-success">{{ label }}</span>
+        {% else %}
+        <span class="badge bg-secondary-subtle text-secondary" style="opacity:0.4">{{ label }}</span>
+        {% endif %}
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>

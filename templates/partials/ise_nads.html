@@ -1,9 +1,17 @@
-<div class="card shadow-sm border-0 animate-fade-in">
-  <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center">
-    <span class="fw-bold">Network Access Devices ({{ total }})</span>
+<div class="card shadow-md border-0 animate-fade-in">
+  <div class="card-header bg-white border-bottom py-3 d-flex justify-content-between align-items-center">
+    <div class="d-flex align-items-center gap-2">
+      <i class="ph ph-shield text-primary"></i>
+      <span class="fw-bold text-navy">Network Access Devices ({{ total }})</span>
+    </div>
     <div class="d-flex gap-2">
-       <input type="text" class="form-control form-control-sm bg-white border-0" placeholder="Filter..." hx-get="/api/ise/nads" hx-trigger="keyup changed delay:500ms" name="search" hx-target="#ise-results">
-       <button class="btn btn-sm btn-outline-light px-2" hx-get="/api/ise/nads" hx-target="#ise-results" hx-indicator="#ise-loading"><i class=" ph ph-arrows-clockwise"></i></button>
+      <input type="text" class="form-control form-control-sm" placeholder="Filter..."
+        hx-get="/api/ise/nads" hx-trigger="keyup changed delay:500ms"
+        name="search" hx-target="#ise-results">
+      <button class="btn btn-sm btn-outline-secondary px-2"
+        hx-get="/api/ise/nads" hx-target="#ise-results" hx-indicator="#ise-loading">
+        <i class="ph ph-arrows-clockwise"></i>
+      </button>
     </div>
   </div>
   <div class="card-body p-0 overflow-auto" style="max-height: calc(100vh - 200px);">
@@ -22,10 +30,10 @@
         {% for item in items %}
         <tr>
           <td class="fw-bold text-navy">{{ item.name }}</td>
-          <td class="mono">{{ item.ip_address }}</td>
-          <td>{{ item.model }}</td>
-          <td class="small">{{ item.software_version }}</td>
-          <td><span class="badge bg-light text-muted">{{ item.profile }}</span></td>
+          <td class="mono">{{ item.ip_address or item.ipaddress }}</td>
+          <td>{{ item.model or item.modelName }}</td>
+          <td class="small">{{ item.software_version or item.softwareVersion or '—' }}</td>
+          <td><span class="badge bg-light text-muted">{{ item.profile or item.profileName }}</span></td>
           <td><span class="status-dot ok" aria-label="Online"></span> Active</td>
         </tr>
         {% endfor %}
