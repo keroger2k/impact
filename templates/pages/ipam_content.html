@@ -105,6 +105,7 @@
 </div>
 
 <script>
+(function() {
     // --- State & Constants ---
     let fullData = null;
     let searchIndex = [];
@@ -769,6 +770,14 @@
         document.getElementById('ipam-refresh-overlay').classList.add('d-none');
     }
 
+    // Expose handlers used by inline onclick attributes (IIFE scope hides locals).
+    window.toggleAll = toggleAll;
+    window.toggleDensity = toggleDensity;
+    window.runIpamDebug = runIpamDebug;
+    window.runRefresh = runRefresh;
+    window.clearFilter = clearFilter;
+    window.closeRefreshOverlay = closeRefreshOverlay;
+
     // Initial load
     var currentIPAMData = {{ initial_ipam_tree | tojson | safe if initial_ipam_tree else 'null' }};
     if (currentIPAMData) {
@@ -785,5 +794,5 @@
     } else {
         loadIPAM();
     }
-
+})();
 </script>
