@@ -47,12 +47,10 @@
       </button>
     </div>
     <div class="card-body bg-dark p-0">
-      <pre class="config-snippet mb-0 p-3 text-light small"><code>{% for block in r.blocks %}
-{% if not loop.first %}
-<span class="text-muted">...</span>
-{% endif %}
-{% for line in block %}<span class="line-row {% if line.is_match %}match-highlight{% endif %}"><span class="line-num">{{ line.line_num }}</span> {{ line.text }}</span>
-{% endfor %}{% endfor %}</code></pre>
+      <pre class="config-snippet mb-0 p-3 text-light small"><code>{%- for block in r.blocks -%}
+{%- if not loop.first -%}<span class="line-row text-muted">...</span>{%- endif -%}
+{%- for line in block -%}<span class="line-row {% if line.is_match %}match-highlight{% endif %}"><span class="line-num">{{ line.line_num }}</span> {{ line.text }}</span>{%- endfor -%}
+{%- endfor -%}</code></pre>
     </div>
   </div>
   {% endfor %}
