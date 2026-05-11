@@ -143,16 +143,17 @@ def _xml_list_to_dicts(xml_text: str, record_tag: str | None = None) -> list:
 # MNT ACTIVE SESSIONS  /admin/API/mnt/Session/ActiveList
 # ──────────────────────────────────────────────────────────────────────────────
 
-def get_active_sessions(limit: int = 200, username: str = None, password: str = None) -> list:
+def get_active_sessions(username: str = None, password: str = None) -> list:
     """
     List active RADIUS/TACACS sessions from ISE MNT REST API.
-    Returns list of session dicts with fields like:
+    Returns the full set of session dicts with fields like:
       calling_station_id, user_name, nas_ip_address, nas_port_id,
       acct_session_id, framed_ip_address, endpoint_profile, vlan,
       auth_method, identity_store, identity_group, ise_node
 
+    Callers are responsible for any display-time truncation.
+
     Args:
-        limit: Max sessions to return
         username: Optional; uses DOMAIN_USERNAME env var if not provided
         password: Optional; uses DOMAIN_PASSWORD env var if not provided
     """
@@ -186,7 +187,7 @@ def get_active_sessions(limit: int = 200, username: str = None, password: str = 
                 # Fallback: walk every immediate child of the root element
                 sessions = _xml_list_to_dicts(resp.text)
             logger.debug(f"Parsed {len(sessions)} active sessions")
-            return sessions[:limit]
+            return sessions
         logger.warning(f"MNT ActiveList returned {resp.status_code}")
         return []
     except Exception as e:

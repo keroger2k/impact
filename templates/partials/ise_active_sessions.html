@@ -2,7 +2,14 @@
   <div class="card-header bg-white border-bottom py-3 d-flex justify-content-between align-items-center">
     <div class="d-flex align-items-center gap-2">
       <i class="ph ph-users-three text-success"></i>
-      <span class="fw-bold text-navy">Active Sessions ({{ total }})</span>
+      <span class="fw-bold text-navy">
+        Active Sessions
+        {% if shown is defined and shown < total %}
+          <span class="text-muted fw-normal small">(showing {{ "{:,}".format(shown) }} of {{ "{:,}".format(total) }})</span>
+        {% else %}
+          ({{ "{:,}".format(total) }})
+        {% endif %}
+      </span>
     </div>
     <button class="btn btn-sm btn-outline-secondary px-2"
       hx-get="/api/ise/sessions/active" hx-target="#ise-results" hx-indicator="#ise-loading">

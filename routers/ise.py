@@ -277,6 +277,9 @@ async def list_endpoint_groups(request: Request, session: SessionEntry = Depends
 
 # ── Active Sessions (MNT API — not cached, always live) ───────────────────────
 
+ACTIVE_SESSIONS_DISPLAY_LIMIT = 200
+
+
 @router.get("/sessions/active")
 async def get_active_sessions(request: Request, mac: Optional[str] = None, session: SessionEntry = Depends(require_auth)):
     from dev import DEV_MODE, MOCK_ACTIVE_SESSIONS
@@ -291,13 +294,16 @@ async def get_active_sessions(request: Request, mac: Optional[str] = None, sessi
             result = await loop.run_in_executor(None, run_with_context(ic.get_session_by_mac), mac, session.username, session.password)
             sessions = [result] if result else []
         else:
-            sessions = await loop.run_in_executor(None, run_with_context(ic.get_active_sessions), 200, session.username, session.password)
+            sessions = await loop.run_in_executor(None, run_with_context(ic.get_active_sessions), session.username, session.password)
+
+    total = len(sessions)
+    items = sessions[:ACTIVE_SESSIONS_DISPLAY_LIMIT]
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
         return templates.TemplateResponse(request, "partials/ise_active_sessions.html",
-            {"total": len(sessions), "items": sessions, "mac_filter": mac})
-    return {"total": len(sessions), "items": sessions}
+            {"total": total, "shown": len(items), "items": items, "mac_filter": mac})
+    return {"total": total, "shown": len(items), "items": items}
 
 
 @router.get("/sessions/auth-history")
