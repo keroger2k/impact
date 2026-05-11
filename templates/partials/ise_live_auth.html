@@ -8,7 +8,14 @@
     <div class="d-flex align-items-center gap-2">
       <span class="status-dot ok" style="animation: pulse 2s infinite;"></span>
       <i class="ph ph-activity text-success"></i>
-      <span class="fw-bold text-navy">Recent Sessions — Last {{ minutes }} min ({{ total }} new)</span>
+      <span class="fw-bold text-navy">
+        Recent Sessions
+        {% if warming %}
+          <span class="text-muted fw-normal small">(warming up — deltas appear on next poll)</span>
+        {% else %}
+          <span class="text-muted fw-normal small">— {{ total }} new since last poll{% if overflow %} (+ {{ overflow }} more, not enriched){% endif %}</span>
+        {% endif %}
+      </span>
     </div>
     <div class="d-flex align-items-center gap-2">
       <span class="small text-muted">Auto-refresh every 30s · successful auths only</span>
@@ -22,44 +29,49 @@
     </div>
   </div>
   <div class="card-body p-0 overflow-auto" style="max-height: calc(100vh - 200px);">
-    {% if total == 0 %}
+    {% if warming %}
+    <div class="text-center p-5 text-muted">
+      <i class="ph ph-hourglass" style="font-size:2rem;"></i>
+      <p class="mt-2">Baseline snapshot stored — new sessions will appear here on the next poll.</p>
+    </div>
+    {% elif total == 0 %}
     <div class="text-center p-5 text-muted">
       <i class="ph ph-wifi-none" style="font-size:2rem;"></i>
-      <p class="mt-2">No new sessions in the last {{ minutes }} minutes.</p>
+      <p class="mt-2">No new sessions since the last poll.</p>
     </div>
     {% else %}
     <table class="table table-hover table-striped mb-0 data-table">
       <thead class="bg-light sticky-top">
         <tr>
-          <th>Age</th>
           <th>MAC / Endpoint</th>
           <th>Username</th>
+          <th>IP Address</th>
           <th>NAS Device</th>
           <th>Method</th>
+          <th>VLAN</th>
           <th>Endpoint Profile</th>
           <th>Identity Group</th>
-          <th>VLAN</th>
         </tr>
       </thead>
       <tbody>
         {% for e in items %}
         <tr>
-          <td class="small mono">{{ e.age_seconds }}s ago</td>
           <td class="mono small fw-bold">{{ e.calling_station_id or '—' }}</td>
-          <td class="small">{{ e.user_name or '—' }}</td>
-          <td class="small">{{ e.network_device_name or '—' }}</td>
+          <td class="small">{{ e.user_name or '<em class="text-muted">MAB</em>' | safe }}</td>
+          <td class="mono small">{{ e.framed_ip_address or '—' }}</td>
+          <td class="small">{{ e.network_device_name or e.nas_ip_address or '—' }}</td>
           <td>
-            {% if e.authentication_method == 'dot1x' %}
+            {% if e.auth_method == 'dot1x' %}
             <span class="badge bg-primary-subtle text-primary">802.1X</span>
-            {% elif e.authentication_method == 'mab' %}
+            {% elif e.auth_method == 'mab' %}
             <span class="badge bg-warning-subtle text-warning">MAB</span>
             {% else %}
-            <span class="badge bg-secondary-subtle text-secondary">{{ e.authentication_method or '—' }}</span>
+            <span class="badge bg-secondary-subtle text-secondary">{{ e.auth_method or '—' }}</span>
             {% endif %}
           </td>
+          <td><span class="badge bg-light text-muted">{{ e.vlan or '—' }}</span></td>
           <td class="small text-muted">{{ e.endpoint_profile or '—' }}</td>
           <td class="small text-muted">{{ e.identity_group or '—' }}</td>
-          <td><span class="badge bg-light text-muted">{{ e.vlan or '—' }}</span></td>
         </tr>
         {% endfor %}
       </tbody>

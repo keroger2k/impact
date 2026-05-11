@@ -143,19 +143,20 @@ def test_auth_history_htmx(htmx_headers):
     assert b"Auth History" in r.content
 
 def test_recent_sessions_json(auth_headers):
+    # In DEV_MODE the snapshot-diff bootstrap is bypassed and the full mock
+    # active-session list is surfaced as "new" so the page is exercisable.
     r = client.get("/api/ise/sessions/recent", headers=auth_headers)
     assert r.status_code == 200
     data = r.json()
-    # Two mock active sessions have acct_session_time within the default 5min window.
-    assert data["total"] >= 2
-    for item in data["items"]:
-        assert item["age_seconds"] <= 300
+    assert data["total"] >= 3
+    assert data["overflow"] == 0
+    assert data["warming"] is False
 
 def test_recent_sessions_htmx(htmx_headers):
     r = client.get("/api/ise/sessions/recent", headers=htmx_headers)
     assert r.status_code == 200
     assert b"Recent Sessions" in r.content
-    assert b"s ago" in r.content
+    assert b"since last poll" in r.content
 
 
 # ── TrustSec ──────────────────────────────────────────────────────────────────

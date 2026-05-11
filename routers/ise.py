@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -275,15 +276,58 @@ async def list_endpoint_groups(request: Request, session: SessionEntry = Depends
     return {"total": len(groups), "items": groups}
 
 
-# ── Active Sessions (MNT API — not cached, always live) ───────────────────────
+# ── Active Sessions (MNT API) ─────────────────────────────────────────────────
+#
+# ISE's MNT /Session/ActiveList endpoint returns a sparse summary per row —
+# just calling_station_id, audit_session_id, server, framed_ipv6_address.
+# Full session detail (username, NAS, auth method, VLAN, ...) requires a
+# follow-up call to /Session/MACAddress/{mac}. Both the Active Sessions page
+# and the Recent Sessions feed enrich rows via that per-MAC call.
 
 ACTIVE_SESSIONS_DISPLAY_LIMIT = 200
+ACTIVE_SESSIONS_TTL = 45           # ActiveList cache; bounded by the 30s UI poll
+SESSION_DETAIL_TTL = 60            # Per-MAC enrichment cache
+RECENT_MAX_ENRICH = 100            # Hard cap on per-poll enrichment work
+RECENT_SNAPSHOT_TTL = 600          # Snapshot of audit_session_ids from prior poll
+ENRICH_WORKERS = 20                # Parallel per-MAC HTTP fan-out
 
 
-# ActiveList is large (45k+ rows in prod) and is the data source for both the
-# active-sessions page and the recent-sessions polling feed. A short cache
-# keeps the 30s poll loop from re-pulling the full list on every tick.
-ACTIVE_SESSIONS_TTL = 45
+def _norm_mac(mac: str) -> str:
+    m = (mac or "").upper().replace("-", ":").replace(".", ":")
+    if ":" not in m and len(m) == 12:
+        m = ":".join(m[i:i + 2] for i in range(0, 12, 2))
+    return m
+
+
+def _enrich_session(mac: str, username: str, password: str) -> dict:
+    """Cached per-MAC session detail. ISE's MNT MACAddress endpoint returns
+    the full session record (auth_method, vlan, nas_ip_address, ...).
+    """
+    return cache.get_or_set(
+        f"ise_session_detail:{_norm_mac(mac)}",
+        lambda: ic.get_session_by_mac(mac, username, password),
+        SESSION_DETAIL_TTL,
+    )
+
+
+def _enrich_many(macs: list, username: str, password: str) -> dict:
+    """Fan out per-MAC enrichment calls in parallel. Returns a dict keyed by
+    normalized MAC so callers can merge enrichment back into their source list
+    in any order."""
+    result: dict = {}
+    if not macs:
+        return result
+    with ThreadPoolExecutor(max_workers=ENRICH_WORKERS) as ex:
+        futures = {ex.submit(_enrich_session, m, username, password): m for m in macs}
+        for fut in futures:
+            mac = futures[fut]
+            try:
+                detail = fut.result()
+                if detail:
+                    result[_norm_mac(mac)] = detail
+            except Exception as e:
+                logger.warning(f"ISE per-MAC enrichment failed for {mac}: {e}")
+    return result
 
 
 async def _fetch_active_sessions(session: SessionEntry) -> list:
@@ -297,6 +341,20 @@ async def _fetch_active_sessions(session: SessionEntry) -> list:
     )
 
 
+def _merge_enrichment(sparse_rows: list, enriched_map: dict) -> list:
+    """Overlay enriched per-MAC detail onto sparse ActiveList rows. Enrichment
+    fields take priority; sparse fields fill any gaps."""
+    merged = []
+    for row in sparse_rows:
+        mac = _norm_mac(row.get("calling_station_id") or "")
+        detail = enriched_map.get(mac) if mac else None
+        if detail:
+            merged.append({**row, **{k: v for k, v in detail.items() if v}})
+        else:
+            merged.append(row)
+    return merged
+
+
 @router.get("/sessions/active")
 async def get_active_sessions(request: Request, mac: Optional[str] = None, session: SessionEntry = Depends(require_auth)):
     from dev import DEV_MODE, MOCK_ACTIVE_SESSIONS
@@ -305,16 +363,24 @@ async def get_active_sessions(request: Request, mac: Optional[str] = None, sessi
         if mac:
             s = mac.upper().replace(":", "").replace("-", "").replace(".", "")
             sessions = [sess for sess in sessions if s in sess.get("calling_station_id", "").upper().replace(":", "").replace("-", "")]
+        total = len(sessions)
+        items = sessions[:ACTIVE_SESSIONS_DISPLAY_LIMIT]
     else:
         loop = asyncio.get_event_loop()
         if mac:
             result = await loop.run_in_executor(None, run_with_context(ic.get_session_by_mac), mac, session.username, session.password)
             sessions = [result] if result else []
+            total = len(sessions)
+            items = sessions
         else:
-            sessions = await _fetch_active_sessions(session)
-
-    total = len(sessions)
-    items = sessions[:ACTIVE_SESSIONS_DISPLAY_LIMIT]
+            sparse = await _fetch_active_sessions(session)
+            total = len(sparse)
+            displayed = sparse[:ACTIVE_SESSIONS_DISPLAY_LIMIT]
+            macs = [r.get("calling_station_id") for r in displayed if r.get("calling_station_id")]
+            enriched_map = await loop.run_in_executor(
+                None, run_with_context(_enrich_many), macs, session.username, session.password
+            )
+            items = _merge_enrichment(displayed, enriched_map)
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
@@ -350,55 +416,61 @@ async def get_auth_history(request: Request, mac: str = Query(..., min_length=4)
     return {"total": len(events), "items": events}
 
 
-def _session_age(s: dict) -> Optional[int]:
-    raw = s.get("acct_session_time")
-    if raw in (None, ""):
-        return None
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        return None
+RECENT_PREV_IDS_KEY = "ise_recent_prev_ids"
 
 
 @router.get("/sessions/recent")
-async def get_recent_sessions(request: Request, minutes: int = 5, session: SessionEntry = Depends(require_auth)):
-    """Recent sessions feed — derived from MNT ActiveList by filtering on
-    acct_session_time. Polled by the UI every 30s.
+async def get_recent_sessions(request: Request, session: SessionEntry = Depends(require_auth)):
+    """Recent (new) sessions feed — snapshot-diffed against the previous poll.
 
-    Note: this only surfaces *successful* authentications (failed auths never
-    appear in ActiveList). A pxGrid-based feed is on the roadmap for full
-    passed/failed visibility — see docs/ROADMAP.md.
+    ISE's MNT API has no global "recent auths" endpoint, so we approximate it:
+    take the current ActiveList, compare audit_session_ids against the snapshot
+    saved on the prior poll, enrich newly-appeared MACs with full session
+    detail, and surface those. Only successful auths appear in ActiveList —
+    failures need pxGrid or syslog (see docs/ROADMAP.md item #7).
+
+    First poll after restart returns empty + a "warming up" indicator; the
+    snapshot is stored so subsequent polls show real deltas.
     """
     from dev import DEV_MODE, MOCK_ACTIVE_SESSIONS
-    if DEV_MODE:
-        sessions = MOCK_ACTIVE_SESSIONS
-    else:
-        sessions = await _fetch_active_sessions(session)
 
-    window = minutes * 60
-    recent = []
-    for s in sessions:
-        age = _session_age(s)
-        if age is None or age > window:
-            continue
-        recent.append({
-            "calling_station_id":  s.get("calling_station_id"),
-            "user_name":           s.get("user_name"),
-            "network_device_name": s.get("network_device_name") or s.get("nas_ip_address"),
-            "nas_ip_address":      s.get("nas_ip_address"),
-            "authentication_method": s.get("auth_method"),
-            "vlan":                s.get("vlan"),
-            "endpoint_profile":    s.get("endpoint_profile"),
-            "identity_group":      s.get("identity_group"),
-            "age_seconds":         age,
-        })
-    recent.sort(key=lambda e: e["age_seconds"])
+    if DEV_MODE:
+        # Mock data already has full session fields — treat the entire mock as
+        # "new" so the page is exercisable in dev without snapshot bootstrapping.
+        items = MOCK_ACTIVE_SESSIONS
+        overflow = 0
+        warming = False
+    else:
+        loop = asyncio.get_event_loop()
+        sparse = await _fetch_active_sessions(session)
+        cur_ids = {s.get("audit_session_id") for s in sparse if s.get("audit_session_id")}
+
+        prev_ids_raw = cache.get(RECENT_PREV_IDS_KEY)
+        warming = prev_ids_raw is None
+        prev_ids = set(prev_ids_raw or [])
+
+        # Always update the snapshot — even on the warming poll — so the next
+        # poll has a baseline.
+        cache.set(RECENT_PREV_IDS_KEY, list(cur_ids), ttl=RECENT_SNAPSHOT_TTL)
+
+        if warming:
+            items, overflow = [], 0
+        else:
+            new_ids = cur_ids - prev_ids
+            new_rows = [s for s in sparse if s.get("audit_session_id") in new_ids]
+            overflow = max(0, len(new_rows) - RECENT_MAX_ENRICH)
+            capped = new_rows[:RECENT_MAX_ENRICH]
+            macs = [r.get("calling_station_id") for r in capped if r.get("calling_station_id")]
+            enriched_map = await loop.run_in_executor(
+                None, run_with_context(_enrich_many), macs, session.username, session.password
+            )
+            items = _merge_enrichment(capped, enriched_map)
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
         return templates.TemplateResponse(request, "partials/ise_live_auth.html",
-            {"total": len(recent), "items": recent, "minutes": minutes})
-    return {"total": len(recent), "items": recent}
+            {"total": len(items), "items": items, "overflow": overflow, "warming": warming})
+    return {"total": len(items), "items": items, "overflow": overflow, "warming": warming}
 
 
 # ── Identity ──────────────────────────────────────────────────────────────────

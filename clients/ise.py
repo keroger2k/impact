@@ -181,18 +181,10 @@ def get_active_sessions(username: str = None, password: str = None) -> list:
         })
         if resp.status_code == 200 and resp.text:
             logger.debug(f"MNT ActiveList response (first 500 chars): {resp.text[:500]}")
-            # DIAGNOSTIC: dump one full <activeSession> record so we can see every
-            # field ISE is sending (vs. what the dict-flattener captures). Remove
-            # once the field shape is confirmed.
-            try:
-                _root = _ET.fromstring(resp.text)
-                _first = next(iter(_root), None)
-                if _first is not None:
-                    sample = _ET.tostring(_first, encoding="unicode")[:3000]
-                    logger.info(f"MNT_ACTIVELIST_SAMPLE root={_local_name(_root.tag)} child={_local_name(_first.tag)} xml={sample}")
-            except Exception as _diag_e:
-                logger.warning(f"MNT ActiveList sample dump failed: {_diag_e}")
-            # ISE wraps each row as <activeSession> inside <activeList>
+            # ISE wraps each row as <activeSession> inside <activeList>.
+            # Confirmed shape on ISE 3.x: only 4 fields per row (calling_station_id,
+            # audit_session_id, server, framed_ipv6_address). Full session detail
+            # requires a follow-up call to Session/MACAddress/{mac}.
             sessions = _xml_list_to_dicts(resp.text, record_tag="activeSession")
             if not sessions:
                 # Fallback: walk every immediate child of the root element
