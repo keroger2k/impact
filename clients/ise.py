@@ -321,62 +321,6 @@ def get_session_history_by_mac(mac: str, duration: int = 86400, username: str = 
         return []
 
 
-def get_recent_auth_events(seconds: int = 300, username: str = None, password: str = None) -> list:
-    """
-    Fetch recent authentication events from the last N seconds.
-
-    The original implementation hit /admin/API/mnt/AuthStatus/Duration/<seconds>,
-    which doesn't exist on ISE 3.x — the MNT API uses /Session/AuthList/<start>/<end>
-    for time-window queries, where start/end are seconds-ago (or the literal
-    string "null" for "from beginning of time").
-
-    Args:
-        seconds: Time window in seconds (default 5 minutes)
-        username: Optional; uses DOMAIN_USERNAME env var if not provided
-        password: Optional; uses DOMAIN_PASSWORD env var if not provided
-    """
-    host = os.getenv("ISE_HOST")
-    if username is None:
-        username = os.getenv("DOMAIN_USERNAME")
-    if password is None:
-        password = os.getenv("DOMAIN_PASSWORD")
-    if not all([host, username, password]):
-        return []
-    # AuthList expects /<startSeconds>/<endSeconds>. We want everything
-    # from `seconds` ago to "now", so start = seconds, end = 0.
-    url = f"https://{host}/admin/API/mnt/Session/AuthList/{seconds}/0"
-    start_time = time.time()
-    try:
-        resp = _requests.get(
-            url,
-            auth    = (username, password),
-            verify  = os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
-            headers = {"Accept": "application/xml"},
-            timeout = 25,
-        )
-        duration = int((time.time() - start_time) * 1000)
-        logger.info(f"ISE MNT recent auth events (last {seconds}s)", extra={
-            "target": "ISE", "action": "MNT_RECENT_AUTH",
-            "status": resp.status_code, "duration_ms": duration,
-        })
-        if resp.status_code == 200 and resp.text:
-            logger.debug(f"MNT AuthList response (first 500 chars): {resp.text[:500]}")
-            # ISE wraps each row as <authRecord> inside <authList>.
-            rows = _xml_list_to_dicts(resp.text, record_tag="authRecord")
-            if not rows:
-                # Fallback: walk every immediate child of root
-                rows = _xml_list_to_dicts(resp.text)
-            logger.debug(f"Parsed {len(rows)} recent auth events")
-            return rows
-        logger.warning(f"MNT AuthList returned {resp.status_code}", extra={
-            "status": resp.status_code, "response_text": resp.text[:500] if resp.text else "empty"
-        })
-        return []
-    except Exception as e:
-        logger.warning(f"MNT recent auth events: {e}")
-        return []
-
-
 def get_tacacs_auth_status(mac_or_user: str, by: str = "mac") -> list:
     """
     Fetch TACACS+ authentication status.

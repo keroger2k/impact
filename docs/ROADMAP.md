@@ -54,9 +54,12 @@ Today DNAC is mostly inventory + config search + IP lookup + `get_recent_issues`
 
 The config side (policy sets, SGTs, profiles) is well covered. What's thin is **runtime state**.
 
-### 7. Failed-auth aggregation
-- `get_recent_auth_events` already exists; build a rollup: top failure reasons / NADs / users in the last hour
-- This is the single highest-value ops view ISE can give us
+### 7. Real auth feed (pxGrid or syslog) + failed-auth aggregation
+- The "Recent Sessions" page is currently derived from MNT ActiveList (`acct_session_time` filter), which only surfaces **successful** auths. The MNT `Session/AuthList` endpoint returns HTTP 500 on ISE 3.x and was removed from the client.
+- To get failures we need either:
+  - **pxGrid** subscriber on the auth event topic (cert auth, requires a pxGrid client lib and a background task to fan events into a ring buffer / SQLite)
+  - **Syslog collector** parsing `CISE_Passed_Authentications` and `CISE_Failed_Authentications` messages
+- Once we have failed events, the highest-value rollup is: top failure reasons / NADs / users in the last hour. This is the single highest-value ops view ISE can give us.
 
 ### 8. Posture
 - Endpoint compliance state — currently invisible in the dashboard

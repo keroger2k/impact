@@ -533,7 +533,7 @@ MOCK_ACTIVE_SESSIONS: list[dict] = [
         "sgt":                 "4",
         "posture_status":      "Compliant",
         "session_timeout":     "28800",
-        "acct_session_time":   "3600",
+        "acct_session_time":   "45",
     },
     {
         "calling_station_id":  "00:1B:44:11:3A:B7",
@@ -587,7 +587,7 @@ MOCK_ACTIVE_SESSIONS: list[dict] = [
         "network_device_name": "SW-JFK-07",
         "sgt":                 "6",
         "posture_status":      "Pending",
-        "acct_session_time":   "1800",
+        "acct_session_time":   "180",
     },
     {
         "calling_station_id":  "B8:27:EB:AA:BB:CC",
@@ -663,35 +663,6 @@ MOCK_AUTH_HISTORY: list[dict] = [
         "sgt":                    "4",
     },
 ]
-
-# Recent auth events for live feed (mix of passed/failed, different devices)
-import random as _random
-_AUTH_ENDPOINTS = [
-    ("A4:C3:F0:11:22:33", "jsmith@tsa.gov",      "10.10.1.1",  "SW-DCA-01",  "dot1x", "EAP-TLS",    "Employee-Full-Access",  "500", "true"),
-    ("00:1B:44:11:3A:B7", "",                     "10.10.1.2",  "SW-DCA-02",  "mab",   "MAB",        "IP-Phone-VLAN",         "600", "true"),
-    ("DC:A6:32:55:66:77", "",                     "10.30.1.5",  "SW-LAX-05",  "mab",   "MAB",        "Camera-VLAN",           "700", "true"),
-    ("E8:40:F2:99:AA:BB", "mwilson@tsa.gov",      "10.20.1.3",  "SW-BOS-03",  "dot1x", "PEAP",       "Employee-Full-Access",  "500", "true"),
-    ("3C:52:A1:CC:DD:EE", "unknown@tsa.gov",      "10.40.1.4",  "SW-ORD-04",  "dot1x", "EAP-TLS",    "DenyAccess",            "",    "false"),
-    ("B8:27:EB:FF:00:11", "",                     "10.50.1.8",  "SW-JFK-08",  "mab",   "MAB",        "Quarantine",            "999", "true"),
-    ("74:86:7A:22:33:44", "rjones@tsa.gov",       "10.10.1.1",  "SW-DCA-01",  "dot1x", "EAP-FAST",   "Employee-Full-Access",  "500", "true"),
-    ("F8:1A:67:55:66:77", "",                     "10.30.1.6",  "SW-LAX-06",  "mab",   "MAB",        "IoT-VLAN",              "750", "true"),
-]
-MOCK_RECENT_AUTH_EVENTS: list[dict] = []
-import time as _time_mod
-for _i, (_mac, _user, _nas, _dev, _method, _proto, _rule, _vlan, _passed) in enumerate(_AUTH_ENDPOINTS):
-    MOCK_RECENT_AUTH_EVENTS.append({
-        "timestamp":              f"2026-05-05T09:{(_i * 3):02d}:00Z",
-        "calling_station_id":     _mac,
-        "user_name":              _user,
-        "nas_ip_address":         _nas,
-        "network_device_name":    _dev,
-        "authentication_method":  _method,
-        "authentication_protocol": _proto,
-        "authz_policy_matched_rule": _rule,
-        "vlan":                   _vlan,
-        "passed":                 _passed,
-        "failed_reason":          "12321 PEAP failed SSL/TLS handshake" if _passed == "false" else "",
-    })
 
 MOCK_AUTHZ_RULES: list[dict] = [
     {

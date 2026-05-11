@@ -280,6 +280,23 @@ async def list_endpoint_groups(request: Request, session: SessionEntry = Depends
 ACTIVE_SESSIONS_DISPLAY_LIMIT = 200
 
 
+# ActiveList is large (45k+ rows in prod) and is the data source for both the
+# active-sessions page and the recent-sessions polling feed. A short cache
+# keeps the 30s poll loop from re-pulling the full list on every tick.
+ACTIVE_SESSIONS_TTL = 45
+
+
+async def _fetch_active_sessions(session: SessionEntry) -> list:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        None,
+        run_with_context(_cached),
+        "ise_active_sessions",
+        lambda: ic.get_active_sessions(session.username, session.password),
+        ACTIVE_SESSIONS_TTL,
+    )
+
+
 @router.get("/sessions/active")
 async def get_active_sessions(request: Request, mac: Optional[str] = None, session: SessionEntry = Depends(require_auth)):
     from dev import DEV_MODE, MOCK_ACTIVE_SESSIONS
@@ -294,7 +311,7 @@ async def get_active_sessions(request: Request, mac: Optional[str] = None, sessi
             result = await loop.run_in_executor(None, run_with_context(ic.get_session_by_mac), mac, session.username, session.password)
             sessions = [result] if result else []
         else:
-            sessions = await loop.run_in_executor(None, run_with_context(ic.get_active_sessions), session.username, session.password)
+            sessions = await _fetch_active_sessions(session)
 
     total = len(sessions)
     items = sessions[:ACTIVE_SESSIONS_DISPLAY_LIMIT]
@@ -333,21 +350,55 @@ async def get_auth_history(request: Request, mac: str = Query(..., min_length=4)
     return {"total": len(events), "items": events}
 
 
+def _session_age(s: dict) -> Optional[int]:
+    raw = s.get("acct_session_time")
+    if raw in (None, ""):
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 @router.get("/sessions/recent")
-async def get_recent_auth(request: Request, minutes: int = 5, session: SessionEntry = Depends(require_auth)):
-    """Live auth feed — recent authentication events. Intended for HTMX polling (every 30s)."""
-    from dev import DEV_MODE, MOCK_RECENT_AUTH_EVENTS
+async def get_recent_sessions(request: Request, minutes: int = 5, session: SessionEntry = Depends(require_auth)):
+    """Recent sessions feed — derived from MNT ActiveList by filtering on
+    acct_session_time. Polled by the UI every 30s.
+
+    Note: this only surfaces *successful* authentications (failed auths never
+    appear in ActiveList). A pxGrid-based feed is on the roadmap for full
+    passed/failed visibility — see docs/ROADMAP.md.
+    """
+    from dev import DEV_MODE, MOCK_ACTIVE_SESSIONS
     if DEV_MODE:
-        events = MOCK_RECENT_AUTH_EVENTS
+        sessions = MOCK_ACTIVE_SESSIONS
     else:
-        loop = asyncio.get_event_loop()
-        events = await loop.run_in_executor(None, run_with_context(ic.get_recent_auth_events), minutes * 60, session.username, session.password)
+        sessions = await _fetch_active_sessions(session)
+
+    window = minutes * 60
+    recent = []
+    for s in sessions:
+        age = _session_age(s)
+        if age is None or age > window:
+            continue
+        recent.append({
+            "calling_station_id":  s.get("calling_station_id"),
+            "user_name":           s.get("user_name"),
+            "network_device_name": s.get("network_device_name") or s.get("nas_ip_address"),
+            "nas_ip_address":      s.get("nas_ip_address"),
+            "authentication_method": s.get("auth_method"),
+            "vlan":                s.get("vlan"),
+            "endpoint_profile":    s.get("endpoint_profile"),
+            "identity_group":      s.get("identity_group"),
+            "age_seconds":         age,
+        })
+    recent.sort(key=lambda e: e["age_seconds"])
 
     if request.headers.get("HX-Request"):
         from templates_module import templates
         return templates.TemplateResponse(request, "partials/ise_live_auth.html",
-            {"total": len(events), "items": events, "minutes": minutes})
-    return {"total": len(events), "items": events}
+            {"total": len(recent), "items": recent, "minutes": minutes})
+    return {"total": len(recent), "items": recent}
 
 
 # ── Identity ──────────────────────────────────────────────────────────────────
