@@ -183,6 +183,41 @@ def generate_solarwinds_csv(tree_data: Dict[str, List[Dict]]) -> str:
         if target_id is not None:
             absorbed_nodes.setdefault(target_id, []).append(host_node)
 
+    # Re-parent every row to the most-specific containing emitted row. The
+    # walk-time parent comes from the engine's tree shape, which can leave a
+    # synthesized host-route rollup (/24 for v4, /64 for v6) sitting as a peer
+    # of subnets that actually nest beneath it — SolarWinds then flags every
+    # one of those siblings as overlapping. Recomputing parents from network
+    # containment also tightens hierarchies the engine left flat when a
+    # supernet wasn't present at engine-build time.
+    containment_candidates = [
+        (r["network"], r["Id"], r["is_v6"])
+        for r in emitted_rows
+        if r.get("Type") != "Group" and r.get("network") is not None
+    ]
+    for row in emitted_rows:
+        if row.get("Type") == "Group":
+            continue
+        net = row.get("network")
+        if net is None:
+            continue
+        rid = row["Id"]
+        isv6 = row["is_v6"]
+        best_id, best_plen = None, -1
+        for cnet, cid, civ6 in containment_candidates:
+            if cid == rid or civ6 != isv6:
+                continue
+            if cnet.prefixlen >= net.prefixlen:
+                continue
+            if net not in cnet:
+                continue
+            if cnet.prefixlen > best_plen:
+                best_id, best_plen = cid, cnet.prefixlen
+        row["ParentId"] = (
+            best_id if best_id is not None
+            else (ipv6_group_id if isv6 else ipv4_group_id)
+        )
+
     # Secondary pass to determine Types and build final field values
     has_children_ids = {row["ParentId"] for row in emitted_rows}
 

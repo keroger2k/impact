@@ -327,5 +327,105 @@ class TestIPAMExport(unittest.TestCase):
         self.assertEqual(rows[2]["CIDR"], "24")
         self.assertIn("EdgeRouter", rows[2]["Group Description"])
 
+    def test_synthesized_rollup_adopts_sibling_subnets(self):
+        # Engine tree has /30 and /27 hanging directly off /8 because no /24
+        # exists in source data. A /32 host route triggers a synthesized /24
+        # rollup. Without re-parenting, that /24 and the /30/27s end up as
+        # siblings under /8, and SolarWinds rejects every one as an overlap.
+        # The exporter must re-parent the /30/27s under the synthesized /24.
+        tree = {
+            "ipv4": [
+                {
+                    "cidr": "10.0.0.0/8", "source": "Aggregate", "display_name": "RFC1918",
+                    "children": [
+                        {"cidr": "10.29.8.4/30", "source": "DNAC", "device": "R1",
+                         "interface_name": "Eth1/1"},
+                        {"cidr": "10.29.8.64/27", "source": "DNAC", "device": "R2",
+                         "interface_name": "Vlan20"},
+                        {"cidr": "10.29.8.96/27", "source": "DNAC", "device": "R3",
+                         "interface_name": "Vlan30"},
+                        {"cidr": "10.29.8.128/25", "source": "DNAC", "device": "R4",
+                         "interface_name": "Vlan40"},
+                        # Host route — triggers a synthesized 10.29.8.0/24 row.
+                        {"cidr": "10.29.8.10/32", "source": "DNAC", "device": "R5",
+                         "interface_name": "Loopback0", "role": "host_route"},
+                    ]
+                }
+            ],
+            "ipv6": []
+        }
+        csv_out = generate_solarwinds_csv(tree)
+        rows = self.parse_csv(csv_out)
+
+        r24 = next(r for r in rows if r["Address"] == "10.29.8.0" and r["CIDR"] == "24")
+        r30 = next(r for r in rows if r["Address"] == "10.29.8.4")
+        r27a = next(r for r in rows if r["Address"] == "10.29.8.64")
+        r27b = next(r for r in rows if r["Address"] == "10.29.8.96")
+        r25 = next(r for r in rows if r["Address"] == "10.29.8.128")
+
+        # All four real subnets must now nest under the synthesized /24
+        # instead of being its peers.
+        self.assertEqual(r30["ParentId"], r24["Id"])
+        self.assertEqual(r27a["ParentId"], r24["Id"])
+        self.assertEqual(r27b["ParentId"], r24["Id"])
+        self.assertEqual(r25["ParentId"], r24["Id"])
+        # The /24 itself stays at the IPv4 root group (10/8 was Aggregate-skipped).
+        self.assertEqual(r24["ParentId"], "1")
+        # And the /24 row now reports Supernet (it has children).
+        self.assertEqual(r24["Type"], "Supernet")
+
+    def test_reparent_uses_most_specific_containing_row(self):
+        # When several supernets contain the same leaf, the leaf's parent
+        # must be the most-specific one (largest prefixlen).
+        tree = {
+            "ipv4": [
+                {"cidr": "10.0.0.0/8", "source": "DNAC", "display_name": "10/8"},
+                {"cidr": "10.1.0.0/16", "source": "DNAC", "display_name": "10.1/16"},
+                {"cidr": "10.1.2.0/24", "source": "DNAC", "display_name": "10.1.2/24"},
+                {"cidr": "10.1.2.4/30", "source": "DNAC", "display_name": "leaf"},
+            ],
+            "ipv6": []
+        }
+        csv_out = generate_solarwinds_csv(tree)
+        rows = self.parse_csv(csv_out)
+
+        r8 = next(r for r in rows if r["Address"] == "10.0.0.0")
+        r16 = next(r for r in rows if r["Address"] == "10.1.0.0")
+        r24 = next(r for r in rows if r["Address"] == "10.1.2.0")
+        r30 = next(r for r in rows if r["Address"] == "10.1.2.4")
+
+        # Each layer parents to the next-most-specific containing row.
+        self.assertEqual(r30["ParentId"], r24["Id"])
+        self.assertEqual(r24["ParentId"], r16["Id"])
+        self.assertEqual(r16["ParentId"], r8["Id"])
+        self.assertEqual(r8["ParentId"], "1")
+
+    def test_reparent_respects_ip_version_boundary(self):
+        # An IPv4 row must never get parented under an IPv6 row (and vice
+        # versa), even when prefix-length math would otherwise "fit".
+        tree = {
+            "ipv4": [
+                {"cidr": "10.0.0.0/8", "source": "DNAC"},
+                {"cidr": "10.1.0.0/16", "source": "DNAC"},
+            ],
+            "ipv6": [
+                {"cidr": "2001:db8::/32", "source": "DNAC"},
+                {"cidr": "2001:db8:1::/48", "source": "DNAC"},
+            ]
+        }
+        csv_out = generate_solarwinds_csv(tree)
+        rows = self.parse_csv(csv_out)
+
+        r8 = next(r for r in rows if r["Address"] == "10.0.0.0")
+        r16 = next(r for r in rows if r["Address"] == "10.1.0.0")
+        r32v6 = next(r for r in rows if r["Address"] == "2001:db8::")
+        r48v6 = next(r for r in rows if r["Address"] == "2001:db8:1::")
+
+        self.assertEqual(r8["ParentId"], "1")    # IPv4 root group
+        self.assertEqual(r16["ParentId"], r8["Id"])
+        self.assertEqual(r32v6["ParentId"], "2")  # IPv6 root group
+        self.assertEqual(r48v6["ParentId"], r32v6["Id"])
+
+
 if __name__ == "__main__":
     unittest.main()
