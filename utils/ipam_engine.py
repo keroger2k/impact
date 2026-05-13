@@ -787,6 +787,11 @@ class IPAMEngine:
         synthesized first and then counted as a member when grouping /48s —
         two /56s in the same /48 (each carrying many /64s) becomes one /48
         with two /56 children instead of a /48 stuffed with /64s directly.
+
+        Each synth node inherits site/device metadata from its descendants
+        so the aggregate row carries useful context (e.g. a /56 whose leaves
+        are all in S093 renders with site=S093; a /48 spanning S093+S094
+        renders with site="2 sites" and a logical_container that lists them).
         """
         for prefix_len in sorted(V6_SYNTH_PREFIXES, reverse=True):
             by_supernet: Dict[str, List[IPAMNode]] = {}
@@ -809,8 +814,42 @@ class IPAMEngine:
                 synth = IPAMNode(cidr, source="Aggregate")
                 synth.role = "supernet"
                 synth.interface_type = "Supernet"
+
+                # Derive descendant metadata. Some members are themselves
+                # synthesized supernets (e.g. a /56 already populated from its
+                # own /64 children), which is exactly the propagation we want.
+                sites = sorted({
+                    m.site for m in members
+                    if m.site and m.site not in ("Unknown", "")
+                    and not m.site.endswith(" sites")
+                })
+                devices = sorted({
+                    m.device for m in members
+                    if m.device and m.device not in ("Unknown", "")
+                })
+                prefix_count = len(members)
+
                 label = "Site" if prefix_len == 56 else "Org"
-                synth.display_name = f"Inferred IPv6 /{prefix_len} {label} Supernet"
+                base = f"Inferred IPv6 /{prefix_len} {label} Supernet"
+
+                if len(sites) == 1:
+                    synth.site = sites[0]
+                    synth.display_name = f"{base} · {sites[0]} ({prefix_count} prefixes)"
+                elif len(sites) > 1:
+                    synth.site = f"{len(sites)} sites"
+                    preview = ", ".join(sites[:3])
+                    if len(sites) > 3:
+                        preview += f", +{len(sites) - 3} more"
+                    synth.display_name = f"{base} · {preview} ({prefix_count} prefixes)"
+                    synth.logical_container = "sites: " + ", ".join(sites)
+                else:
+                    synth.display_name = f"{base} ({prefix_count} prefixes)"
+
+                if len(devices) == 1:
+                    synth.device = devices[0]
+                elif len(devices) > 1:
+                    synth.device = f"{len(devices)} devices"
+
                 unique_nets[cidr] = synth
 
     def _recursive_build(self, nets: List[IPAMNode], is_top_level: bool = False) -> List[Dict]:
