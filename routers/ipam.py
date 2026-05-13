@@ -278,8 +278,13 @@ async def export_ipam_csv(session: SessionEntry = Depends(require_auth)):
 
     csv_content = generate_solarwinds_csv(tree_data)
 
+    # SolarWinds IPAM's Subnet Import refuses files it can't auto-detect the
+    # encoding of ("Spreadsheet failed to load … Try saving as UTF-8 format").
+    # utf-8-sig prepends the UTF-8 BOM so the importer recognizes the charset;
+    # this matters because Group Description can contain non-ASCII (em dash,
+    # site-name punctuation, etc.).
     return Response(
-        content=csv_content,
-        media_type="text/csv",
+        content=csv_content.encode("utf-8-sig"),
+        media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": "attachment; filename=solarwinds_ipam_import.csv"}
     )
