@@ -33,6 +33,14 @@ RFC1918_SUPERNETS = [
     netaddr.IPNetwork("192.168.0.0/16"),
 ]
 
+# IPv6 prefix lengths at which to dynamically infer site/org supernets.
+# Network convention here: a /56 is the per-site allocation, a /48 is the
+# regional/organizational aggregate. These summaries aren't always advertised
+# in DNAC configs, so leaves like /64 SVIs and /127 P2P links would otherwise
+# scatter as top-level orphans. We synthesize the supernet when 2+ existing
+# prefixes share it and no node already covers them at that length.
+V6_SYNTH_PREFIXES = [48, 56]
+
 # Regex patterns for interfaces/links to exclude (HA, keepalives, etc.)
 HA_PATTERNS = re.compile(r"KEEPALIVE|FAILOVER|HA-LINK|HEARTBEAT", re.IGNORECASE)
 
@@ -753,6 +761,13 @@ class IPAMEngine:
                 synth.display_name = "RFC1918 Aggregate"
                 unique_nets[cidr] = synth
 
+        # 5b. Synthesize IPv6 site (/56) and org (/48) supernets from the data.
+        # DNAC configs rarely advertise the /56 summary, so /64 SVIs and /127
+        # P2P links would otherwise scatter at the top level. Group by /56
+        # then /48; synthesize when 2+ existing prefixes share a supernet
+        # that isn't already represented.
+        self._synthesize_v6_supernets(unique_nets)
+
         # 6. Sort by IP first (then prefixlen) and build tree.
         # IP-first sort gives users true numeric ordering at every depth (10.2 before
         # 10.100), while the prefixlen tiebreaker keeps parent supernets ahead of
@@ -764,6 +779,39 @@ class IPAMEngine:
 
         self.tree["ipv4"] = self._recursive_build(v4_nets, is_top_level=True)
         self.tree["ipv6"] = self._recursive_build(v6_nets, is_top_level=True)
+
+    def _synthesize_v6_supernets(self, unique_nets: Dict[str, IPAMNode]) -> None:
+        """Infer IPv6 site / org supernets when 2+ known prefixes share one.
+
+        Iterates V6_SYNTH_PREFIXES from longest to shortest so a /56 can be
+        synthesized first and then counted as a member when grouping /48s —
+        two /56s in the same /48 (each carrying many /64s) becomes one /48
+        with two /56 children instead of a /48 stuffed with /64s directly.
+        """
+        for prefix_len in sorted(V6_SYNTH_PREFIXES, reverse=True):
+            by_supernet: Dict[str, List[IPAMNode]] = {}
+            for node in list(unique_nets.values()):
+                if node.version != 6 or node.prefixlen <= prefix_len:
+                    continue
+                try:
+                    supernet = netaddr.IPNetwork(
+                        f"{node.network.network}/{prefix_len}"
+                    ).cidr
+                except Exception:
+                    continue
+                if any(supernet in ex for ex in EXCLUDED_RANGES):
+                    continue
+                by_supernet.setdefault(str(supernet), []).append(node)
+
+            for cidr, members in by_supernet.items():
+                if cidr in unique_nets or len(members) < 2:
+                    continue
+                synth = IPAMNode(cidr, source="Aggregate")
+                synth.role = "supernet"
+                synth.interface_type = "Supernet"
+                label = "Site" if prefix_len == 56 else "Org"
+                synth.display_name = f"Inferred IPv6 /{prefix_len} {label} Supernet"
+                unique_nets[cidr] = synth
 
     def _recursive_build(self, nets: List[IPAMNode], is_top_level: bool = False) -> List[Dict]:
         if not nets: return []
