@@ -508,7 +508,7 @@
                     </div>
                     <div class="ipam-icon">${icon}</div>
                     <div class="ipam-cidr">${cidrDisplay}${warningHtml}</div>
-                    <div class="ipam-label">${esc(n.display_name) || 'System'}</div>
+                    <div class="ipam-label">${esc(n.vlan_purpose || n.display_name) || 'System'}</div>
                     ${n.role === 'tunnel_group' ? `<span class="badge bg-indigo-soft text-indigo ms-1" style="font-size:9px">${n.children.length} ep</span>` : ''}
                 </div>
                 <div class="ipam-right">

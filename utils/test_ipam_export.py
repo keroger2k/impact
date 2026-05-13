@@ -205,6 +205,67 @@ class TestIPAMExport(unittest.TestCase):
         self.assertIn("RouterA", rows[2]["Group Description"])
         self.assertIn("RouterB", rows[2]["Group Description"])
 
+    def test_group_description_uses_vlan_purpose_when_known(self):
+        # vlan_id maps to a known purpose -> description is just the short
+        # label (e.g. "Data VLAN"), no Device:/Interface: clutter.
+        tree = {
+            "ipv4": [
+                {"cidr": "10.10.10.0/24", "source": "DNAC", "display_name": "Vlan100",
+                 "vlan_id": 100, "device": "core1", "interface_name": "Vlan100"},
+            ],
+            "ipv6": []
+        }
+        csv_out = generate_solarwinds_csv(tree)
+        rows = self.parse_csv(csv_out)
+        self.assertEqual(rows[2]["Group Description"], "Data VLAN")
+        self.assertEqual(rows[2]["VLAN"], "100")
+
+    def test_group_description_falls_back_to_vlan_id_for_unknown_vlan(self):
+        # vlan_id present but not in the purpose mapping -> compact
+        # "VLAN {id} — device / iface" line.
+        tree = {
+            "ipv4": [
+                {"cidr": "10.20.30.0/24", "source": "DNAC", "display_name": "Vlan250",
+                 "vlan_id": 250, "device": "core1", "interface_name": "Vlan250"},
+            ],
+            "ipv6": []
+        }
+        csv_out = generate_solarwinds_csv(tree)
+        rows = self.parse_csv(csv_out)
+        self.assertEqual(rows[2]["Group Description"], "VLAN 250 — core1 / Vlan250")
+
+    def test_group_description_keeps_legacy_format_without_vlan(self):
+        # No vlan_id -> preserve the original Device:/Interface: format so
+        # SolarWinds operators still get context for non-VLAN subnets.
+        tree = {
+            "ipv4": [
+                {"cidr": "172.16.5.0/30", "source": "Nexus", "display_name": "p2p",
+                 "device": "core1", "interface_name": "Ethernet1/1"},
+            ],
+            "ipv6": []
+        }
+        csv_out = generate_solarwinds_csv(tree)
+        rows = self.parse_csv(csv_out)
+        self.assertEqual(rows[2]["Group Description"],
+                         "Device: core1 | Interface: Ethernet1/1")
+
+    def test_group_description_appends_conflicts_with_vlan_purpose(self):
+        # Conflicts/Overlaps must remain discoverable even when a short VLAN
+        # purpose is used as the base description.
+        tree = {
+            "ipv4": [
+                {"cidr": "10.10.10.0/24", "source": "DNAC", "display_name": "Vlan100",
+                 "vlan_id": 100, "device": "core1", "interface_name": "Vlan100",
+                 "conflicts": ["dup with 10.10.10.0/24 on core2"]},
+            ],
+            "ipv6": []
+        }
+        csv_out = generate_solarwinds_csv(tree)
+        rows = self.parse_csv(csv_out)
+        desc = rows[2]["Group Description"]
+        self.assertTrue(desc.startswith("Data VLAN"))
+        self.assertIn("Conflicts: dup with 10.10.10.0/24 on core2", desc)
+
     def test_synthetic_host_route_group_container_is_traversed(self):
         # The engine emits host_route_group containers with a non-CIDR string
         # like "Host Routes (SiteX)" as their cidr field. The exporter must

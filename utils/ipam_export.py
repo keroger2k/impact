@@ -3,6 +3,8 @@ import io
 import netaddr
 from typing import List, Dict, Any, Optional
 
+from utils.vlan_purposes import describe_vlan
+
 def generate_solarwinds_csv(tree_data: Dict[str, List[Dict]]) -> str:
     """
     Generates a SolarWinds-compatible CSV for Subnet Import matching Phase 2 requirements.
@@ -273,15 +275,34 @@ def generate_solarwinds_csv(tree_data: Dict[str, List[Dict]]) -> str:
             for o in ovls:
                 if o and str(o) not in overlaps: overlaps.append(str(o))
 
-        desc_parts = []
-        if devices: desc_parts.append(f"Device: {', '.join(devices)}")
-        if ifaces: desc_parts.append(f"Interface: {', '.join(ifaces)}")
-        if conflicts: desc_parts.append(f"Conflicts: {'; '.join(conflicts)}")
-        if overlaps: desc_parts.append(f"Overlaps: {'; '.join(overlaps)}")
-        gdesc = " | ".join(desc_parts)
-
         # 8. Field Mapping (VLAN & Location)
         vlan = n.get("vlan_id")
+
+        # Short Group Description: prefer a VLAN purpose label when we know it,
+        # then a compact "VLAN {id} - device / iface" for unmapped VLANs,
+        # then fall back to the original Device/Interface format. Conflicts and
+        # Overlaps are always appended when present so they remain discoverable
+        # in SolarWinds.
+        purpose = describe_vlan(vlan)
+        if purpose:
+            base = purpose
+        elif vlan is not None:
+            ctx_parts = []
+            if devices: ctx_parts.append(", ".join(devices))
+            if ifaces: ctx_parts.append(", ".join(ifaces))
+            base = f"VLAN {vlan}"
+            if ctx_parts:
+                base += " — " + " / ".join(ctx_parts)
+        else:
+            legacy = []
+            if devices: legacy.append(f"Device: {', '.join(devices)}")
+            if ifaces: legacy.append(f"Interface: {', '.join(ifaces)}")
+            base = " | ".join(legacy)
+
+        warn_parts = []
+        if conflicts: warn_parts.append(f"Conflicts: {'; '.join(conflicts)}")
+        if overlaps: warn_parts.append(f"Overlaps: {'; '.join(overlaps)}")
+        gdesc = " | ".join(p for p in ([base] + warn_parts) if p)
         loc = n.get("site")
         if loc == "Unknown": loc = ""
 

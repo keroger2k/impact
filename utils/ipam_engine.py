@@ -124,6 +124,7 @@ class IPAMNode:
         self.role = "subnet" # subnet, endpoint, tunnel_group, host_route, vip
 
     def to_dict(self) -> Dict:
+        from utils.vlan_purposes import describe_vlan
         return {
             "cidr": self.cidr or "",
             "source": self.source or "Unknown",
@@ -137,6 +138,7 @@ class IPAMNode:
             "interface_name": self.interface_name,
             "host_ip": self.host_ip,
             "vlan_id": self.vlan_id,
+            "vlan_purpose": describe_vlan(self.vlan_id),
             "role": self.role,
             "children": []
         }
