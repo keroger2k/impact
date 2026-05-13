@@ -416,19 +416,32 @@ class IPAMEngine:
         return configs
 
     async def _discover_dnac_summaries(self, session, loop):
-        """Parse EIGRP `summary-address` statements from DNAC device configs.
-        These represent the real per-site IP allocations (advertised aggregates),
-        which our interface-IP discovery can't see directly.
+        """Parse summary/aggregate declarations from DNAC device configs.
+
+        Covers EIGRP `summary-address`, static `ip route … Null0`, OSPF
+        `area … range`, and BGP `aggregate-address` — each is a real per-site
+        IP allocation that interface-IP discovery can't see directly, and
+        any one of them may be the site's true /23 (or whatever) summary.
         """
         try:
-            from utils.ipam_config_parser import parse_eigrp_summaries
+            from utils.ipam_config_parser import parse_aggregate_summaries
 
             devices, dev_site_map, id_to_dev = await self._load_dnac_device_metadata(session, loop)
             if not devices:
-                logger.info("No DNAC devices cached; skipping EIGRP summary discovery.")
+                logger.info("No DNAC devices cached; skipping summary discovery.")
                 return
 
             configs = await self._load_dnac_device_configs(session, loop, devices)
+
+            # Display label per `kind` — keeps the dashboard / CSV-side
+            # `display_name` discoverable so operators can tell at a glance
+            # which protocol declared the aggregate.
+            kind_labels = {
+                "eigrp":         "EIGRP Summary",
+                "static-null":   "Static Summary",
+                "ospf-range":    "OSPF Area Range",
+                "bgp-aggregate": "BGP Aggregate",
+            }
 
             for dev_id, cfg in configs.items():
                 if not cfg:
@@ -437,7 +450,7 @@ class IPAMEngine:
                 hostname = dev.get("hostname") or "Unknown"
                 site = dev_site_map.get(dev_id, "Unknown")
 
-                for s in parse_eigrp_summaries(cfg):
+                for s in parse_aggregate_summaries(cfg):
                     cidr_str = f"{s['network']}/{s['prefix_length']}"
                     try:
                         net = netaddr.IPNetwork(cidr_str)
@@ -446,16 +459,16 @@ class IPAMEngine:
                     if self.is_excluded(net):
                         continue
 
+                    label = kind_labels.get(s["kind"], "Summary")
+                    ctx = s.get("context") or ""
                     node = IPAMNode(str(net.cidr), source="DNAC-Config")
-                    node.display_name = f"EIGRP Summary ({s['af_interface']})"
+                    node.display_name = f"{label} ({ctx})" if ctx else label
                     node.site = site
                     node.device = hostname
-                    node.interface_name = s["af_interface"]
+                    node.interface_name = ctx
                     node.interface_type = "aggregate"
                     node.role = "aggregate"
-                    node.logical_container = (
-                        f"eigrp:{s['eigrp_process'] or s['eigrp_as']}"
-                    )
+                    node.logical_container = f"{s['kind']}:{ctx}" if ctx else s["kind"]
                     self.subnets.append(node)
         except Exception as e:
             logger.error(f"DNAC summary discovery failed: {e}")

@@ -1,6 +1,13 @@
 import unittest
 
-from utils.ipam_config_parser import parse_eigrp_summaries, parse_ipv6_addresses
+from utils.ipam_config_parser import (
+    parse_eigrp_summaries,
+    parse_ipv6_addresses,
+    parse_static_null_summaries,
+    parse_ospf_area_ranges,
+    parse_bgp_aggregates,
+    parse_aggregate_summaries,
+)
 
 
 IPV6_INTERFACE_CONFIG = """!
@@ -203,6 +210,153 @@ router eigrp TSA-EIGRP
 """
         # /0 is the default route, not a meaningful summary.
         self.assertEqual(parse_eigrp_summaries(cfg), [])
+
+
+STATIC_NULL_CONFIG = """!
+hostname rtr-T489
+!
+ip route 10.29.8.0 255.255.254.0 Null0
+ip route 10.30.0.0 255.255.0.0 Null0 254 name TSA-SUMMARY
+ip route 10.40.0.0 255.255.0.0 Null0 tag 100
+! Not a summary — points at a real next-hop
+ip route 192.0.2.0 255.255.255.0 10.0.0.1
+! Default route to Null0 — explicitly skipped (/0 is meaningless as a summary)
+ip route 0.0.0.0 0.0.0.0 Null0
+!
+end
+"""
+
+
+OSPF_AREA_CONFIG = """!
+router ospf 100
+ router-id 10.99.0.1
+ area 0 range 10.29.8.0 255.255.254.0
+ area 0 range 10.30.0.0 255.255.0.0 cost 100
+ area 0.0.0.1 range 10.40.0.0 255.255.0.0 advertise
+!
+! `area range` outside `router ospf` must be ignored.
+area 0 range 192.0.2.0 255.255.255.0
+!
+end
+"""
+
+
+BGP_AGGR_CONFIG = """!
+router bgp 65000
+ bgp router-id 10.99.0.1
+ aggregate-address 10.29.8.0 255.255.254.0 summary-only
+ !
+ address-family ipv4
+  aggregate-address 10.30.0.0 255.255.0.0
+ exit-address-family
+ !
+ address-family ipv6
+  aggregate-address 2001:db8::/32 summary-only
+ exit-address-family
+!
+end
+"""
+
+
+NX_BGP_AGGR_CONFIG = """!
+router bgp 65001
+ address-family ipv4 unicast
+  aggregate-address 10.50.0.0/16 summary-only
+!
+end
+"""
+
+
+class TestStaticNullSummaries(unittest.TestCase):
+    def test_basic_and_variants(self):
+        results = parse_static_null_summaries(STATIC_NULL_CONFIG)
+        cidrs = {(r["network"], r["prefix_length"]) for r in results}
+        self.assertIn(("10.29.8.0", 23), cidrs)
+        self.assertIn(("10.30.0.0", 16), cidrs)
+        self.assertIn(("10.40.0.0", 16), cidrs)
+        # Real-next-hop static is NOT a summary
+        self.assertNotIn(("192.0.2.0", 24), cidrs)
+        # Default-route /0 is skipped
+        self.assertNotIn(("0.0.0.0", 0), cidrs)
+
+    def test_empty(self):
+        self.assertEqual(parse_static_null_summaries(""), [])
+        self.assertEqual(parse_static_null_summaries(None), [])
+
+    def test_case_insensitive_null0(self):
+        cfg = "ip route 10.1.0.0 255.255.0.0 null0\n"
+        self.assertEqual(len(parse_static_null_summaries(cfg)), 1)
+
+
+class TestOSPFAreaRanges(unittest.TestCase):
+    def test_extracts_area_ranges(self):
+        results = parse_ospf_area_ranges(OSPF_AREA_CONFIG)
+        cidrs = {(r["network"], r["prefix_length"]) for r in results}
+        self.assertIn(("10.29.8.0", 23), cidrs)
+        self.assertIn(("10.30.0.0", 16), cidrs)
+        self.assertIn(("10.40.0.0", 16), cidrs)
+
+    def test_outside_router_ospf_is_ignored(self):
+        results = parse_ospf_area_ranges(OSPF_AREA_CONFIG)
+        cidrs = {(r["network"], r["prefix_length"]) for r in results}
+        self.assertNotIn(("192.0.2.0", 24), cidrs)
+
+    def test_carries_process_and_area(self):
+        results = parse_ospf_area_ranges(OSPF_AREA_CONFIG)
+        first = next(r for r in results if r["network"] == "10.29.8.0")
+        self.assertEqual(first["ospf_process"], "100")
+        self.assertEqual(first["area"], "0")
+        # Dotted-quad area form is preserved verbatim
+        dotted = next(r for r in results if r["network"] == "10.40.0.0")
+        self.assertEqual(dotted["area"], "0.0.0.1")
+
+
+class TestBGPAggregates(unittest.TestCase):
+    def test_ios_form_with_and_without_address_family(self):
+        results = parse_bgp_aggregates(BGP_AGGR_CONFIG)
+        cidrs = {(r["network"], r["prefix_length"]) for r in results}
+        self.assertIn(("10.29.8.0", 23), cidrs)
+        self.assertIn(("10.30.0.0", 16), cidrs)
+
+    def test_ipv6_address_family_is_excluded(self):
+        # The 2001:db8::/32 aggregate sits under `address-family ipv6` and
+        # must not appear in the IPv4-only output.
+        results = parse_bgp_aggregates(BGP_AGGR_CONFIG)
+        for r in results:
+            self.assertNotIn(":", r["network"])
+
+    def test_nx_os_cidr_form(self):
+        results = parse_bgp_aggregates(NX_BGP_AGGR_CONFIG)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["network"], "10.50.0.0")
+        self.assertEqual(results[0]["prefix_length"], 16)
+        self.assertEqual(results[0]["bgp_as"], "65001")
+
+
+class TestParseAggregateSummaries(unittest.TestCase):
+    def test_unified_returns_every_kind(self):
+        # Stitching all four forms into one config; the unified call must
+        # return one entry per declaration with the right `kind` tag.
+        combined = (
+            STATIC_NULL_CONFIG
+            + OSPF_AREA_CONFIG
+            + BGP_AGGR_CONFIG
+            + NAMED_MODE_CONFIG
+        )
+        results = parse_aggregate_summaries(combined)
+        kinds = {r["kind"] for r in results}
+        self.assertEqual(
+            kinds, {"eigrp", "static-null", "ospf-range", "bgp-aggregate"}
+        )
+        # The /23 specifically — present from all three non-EIGRP forms.
+        twenty_three = [
+            r for r in results
+            if r["network"] == "10.29.8.0" and r["prefix_length"] == 23
+        ]
+        kinds_for_23 = {r["kind"] for r in twenty_three}
+        self.assertIn("static-null", kinds_for_23)
+        self.assertIn("ospf-range", kinds_for_23)
+        self.assertIn("bgp-aggregate", kinds_for_23)
 
 
 if __name__ == "__main__":
