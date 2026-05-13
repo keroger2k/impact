@@ -78,6 +78,14 @@ def generate_solarwinds_csv(tree_data: Dict[str, List[Dict]]) -> str:
                 process_tree(n.get("children", []), current_parent_id, is_v6)
                 continue
 
+            # SolarWinds rejects a /0 supernet on import, so drop 0.0.0.0/0
+            # and ::/0 default-route entries while preserving any descendants
+            # by reparenting them to the current parent (typically the IPv4/IPv6
+            # root group).
+            if network.prefixlen == 0:
+                process_tree(n.get("children", []), current_parent_id, is_v6)
+                continue
+
             # 5. Skip Aggregate source (but recurse children)
             if source == "Aggregate":
                 process_tree(n.get("children", []), current_parent_id, is_v6)
@@ -227,32 +235,10 @@ def generate_solarwinds_csv(tree_data: Dict[str, List[Dict]]) -> str:
             if row_id in has_children_ids: rtype = "Supernet"
             else: rtype = "Subnet"
 
-        # 4. Display Name Composition
-        source = n.get("source", "")
-        disp = n.get("display_name", "")
-
-        # For synthesized rollups, the seed node's display name is order-dependent
-        # when multiple hosts roll up. Use a deterministic count-based name in that
-        # case; preserve the seed's name when only one host rolled up.
-        if row["is_synthesized"]:
-            host_count = 1 + len(absorbed_nodes.get(row_id, []))
-            if host_count > 1:
-                disp = f"Rollup ({host_count} hosts)"
-            else:
-                try:
-                    netaddr.IPAddress(disp)
-                    disp = "Rollup"
-                except (netaddr.AddrFormatError, ValueError):
-                    pass
-
-        if source and disp:
-            dname = f"{source}: {disp}"
-        elif source:
-            dname = source
-        elif disp:
-            dname = disp
-        else:
-            dname = f"Imported {rtype}"
+        # 4. Display Name = canonical CIDR ("10.10.10.0/24"). Synthesized
+        # rollup rows already have the rollup network in Address/CIDR, so this
+        # is naturally deterministic regardless of host order.
+        dname = f"{row['Address']}/{row['CIDR']}"
 
         # 8. Group Description Composition
         # Collect info from the node itself plus all absorbed nodes (endpoints, vips, hosts)

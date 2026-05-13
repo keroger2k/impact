@@ -88,8 +88,9 @@ class TestIPAMExport(unittest.TestCase):
         self.assertIn("Device: R1", rows[2]["Group Description"])
         # 10.2.2.1/32 should be absorbed into its rollup row description
         self.assertIn("Device: R2", rows[3]["Group Description"])
-        # Display Name for rollup should be from the host route
-        self.assertEqual(rows[3]["Display Name"], "DNAC: Orphan Host")
+        # Display Name is the canonical CIDR for both real and synthesized rows
+        self.assertEqual(rows[2]["Display Name"], "10.1.1.0/24")
+        self.assertEqual(rows[3]["Display Name"], "10.2.2.0/24")
 
     def test_aggregate_skip(self):
         tree = {
@@ -138,7 +139,10 @@ class TestIPAMExport(unittest.TestCase):
         self.assertIn("Device: R1, R2", desc)
         self.assertIn("Interface: Tunnel0", desc)
 
-    def test_display_name_composition(self):
+    def test_display_name_is_canonical_cidr(self):
+        # Display Name always echoes Address/CIDR regardless of source or
+        # display_name on the node, so it lines up cleanly with the Address
+        # and CIDR columns in SolarWinds.
         tree = {
             "ipv4": [
                 {"cidr": "1.1.1.0/24", "source": "DNAC", "display_name": "MySubnet"},
@@ -151,10 +155,10 @@ class TestIPAMExport(unittest.TestCase):
         csv_out = generate_solarwinds_csv(tree)
         rows = self.parse_csv(csv_out)
 
-        self.assertEqual(rows[2]["Display Name"], "DNAC: MySubnet")
-        self.assertEqual(rows[3]["Display Name"], "ACI")
-        self.assertEqual(rows[4]["Display Name"], "JustName")
-        self.assertEqual(rows[5]["Display Name"], "Imported Subnet")
+        self.assertEqual(rows[2]["Display Name"], "1.1.1.0/24")
+        self.assertEqual(rows[3]["Display Name"], "2.2.2.0/24")
+        self.assertEqual(rows[4]["Display Name"], "3.3.3.0/24")
+        self.assertEqual(rows[5]["Display Name"], "4.4.4.0/24")
 
     def test_orphan_host_absorbed_into_existing_real_subnet(self):
         # A real /24 sits as a peer to an orphan /32 (e.g. coming out of a
@@ -199,11 +203,40 @@ class TestIPAMExport(unittest.TestCase):
         self.assertEqual(len(rows), 3)
         self.assertEqual(rows[2]["Address"], "10.9.9.0")
         self.assertEqual(rows[2]["CIDR"], "24")
-        # Deterministic name: count-based, not "DNAC: HostA" or "DNAC: HostB"
-        self.assertEqual(rows[2]["Display Name"], "DNAC: Rollup (2 hosts)")
+        # Display Name = canonical CIDR — deterministic by construction,
+        # not order-dependent on which host happened to be first.
+        self.assertEqual(rows[2]["Display Name"], "10.9.9.0/24")
         # Both hosts' device metadata must show up
         self.assertIn("RouterA", rows[2]["Group Description"])
         self.assertIn("RouterB", rows[2]["Group Description"])
+
+    def test_default_route_zero_slash_zero_is_skipped(self):
+        # SolarWinds rejects a /0 supernet on import. The exporter must drop
+        # both 0.0.0.0/0 and ::/0 while still emitting any nested descendants
+        # (reparented under the IPv4/IPv6 root group).
+        tree = {
+            "ipv4": [
+                {"cidr": "0.0.0.0/0", "source": "DNAC", "display_name": "default",
+                 "children": [
+                     {"cidr": "10.50.0.0/16", "source": "DNAC", "display_name": "Site"}
+                 ]},
+                {"cidr": "172.16.0.0/12", "source": "DNAC", "display_name": "RFC1918"}
+            ],
+            "ipv6": [
+                {"cidr": "::/0", "source": "DNAC", "display_name": "v6 default"}
+            ]
+        }
+        csv_out = generate_solarwinds_csv(tree)
+        rows = self.parse_csv(csv_out)
+
+        # No row should be 0.0.0.0/0 or ::/0
+        addresses = [(r["Address"], r["CIDR"]) for r in rows]
+        self.assertNotIn(("0.0.0.0", "0"), addresses)
+        self.assertNotIn(("::", "0"), addresses)
+
+        # Descendants of 0.0.0.0/0 reparent to the IPv4 root group (Id=1)
+        site_row = next(r for r in rows if r["Address"] == "10.50.0.0")
+        self.assertEqual(site_row["ParentId"], "1")
 
     def test_group_description_uses_vlan_purpose_when_known(self):
         # vlan_id maps to a known purpose -> description is just the short
