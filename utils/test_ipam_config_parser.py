@@ -211,6 +211,28 @@ router eigrp TSA-EIGRP
         # /0 is the default route, not a meaningful summary.
         self.assertEqual(parse_eigrp_summaries(cfg), [])
 
+    def test_named_mode_with_vrf(self):
+        cfg = """!
+router eigrp TSA-EIGRP
+ !
+ address-family ipv4 unicast vrf tsanet autonomous-system 22
+  !
+  af-interface Tunnel5000
+   summary-address 10.29.8.0 255.255.254.0
+   authentication mode md5
+   authentication key-chain RoutePW
+  exit-af-interface
+ exit-address-family
+!
+"""
+        results = parse_eigrp_summaries(cfg)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["network"], "10.29.8.0")
+        self.assertEqual(results[0]["prefix_length"], 23)
+        self.assertEqual(results[0]["af_interface"], "Tunnel5000")
+        self.assertEqual(results[0]["eigrp_as"], 22)
+        self.assertEqual(results[0]["mode"], "named")
+
 
 STATIC_NULL_CONFIG = """!
 hostname rtr-T489
