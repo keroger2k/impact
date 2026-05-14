@@ -551,12 +551,17 @@ def _wait_for_task_resource(dnac, task_id: str, timeout: int = 60) -> str | None
                 if isinstance(v, str) and v.strip().startswith("{"):
                     try:
                         parsed = _json.loads(v)
-                        if isinstance(parsed, dict):
-                            for k in ("templateId", "id", "projectId", "deploymentId"):
-                                if parsed.get(k):
-                                    return parsed[k]
                     except (ValueError, TypeError):
-                        pass
+                        parsed = None
+                    if isinstance(parsed, dict):
+                        # Catch DNAC tasks that end with isError=false but a body
+                        # like {"errorMessage":"Resource does not exist. version 1.0"}
+                        err = parsed.get("errorMessage") or parsed.get("error")
+                        if err:
+                            raise RuntimeError(f"DNAC task failed (task body): {err}")
+                        for k in ("templateId", "id", "projectId", "deploymentId"):
+                            if parsed.get(k):
+                                return parsed[k]
                 # Bare UUID string
                 if isinstance(v, str):
                     m = uuid_re.search(v)
@@ -655,16 +660,14 @@ def deploy_template(dnac, template_id: str, device_uuids: list[str]) -> str:
     raise RuntimeError(f"deploy_template: no deploymentId or taskId in response ({body})")
 
 
-_UUID_RE = None  # lazy-compiled below
-
 def _wait_for_deployment_id(dnac, task_id: str, timeout: int = 120) -> str:
     """Poll a deploy task to completion and extract the deploymentId from its
-    progress / data fields. DNAC encodes it differently per version."""
+    progress / data fields. Strict: only accepts a value explicitly labelled
+    as a deployment id, so we don't accidentally polling-status the templateId."""
     import json as _json
     import re
-    global _UUID_RE
-    if _UUID_RE is None:
-        _UUID_RE = re.compile(r'[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}', re.I)
+
+    label_re = re.compile(r'[Dd]eployment\s*[Ii]d\s*[:=]\s*([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})', re.I)
 
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -682,26 +685,35 @@ def _wait_for_deployment_id(dnac, task_id: str, timeout: int = 120) -> str:
             progress = t.get("progress") or ""
             data     = t.get("data") or ""
 
-            # 1) progress as JSON: {"deploymentId":"<uuid>", ...}
+            # 1) JSON shape: surface explicit deploymentId AND explicit errorMessage
+            #    (DNAC sometimes ends a task with isError=false but the body says
+            #    "Resource does not exist. version 1.0" — catch that here.)
             for blob in (progress, data):
                 if isinstance(blob, str) and blob.strip().startswith("{"):
                     try:
                         parsed = _json.loads(blob)
-                        if isinstance(parsed, dict) and parsed.get("deploymentId"):
-                            return parsed["deploymentId"]
                     except (ValueError, TypeError):
-                        pass
+                        continue
+                    if not isinstance(parsed, dict):
+                        continue
+                    if parsed.get("deploymentId"):
+                        return parsed["deploymentId"]
+                    err = parsed.get("errorMessage") or parsed.get("error") or parsed.get("description")
+                    if err:
+                        raise RuntimeError(f"Deploy failed (task body): {err}")
 
-            # 2) plain "Deployment Id : <uuid>" or "Template Deployment Id : <uuid>"
+            # 2) labelled-UUID shape: "Deployment Id : <uuid>"
             for blob in (progress, data):
                 if isinstance(blob, str):
-                    m = _UUID_RE.search(blob)
+                    m = label_re.search(blob)
                     if m:
-                        return m.group(0)
+                        return m.group(1)
 
+            # No deploymentId AND no errorMessage — surface the raw blobs so we
+            # can see what DNAC actually returned.
             raise RuntimeError(
-                f"Deploy task completed but no deploymentId found "
-                f"(progress={str(progress)[:200]!r}, data={str(data)[:200]!r})")
+                f"Deploy task completed without a deploymentId. "
+                f"progress={str(progress)[:300]!r} data={str(data)[:200]!r}")
         except RuntimeError:
             raise
         except Exception as e:
