@@ -64,36 +64,22 @@
           <div id="config-inputs" style="display:none">
             <div class="alert alert-warning small mb-3 py-2">
               <i class="ph ph-warning-circle me-1"></i>
-              Config mode pushes changes via DNAC. Deploys are audited and rollback is best-effort from DNAC's running-config archive.
+              Config mode pushes commands directly via SSH. No automatic rollback — review carefully before pushing.
             </div>
 
             <div class="mb-3 border-top pt-3">
-              <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Target Platform</label>
-              <select id="config-platform" class="form-select">
-                <option value="cisco_ios">IOS / IOS-XE (Catalyst)</option>
-                <option value="cisco_nxos">NX-OS (Nexus)</option>
-              </select>
-              <div class="form-text">Devices not matching this platform will be skipped.</div>
-            </div>
-
-            <div class="mb-3">
               <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Config Script</label>
-              <textarea id="config-script" class="form-control" rows="8" style="font-family: 'SF Mono', monospace; font-size: 12px;"
+              <textarea id="config-script" class="form-control" rows="10"
+                style="font-family: 'SF Mono', monospace; font-size: 12px;"
                 placeholder="e.g.
 ip access-list extended ACL_MGMT
   permit tcp any host 10.0.0.1 eq 22"></textarea>
             </div>
 
-            <div class="form-check mb-2">
-              <input class="form-check-input" type="checkbox" id="config-canary" checked>
-              <label class="form-check-label small" for="config-canary">
-                Canary first (push to 3 devices, then continue)
-              </label>
-            </div>
             <div class="form-check mb-3">
-              <input class="form-check-input" type="checkbox" id="config-approval">
-              <label class="form-check-label small" for="config-approval">
-                Require DNAC approval workflow (second admin must approve)
+              <input class="form-check-input" type="checkbox" id="config-save" checked>
+              <label class="form-check-label small" for="config-save">
+                Save to startup-config after push (<code>write memory</code>)
               </label>
             </div>
 
@@ -102,9 +88,9 @@ ip access-list extended ACL_MGMT
               <input type="text" id="config-confirm" class="form-control" oninput="updateDeployBtn()" placeholder="DEPLOY">
             </div>
 
-            <button type="button" id="config-deploy-btn" onclick="executeConfigDeploy()" disabled
+            <button type="button" id="config-deploy-btn" onclick="executeConfigPush()" disabled
                     class="btn btn-danger w-100 py-2 fw-bold shadow-sm">
-              <i class=" ph ph-upload-simple me-1"></i> Stage Deploy
+              <i class=" ph ph-upload-simple me-1"></i> Push Config
             </button>
           </div>
         </form>
@@ -113,30 +99,6 @@ ip access-list extended ACL_MGMT
   </div>
 
   <div class="col-md-8 d-flex flex-column">
-    <!-- Config-mode summary panel (hidden in show mode) -->
-    <div id="config-summary" class="card shadow-sm border-0 mb-3" style="display:none">
-      <div class="card-body py-2 px-3">
-        <div class="d-flex align-items-center gap-3 flex-wrap">
-          <span class="fw-bold text-uppercase small text-navy">Deploy:</span>
-          <span class="badge bg-secondary" id="sum-total">0 total</span>
-          <span class="badge bg-success" id="sum-success">0 ok</span>
-          <span class="badge bg-danger" id="sum-failed">0 failed</span>
-          <span class="badge bg-info text-dark" id="sum-pending">0 pending</span>
-          <span class="badge bg-warning text-dark" id="sum-skipped">0 skipped</span>
-          <span class="ms-auto d-flex gap-2">
-            <button type="button" id="config-continue-btn" onclick="executeConfigContinue()"
-                    class="btn btn-sm btn-primary" style="display:none">
-              <i class="ph ph-arrow-right me-1"></i> Continue (fan out)
-            </button>
-            <button type="button" id="config-rollback-btn" onclick="executeConfigRollback()"
-                    class="btn btn-sm btn-outline-warning" style="display:none">
-              <i class="ph ph-arrow-u-up-left me-1"></i> Rollback
-            </button>
-          </span>
-        </div>
-      </div>
-    </div>
-
     <div class="card shadow-sm border-0 animate-fade-in flex-grow-1 overflow-hidden">
       <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
         <span class="fw-bold small text-uppercase letter-spacing-1">Live Console Output</span>
@@ -155,11 +117,9 @@ ip access-list extended ACL_MGMT
 </div>
 
 <script>
-  // ── Mode switching ────────────────────────────────────────────────────────
   function switchMode(mode) {
     document.getElementById('show-inputs').style.display   = mode === 'show' ? '' : 'none';
     document.getElementById('config-inputs').style.display = mode === 'config' ? '' : 'none';
-    document.getElementById('config-summary').style.display = 'none';
     clearOutput();
   }
 
@@ -173,7 +133,6 @@ ip access-list extended ACL_MGMT
     document.getElementById('config-deploy-btn').disabled = !ok;
   }
 
-  // ── Shared helpers ────────────────────────────────────────────────────────
   function gatherDevices() {
     let devices = [];
     const select = document.getElementById('device-multi-select');
@@ -199,13 +158,9 @@ ip access-list extended ACL_MGMT
     return csrfToken ? csrfToken.split('=')[1] : '';
   }
 
-  function appendLine(html, cls) {
-    const output = document.getElementById('cmd-output');
-    const div = document.createElement('div');
-    if (cls) div.className = cls;
-    div.innerHTML = html;
-    output.appendChild(div);
-    output.scrollTop = output.scrollHeight;
+  function escapeHtml(s) {
+    return String(s || '').replace(/[&<>"']/g, c =>
+      ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
 
   async function streamSSE(url, body, onEvent) {
@@ -217,7 +172,10 @@ ip access-list extended ACL_MGMT
     if (!resp.ok) {
       let detail = resp.statusText;
       try { detail = (await resp.json()).detail || detail; } catch(_) {}
-      appendLine(`>> Request failed (${resp.status}): ${escapeHtml(detail)}`, 'text-danger fw-bold');
+      const err = document.createElement('div');
+      err.className = 'text-danger fw-bold';
+      err.textContent = `>> Request failed (${resp.status}): ${detail}`;
+      document.getElementById('cmd-output').appendChild(err);
       return;
     }
     const reader = resp.body.getReader();
@@ -242,145 +200,89 @@ ip access-list extended ACL_MGMT
     }
   }
 
-  function escapeHtml(s) {
-    return String(s || '').replace(/[&<>"']/g, c =>
-      ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  function renderDeviceResult(data) {
+    const progress = document.getElementById('cmd-progress-label');
+    progress.textContent = `Progress: ${data.done} / ${data.total}`;
+    const container = document.createElement('div');
+    container.className = 'mt-3 border-top border-secondary pt-2';
+    const header = document.createElement('span');
+    header.className = 'fw-bold text-info';
+    header.textContent = `[${data.hostname} (${data.ip})]`;
+    container.appendChild(header);
+    container.appendChild(document.createElement('br'));
+    if (data.status === 'success') {
+      const pre = document.createElement('pre');
+      pre.className = 'text-success';
+      pre.textContent = data.output;
+      container.appendChild(pre);
+    } else {
+      const span = document.createElement('span');
+      span.className = 'text-danger';
+      span.textContent = data.error;
+      container.appendChild(span);
+    }
+    const output = document.getElementById('cmd-output');
+    output.appendChild(container);
+    output.scrollTop = output.scrollHeight;
   }
 
-  // ── Show mode (existing behaviour) ────────────────────────────────────────
   function executeCommands() {
     const command = document.getElementById('custom-cmd').value;
     if (!command) { alert("Please enter a command."); return; }
-
     const devices = gatherDevices();
     if (devices.length === 0) {
       alert("Please select a device or enter an IP address."); return;
     }
 
     clearOutput();
-    appendLine(`>> Initializing session for ${devices.length} targets...`, 'text-info');
+    const init = document.createElement('div');
+    init.className = 'text-info';
+    init.textContent = `>> Initializing session for ${devices.length} targets...`;
+    document.getElementById('cmd-output').appendChild(init);
 
-    const payload = {devices, command, timeout: 60};
-    streamSSE('/api/commands/run', payload, (data) => {
-      if (data.type === 'progress') {
-        document.getElementById('cmd-progress-label').textContent = `Progress: ${data.done} / ${data.total}`;
-        const container = document.createElement('div');
-        container.className = 'mt-3 border-top border-secondary pt-2';
-        container.innerHTML = `<span class="fw-bold text-info">[${escapeHtml(data.hostname)} (${escapeHtml(data.ip)})]</span><br>`;
-        if (data.status === 'success') {
-          const pre = document.createElement('pre');
-          pre.className = 'text-success';
-          pre.textContent = data.output;
-          container.appendChild(pre);
-        } else {
-          const span = document.createElement('span');
-          span.className = 'text-danger';
-          span.textContent = data.error;
-          container.appendChild(span);
-        }
-        document.getElementById('cmd-output').appendChild(container);
-        document.getElementById('cmd-output').scrollTop = document.getElementById('cmd-output').scrollHeight;
-      } else if (data.type === 'complete') {
-        appendLine(`>> Command execution complete. Succeeded: ${data.succeeded}, Failed: ${data.failed}`, 'mt-4 text-info fw-bold');
+    streamSSE('/api/commands/run', {devices, command, timeout: 60}, (data) => {
+      if (data.type === 'progress') renderDeviceResult(data);
+      else if (data.type === 'complete') {
+        const div = document.createElement('div');
+        div.className = 'mt-4 text-info fw-bold';
+        div.textContent = `>> Command execution complete. Succeeded: ${data.succeeded}, Failed: ${data.failed}`;
+        document.getElementById('cmd-output').appendChild(div);
       }
     });
   }
 
-  // ── Config mode ───────────────────────────────────────────────────────────
-  let currentStage = null;  // { stage_id, total, pending_ids, results, failed_ids }
-
-  function resetStageSummary(total) {
-    currentStage = {stage_id: null, total, pending_ids: new Set(), results: {}, failed_ids: new Set(), all_devices: []};
-    document.getElementById('sum-total').textContent = `${total} total`;
-    document.getElementById('sum-success').textContent = `0 ok`;
-    document.getElementById('sum-failed').textContent = `0 failed`;
-    document.getElementById('sum-pending').textContent = `${total} pending`;
-    document.getElementById('sum-skipped').textContent = `0 skipped`;
-    document.getElementById('config-continue-btn').style.display = 'none';
-    document.getElementById('config-rollback-btn').style.display = 'none';
-    document.getElementById('config-summary').style.display = '';
-  }
-
-  function updateSummary() {
-    if (!currentStage) return;
-    const ok = Object.values(currentStage.results).filter(r => r.status === 'success').length;
-    const fail = currentStage.failed_ids.size;
-    const pend = currentStage.total - ok - fail;
-    document.getElementById('sum-success').textContent = `${ok} ok`;
-    document.getElementById('sum-failed').textContent = `${fail} failed`;
-    document.getElementById('sum-pending').textContent = `${Math.max(0, pend)} pending`;
-  }
-
-  function executeConfigDeploy() {
-    const ips = gatherDevices().map(d => d.ip);
+  function executeConfigPush() {
     const script = document.getElementById('config-script').value;
-    if (!ips.length) { alert("Add at least one device IP."); return; }
     if (!script.trim()) { alert("Config script is empty."); return; }
-
-    const payload = {
-      ips,
-      platform: document.getElementById('config-platform').value,
-      script,
-      confirm: document.getElementById('config-confirm').value,
-      canary: document.getElementById('config-canary').checked,
-      approval: document.getElementById('config-approval').checked,
-    };
+    const devices = gatherDevices();
+    if (devices.length === 0) {
+      alert("Please select a device or enter an IP address."); return;
+    }
+    if (!confirm(`Push this config to ${devices.length} device(s)? This cannot be auto-rolled-back.`)) return;
 
     clearOutput();
-    resetStageSummary(ips.length);
-    appendLine(`>> Staging deploy to ${ips.length} target(s)...`, 'text-info');
+    const init = document.createElement('div');
+    init.className = 'text-warning';
+    init.textContent = `>> Pushing config to ${devices.length} target(s)...`;
+    document.getElementById('cmd-output').appendChild(init);
 
-    streamSSE('/api/commands/config-deploy', payload, handleConfigEvent);
-  }
-
-  function executeConfigContinue() {
-    if (!currentStage || !currentStage.stage_id) return;
-    document.getElementById('config-continue-btn').style.display = 'none';
-    appendLine('>> Continuing — fanning out to remaining devices...', 'text-info');
-    streamSSE('/api/commands/config-continue', {deploy_id: currentStage.stage_id}, handleConfigEvent);
-  }
-
-  function executeConfigRollback() {
-    if (!currentStage || !currentStage.stage_id) return;
-    if (!confirm('Roll back this deploy on all affected devices? Pre-deploy configs from DNAC archive will be pushed back.')) return;
-    appendLine('>> Rollback requested...', 'text-warning');
-    // Default: roll back everyone (failed + succeeded)
-    streamSSE('/api/commands/config-rollback', {deploy_id: currentStage.stage_id}, handleConfigEvent);
-  }
-
-  function handleConfigEvent(d) {
-    if (d.type === 'log') {
-      appendLine('>> ' + escapeHtml(d.message), 'text-info');
-    } else if (d.type === 'skipped') {
-      const n = (d.items || []).length;
-      document.getElementById('sum-skipped').textContent = `${n} skipped`;
-      appendLine(`>> Skipped ${n} device(s): not in DNAC inventory or wrong platform.`, 'text-warning');
-      (d.items || []).forEach(it => {
-        appendLine(`  • ${escapeHtml(it.ip)} — ${escapeHtml(it.reason)}${it.detected ? ' (detected '+escapeHtml(it.detected)+')' : ''}`, 'text-warning small');
-      });
-    } else if (d.type === 'deploy_started') {
-      if (!currentStage.stage_id) currentStage.stage_id = d.stage_id;
-      appendLine(`>> ${d.phase === 'canary' ? 'Canary' : d.phase === 'fanout' ? 'Fan-out' : 'Deploy'} started (${d.in_flight} device(s) in flight, deployment ${escapeHtml(d.deployment_id)})`, 'text-info');
-    } else if (d.type === 'device_result') {
-      const cls = d.status === 'success' ? 'text-success' : 'text-danger';
-      const icon = d.status === 'success' ? '✓' : '✗';
-      appendLine(`<span class="${cls}">${icon} ${escapeHtml(d.hostname || d.ip)} (${escapeHtml(d.ip)})</span> — ${escapeHtml(d.message || d.status)}`);
-      currentStage.results[d.device_id] = d;
-      if (d.status !== 'success') currentStage.failed_ids.add(d.device_id);
-      updateSummary();
-    } else if (d.type === 'phase_complete') {
-      if (d.phase === 'canary' && d.remainder > 0) {
-        appendLine(`>> Canary done. ${d.remainder} device(s) remaining — review above, then click Continue.`, 'text-info fw-bold');
-        document.getElementById('config-continue-btn').style.display = '';
-        document.getElementById('config-rollback-btn').style.display = '';
-      } else if (d.phase === 'fanout' || d.phase === 'full') {
-        appendLine('>> Deploy complete.', 'text-info fw-bold');
-        document.getElementById('config-rollback-btn').style.display = '';
-      } else if (d.phase === 'rollback') {
-        appendLine('>> Rollback complete.', 'text-warning fw-bold');
+    const payload = {
+      devices,
+      script,
+      confirm: document.getElementById('config-confirm').value,
+      save: document.getElementById('config-save').checked,
+      timeout: 60,
+    };
+    streamSSE('/api/commands/config-run', payload, (data) => {
+      if (data.type === 'progress') renderDeviceResult(data);
+      else if (data.type === 'complete') {
+        const div = document.createElement('div');
+        div.className = 'mt-4 text-info fw-bold';
+        div.textContent = `>> Config push complete. Succeeded: ${data.succeeded}, Failed: ${data.failed}`;
+        document.getElementById('cmd-output').appendChild(div);
+        document.getElementById('config-confirm').value = '';
+        updateDeployBtn();
       }
-    } else if (d.type === 'error') {
-      appendLine('>> ERROR: ' + escapeHtml(d.message), 'text-danger fw-bold');
-    }
+    });
   }
 </script>
