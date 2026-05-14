@@ -533,7 +533,9 @@ def create_adhoc_template(dnac, project_id: str, name: str, body: str,
         "composite": False,
         "description": "Ephemeral ad-hoc template (auto-cleaned by IMPACT II)",
     }
-    resp = _tp_call(dnac, "POST", "/dna/intent/api/v1/template-programmer/template",
+    # DNAC create-template is project-scoped: POST /project/{projectId}/template
+    resp = _tp_call(dnac, "POST",
+                    f"/dna/intent/api/v1/template-programmer/project/{project_id}/template",
                     json=payload)
     body_out = _dictify(getattr(resp, "response", resp))
     task_id = body_out.get("taskId")
