@@ -662,12 +662,14 @@ def deploy_template(dnac, template_id: str, device_uuids: list[str]) -> str:
 
 def _wait_for_deployment_id(dnac, task_id: str, timeout: int = 120) -> str:
     """Poll a deploy task to completion and extract the deploymentId from its
-    progress / data fields. Strict: only accepts a value explicitly labelled
-    as a deployment id, so we don't accidentally polling-status the templateId."""
+    progress / data / additionalStatusURL fields. Strict: only accepts a value
+    explicitly labelled as a deployment id."""
     import json as _json
     import re
 
     label_re = re.compile(r'[Dd]eployment\s*[Ii]d\s*[:=]\s*([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})', re.I)
+    # The status URL has the deployment uuid as its last path segment.
+    url_re = re.compile(r'/template/deploy/status/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})', re.I)
 
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -682,12 +684,14 @@ def _wait_for_deployment_id(dnac, task_id: str, timeout: int = 120) -> str:
                 raise RuntimeError(
                     f"Deploy task failed: {t.get('failureReason') or t.get('progress')}")
 
-            progress = t.get("progress") or ""
-            data     = t.get("data") or ""
+            progress     = t.get("progress") or ""
+            data         = t.get("data") or ""
+            status_url   = t.get("additionalStatusURL") or t.get("resultLocation") or ""
+
+            # Log the full task body once per attempt so we can diagnose unknown shapes.
+            logger.info(f"Deploy task {task_id} body: {dict(t)}")
 
             # 1) JSON shape: surface explicit deploymentId AND explicit errorMessage
-            #    (DNAC sometimes ends a task with isError=false but the body says
-            #    "Resource does not exist. version 1.0" — catch that here.)
             for blob in (progress, data):
                 if isinstance(blob, str) and blob.strip().startswith("{"):
                     try:
@@ -709,11 +713,17 @@ def _wait_for_deployment_id(dnac, task_id: str, timeout: int = 120) -> str:
                     if m:
                         return m.group(1)
 
-            # No deploymentId AND no errorMessage — surface the raw blobs so we
-            # can see what DNAC actually returned.
+            # 3) The deployment status URL: /template/deploy/status/<uuid>
+            for blob in (status_url, progress, data):
+                if isinstance(blob, str):
+                    m = url_re.search(blob)
+                    if m:
+                        return m.group(1)
+
             raise RuntimeError(
                 f"Deploy task completed without a deploymentId. "
-                f"progress={str(progress)[:300]!r} data={str(data)[:200]!r}")
+                f"progress={str(progress)[:300]!r} data={str(data)[:200]!r} "
+                f"additionalStatusURL={str(status_url)[:200]!r}")
         except RuntimeError:
             raise
         except Exception as e:
