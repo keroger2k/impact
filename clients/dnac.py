@@ -453,8 +453,27 @@ DNAC_SOFTWARE_TYPE = {
 
 
 def _tp_call(dnac, method: str, path: str, **kwargs):
-    """custom_caller wrapper that surfaces DNAC's error body in exceptions."""
-    return dnac.custom_caller.call_api(method, path, **kwargs)
+    """custom_caller wrapper that surfaces DNAC's error body in exceptions.
+    The SDK's default exception message is just the URL + status — wrap it so the
+    DNAC error JSON ends up in the message we propagate up to the UI."""
+    try:
+        return dnac.custom_caller.call_api(method, path, **kwargs)
+    except Exception as e:
+        # dnacentersdk attaches the requests.Response on the exception under
+        # various attrs depending on version — try a few to dig out the body.
+        body = None
+        for attr in ("response", "details", "message"):
+            r = getattr(e, attr, None)
+            if r is not None:
+                if hasattr(r, "text"):
+                    body = r.text
+                elif isinstance(r, (dict, str)):
+                    body = r
+                if body:
+                    break
+        if body:
+            raise RuntimeError(f"DNAC {method} {path} failed: {e} | body={str(body)[:500]}") from e
+        raise
 
 
 def ensure_adhoc_project(dnac) -> str:
@@ -497,21 +516,62 @@ def ensure_adhoc_project(dnac) -> str:
 
 
 def _wait_for_task_resource(dnac, task_id: str, timeout: int = 60) -> str | None:
-    """Poll a DNAC task to completion, return its resulting resource id (data field)."""
+    """Poll a DNAC task to completion, return its resulting resource id.
+
+    DNAC encodes the id differently per version/endpoint:
+      - data field is a bare UUID string (most common for project/template create)
+      - data field is a JSON string like '{"templateId":"<uuid>"}'
+      - progress is a JSON string with the id embedded
+      - progress is plain text like "Template Id: <uuid>"
+    We try each shape in order and fall back to a UUID regex on either field.
+    """
+    import json as _json
+    import re
+    uuid_re = re.compile(r'[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}', re.I)
+
     deadline = time.time() + timeout
+    last_task: dict = {}
     while time.time() < deadline:
         try:
             resp = _tp_call(dnac, "GET", f"/dna/intent/api/v1/task/{task_id}")
             t = _dictify(getattr(resp, "response", resp))
-            if t.get("endTime"):
-                if t.get("isError"):
-                    raise RuntimeError(f"DNAC task failed: {t.get('failureReason') or t.get('progress')}")
-                # Most template-programmer tasks put the new id in `data`
-                return t.get("data") or t.get("progress")
+            last_task = t
+            if not t.get("endTime"):
+                time.sleep(1.0)
+                continue
+
+            if t.get("isError"):
+                raise RuntimeError(f"DNAC task failed: {t.get('failureReason') or t.get('progress')}")
+
+            for field in ("data", "progress"):
+                v = t.get(field)
+                if not v:
+                    continue
+                # JSON-string shape
+                if isinstance(v, str) and v.strip().startswith("{"):
+                    try:
+                        parsed = _json.loads(v)
+                        if isinstance(parsed, dict):
+                            for k in ("templateId", "id", "projectId", "deploymentId"):
+                                if parsed.get(k):
+                                    return parsed[k]
+                    except (ValueError, TypeError):
+                        pass
+                # Bare UUID string
+                if isinstance(v, str):
+                    m = uuid_re.search(v)
+                    if m:
+                        return m.group(0)
+            # Task ended cleanly but we couldn't find an id — return None so caller
+            # can fall back (e.g. re-list by name).
+            return None
+        except RuntimeError:
+            raise
         except Exception as e:
             logger.debug(f"Task poll error for {task_id}: {e}")
-        time.sleep(1.0)
-    raise TimeoutError(f"DNAC task {task_id} did not complete within {timeout}s")
+            time.sleep(1.0)
+    raise TimeoutError(f"DNAC task {task_id} did not complete within {timeout}s "
+                       f"(last_task={str(last_task)[:200]})")
 
 
 def create_adhoc_template(dnac, project_id: str, name: str, body: str,
@@ -541,11 +601,14 @@ def create_adhoc_template(dnac, project_id: str, name: str, body: str,
     task_id = body_out.get("taskId")
     template_id = _wait_for_task_resource(dnac, task_id) if task_id else None
     if not template_id:
-        raise RuntimeError(f"Template creation did not return an id (task={task_id})")
+        raise RuntimeError(f"Template creation did not return an id (task={task_id}, body={body_out})")
+    logger.info(f"Template created in DNAC: id={template_id} name={name} project={project_id}")
 
     # Commit a version so the template is deployable
+    version_payload = {"templateId": template_id, "comments": "IMPACT II initial version"}
+    logger.info(f"Committing template version: {version_payload}")
     commit_resp = _tp_call(dnac, "POST", "/dna/intent/api/v1/template-programmer/template/version",
-                           json={"templateId": template_id, "comments": "IMPACT II initial version"})
+                           json=version_payload)
     commit_body = _dictify(getattr(commit_resp, "response", commit_resp))
     commit_task = commit_body.get("taskId")
     if commit_task:
