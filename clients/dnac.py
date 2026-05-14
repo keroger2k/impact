@@ -437,6 +437,220 @@ def get_device_detail(dnac, device_id):
     resp = dnac.devices.get_network_device_by_id(id=device_id)
     return _dictify(resp.response) if hasattr(resp, "response") else _dictify(resp)
 
+# ── Template Programmer (config-change deploys) ─────────────────────────────
+#
+# Thin wrappers around DNAC's /dna/intent/api/v1/template-programmer endpoints.
+# Used by the Command Runner's Config mode to push ad-hoc scripts to a set of
+# devices and roll back via DNAC's running-config archive.
+
+IMPACT_ADHOC_PROJECT_NAME = "IMPACT-AdHoc-Templates"
+
+# DNAC softwareType strings expected by the template metadata.
+DNAC_SOFTWARE_TYPE = {
+    "cisco_ios":  "IOS-XE",
+    "cisco_nxos": "NX-OS",
+}
+
+
+def _tp_call(dnac, method: str, path: str, **kwargs):
+    """custom_caller wrapper that surfaces DNAC's error body in exceptions."""
+    return dnac.custom_caller.call_api(method, path, **kwargs)
+
+
+def ensure_adhoc_project(dnac) -> str:
+    """Return the projectId for IMPACT_ADHOC_PROJECT_NAME, creating it if missing."""
+    from dev import DEV_MODE
+    if DEV_MODE:
+        return _uid(f"project-{IMPACT_ADHOC_PROJECT_NAME}")
+
+    try:
+        resp = _tp_call(dnac, "GET", "/dna/intent/api/v1/template-programmer/project",
+                        params={"name": IMPACT_ADHOC_PROJECT_NAME})
+        projects = getattr(resp, "response", None) or (resp if isinstance(resp, list) else [])
+        for p in projects:
+            d = _dictify(p)
+            if d.get("name") == IMPACT_ADHOC_PROJECT_NAME:
+                return d["id"]
+    except Exception as e:
+        logger.debug(f"Template project lookup failed: {e}")
+
+    resp = _tp_call(dnac, "POST", "/dna/intent/api/v1/template-programmer/project",
+                    json={"name": IMPACT_ADHOC_PROJECT_NAME,
+                          "description": "Ephemeral templates created by IMPACT II Command Runner"})
+    body = _dictify(getattr(resp, "response", resp))
+    # DNAC returns {"response": {"taskId": "..."}} for async creates — poll the task for resultId.
+    task_id = body.get("taskId")
+    if task_id:
+        project_id = _wait_for_task_resource(dnac, task_id)
+        if project_id:
+            return project_id
+
+    # Fallback: re-list to find it
+    resp = _tp_call(dnac, "GET", "/dna/intent/api/v1/template-programmer/project",
+                    params={"name": IMPACT_ADHOC_PROJECT_NAME})
+    projects = getattr(resp, "response", None) or []
+    for p in projects:
+        d = _dictify(p)
+        if d.get("name") == IMPACT_ADHOC_PROJECT_NAME:
+            return d["id"]
+    raise RuntimeError("Failed to create or locate IMPACT-AdHoc-Templates project in DNAC")
+
+
+def _wait_for_task_resource(dnac, task_id: str, timeout: int = 60) -> str | None:
+    """Poll a DNAC task to completion, return its resulting resource id (data field)."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            resp = _tp_call(dnac, "GET", f"/dna/intent/api/v1/task/{task_id}")
+            t = _dictify(getattr(resp, "response", resp))
+            if t.get("endTime"):
+                if t.get("isError"):
+                    raise RuntimeError(f"DNAC task failed: {t.get('failureReason') or t.get('progress')}")
+                # Most template-programmer tasks put the new id in `data`
+                return t.get("data") or t.get("progress")
+        except Exception as e:
+            logger.debug(f"Task poll error for {task_id}: {e}")
+        time.sleep(1.0)
+    raise TimeoutError(f"DNAC task {task_id} did not complete within {timeout}s")
+
+
+def create_adhoc_template(dnac, project_id: str, name: str, body: str,
+                          software_type: str) -> str:
+    """Create a single-version template in the ad-hoc project. Returns templateId
+    after the version is committed and ready to deploy."""
+    from dev import DEV_MODE
+    if DEV_MODE:
+        return _uid(f"template-{name}")
+
+    payload = {
+        "name": name,
+        "projectId": project_id,
+        "projectName": IMPACT_ADHOC_PROJECT_NAME,
+        "softwareType": software_type,
+        "deviceTypes": [{"productFamily": "Switches and Hubs"}, {"productFamily": "Routers"}],
+        "language": "VELOCITY",
+        "templateContent": body,
+        "composite": False,
+        "description": "Ephemeral ad-hoc template (auto-cleaned by IMPACT II)",
+    }
+    resp = _tp_call(dnac, "POST", "/dna/intent/api/v1/template-programmer/template",
+                    json=payload)
+    body_out = _dictify(getattr(resp, "response", resp))
+    task_id = body_out.get("taskId")
+    template_id = _wait_for_task_resource(dnac, task_id) if task_id else None
+    if not template_id:
+        raise RuntimeError(f"Template creation did not return an id (task={task_id})")
+
+    # Commit a version so the template is deployable
+    commit_resp = _tp_call(dnac, "POST", "/dna/intent/api/v1/template-programmer/template/version",
+                           json={"templateId": template_id, "comments": "IMPACT II initial version"})
+    commit_body = _dictify(getattr(commit_resp, "response", commit_resp))
+    commit_task = commit_body.get("taskId")
+    if commit_task:
+        _wait_for_task_resource(dnac, commit_task)
+
+    return template_id
+
+
+def deploy_template(dnac, template_id: str, device_uuids: list[str]) -> str:
+    """Deploy a committed template to a set of devices. Returns deploymentId."""
+    from dev import DEV_MODE
+    if DEV_MODE:
+        return _uid(f"deploy-{template_id}-{time.time()}")
+
+    payload = {
+        "forcePushTemplate": True,
+        "isComposite": False,
+        "templateId": template_id,
+        "targetInfo": [
+            {"id": uuid, "type": "MANAGED_DEVICE_UUID", "params": {}}
+            for uuid in device_uuids
+        ],
+    }
+    resp = _tp_call(dnac, "POST", "/dna/intent/api/v2/template-programmer/template/deploy",
+                    json=payload)
+    body = _dictify(getattr(resp, "response", resp))
+    deployment_id = body.get("deploymentId")
+    if not deployment_id:
+        # v2 deploy returns deploymentId in different shapes across versions
+        deployment_id = (body.get("response", {}).get("deploymentId")
+                         if isinstance(body.get("response"), dict) else None)
+    if not deployment_id:
+        raise RuntimeError(f"deploy_template: no deploymentId in response ({body})")
+    return deployment_id
+
+
+def get_deployment_status(dnac, deployment_id: str) -> dict:
+    """Fetch per-device status for a deployment. Returns the raw response dict."""
+    from dev import DEV_MODE
+    if DEV_MODE:
+        return _mock_deployment_status(deployment_id)
+
+    resp = _tp_call(dnac, "GET",
+                    f"/dna/intent/api/v1/template-programmer/template/deploy/status/{deployment_id}")
+    return _dictify(getattr(resp, "response", resp))
+
+
+def delete_template(dnac, template_id: str) -> None:
+    """Delete a template (best-effort, swallows errors for cleanup paths)."""
+    from dev import DEV_MODE
+    if DEV_MODE:
+        return
+    try:
+        _tp_call(dnac, "DELETE",
+                 f"/dna/intent/api/v1/template-programmer/template/{template_id}")
+    except Exception as e:
+        logger.warning(f"Template delete failed for {template_id}: {e}")
+
+
+def list_adhoc_templates(dnac, project_id: str) -> list[dict]:
+    """Return all templates under the ad-hoc project (for retention cleanup)."""
+    from dev import DEV_MODE
+    if DEV_MODE:
+        return []
+    try:
+        resp = _tp_call(dnac, "GET", "/dna/intent/api/v1/template-programmer/template",
+                        params={"projectId": project_id})
+        items = getattr(resp, "response", None) or []
+        return [_dictify(t) for t in items]
+    except Exception as e:
+        logger.warning(f"List templates failed: {e}")
+        return []
+
+
+def _mock_deployment_status(deployment_id: str) -> dict:
+    """DEV_MODE: synthesize a deployment status response that looks like DNAC's.
+    Cycles through stages keyed off elapsed time since the deployment_id was minted."""
+    # The deployment_id we emit in DEV_MODE has a time-derived component; use the
+    # cache to remember when each id was first seen, then mark complete after ~2s.
+    from cache import cache
+    key = f"dev_deploy_started:{deployment_id}"
+    started = cache.get(key)
+    if not started:
+        started = time.time()
+        cache.set(key, started, ttl=600)
+    elapsed = time.time() - started
+
+    # Pull device list out of the cache (router stashes it under dev_deploy_devices:<id>)
+    devs = cache.get(f"dev_deploy_devices:{deployment_id}") or []
+    if elapsed < 1.5:
+        status = "IN_PROGRESS"
+        per_dev_status = "IN_PROGRESS"
+    else:
+        status = "SUCCESS"
+        per_dev_status = "SUCCESS"
+    return {
+        "deploymentId": deployment_id,
+        "status": status,
+        "devices": [
+            {"deviceId": d, "ipAddress": "", "status": per_dev_status,
+             "name": "", "startTime": "", "endTime": "",
+             "statusMessage": "DEV_MODE simulated success"}
+            for d in devs
+        ],
+    }
+
+
 def get_recent_issues(dnac) -> list:
     """Fetch and normalize recent global issues/alerts from DNAC."""
     from dev import DEV_MODE, MOCK_ISSUES

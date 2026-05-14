@@ -212,6 +212,7 @@ async def command_runner_page(request: Request, user: SessionEntry = Depends(get
     context = {
         "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
         "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
+        "config_changes_enabled": os.getenv("CONFIG_CHANGES_ENABLED", "false").lower() == "true",
         "active_page": "command-runner",
         "username": user.username,
     }

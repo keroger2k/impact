@@ -1,11 +1,27 @@
 <div class="row g-4 h-100">
-  <div class="col-md-3">
+  <div class="col-md-4">
     <div class="card shadow-sm border-0 animate-fade-in h-100">
       <div class="card-header bg-navy text-white d-flex align-items-center gap-2">
         <i class=" ph ph-terminal"></i>
         <span class="fw-bold">Command Runner</span>
       </div>
       <div class="card-body">
+        {% if config_changes_enabled %}
+        <!-- Mode toggle (only if Config mode is enabled in env) -->
+        <div class="btn-group w-100 mb-3" role="group" aria-label="Mode">
+          <input type="radio" class="btn-check" name="cmd-mode" id="mode-show" value="show" checked
+                 onchange="switchMode('show')">
+          <label class="btn btn-outline-primary" for="mode-show">
+            <i class="ph ph-eye me-1"></i> Show
+          </label>
+          <input type="radio" class="btn-check" name="cmd-mode" id="mode-config" value="config"
+                 onchange="switchMode('config')">
+          <label class="btn btn-outline-danger" for="mode-config">
+            <i class="ph ph-pencil-line me-1"></i> Config
+          </label>
+        </div>
+        {% endif %}
+
         <form id="cmd-form">
           <div class="mb-3">
             <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">DNAC Devices</label>
@@ -21,36 +37,112 @@
             <textarea id="manual-ips" class="form-control form-control-sm" rows="3" placeholder="Paste IP addresses here (one per line)..."></textarea>
           </div>
 
-          <div class="mb-3 border-top pt-3">
-            <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Diagnostic Template</label>
-            <select name="command_preset" class="form-select" onchange="document.getElementById('custom-cmd').value = this.value">
-              <option value="">-- Custom --</option>
-              <option value="show ip route">Show IP Route</option>
-              <option value="show ip bgp summary">Show BGP Summary</option>
-              <option value="show ip eigrp topology">Show EIGRP Topology</option>
-              <option value="show version">Show Version</option>
-              <option value="show inventory">Show Inventory</option>
-              <option value="show running-config">Show Config</option>
-            </select>
+          <!-- SHOW MODE INPUTS -->
+          <div id="show-inputs">
+            <div class="mb-3 border-top pt-3">
+              <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Diagnostic Template</label>
+              <select name="command_preset" class="form-select" onchange="document.getElementById('custom-cmd').value = this.value">
+                <option value="">-- Custom --</option>
+                <option value="show ip route">Show IP Route</option>
+                <option value="show ip bgp summary">Show BGP Summary</option>
+                <option value="show ip eigrp topology">Show EIGRP Topology</option>
+                <option value="show version">Show Version</option>
+                <option value="show inventory">Show Inventory</option>
+                <option value="show running-config">Show Config</option>
+              </select>
+            </div>
+            <div class="mb-4">
+              <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Command</label>
+              <textarea id="custom-cmd" name="command" class="form-control" rows="4" placeholder="Enter command to run..."></textarea>
+            </div>
+            <button type="button" onclick="executeCommands()" class="btn btn-primary w-100 py-2 fw-bold shadow-sm">
+              <i class=" ph ph-play me-1"></i> Run on Targets
+            </button>
           </div>
-          <div class="mb-4">
-            <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Command</label>
-            <textarea id="custom-cmd" name="command" class="form-control" rows="4" placeholder="Enter command to run..." required></textarea>
+
+          <!-- CONFIG MODE INPUTS -->
+          <div id="config-inputs" style="display:none">
+            <div class="alert alert-warning small mb-3 py-2">
+              <i class="ph ph-warning-circle me-1"></i>
+              Config mode pushes changes via DNAC. Deploys are audited and rollback is best-effort from DNAC's running-config archive.
+            </div>
+
+            <div class="mb-3 border-top pt-3">
+              <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Target Platform</label>
+              <select id="config-platform" class="form-select">
+                <option value="cisco_ios">IOS / IOS-XE (Catalyst)</option>
+                <option value="cisco_nxos">NX-OS (Nexus)</option>
+              </select>
+              <div class="form-text">Devices not matching this platform will be skipped.</div>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label text-navy fw-bold small uppercase letter-spacing-1">Config Script</label>
+              <textarea id="config-script" class="form-control" rows="8" style="font-family: 'SF Mono', monospace; font-size: 12px;"
+                placeholder="e.g.
+ip access-list extended ACL_MGMT
+  permit tcp any host 10.0.0.1 eq 22"></textarea>
+            </div>
+
+            <div class="form-check mb-2">
+              <input class="form-check-input" type="checkbox" id="config-canary" checked>
+              <label class="form-check-label small" for="config-canary">
+                Canary first (push to 3 devices, then continue)
+              </label>
+            </div>
+            <div class="form-check mb-3">
+              <input class="form-check-input" type="checkbox" id="config-approval">
+              <label class="form-check-label small" for="config-approval">
+                Require DNAC approval workflow (second admin must approve)
+              </label>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label text-navy fw-bold small">Type <code>DEPLOY</code> to enable</label>
+              <input type="text" id="config-confirm" class="form-control" oninput="updateDeployBtn()" placeholder="DEPLOY">
+            </div>
+
+            <button type="button" id="config-deploy-btn" onclick="executeConfigDeploy()" disabled
+                    class="btn btn-danger w-100 py-2 fw-bold shadow-sm">
+              <i class=" ph ph-upload-simple me-1"></i> Stage Deploy
+            </button>
           </div>
-          <button type="button" onclick="executeCommands()" class="btn btn-primary w-100 py-2 fw-bold shadow-sm">
-            <i class=" ph ph-play me-1"></i> Run on Targets
-          </button>
         </form>
       </div>
     </div>
   </div>
-  <div class="col-md-9 d-flex flex-column">
+
+  <div class="col-md-8 d-flex flex-column">
+    <!-- Config-mode summary panel (hidden in show mode) -->
+    <div id="config-summary" class="card shadow-sm border-0 mb-3" style="display:none">
+      <div class="card-body py-2 px-3">
+        <div class="d-flex align-items-center gap-3 flex-wrap">
+          <span class="fw-bold text-uppercase small text-navy">Deploy:</span>
+          <span class="badge bg-secondary" id="sum-total">0 total</span>
+          <span class="badge bg-success" id="sum-success">0 ok</span>
+          <span class="badge bg-danger" id="sum-failed">0 failed</span>
+          <span class="badge bg-info text-dark" id="sum-pending">0 pending</span>
+          <span class="badge bg-warning text-dark" id="sum-skipped">0 skipped</span>
+          <span class="ms-auto d-flex gap-2">
+            <button type="button" id="config-continue-btn" onclick="executeConfigContinue()"
+                    class="btn btn-sm btn-primary" style="display:none">
+              <i class="ph ph-arrow-right me-1"></i> Continue (fan out)
+            </button>
+            <button type="button" id="config-rollback-btn" onclick="executeConfigRollback()"
+                    class="btn btn-sm btn-outline-warning" style="display:none">
+              <i class="ph ph-arrow-u-up-left me-1"></i> Rollback
+            </button>
+          </span>
+        </div>
+      </div>
+    </div>
+
     <div class="card shadow-sm border-0 animate-fade-in flex-grow-1 overflow-hidden">
       <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
         <span class="fw-bold small text-uppercase letter-spacing-1">Live Console Output</span>
         <div class="d-flex gap-2">
            <div id="cmd-progress-label" class="text-info small me-3"></div>
-          <button class="btn btn-sm btn-outline-light px-2" onclick="document.getElementById('cmd-output').innerHTML = ''">
+          <button class="btn btn-sm btn-outline-light px-2" onclick="clearOutput()">
             <i class=" ph ph-trash"></i>
           </button>
         </div>
@@ -63,18 +155,26 @@
 </div>
 
 <script>
-  function executeCommands() {
-    const form = document.getElementById('cmd-form');
-    const command = form.command.value;
-    const output = document.getElementById('cmd-output');
-    const progress = document.getElementById('cmd-progress-label');
+  // ── Mode switching ────────────────────────────────────────────────────────
+  function switchMode(mode) {
+    document.getElementById('show-inputs').style.display   = mode === 'show' ? '' : 'none';
+    document.getElementById('config-inputs').style.display = mode === 'config' ? '' : 'none';
+    document.getElementById('config-summary').style.display = 'none';
+    clearOutput();
+  }
 
-    if (!command) {
-        alert("Please enter a command.");
-        return;
-    }
+  function clearOutput() {
+    document.getElementById('cmd-output').innerHTML = '';
+    document.getElementById('cmd-progress-label').textContent = '';
+  }
 
-    // 1. Gather devices from dropdown
+  function updateDeployBtn() {
+    const ok = document.getElementById('config-confirm').value === 'DEPLOY';
+    document.getElementById('config-deploy-btn').disabled = !ok;
+  }
+
+  // ── Shared helpers ────────────────────────────────────────────────────────
+  function gatherDevices() {
     let devices = [];
     const select = document.getElementById('device-multi-select');
     if (select) {
@@ -83,116 +183,204 @@
            devices.push({ ip: data.ip, hostname: data.hostname, platform: data.platform });
         });
     }
-
-    // 2. Gather devices from textarea
     const manualIps = document.getElementById('manual-ips').value;
     if (manualIps) {
         manualIps.split('\n').map(ip => ip.trim()).filter(ip => ip.length > 0).forEach(ip => {
-            // Avoid duplicates
             if (!devices.some(d => d.ip === ip)) {
                 devices.push({ ip: ip, hostname: ip, platform: 'unknown' });
             }
         });
     }
+    return devices;
+  }
 
-    if (devices.length === 0) {
-      alert("Please select a device or enter an IP address.");
+  function csrfHeader() {
+    const csrfToken = document.cookie.split('; ').find(row => row.startsWith('csrf_token='));
+    return csrfToken ? csrfToken.split('=')[1] : '';
+  }
+
+  function appendLine(html, cls) {
+    const output = document.getElementById('cmd-output');
+    const div = document.createElement('div');
+    if (cls) div.className = cls;
+    div.innerHTML = html;
+    output.appendChild(div);
+    output.scrollTop = output.scrollHeight;
+  }
+
+  async function streamSSE(url, body, onEvent) {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfHeader()},
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      let detail = resp.statusText;
+      try { detail = (await resp.json()).detail || detail; } catch(_) {}
+      appendLine(`>> Request failed (${resp.status}): ${escapeHtml(detail)}`, 'text-danger fw-bold');
       return;
     }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) {
+        if (buf.startsWith('data: ')) {
+          try { onEvent(JSON.parse(buf.substring(6))); } catch(_) {}
+        }
+        break;
+      }
+      buf += decoder.decode(value, {stream: true});
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try { onEvent(JSON.parse(line.substring(6))); } catch(_) {}
+        }
+      }
+    }
+  }
 
-    output.innerHTML = '<div class="text-info">>> Initializing session for ' + devices.length + ' targets...</div>';
+  function escapeHtml(s) {
+    return String(s || '').replace(/[&<>"']/g, c =>
+      ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  // ── Show mode (existing behaviour) ────────────────────────────────────────
+  function executeCommands() {
+    const command = document.getElementById('custom-cmd').value;
+    if (!command) { alert("Please enter a command."); return; }
+
+    const devices = gatherDevices();
+    if (devices.length === 0) {
+      alert("Please select a device or enter an IP address."); return;
+    }
+
+    clearOutput();
+    appendLine(`>> Initializing session for ${devices.length} targets...`, 'text-info');
+
+    const payload = {devices, command, timeout: 60};
+    streamSSE('/api/commands/run', payload, (data) => {
+      if (data.type === 'progress') {
+        document.getElementById('cmd-progress-label').textContent = `Progress: ${data.done} / ${data.total}`;
+        const container = document.createElement('div');
+        container.className = 'mt-3 border-top border-secondary pt-2';
+        container.innerHTML = `<span class="fw-bold text-info">[${escapeHtml(data.hostname)} (${escapeHtml(data.ip)})]</span><br>`;
+        if (data.status === 'success') {
+          const pre = document.createElement('pre');
+          pre.className = 'text-success';
+          pre.textContent = data.output;
+          container.appendChild(pre);
+        } else {
+          const span = document.createElement('span');
+          span.className = 'text-danger';
+          span.textContent = data.error;
+          container.appendChild(span);
+        }
+        document.getElementById('cmd-output').appendChild(container);
+        document.getElementById('cmd-output').scrollTop = document.getElementById('cmd-output').scrollHeight;
+      } else if (data.type === 'complete') {
+        appendLine(`>> Command execution complete. Succeeded: ${data.succeeded}, Failed: ${data.failed}`, 'mt-4 text-info fw-bold');
+      }
+    });
+  }
+
+  // ── Config mode ───────────────────────────────────────────────────────────
+  let currentStage = null;  // { stage_id, total, pending_ids, results, failed_ids }
+
+  function resetStageSummary(total) {
+    currentStage = {stage_id: null, total, pending_ids: new Set(), results: {}, failed_ids: new Set(), all_devices: []};
+    document.getElementById('sum-total').textContent = `${total} total`;
+    document.getElementById('sum-success').textContent = `0 ok`;
+    document.getElementById('sum-failed').textContent = `0 failed`;
+    document.getElementById('sum-pending').textContent = `${total} pending`;
+    document.getElementById('sum-skipped').textContent = `0 skipped`;
+    document.getElementById('config-continue-btn').style.display = 'none';
+    document.getElementById('config-rollback-btn').style.display = 'none';
+    document.getElementById('config-summary').style.display = '';
+  }
+
+  function updateSummary() {
+    if (!currentStage) return;
+    const ok = Object.values(currentStage.results).filter(r => r.status === 'success').length;
+    const fail = currentStage.failed_ids.size;
+    const pend = currentStage.total - ok - fail;
+    document.getElementById('sum-success').textContent = `${ok} ok`;
+    document.getElementById('sum-failed').textContent = `${fail} failed`;
+    document.getElementById('sum-pending').textContent = `${Math.max(0, pend)} pending`;
+  }
+
+  function executeConfigDeploy() {
+    const ips = gatherDevices().map(d => d.ip);
+    const script = document.getElementById('config-script').value;
+    if (!ips.length) { alert("Add at least one device IP."); return; }
+    if (!script.trim()) { alert("Config script is empty."); return; }
 
     const payload = {
-      devices: devices,
-      command: command,
-      timeout: 60
+      ips,
+      platform: document.getElementById('config-platform').value,
+      script,
+      confirm: document.getElementById('config-confirm').value,
+      canary: document.getElementById('config-canary').checked,
+      approval: document.getElementById('config-approval').checked,
     };
 
-    const csrfToken = document.cookie.split('; ').find(row => row.startsWith('csrf_token='));
-    const csrfHeader = csrfToken ? csrfToken.split('=')[1] : '';
+    clearOutput();
+    resetStageSummary(ips.length);
+    appendLine(`>> Staging deploy to ${ips.length} target(s)...`, 'text-info');
 
-    fetch('/api/commands/run', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-CSRF-Token': csrfHeader
-        },
-      body: JSON.stringify(payload)
-    }).then(async response => {
-       if (!response.ok) {
-         let detail = response.statusText;
-         try {
-           const body = await response.json();
-           detail = body.detail || detail;
-         } catch (_) {}
-         const err = document.createElement('div');
-         err.className = 'text-danger fw-bold';
-         err.textContent = `>> Request failed (${response.status}): ${detail}`;
-         output.appendChild(err);
-         return;
-       }
-       const reader = response.body.getReader();
-       const decoder = new TextDecoder();
-       let buf = '';
+    streamSSE('/api/commands/config-deploy', payload, handleConfigEvent);
+  }
 
-       function process({ done, value }) {
-         if (done) {
-           if (buf.startsWith('data: ')) {
-             try { handleEvent(JSON.parse(buf.substring(6))); } catch (e) {}
-           }
-           return;
-         }
-         buf += decoder.decode(value, { stream: true });
-         const lines = buf.split('\n');
-         buf = lines.pop();
+  function executeConfigContinue() {
+    if (!currentStage || !currentStage.stage_id) return;
+    document.getElementById('config-continue-btn').style.display = 'none';
+    appendLine('>> Continuing — fanning out to remaining devices...', 'text-info');
+    streamSSE('/api/commands/config-continue', {deploy_id: currentStage.stage_id}, handleConfigEvent);
+  }
 
-         lines.forEach(line => {
-           if (line.startsWith('data: ')) {
-             try {
-               const data = JSON.parse(line.substring(6));
-               handleEvent(data);
-             } catch (e) {}
-           }
-         });
+  function executeConfigRollback() {
+    if (!currentStage || !currentStage.stage_id) return;
+    if (!confirm('Roll back this deploy on all affected devices? Pre-deploy configs from DNAC archive will be pushed back.')) return;
+    appendLine('>> Rollback requested...', 'text-warning');
+    // Default: roll back everyone (failed + succeeded)
+    streamSSE('/api/commands/config-rollback', {deploy_id: currentStage.stage_id}, handleConfigEvent);
+  }
 
-         return reader.read().then(process);
-       }
-
-       function handleEvent(data) {
-               if (data.type === 'progress') {
-                 progress.textContent = `Progress: ${data.done} / ${data.total}`;
-
-                 const container = document.createElement('div');
-                 container.className = 'mt-3 border-top border-secondary pt-2';
-
-                 const header = document.createElement('span');
-                 header.className = 'fw-bold text-info';
-                 header.textContent = `[${data.hostname} (${data.ip})]`;
-                 container.appendChild(header);
-                 container.appendChild(document.createElement('br'));
-
-                 if (data.status === 'success') {
-                   const pre = document.createElement('pre');
-                   pre.className = 'text-success';
-                   pre.textContent = data.output;
-                   container.appendChild(pre);
-                 } else {
-                   const span = document.createElement('span');
-                   span.className = 'text-danger';
-                   span.textContent = data.error;
-                   container.appendChild(span);
-                 }
-
-                 output.appendChild(container);
-                 output.scrollTop = output.scrollHeight;
-               } else if (data.type === 'complete') {
-                  const completeDiv = document.createElement('div');
-                  completeDiv.className = 'mt-4 text-info fw-bold';
-                  completeDiv.textContent = `>> Command execution complete. Succeeded: ${data.succeeded}, Failed: ${data.failed}`;
-                  output.appendChild(completeDiv);
-               }
-       }
-       return reader.read().then(process);
-    });
+  function handleConfigEvent(d) {
+    if (d.type === 'log') {
+      appendLine('>> ' + escapeHtml(d.message), 'text-info');
+    } else if (d.type === 'skipped') {
+      const n = (d.items || []).length;
+      document.getElementById('sum-skipped').textContent = `${n} skipped`;
+      appendLine(`>> Skipped ${n} device(s): not in DNAC inventory or wrong platform.`, 'text-warning');
+      (d.items || []).forEach(it => {
+        appendLine(`  • ${escapeHtml(it.ip)} — ${escapeHtml(it.reason)}${it.detected ? ' (detected '+escapeHtml(it.detected)+')' : ''}`, 'text-warning small');
+      });
+    } else if (d.type === 'deploy_started') {
+      if (!currentStage.stage_id) currentStage.stage_id = d.stage_id;
+      appendLine(`>> ${d.phase === 'canary' ? 'Canary' : d.phase === 'fanout' ? 'Fan-out' : 'Deploy'} started (${d.in_flight} device(s) in flight, deployment ${escapeHtml(d.deployment_id)})`, 'text-info');
+    } else if (d.type === 'device_result') {
+      const cls = d.status === 'success' ? 'text-success' : 'text-danger';
+      const icon = d.status === 'success' ? '✓' : '✗';
+      appendLine(`<span class="${cls}">${icon} ${escapeHtml(d.hostname || d.ip)} (${escapeHtml(d.ip)})</span> — ${escapeHtml(d.message || d.status)}`);
+      currentStage.results[d.device_id] = d;
+      if (d.status !== 'success') currentStage.failed_ids.add(d.device_id);
+      updateSummary();
+    } else if (d.type === 'phase_complete') {
+      if (d.phase === 'canary' && d.remainder > 0) {
+        appendLine(`>> Canary done. ${d.remainder} device(s) remaining — review above, then click Continue.`, 'text-info fw-bold');
+        document.getElementById('config-continue-btn').style.display = '';
+        document.getElementById('config-rollback-btn').style.display = '';
+      } else if (d.phase === 'fanout' || d.phase === 'full') {
+        appendLine('>> Deploy complete.', 'text-info fw-bold');
+        document.getElementById('config-rollback-btn').style.display = '';
+      } else if (d.phase === 'rollback') {
+        appendLine('>> Rollback complete.', 'text-warning fw-bold');
+      }
+    } else if (d.type === 'error') {
+      appendLine('>> ERROR: ' + escapeHtml(d.message), 'text-danger fw-bold');
+    }
   }
 </script>
