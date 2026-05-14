@@ -667,7 +667,9 @@ def _wait_for_deployment_id(dnac, task_id: str, timeout: int = 120) -> str:
     import json as _json
     import re
 
-    label_re = re.compile(r'[Dd]eployment\s*[Ii]d\s*[:=]\s*([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})', re.I)
+    # `[Dd]eplo\w*` tolerates Cisco's typo in the progress string ("Deployemnt Id: <uuid>"),
+    # as well as variants like "Deployment Id" / "Deploy Id".
+    label_re = re.compile(r'[Dd]eplo\w*\s*[Ii]d\s*[:=]\s*([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})', re.I)
     # The status URL has the deployment uuid as its last path segment.
     url_re = re.compile(r'/template/deploy/status/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})', re.I)
 
