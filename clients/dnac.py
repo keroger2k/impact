@@ -572,14 +572,79 @@ def deploy_template(dnac, template_id: str, device_uuids: list[str]) -> str:
     resp = _tp_call(dnac, "POST", "/dna/intent/api/v2/template-programmer/template/deploy",
                     json=payload)
     body = _dictify(getattr(resp, "response", resp))
-    deployment_id = body.get("deploymentId")
-    if not deployment_id:
-        # v2 deploy returns deploymentId in different shapes across versions
-        deployment_id = (body.get("response", {}).get("deploymentId")
-                         if isinstance(body.get("response"), dict) else None)
-    if not deployment_id:
-        raise RuntimeError(f"deploy_template: no deploymentId in response ({body})")
-    return deployment_id
+
+    # Sync shape (older versions): deploymentId is in the body directly.
+    deployment_id = body.get("deploymentId") or (
+        body.get("response", {}).get("deploymentId")
+        if isinstance(body.get("response"), dict) else None)
+    if deployment_id:
+        return deployment_id
+
+    # Async shape (DNAC 2.3.x+): response is {"taskId": "...", "url": "..."}.
+    # Poll the task; deploymentId is embedded in task.progress (often as a JSON
+    # string, sometimes as plain text like "Template Deployment Id : <uuid>").
+    task_id = body.get("taskId") or (
+        body.get("response", {}).get("taskId")
+        if isinstance(body.get("response"), dict) else None)
+    if task_id:
+        return _wait_for_deployment_id(dnac, task_id)
+
+    raise RuntimeError(f"deploy_template: no deploymentId or taskId in response ({body})")
+
+
+_UUID_RE = None  # lazy-compiled below
+
+def _wait_for_deployment_id(dnac, task_id: str, timeout: int = 120) -> str:
+    """Poll a deploy task to completion and extract the deploymentId from its
+    progress / data fields. DNAC encodes it differently per version."""
+    import json as _json
+    import re
+    global _UUID_RE
+    if _UUID_RE is None:
+        _UUID_RE = re.compile(r'[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}', re.I)
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            resp = _tp_call(dnac, "GET", f"/dna/intent/api/v1/task/{task_id}")
+            t = _dictify(getattr(resp, "response", resp))
+            if not t.get("endTime"):
+                time.sleep(1.0)
+                continue
+
+            if t.get("isError"):
+                raise RuntimeError(
+                    f"Deploy task failed: {t.get('failureReason') or t.get('progress')}")
+
+            progress = t.get("progress") or ""
+            data     = t.get("data") or ""
+
+            # 1) progress as JSON: {"deploymentId":"<uuid>", ...}
+            for blob in (progress, data):
+                if isinstance(blob, str) and blob.strip().startswith("{"):
+                    try:
+                        parsed = _json.loads(blob)
+                        if isinstance(parsed, dict) and parsed.get("deploymentId"):
+                            return parsed["deploymentId"]
+                    except (ValueError, TypeError):
+                        pass
+
+            # 2) plain "Deployment Id : <uuid>" or "Template Deployment Id : <uuid>"
+            for blob in (progress, data):
+                if isinstance(blob, str):
+                    m = _UUID_RE.search(blob)
+                    if m:
+                        return m.group(0)
+
+            raise RuntimeError(
+                f"Deploy task completed but no deploymentId found "
+                f"(progress={str(progress)[:200]!r}, data={str(data)[:200]!r})")
+        except RuntimeError:
+            raise
+        except Exception as e:
+            logger.debug(f"Deploy task poll error for {task_id}: {e}")
+            time.sleep(1.0)
+    raise TimeoutError(f"Deploy task {task_id} did not complete within {timeout}s")
 
 
 def get_deployment_status(dnac, deployment_id: str) -> dict:
