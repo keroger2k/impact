@@ -18,6 +18,7 @@ from templates_module import templates
 from utils.csrf import CSRFMiddleware
 import auth as auth_module
 from auth import require_auth, SessionEntry
+from clients import verify_ssl
 from routers import dnac, ise, firewall, aci, commands, import_, auth as auth_router, pages, routing, nexus, cache_mgmt, ipam
 from logger_config import setup_logging, set_correlation_id, run_with_context
 
@@ -32,7 +33,7 @@ async def lifespan(app: FastAPI):
     from dev import DEV_MODE, seed_cache, create_dev_session
     from cache import cache
     set_correlation_id(f"startup-{uuid.uuid4().hex[:8]}")
-    if os.getenv("IMPACT_VERIFY_SSL", "false").lower() != "true":
+    if not verify_ssl():
         logger.warning("SSL verification is globally disabled")
 
     # Purge legacy ACI cache keys

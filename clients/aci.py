@@ -11,6 +11,8 @@ from urllib.parse import unquote
 import requests
 from dotenv import load_dotenv
 
+from clients import verify_ssl
+
 load_dotenv()
 logger = logging.getLogger(__name__)
 
@@ -65,7 +67,7 @@ class ACIClient:
 
         start_time = time.time()
         try:
-            response = self.session.post(login_url, json=payload, verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true", timeout=10)
+            response = self.session.post(login_url, json=payload, verify=verify_ssl(), timeout=10)
             duration = int((time.time() - start_time) * 1000)
             logger.info(f"ACI Login: {formatted_user}", extra={
                 "target": "ACI",
@@ -81,7 +83,7 @@ class ACIClient:
 
             # Deliverable 3d — Record session domains
             try:
-                domains_resp = self.session.get(f"{self.url}/api/aaaListDomains.json", verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true", timeout=5)
+                domains_resp = self.session.get(f"{self.url}/api/aaaListDomains.json", verify=verify_ssl(), timeout=5)
                 if domains_resp.ok:
                     d_data = domains_resp.json()
                     self.domains = [d.get("aaaDomain", {}).get("attributes", {}).get("name") for d in d_data.get("imdata", [])]
@@ -254,7 +256,7 @@ class ACIClient:
         def _do_get():
             start_time = time.time()
             try:
-                response = self.session.get(url, verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true", timeout=15)
+                response = self.session.get(url, verify=verify_ssl(), timeout=15)
                 duration = int((time.time() - start_time) * 1000)
                 logger.info(f"ACI GET {path}", extra={
                     "target": "ACI",
@@ -309,7 +311,7 @@ class ACIClient:
 
         def _do():
             try:
-                response = self.session.get(url, verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true", timeout=15)
+                response = self.session.get(url, verify=verify_ssl(), timeout=15)
                 if response.status_code in (401, 403):
                     return response, None, f"status_{response.status_code}"
                 response.raise_for_status()

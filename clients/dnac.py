@@ -7,6 +7,8 @@ from dnacentersdk import api
 from dotenv import load_dotenv
 from requests.adapters import HTTPAdapter
 
+from clients import verify_ssl
+
 load_dotenv()
 logger = logging.getLogger(__name__)
 
@@ -23,7 +25,7 @@ def _make_client(username: str, password: str) -> api.DNACenterAPI:
         username=username,
         password=password,
         version=os.getenv("DNA_CENTER_VERSION", "2.3.7.6"),
-        verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
+        verify=verify_ssl(),
     )
     adapter = HTTPAdapter(pool_connections=_POOL_SIZE, pool_maxsize=_POOL_SIZE)
     session = client.custom_caller._session._req_session
