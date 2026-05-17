@@ -16,6 +16,8 @@ import requests
 from dotenv import load_dotenv
 from panos.panorama import DeviceGroup, Panorama
 
+from clients import verify_ssl
+
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -49,16 +51,14 @@ def _pan(api_key: str) -> Panorama:
 # CONNECTION & RAW CALLS
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _keygen(host: str, user: str, pwd: str) -> str:
+def _keygen(user: str, pwd: str) -> str:
     """Exchange credentials for a Panorama API key."""
-    if not host: raise PanoramaAPIError("Host not provided")
     start_time = time.time()
     try:
-        host_clean = host.strip().split('/')[0]
         resp = requests.post(
-            f"https://{host_clean}/api/",
+            f"https://{_host()}/api/",
             data={"type": "keygen", "user": user, "password": pwd},
-            verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
+            verify=verify_ssl(),
             timeout=15,
         )
         duration = int((time.time() - start_time) * 1000)
@@ -94,7 +94,7 @@ def get_api_key() -> str:
         if now < exp:
             return key
 
-    key = _keygen(host, user, pwd)
+    key = _keygen(user, pwd)
     if key:
         _key_cache[cache_key] = (key, now + KEY_TTL)
     return key
@@ -113,7 +113,7 @@ def get_user_api_key(username: str, password: str) -> str:
         if now < exp:
             return key
 
-    key = _keygen(host, username, password)
+    key = _keygen(username, password)
     if key:
         _key_cache[cache_key] = (key, now + KEY_TTL)
     return key
@@ -121,20 +121,17 @@ def get_user_api_key(username: str, password: str) -> str:
 
 def _config_get(xpath: str, api_key: str) -> ET.Element:
     """Panorama config GET — returns the <result> element or raises PanoramaAPIError."""
-    host = os.getenv("PANORAMA_HOST")
-    if not host: raise PanoramaAPIError("PANORAMA_HOST not set")
     start_time = time.time()
     try:
-        host_clean = host.strip().split('/')[0]
         resp = requests.get(
-            f"https://{host_clean}/api/",
+            f"https://{_host()}/api/",
             params={
                 "type":   "config",
                 "action": "get",
                 "xpath":  xpath,
                 "key":    api_key,
             },
-            verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
+            verify=verify_ssl(),
             timeout=30,
         )
         duration = int((time.time() - start_time) * 1000)
@@ -158,15 +155,12 @@ def _config_get(xpath: str, api_key: str) -> ET.Element:
 
 def _op(cmd: str, api_key: str) -> ET.Element:
     """Panorama op command — returns the <result> element or raises PanoramaAPIError."""
-    host = os.getenv("PANORAMA_HOST")
-    if not host: raise PanoramaAPIError("PANORAMA_HOST not set")
     start_time = time.time()
     try:
-        host_clean = host.strip().split('/')[0]
         resp = requests.get(
-            f"https://{host_clean}/api/",
+            f"https://{_host()}/api/",
             params={"type": "op", "cmd": cmd, "key": api_key},
-            verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
+            verify=verify_ssl(),
             timeout=30,
         )
         duration = int((time.time() - start_time) * 1000)
@@ -189,14 +183,15 @@ def _op(cmd: str, api_key: str) -> ET.Element:
 
 def _op_targeted(cmd: str, api_key: str, target: str) -> ET.Element | None:
     """Like _op but targets a specific managed firewall by serial number."""
-    host = os.getenv("PANORAMA_HOST")
-    if not host: return None
     try:
-        host_clean = host.strip().split('/')[0]
+        host_clean = _host()
+    except PanoramaAPIError:
+        return None
+    try:
         resp = requests.get(
             f"https://{host_clean}/api/",
             params={"type": "op", "cmd": cmd, "key": api_key, "target": target},
-            verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
+            verify=verify_ssl(),
             timeout=20,
         )
         if not resp.text or not resp.text.strip():
@@ -949,14 +944,14 @@ def find_matching_rules(
 
 def run_diagnostics(api_key: str) -> dict[str, str]:
     """Probe Panorama API with various XPaths."""
-    host, results = os.getenv("PANORAMA_HOST"), {}
+    host, results = _host(), {}
 
     def raw_get(xpath: str) -> str:
         try:
             resp = requests.get(
                 f"https://{host}/api/",
                 params={"type": "config", "action": "get", "xpath": xpath, "key": api_key},
-                verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true", timeout=20,
+                verify=verify_ssl(), timeout=20,
             )
             return resp.text[:3000]
         except Exception as e:
@@ -967,7 +962,7 @@ def run_diagnostics(api_key: str) -> dict[str, str]:
             resp = requests.get(
                 f"https://{host}/api/",
                 params={"type": "op", "cmd": cmd, "key": api_key},
-                verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true", timeout=20,
+                verify=verify_ssl(), timeout=20,
             )
             return resp.text[:3000]
         except Exception as e:

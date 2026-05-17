@@ -2,15 +2,13 @@ import sys
 import os
 import xml.etree.ElementTree as ET
 import requests
-import urllib3
 from pathlib import Path
 
 # Add project root to sys.path
 sys.path.append(str(Path(__file__).parent.parent))
 
 import clients.panorama as pc
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+from clients import verify_ssl
 
 def main():
     if len(sys.argv) < 2:
@@ -36,7 +34,7 @@ def main():
         resp = requests.get(
             f"https://{host_clean}/api/",
             params={"type": "op", "cmd": cmd, "key": key, "target": serial},
-            verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
+            verify=verify_ssl(),
             timeout=20,
         )
 

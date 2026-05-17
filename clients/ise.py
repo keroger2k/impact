@@ -20,6 +20,8 @@ import requests as _requests
 from ciscoisesdk import IdentityServicesEngineAPI
 from dotenv import load_dotenv
 
+from clients import verify_ssl
+
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -45,7 +47,7 @@ def create_client() -> IdentityServicesEngineAPI:
         uses_api_gateway = True,
         base_url         = f"https://{host}",
         version          = ISE_SDK_VERSION,
-        verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
+        verify=verify_ssl(),
         debug            = False,
         uses_csrf_token  = False,
     )
@@ -69,7 +71,7 @@ def _mnt_service_get(path: str) -> dict | list:
         resp = _requests.get(
             url,
             auth    = (username, password),
-            verify  = os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
+            verify  = verify_ssl(),
             headers = {"Accept": "application/xml"},
             timeout = 20,
         )
@@ -168,7 +170,7 @@ def get_active_sessions(username: str = None, password: str = None) -> list:
         resp = _requests.get(
             url,
             auth    = (username, password),
-            verify  = os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
+            verify  = verify_ssl(),
             headers = {"Accept": "application/xml"},
             timeout = 25,
         )
@@ -224,7 +226,7 @@ def get_session_by_mac(mac: str, username: str = None, password: str = None) -> 
         resp = _requests.get(
             url,
             auth    = (username, password),
-            verify  = os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
+            verify  = verify_ssl(),
             headers = {"Accept": "application/xml"},
             timeout = 20,
         )
@@ -267,7 +269,7 @@ def get_auth_history_by_mac(mac: str, seconds: int = 86400, records: int = 50, u
         resp = _requests.get(
             url,
             auth    = (username, password),
-            verify  = os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
+            verify  = verify_ssl(),
             headers = {"Accept": "application/xml"},
             timeout = 20,
         )
@@ -309,7 +311,7 @@ def get_session_history_by_mac(mac: str, duration: int = 86400, username: str = 
         resp = _requests.get(
             url,
             auth    = (username, password),
-            verify  = os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
+            verify  = verify_ssl(),
             headers = {"Accept": "application/xml"},
             timeout = 20,
         )
@@ -348,7 +350,7 @@ def get_tacacs_auth_status(mac_or_user: str, by: str = "mac") -> list:
         resp = _requests.get(
             url,
             auth    = (username_env, password_env),
-            verify  = os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
+            verify  = verify_ssl(),
             headers = {"Accept": "application/xml"},
             timeout = 20,
         )
@@ -823,7 +825,7 @@ def _mnt_get(path: str, session=None) -> dict:
         resp = _requests.get(
             url,
             auth    = (username, password),
-            verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
+            verify=verify_ssl(),
             headers = {"Accept": "application/xml"},
             timeout = 15,
         )
@@ -895,7 +897,7 @@ def create_user_client(username: str, password: str) -> IdentityServicesEngineAP
         uses_api_gateway = True,
         base_url         = f"https://{host}",
         version          = ISE_SDK_VERSION,
-        verify=os.getenv("IMPACT_VERIFY_SSL", "false").lower() == "true",
+        verify=verify_ssl(),
         debug            = False,
         uses_csrf_token  = False,
     )
