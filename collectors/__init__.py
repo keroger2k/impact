@@ -19,19 +19,9 @@ import importlib
 _REGISTRY: dict[str, tuple[str, str]] = {
     # Palo Alto
     "paloalto":       ("collectors.paloalto",        "PaloAltoCollector"),
-#    "panorama":       ("collectors.paloalto",        "PaloAltoCollector"),  # M-600
 
     # Cisco NX-OS (SSH)
     "nxos":           ("collectors.nxos",            "NXOSCollector"),
-
-    # Cisco IOS / IOS-XE via Catalyst Center REST API
- #   "catalystcenter": ("collectors.cisco_catalyst",  "CatalystCenterCollector"),
-  #  "dnac":           ("collectors.cisco_catalyst",  "CatalystCenterCollector"),  # alias
-
-    # Future
-    # "ios":          ("collectors.ios",             "IOSCollector"),       # direct SSH
-    # "f5":           ("collectors.f5",              "F5Collector"),
-    # "juniper":      ("collectors.juniper",         "JuniperCollector"),
 }
 
 

@@ -3,13 +3,11 @@
 import logging
 import os
 import time
-import urllib3
 from dnacentersdk import api
 from dotenv import load_dotenv
 from requests.adapters import HTTPAdapter
 
 load_dotenv()
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logger = logging.getLogger(__name__)
 
 _client = None
