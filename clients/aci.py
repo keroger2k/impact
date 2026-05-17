@@ -9,11 +9,9 @@ import time
 import urllib.parse
 from urllib.parse import unquote
 import requests
-import urllib3
 from dotenv import load_dotenv
 
 load_dotenv()
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logger = logging.getLogger(__name__)
 
 def _quote_dn(dn: str) -> str:

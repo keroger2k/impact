@@ -17,12 +17,10 @@ from urllib.parse import urlencode
 import xml.etree.ElementTree as _ET
 
 import requests as _requests
-import urllib3
 from ciscoisesdk import IdentityServicesEngineAPI
 from dotenv import load_dotenv
 
 load_dotenv()
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger(__name__)
 ISE_SDK_VERSION = "3.3_patch_1"

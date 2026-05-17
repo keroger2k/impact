@@ -13,12 +13,10 @@ import time
 import xml.etree.ElementTree as ET
 
 import requests
-import urllib3
 from dotenv import load_dotenv
 from panos.panorama import DeviceGroup, Panorama
 
 load_dotenv()
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger(__name__)
 
