@@ -1,5 +1,9 @@
 """
 panorama_client.py — Cisco Panorama API client for security policy lookup.
+
+Backed by pan-os-python (panos package) for object/policy operations; falls back
+to raw XML for managed-device op commands and diagnostics where the SDK doesn't
+add value.
 """
 
 import ipaddress
@@ -11,6 +15,7 @@ import xml.etree.ElementTree as ET
 import requests
 import urllib3
 from dotenv import load_dotenv
+from panos.panorama import DeviceGroup, Panorama
 
 load_dotenv()
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -26,6 +31,20 @@ _key_cache: dict[str, tuple[str, float]] = {}  # (key, expires_at)
 KEY_TTL = 23 * 3600
 
 BASE_XPATH = "/config/devices/entry[@name='localhost.localdomain']"
+
+
+def _host() -> str:
+    host = os.getenv("PANORAMA_HOST")
+    if not host:
+        raise PanoramaAPIError("PANORAMA_HOST not set")
+    return host.strip().split('/')[0]
+
+
+def _pan(api_key: str) -> Panorama:
+    """Build a Panorama SDK client from an already-issued API key."""
+    if not api_key:
+        raise PanoramaAPIError("API key not provided")
+    return Panorama(hostname=_host(), api_key=api_key)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -391,12 +410,20 @@ def connectivity_check_with_key(key: str) -> tuple[bool, str]:
 
 def get_device_groups(api_key: str) -> list[str]:
     """Return a list of all device group names from Panorama."""
-    result = _config_get(f"{BASE_XPATH}/device-group", api_key)
-    # Response shape: <result><device-group><entry name="...">
-    entries = result.findall("device-group/entry")
-    if not entries:
-        entries = result.findall("entry")
-    return sorted(e.get("name", "") for e in entries if e.get("name"))
+    start_time = time.time()
+    try:
+        pan = _pan(api_key)
+        dgs = DeviceGroup.refreshall(pan, add=False)
+        names = sorted(dg.name for dg in dgs if dg.name)
+        logger.info("Panorama DeviceGroup.refreshall", extra={
+            "target": "Panorama",
+            "action": "DEVICE_GROUPS",
+            "status": 200,
+            "duration_ms": int((time.time() - start_time) * 1000),
+        })
+        return names
+    except Exception as e:
+        raise PanoramaAPIError(f"get_device_groups error: {e}")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
