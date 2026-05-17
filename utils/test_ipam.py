@@ -37,6 +37,16 @@ class TestIPAMEngine(unittest.TestCase):
     def setUp(self):
         self.engine = IPAMEngine()
 
+    def _v4_roots(self):
+        # build_tree() synthesizes an RFC1918 supernet (10/8, 172.16/12, 192.168/16)
+        # whenever any descendant exists. These tests pre-date that feature and
+        # assert against the *logical* tree root — descend through the synthetic
+        # wrapper so each test can still target the subnet it created.
+        v4 = self.engine.tree["ipv4"]
+        if len(v4) == 1 and v4[0].get("source") == "Aggregate" and v4[0].get("role") == "supernet":
+            return v4[0]["children"]
+        return v4
+
     def test_classify_interface(self):
         # Tunnel
         self.assertEqual(classify_interface("Tunnel100", netaddr.IPNetwork("10.1.1.1/24"))[0], "tunnel")
@@ -82,7 +92,7 @@ class TestIPAMEngine(unittest.TestCase):
         self.engine.subnets = [n1, n2]
         self.engine.build_tree()
 
-        v4_tree = self.engine.tree["ipv4"]
+        v4_tree = self._v4_roots()
         self.assertEqual(len(v4_tree), 1)
         group = v4_tree[0]
         self.assertEqual(group["role"], "tunnel_group")
@@ -101,13 +111,16 @@ class TestIPAMEngine(unittest.TestCase):
         self.engine.subnets = [n1, n2]
         self.engine.build_tree()
 
-        v4_tree = self.engine.tree["ipv4"]
+        v4_tree = self._v4_roots()
         self.assertEqual(len(v4_tree), 1)
         node = v4_tree[0]
         self.assertTrue(any("Site Conflict" in c for c in node["conflicts"]))
 
     def test_loopback_host_route(self):
-        n = IPAMNode("10.99.0.1/32", source="Nexus")
+        # Use a non-RFC1918 /32 so the RFC1918 supernet synthesis doesn't claim
+        # it as a child — we want a true top-level orphan to exercise the
+        # "Host Routes" pseudo-group, which is only created at the top level.
+        n = IPAMNode("100.64.0.1/32", source="Nexus")
         n.interface_name = "Loopback0"
         n.interface_type, _ = classify_interface(n.interface_name, n.network)
         n.role = "host_route"
@@ -155,7 +168,7 @@ class TestIPAMEngine(unittest.TestCase):
         self.engine.subnets = [mgmt, tun]
         self.engine.build_tree()
 
-        v4 = self.engine.tree["ipv4"]
+        v4 = self._v4_roots()
         self.assertEqual(len(v4), 1)
         self.assertEqual(v4[0]["interface_type"], "management")
         # The tunnel must still be reachable, as a child endpoint
@@ -186,7 +199,7 @@ class TestIPAMEngine(unittest.TestCase):
         self.engine.subnets = [mgmt, n1, n2]
         self.engine.build_tree()
 
-        v4 = self.engine.tree["ipv4"]
+        v4 = self._v4_roots()
         self.assertEqual(len(v4), 1)
         self.assertEqual(v4[0]["interface_type"], "management")
         groups = [c for c in v4[0]["children"] if c.get("role") == "tunnel_group"]
@@ -205,7 +218,7 @@ class TestIPAMEngine(unittest.TestCase):
         self.engine.subnets = [n1, n2]
         self.engine.build_tree()
 
-        v4_tree = self.engine.tree["ipv4"]
+        v4_tree = self._v4_roots()
         subnet = v4_tree[0]
         vips = [c for c in subnet["children"] if c["role"] == "vip"]
         self.assertEqual(len(vips), 1)
