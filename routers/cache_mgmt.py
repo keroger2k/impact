@@ -4,7 +4,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from auth import require_auth, SessionEntry
-from cache import cache, IPAM_TREE_CACHE_KEY
+from cache import cache, IPAM_TREE_CACHE_KEY, TUNNEL_INVENTORY_CACHE_KEY
 import logging
 
 
@@ -71,6 +71,15 @@ CACHE_SYSTEMS = [
         "refresh_url": None,
         "sse": True,
         "sse_fn": "triggerNexusCacheRefresh()",
+    },
+    {
+        "id": "tunnels",
+        "label": "Tunnels",
+        "icon": "ph-lock-key",
+        "keys": [TUNNEL_INVENTORY_CACHE_KEY, "pan_ike_gateways", "pan_ipsec_tunnels"],
+        "count_key": TUNNEL_INVENTORY_CACHE_KEY,
+        "refresh_url": "/api/cache/refresh/tunnels",
+        "sse": False,
     },
 ]
 
@@ -440,6 +449,14 @@ async def refresh_specific_cache(category: str, session: SessionEntry = Depends(
     elif category == "ipam":
         cache.invalidate(IPAM_TREE_CACHE_KEY)
         msg = "IPAM cache cleared. Use the Collect button to rebuild the tree."
+
+    elif category == "tunnels":
+        cache.invalidate(TUNNEL_INVENTORY_CACHE_KEY)
+        cache.invalidate("pan_ike_gateways")
+        cache.invalidate("pan_ipsec_tunnels")
+        cache.invalidate("pan_ike_crypto_profiles")
+        cache.invalidate("pan_ipsec_crypto_profiles")
+        msg = "Tunnel inventory cache cleared. Visit the VPN Tunnels page to rebuild."
 
     elif category == "clear_all":
         cache.clear()

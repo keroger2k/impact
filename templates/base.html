@@ -54,6 +54,10 @@
          hx-get="/ipam" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
         <span class="nav-icon"><i class="ph ph-network"></i></span> <span class="nav-text">IPAM Dashboard</span>
       </a>
+      <a class="nav-item {% if active_page == 'tunnels' %}active{% endif %}"
+         hx-get="/tunnels" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+        <span class="nav-icon"><i class="ph ph-lock-key"></i></span> <span class="nav-text">VPN Tunnels</span>
+      </a>
 
       <!-- Security & Compliance -->
       <div class="sidebar-section-label">Security & Compliance</div>

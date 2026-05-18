@@ -979,3 +979,250 @@ def get_client() -> str | None:
         return get_api_key()
     except Exception:
         return None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# IKE / IPSEC OBJECTS (network profiles + tunnels)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _members_text(parent: ET.Element | None, path: str) -> list[str]:
+    if parent is None: return []
+    return [m.text for m in parent.findall(path) if m and m.text]
+
+
+def _parse_ike_crypto_profiles(parent: ET.Element | None, scope: str) -> list[dict]:
+    """Parse <ike-crypto-profiles>/<entry> blocks."""
+    out: list[dict] = []
+    if parent is None: return out
+    for entry in parent.findall("entry"):
+        out.append({
+            "scope":          scope,
+            "name":           entry.get("name", ""),
+            "encryption":     _members_text(entry, ".//encryption/member"),
+            "hash":           _members_text(entry, ".//hash/member"),
+            "dh_group":       _members_text(entry, ".//dh-group/member"),
+            "lifetime_value": (entry.find(".//lifetime/*").text if entry.find(".//lifetime/*") is not None else ""),
+            "lifetime_unit":  (entry.find(".//lifetime/*").tag if entry.find(".//lifetime/*") is not None else ""),
+            "authentication_multiple": entry.findtext("authentication-multiple") or "",
+        })
+    return out
+
+
+def _parse_ipsec_crypto_profiles(parent: ET.Element | None, scope: str) -> list[dict]:
+    """Parse <ipsec-crypto-profiles>/<entry> blocks. Each entry has an esp or ah child."""
+    out: list[dict] = []
+    if parent is None: return out
+    for entry in parent.findall("entry"):
+        esp = entry.find("esp")
+        ah  = entry.find("ah")
+        proto = "esp" if esp is not None else ("ah" if ah is not None else "")
+        body = esp if esp is not None else ah
+        out.append({
+            "scope":          scope,
+            "name":           entry.get("name", ""),
+            "protocol":       proto,
+            "encryption":     _members_text(body, ".//encryption/member") if body is not None else [],
+            "authentication": _members_text(body, ".//authentication/member") if body is not None else [],
+            "dh_group":       entry.findtext("dh-group") or "",
+            "lifetime_value": (entry.find(".//lifetime/*").text if entry.find(".//lifetime/*") is not None else ""),
+            "lifetime_unit":  (entry.find(".//lifetime/*").tag if entry.find(".//lifetime/*") is not None else ""),
+            "lifesize_value": (entry.find(".//lifesize/*").text if entry.find(".//lifesize/*") is not None else ""),
+            "lifesize_unit":  (entry.find(".//lifesize/*").tag if entry.find(".//lifesize/*") is not None else ""),
+        })
+    return out
+
+
+def _parse_ike_gateways(parent: ET.Element | None, scope: str, template: str = "") -> list[dict]:
+    """Parse <ike/gateway>/<entry> blocks."""
+    out: list[dict] = []
+    if parent is None: return out
+    for entry in parent.findall("entry"):
+        peer_addr = ""
+        for path in (".//peer-address/ip", ".//peer-address/fqdn", ".//peer-address/dynamic"):
+            v = entry.find(path)
+            if v is not None:
+                peer_addr = v.text or ("dynamic" if path.endswith("dynamic") else "")
+                break
+
+        local_iface = entry.findtext(".//local-address/interface") or ""
+        local_ip    = entry.findtext(".//local-address/ip") or ""
+        protocol    = entry.findtext("protocol/version") or "ikev1"
+
+        # IKEv1
+        v1 = entry.find("protocol/ikev1")
+        v1_profile = v1.findtext("ike-crypto-profile") if v1 is not None else ""
+        v1_mode    = v1.findtext("exchange-mode") if v1 is not None else ""
+
+        # IKEv2
+        v2 = entry.find("protocol/ikev2")
+        v2_profile = v2.findtext("ike-crypto-profile") if v2 is not None else ""
+
+        auth_psk = entry.find(".//authentication/pre-shared-key") is not None
+        auth_cert = entry.find(".//authentication/certificate") is not None
+
+        out.append({
+            "scope":          scope,
+            "template":       template,
+            "name":           entry.get("name", ""),
+            "peer_address":   peer_addr,
+            "local_interface": local_iface,
+            "local_ip":       local_ip,
+            "protocol":       protocol,
+            "ikev1_profile":  v1_profile or "",
+            "ikev1_mode":     v1_mode or "",
+            "ikev2_profile":  v2_profile or "",
+            "auth":           "pre-shared-key" if auth_psk else ("certificate" if auth_cert else ""),
+            "disabled":       entry.findtext("disabled") == "yes",
+        })
+    return out
+
+
+def _parse_ipsec_tunnels(parent: ET.Element | None, scope: str, template: str = "") -> list[dict]:
+    """Parse <ipsec/tunnel>/<entry> blocks."""
+    out: list[dict] = []
+    if parent is None: return out
+    for entry in parent.findall("entry"):
+        ak = entry.find("auto-key")
+        ike_gateway = ""
+        ipsec_profile = ""
+        proxy_ids: list[dict] = []
+        if ak is not None:
+            ig = ak.find("ike-gateway/entry")
+            if ig is not None:
+                ike_gateway = ig.get("name", "")
+            ipsec_profile = ak.findtext("ipsec-crypto-profile") or ""
+            for pid in ak.findall(".//proxy-id/entry"):
+                proxy_ids.append({
+                    "name":     pid.get("name", ""),
+                    "local":    pid.findtext("local") or "",
+                    "remote":   pid.findtext("remote") or "",
+                    "protocol": "any" if pid.find(".//protocol/any") is not None
+                               else (pid.findtext(".//protocol/number") or ""),
+                })
+
+        tunnel_iface = entry.findtext("tunnel-interface") or ""
+        disabled = entry.findtext("disabled") == "yes"
+        out.append({
+            "scope":           scope,
+            "template":        template,
+            "name":            entry.get("name", ""),
+            "tunnel_interface": tunnel_iface,
+            "ike_gateway":     ike_gateway,
+            "ipsec_profile":   ipsec_profile,
+            "proxy_ids":       proxy_ids,
+            "disabled":        disabled,
+            "anti_replay":     entry.findtext("anti-replay") or "",
+        })
+    return out
+
+
+def _network_xpath_roots() -> dict[str, str]:
+    """Where IKE/IPsec live on Panorama. We search shared + all templates."""
+    return {
+        "shared_ike_crypto":   "/config/shared/network/ike/crypto-profiles/ike-crypto-profiles",
+        "shared_ipsec_crypto": "/config/shared/network/ike/crypto-profiles/ipsec-crypto-profiles",
+        "shared_ike_gateway":  "/config/shared/network/ike/gateway",
+        "shared_ipsec_tunnel": "/config/shared/network/tunnel/ipsec",
+    }
+
+
+def _list_templates(api_key: str) -> list[str]:
+    """Panorama templates that may carry network/IKE config."""
+    names: list[str] = []
+    try:
+        r = _config_get(f"{BASE_XPATH}/template", api_key)
+        if r is not None:
+            for entry in r.findall(".//entry") + r.findall("./entry"):
+                n = entry.get("name", "")
+                if n: names.append(n)
+    except Exception:
+        pass
+    return names
+
+
+def get_ike_crypto_profiles(api_key: str) -> list[dict]:
+    """Fetch IKE crypto profiles from shared + every template."""
+    out: list[dict] = []
+    roots = _network_xpath_roots()
+    try:
+        r = _config_get(roots["shared_ike_crypto"], api_key)
+        out.extend(_parse_ike_crypto_profiles(_unwrap(r, "ike-crypto-profiles"), "shared"))
+    except Exception: pass
+
+    for tpl in _list_templates(api_key):
+        try:
+            xpath = (
+                f"{BASE_XPATH}/template/entry[@name='{tpl}']"
+                "/config/devices/entry[@name='localhost.localdomain']"
+                "/network/ike/crypto-profiles/ike-crypto-profiles"
+            )
+            r = _config_get(xpath, api_key)
+            out.extend(_parse_ike_crypto_profiles(_unwrap(r, "ike-crypto-profiles"), f"template:{tpl}"))
+        except Exception: continue
+    return out
+
+
+def get_ipsec_crypto_profiles(api_key: str) -> list[dict]:
+    """Fetch IPsec crypto profiles from shared + every template."""
+    out: list[dict] = []
+    roots = _network_xpath_roots()
+    try:
+        r = _config_get(roots["shared_ipsec_crypto"], api_key)
+        out.extend(_parse_ipsec_crypto_profiles(_unwrap(r, "ipsec-crypto-profiles"), "shared"))
+    except Exception: pass
+
+    for tpl in _list_templates(api_key):
+        try:
+            xpath = (
+                f"{BASE_XPATH}/template/entry[@name='{tpl}']"
+                "/config/devices/entry[@name='localhost.localdomain']"
+                "/network/ike/crypto-profiles/ipsec-crypto-profiles"
+            )
+            r = _config_get(xpath, api_key)
+            out.extend(_parse_ipsec_crypto_profiles(_unwrap(r, "ipsec-crypto-profiles"), f"template:{tpl}"))
+        except Exception: continue
+    return out
+
+
+def get_ike_gateways(api_key: str) -> list[dict]:
+    """Fetch IKE gateways from shared + every template."""
+    out: list[dict] = []
+    roots = _network_xpath_roots()
+    try:
+        r = _config_get(roots["shared_ike_gateway"], api_key)
+        out.extend(_parse_ike_gateways(_unwrap(r, "gateway"), "shared"))
+    except Exception: pass
+
+    for tpl in _list_templates(api_key):
+        try:
+            xpath = (
+                f"{BASE_XPATH}/template/entry[@name='{tpl}']"
+                "/config/devices/entry[@name='localhost.localdomain']"
+                "/network/ike/gateway"
+            )
+            r = _config_get(xpath, api_key)
+            out.extend(_parse_ike_gateways(_unwrap(r, "gateway"), f"template:{tpl}", template=tpl))
+        except Exception: continue
+    return out
+
+
+def get_ipsec_tunnels(api_key: str) -> list[dict]:
+    """Fetch IPsec tunnels from shared + every template."""
+    out: list[dict] = []
+    roots = _network_xpath_roots()
+    try:
+        r = _config_get(roots["shared_ipsec_tunnel"], api_key)
+        out.extend(_parse_ipsec_tunnels(_unwrap(r, "ipsec"), "shared"))
+    except Exception: pass
+
+    for tpl in _list_templates(api_key):
+        try:
+            xpath = (
+                f"{BASE_XPATH}/template/entry[@name='{tpl}']"
+                "/config/devices/entry[@name='localhost.localdomain']"
+                "/network/tunnel/ipsec"
+            )
+            r = _config_get(xpath, api_key)
+            out.extend(_parse_ipsec_tunnels(_unwrap(r, "ipsec"), f"template:{tpl}", template=tpl))
+        except Exception: continue
+    return out

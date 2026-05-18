@@ -31,8 +31,10 @@ TTL_DNAC_INTERFACES     = int(os.getenv("IMPACT_TTL_DNAC_INTERFACES",   "14400")
 TTL_CONFIG_SEARCH_RESULT = int(os.getenv("IMPACT_TTL_CONFIG_SEARCH_RESULT", "300"))  # 5 minutes
 TTL_DNAC_ROUTER_CONFIGS = int(os.getenv("IMPACT_TTL_DNAC_ROUTER_CONFIGS", "86400"))  # 24 hours
 TTL_DNAC_IP_POOLS       = int(os.getenv("IMPACT_TTL_DNAC_IP_POOLS",       "86400"))  # 24 hours
+TTL_TUNNEL_INVENTORY    = int(os.getenv("IMPACT_TTL_TUNNEL_INVENTORY",    "86400"))  # 24 hours
 
 IPAM_TREE_CACHE_KEY = "ipam_tree_v4" # Bumped — RFC1918 supernet aggregation + IP-first sort (was v3)
+TUNNEL_INVENTORY_CACHE_KEY = "tunnel_inventory_v1"
 
 CACHE_DIR = Path(__file__).parent / "data" / "cache" / "diskcache"
 

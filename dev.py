@@ -979,6 +979,97 @@ MOCK_PAN_INTERFACES: list[dict] = [
     },
 ]
 
+# Mock Panorama IKE/IPsec inventory for the VPN Tunnels page.
+MOCK_PAN_IKE_CRYPTO_PROFILES: list[dict] = [
+    {
+        "scope": "shared", "name": "Strong-IKE",
+        "encryption": ["aes-256-cbc", "aes-128-cbc"],
+        "hash": ["sha256"],
+        "dh_group": ["group14"],
+        "lifetime_value": "8", "lifetime_unit": "hours",
+        "authentication_multiple": "0",
+    },
+    {
+        "scope": "shared", "name": "Legacy-IKE",
+        "encryption": ["3des"],
+        "hash": ["sha1"],
+        "dh_group": ["group2"],
+        "lifetime_value": "24", "lifetime_unit": "hours",
+        "authentication_multiple": "0",
+    },
+]
+
+MOCK_PAN_IPSEC_CRYPTO_PROFILES: list[dict] = [
+    {
+        "scope": "shared", "name": "Strong-IPsec",
+        "protocol": "esp",
+        "encryption": ["aes-256-gcm"], "authentication": ["none"],
+        "dh_group": "group14",
+        "lifetime_value": "1", "lifetime_unit": "hours",
+        "lifesize_value": "", "lifesize_unit": "",
+    },
+    {
+        "scope": "shared", "name": "Legacy-IPsec",
+        "protocol": "esp",
+        "encryption": ["3des"], "authentication": ["sha1"],
+        "dh_group": "group2",
+        "lifetime_value": "1", "lifetime_unit": "hours",
+        "lifesize_value": "", "lifesize_unit": "",
+    },
+]
+
+MOCK_PAN_IKE_GATEWAYS: list[dict] = [
+    {
+        "scope": "shared", "template": "", "name": "GW-AWS-East",
+        "peer_address": "54.10.20.30", "local_interface": "ethernet1/2", "local_ip": "203.0.113.5",
+        "protocol": "ikev2", "ikev1_profile": "", "ikev1_mode": "",
+        "ikev2_profile": "Strong-IKE", "auth": "pre-shared-key", "disabled": False,
+    },
+    {
+        "scope": "shared", "template": "", "name": "GW-Partner-X",
+        "peer_address": "198.51.100.7", "local_interface": "ethernet1/2", "local_ip": "203.0.113.5",
+        "protocol": "ikev1", "ikev1_profile": "Legacy-IKE", "ikev1_mode": "main",
+        "ikev2_profile": "", "auth": "pre-shared-key", "disabled": False,
+    },
+    {
+        "scope": "shared", "template": "", "name": "GW-Branch-Disabled",
+        "peer_address": "192.0.2.100", "local_interface": "ethernet1/2", "local_ip": "203.0.113.5",
+        "protocol": "ikev2", "ikev1_profile": "", "ikev1_mode": "",
+        "ikev2_profile": "Strong-IKE", "auth": "pre-shared-key", "disabled": True,
+    },
+]
+
+MOCK_PAN_IPSEC_TUNNELS: list[dict] = [
+    {
+        "scope": "shared", "template": "", "name": "VPN-AWS-East",
+        "tunnel_interface": "tunnel.10",
+        "ike_gateway": "GW-AWS-East",
+        "ipsec_profile": "Strong-IPsec",
+        "proxy_ids": [
+            {"name": "any", "local": "0.0.0.0/0", "remote": "0.0.0.0/0", "protocol": "any"},
+        ],
+        "disabled": False, "anti_replay": "yes",
+    },
+    {
+        "scope": "shared", "template": "", "name": "VPN-Partner-X",
+        "tunnel_interface": "tunnel.11",
+        "ike_gateway": "GW-Partner-X",
+        "ipsec_profile": "Legacy-IPsec",
+        "proxy_ids": [
+            {"name": "p1", "local": "10.80.0.0/16", "remote": "192.0.2.0/24", "protocol": "any"},
+        ],
+        "disabled": False, "anti_replay": "yes",
+    },
+    {
+        "scope": "shared", "template": "", "name": "VPN-Branch-Disabled",
+        "tunnel_interface": "tunnel.12",
+        "ike_gateway": "GW-Branch-Disabled",
+        "ipsec_profile": "Strong-IPsec",
+        "proxy_ids": [],
+        "disabled": True, "anti_replay": "yes",
+    },
+]
+
 # Managed firewalls as returned by clients.panorama.get_managed_devices.
 # Derived from MOCK_PAN_INTERFACES so the two views agree.
 MOCK_PAN_MANAGED_DEVICES: list[dict] = [
@@ -2024,6 +2115,12 @@ def seed_cache(cache) -> None:
     cache.set("pan_services",         MOCK_SERVICES,            LONG)
     cache.set("pan_interfaces",       MOCK_PAN_INTERFACES,      LONG)
 
+    # Panorama IKE/IPsec — for the VPN Tunnels page
+    cache.set("pan_ike_gateways",          MOCK_PAN_IKE_GATEWAYS,          LONG)
+    cache.set("pan_ipsec_tunnels",         MOCK_PAN_IPSEC_TUNNELS,         LONG)
+    cache.set("pan_ike_crypto_profiles",   MOCK_PAN_IKE_CRYPTO_PROFILES,   LONG)
+    cache.set("pan_ipsec_crypto_profiles", MOCK_PAN_IPSEC_CRYPTO_PROFILES, LONG)
+
     # Panorama status
     cache.set("status_panorama", {"ok": True, "detail": "Connected (mock)"}, LONG)
 
@@ -2183,7 +2280,140 @@ router eigrp TSA-EIGRP
  exit-address-family
 !
 """
+        base += _mock_ipsec_block(dev)
     return base + "end\n"
+
+
+_DMVPN_HUB_MGMT_IP = "10.10.5.1"   # first router in DCA-HQ — the DMVPN hub
+_DMVPN_HUB_OVERLAY = "172.16.0.1"  # hub's tunnel100 IP
+_SVTI_PEER         = "203.0.113.42"  # mock partner WAN endpoint
+_LEGACY_PEER       = "198.51.100.7"  # mock legacy IKEv1 partner
+
+
+def _mock_ipsec_block(dev: dict) -> str:
+    """Inject IPsec config into router mock configs so the tunnel inventory
+    page has realistic data in DEV_MODE.
+
+    All routers share the same crypto material. The router at 10.10.5.1
+    plays hub (DMVPN hub-template, sVTI to partner, crypto-map example);
+    every other router is a DMVPN spoke pointing to that hub.
+    """
+    mgmt_ip = dev.get("managementIpAddress", "")
+    is_hub = mgmt_ip == _DMVPN_HUB_MGMT_IP
+    last_octet = int(mgmt_ip.rsplit(".", 1)[1]) if "." in mgmt_ip else 1
+    site = MOCK_DEVICE_SITE_MAP.get(dev["id"], "")
+    site_octet = next((int(p.split(".")[1]) for s, p in _SITES if s == site), 99)
+
+    # Spoke overlay IP — give each spoke a unique /24 slot in 172.16.0.0/16
+    overlay_octet3 = (site_octet // 10) % 256
+    overlay_octet4 = last_octet
+    spoke_overlay = f"172.16.{overlay_octet3}.{overlay_octet4}"
+
+    common = """!
+crypto ikev2 proposal STRONG-IKE2
+ encryption aes-cbc-256 aes-cbc-192 aes-cbc-128
+ integrity sha384 sha256
+ group 19 14
+!
+crypto ikev2 policy WAN-POL
+ proposal STRONG-IKE2
+!
+crypto ikev2 keyring TSA-KR
+ peer ANY
+  address 0.0.0.0 0.0.0.0
+  pre-shared-key local SECRET
+  pre-shared-key remote SECRET
+ !
+!
+crypto ikev2 profile WAN-PROFILE
+ match identity remote address 0.0.0.0
+ authentication local pre-share
+ authentication remote pre-share
+ keyring local TSA-KR
+!
+crypto ipsec transform-set TSA-TS esp-aes 256 esp-sha256-hmac
+ mode tunnel
+!
+crypto ipsec profile DMVPN-PROFILE
+ set transform-set TSA-TS
+ set pfs group14
+ set ikev2-profile WAN-PROFILE
+ set security-association lifetime seconds 3600
+!
+crypto ipsec profile SVTI-PROFILE
+ set transform-set TSA-TS
+ set ikev2-profile WAN-PROFILE
+!
+"""
+
+    if is_hub:
+        return common + f"""!
+interface Tunnel100
+ description DMVPN Hub overlay
+ ip address {_DMVPN_HUB_OVERLAY} 255.255.0.0
+ no ip redirects
+ ip nhrp authentication TSA-NHRP
+ ip nhrp network-id 100
+ ip nhrp map multicast dynamic
+ ip nhrp redirect
+ tunnel source GigabitEthernet0/1
+ tunnel mode gre multipoint
+ tunnel key 100
+ tunnel protection ipsec profile DMVPN-PROFILE
+!
+interface Tunnel200
+ description sVTI to TSA Partner
+ ip address 10.255.255.{last_octet} 255.255.255.252
+ tunnel source GigabitEthernet0/1
+ tunnel destination {_SVTI_PEER}
+ tunnel mode ipsec ipv4
+ tunnel protection ipsec profile SVTI-PROFILE
+!
+ip access-list extended LEGACY-IPSEC-ACL
+ permit ip 10.10.0.0 0.0.255.255 192.0.2.0 0.0.0.255
+!
+crypto isakmp policy 10
+ encryption aes 256
+ hash sha
+ authentication pre-share
+ group 14
+ lifetime 28800
+!
+crypto isakmp key LEGACYSECRET address {_LEGACY_PEER}
+!
+crypto ipsec transform-set LEGACY-TS esp-aes 256 esp-sha-hmac
+!
+crypto map LEGACY-MAP 10 ipsec-isakmp
+ description Partner VPN (IKEv1)
+ set peer {_LEGACY_PEER}
+ set transform-set LEGACY-TS
+ set pfs group2
+ match address LEGACY-IPSEC-ACL
+!
+interface GigabitEthernet0/2
+ description WAN to legacy partner
+ ip address 198.51.100.{last_octet} 255.255.255.0
+ crypto map LEGACY-MAP
+!
+"""
+
+    # Spoke
+    return common + f"""!
+interface Tunnel100
+ description DMVPN Spoke overlay
+ ip address {spoke_overlay} 255.255.0.0
+ no ip redirects
+ ip nhrp authentication TSA-NHRP
+ ip nhrp network-id 100
+ ip nhrp nhs {_DMVPN_HUB_OVERLAY}
+ ip nhrp map {_DMVPN_HUB_OVERLAY} {_DMVPN_HUB_MGMT_IP}
+ ip nhrp shortcut
+ tunnel source GigabitEthernet0/1
+ tunnel mode gre multipoint
+ tunnel key 100
+ tunnel protection ipsec profile DMVPN-PROFILE
+!
+"""
 
 
 MOCK_CONFIGS = {
