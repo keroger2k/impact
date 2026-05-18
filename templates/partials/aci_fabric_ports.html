@@ -1,0 +1,246 @@
+<div class="card shadow-sm border-0 animate-fade-in">
+    <div class="card-header bg-light d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div class="d-flex align-items-center gap-3">
+            <div class="btn-group btn-group-sm" role="group" aria-label="ACI nodes view toggle">
+                <button class="btn btn-outline-navy"
+                        hx-get="/api/aci/fabric/nodes"
+                        hx-vals='js:{fabric: window.currentFabric}'
+                        hx-target="#aci-results"
+                        hx-indicator="#aci-loading">
+                    <i class="ph ph-hard-drives me-1"></i>Nodes
+                </button>
+                <button class="btn btn-navy active" disabled>
+                    <i class="ph ph-grid-four me-1"></i>Fabric Ports
+                </button>
+            </div>
+            <span class="fw-bold text-navy"><i class="ph ph-plugs-connected me-1"></i>All Leaf Access Ports</span>
+        </div>
+        <div class="d-flex gap-2 flex-wrap">
+            <span class="badge bg-secondary">{{ summary.leaves }} Leaves</span>
+            <span class="badge bg-secondary">{{ summary.total }} Ports</span>
+            <span class="badge bg-success">{{ summary.up }} Up</span>
+            {% if summary.down %}<span class="badge bg-danger">{{ summary.down }} Down</span>{% endif %}
+            {% if summary.hot_standby %}<span class="badge bg-warning text-dark">{{ summary.hot_standby }} Hot-Standby</span>{% endif %}
+            {% if summary.bundled_down %}<span class="badge" style="background-color:#fb923c;color:#000;">{{ summary.bundled_down }} Bundled-Down</span>{% endif %}
+            {% if summary.sfp_missing %}<span class="badge" style="background-color:#06b6d4;color:#000;">{{ summary.sfp_missing }} SFP-Missing</span>{% endif %}
+            {% if summary.admin_down %}<span class="badge bg-secondary">{{ summary.admin_down }} Admin-Down</span>{% endif %}
+        </div>
+    </div>
+
+    <!-- Heatmap -->
+    <div class="card-body bg-white border-bottom p-3">
+        <div class="d-flex flex-column gap-2">
+            <div class="text-muted small fw-bold text-uppercase letter-spacing-1">
+                Fabric Port Heatmap — click any cell for details
+            </div>
+
+            <div class="table-responsive">
+                <table class="aci-heatmap mb-0">
+                    <thead>
+                        <tr>
+                            <th class="aci-heatmap-rowlabel"></th>
+                            {% for n in range(1, max_port + 1) %}
+                                <th class="aci-heatmap-colhdr">{{ n }}</th>
+                            {% endfor %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for node in nodes %}
+                        {% set port_map = {} %}
+                        {% for c in node.cells %}{% set _ = port_map.update({c.port_num: c}) %}{% endfor %}
+                        <tr>
+                            <td class="aci-heatmap-rowlabel">
+                                <span class="fw-bold text-navy">{{ node.name }}</span>
+                                <span class="text-muted small ms-1">({{ node.id }})</span>
+                            </td>
+                            {% for n in range(1, max_port + 1) %}
+                                {% set p = port_map.get(n) %}
+                                {% if p %}
+                                <td class="aci-heatmap-cell-wrap">
+                                    <button type="button"
+                                            class="aci-heatmap-cell port-pip {{ p.cell_class }}"
+                                            data-bs-toggle="popover"
+                                            data-bs-trigger="focus"
+                                            data-bs-html="true"
+                                            data-bs-placement="top"
+                                            data-bs-title="{{ node.name }} — {{ p.id }}"
+                                            data-bs-content="{{ ('<div class=\"small\">'
+                                                ~ '<div><strong>Status:</strong> ' ~ p.operSt ~ ' / admin ' ~ p.adminSt ~ '</div>'
+                                                ~ ('<div><strong>Reason:</strong> ' ~ p.operStQual ~ '</div>' if p.operStQual and p.operStQual != 'none' else '')
+                                                ~ '<div><strong>Speed:</strong> ' ~ (p.operSpeed if p.operSpeed != 'inherit' else p.adminSpeed) ~ ' &middot; ' ~ p.mode ~ '</div>'
+                                                ~ ('<div><strong>VLANs:</strong> ' ~ p.operVlans ~ '</div>' if p.operVlans else '')
+                                                ~ ('<div><strong>Channel:</strong> ' ~ p.channel ~ (' (' ~ p.lacp_state ~ ')' if p.lacp_state else '') ~ '</div>' if p.channel else '')
+                                                ~ ('<div><strong>vPC:</strong> ' ~ p.vpc ~ '</div>' if p.vpc else '')
+                                                ~ ('<div class=\"text-truncate\" style=\"max-width:260px\"><strong>Descr:</strong> ' ~ p.descr ~ '</div>' if p.descr else '')
+                                                ~ '</div>') | e }}"
+                                            aria-label="{{ node.name }} {{ p.id }}">
+                                    </button>
+                                </td>
+                                {% else %}
+                                <td class="aci-heatmap-cell-wrap"><span class="aci-heatmap-cell aci-heatmap-empty"></span></td>
+                                {% endif %}
+                            {% endfor %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="d-flex gap-4 mt-2 small text-muted flex-wrap">
+                <div class="d-flex align-items-center gap-2"><span class="pip-legend up"></span> Up</div>
+                <div class="d-flex align-items-center gap-2"><span class="pip-legend down"></span> Down</div>
+                <div class="d-flex align-items-center gap-2"><span class="pip-legend hot-standby"></span> Hot-Standby</div>
+                <div class="d-flex align-items-center gap-2"><span class="pip-legend bundled-down"></span> Bundled-Down</div>
+                <div class="d-flex align-items-center gap-2"><span class="pip-legend sfp-missing"></span> SFP Missing</div>
+                <div class="d-flex align-items-center gap-2"><span class="pip-legend admin-down"></span> Admin Down</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dense table -->
+    <div class="card-body p-0">
+        <div class="table-responsive" style="max-height: calc(100vh - 420px);">
+            <table class="table table-hover align-middle mb-0 data-table">
+                <thead class="table-light">
+                    <tr class="small text-uppercase letter-spacing-05">
+                        <th style="width: 40px;" data-no-sort data-no-filter>Stat</th>
+                        <th>Node</th>
+                        <th>Port</th>
+                        <th>Admin</th>
+                        <th>Oper</th>
+                        <th>Reason</th>
+                        <th>Speed</th>
+                        <th>Mode</th>
+                        <th>VLANs</th>
+                        <th>Channel</th>
+                        <th>LACP State</th>
+                        <th>vPC</th>
+                        <th>Description</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in rows %}
+                    <tr>
+                        <td>
+                            <span class="port-pip {{ r.cell_class }} pip-inline" title="{{ r.cell_class }}"></span>
+                        </td>
+                        <td class="fw-bold text-navy">{{ r.node_name }} <span class="text-muted small">({{ r.node_id }})</span></td>
+                        <td class="fw-bold">{{ r.id }}</td>
+                        <td class="small">{{ r.adminSt }}</td>
+                        <td>
+                            <span class="badge {{ 'bg-success' if r.operSt == 'up' else ('bg-danger' if r.operSt == 'down' else 'bg-warning text-dark') }} btn-xs">
+                                {{ r.operSt }}
+                            </span>
+                        </td>
+                        <td class="small text-muted">{{ r.operStQual if r.operStQual != 'none' else '' }}</td>
+                        <td class="small">{{ r.operSpeed if r.operSpeed != 'inherit' else r.adminSpeed }}</td>
+                        <td class="small">{{ r.mode }}</td>
+                        <td class="small" title="{{ r.operVlans or '' }}">{{ (r.operVlans or '')|truncate(20) }}</td>
+                        <td class="small">{{ r.channel }}</td>
+                        <td class="small">{{ r.lacp_state }}</td>
+                        <td>
+                            {% if r.vpc %}<span class="badge bg-primary">{{ r.vpc }}</span>{% endif %}
+                        </td>
+                        <td class="small text-truncate" style="max-width: 280px;" title="{{ r.descr }}">{{ r.descr }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<style>
+    /* Shared port-pip styles (kept in sync with aci_node_interfaces.html) */
+    .port-pip {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: 700;
+        border-radius: 3px;
+        border: 1px solid rgba(0,0,0,0.2);
+    }
+    .port-pip.up { background-color: #10b981; }
+    .port-pip.down { background-color: #ef4444; }
+    .port-pip.hot-standby { background-color: #f59e0b; color: #000; }
+    .port-pip.sfp-missing { background-color: #06b6d4; color: #000; }
+    .port-pip.bundled-down { background-color: #fb923c; color: #000; }
+    .port-pip.admin-down { background-color: #94a3b8; opacity: 0.6; }
+    .port-pip.other { background-color: #64748b; }
+
+    .port-pip.pip-inline { width: 14px; height: 14px; }
+
+    .pip-legend {
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        border-radius: 2px;
+    }
+    .pip-legend.up { background-color: #10b981; }
+    .pip-legend.down { background-color: #ef4444; }
+    .pip-legend.hot-standby { background-color: #f59e0b; }
+    .pip-legend.sfp-missing { background-color: #06b6d4; }
+    .pip-legend.bundled-down { background-color: #fb923c; }
+    .pip-legend.admin-down { background-color: #94a3b8; }
+    .letter-spacing-1 { letter-spacing: 0.1em; }
+
+    /* Heatmap */
+    .aci-heatmap { border-collapse: separate; border-spacing: 2px; }
+    .aci-heatmap th, .aci-heatmap td { padding: 0; }
+    .aci-heatmap-colhdr {
+        font-size: 9px;
+        color: #64748b;
+        text-align: center;
+        font-weight: 600;
+        min-width: 16px;
+        max-width: 16px;
+        line-height: 1;
+        padding-bottom: 2px;
+    }
+    .aci-heatmap-rowlabel {
+        white-space: nowrap;
+        padding-right: 10px !important;
+        font-size: 12px;
+        text-align: left;
+        position: sticky;
+        left: 0;
+        background-color: #ffffff;
+        z-index: 1;
+    }
+    .aci-heatmap-cell-wrap { padding: 0 !important; }
+    .aci-heatmap-cell {
+        width: 16px;
+        height: 16px;
+        padding: 0;
+        border-radius: 2px;
+        border: 1px solid rgba(0,0,0,0.15);
+        cursor: pointer;
+        transition: transform 0.08s, filter 0.08s;
+    }
+    .aci-heatmap-cell:hover:not(.aci-heatmap-empty) {
+        transform: scale(1.6);
+        z-index: 10;
+        filter: brightness(1.15);
+        position: relative;
+    }
+    .aci-heatmap-empty {
+        background-color: #e5e7eb;
+        opacity: 0.4;
+        cursor: default;
+        display: inline-block;
+    }
+</style>
+
+<script>
+    (function initFabricPortsPopovers() {
+        const root = document.getElementById('aci-results');
+        if (!root || !window.bootstrap) return;
+        // Dispose any existing popovers from a previous render
+        root.querySelectorAll('[data-bs-toggle="popover"]').forEach(el => {
+            const existing = bootstrap.Popover.getInstance(el);
+            if (existing) existing.dispose();
+            new bootstrap.Popover(el, { container: 'body' });
+        });
+    })();
+</script>
