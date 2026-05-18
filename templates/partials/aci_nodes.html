@@ -1,7 +1,19 @@
 <div class="card shadow-sm border-0 animate-fade-in">
     <script id="aci-nodes-raw" type="application/json">{{ raw_json|tojson }}</script>
-    <div class="card-header bg-light d-flex justify-content-between align-items-center">
+    <div class="card-header bg-light d-flex justify-content-between align-items-center flex-wrap gap-2">
         <div class="d-flex align-items-center gap-3">
+            <div class="btn-group btn-group-sm" role="group" aria-label="ACI nodes view toggle">
+                <button class="btn btn-navy active" disabled>
+                    <i class="ph ph-hard-drives me-1"></i>Nodes
+                </button>
+                <button class="btn btn-outline-navy"
+                        hx-get="/api/aci/fabric-ports"
+                        hx-vals='js:{fabric: window.currentFabric}'
+                        hx-target="#aci-results"
+                        hx-indicator="#aci-loading">
+                    <i class="ph ph-grid-four me-1"></i>Fabric Ports
+                </button>
+            </div>
             <span class="fw-bold text-navy">🏢 Fabric Nodes</span>
             <button class="btn btn-xs btn-outline-navy" onclick="showRawData('aci-nodes-raw')">
                 <i class=" ph ph-code me-1"></i>Raw

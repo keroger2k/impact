@@ -350,39 +350,20 @@ async def list_fabric_nodes(
 
 # ── Node Interfaces ───────────────────────────────────────────────────────────
 
-@router.get("/nodes/{node_id}/interfaces")
-async def get_node_interfaces(
-    request: Request,
-    node_id: str,
-    session: SessionEntry = Depends(require_auth),
-    fabric_id: str = Depends(get_fabric_id)
-):
+def _parse_port_id(port_id):
+    """Parse an ACI port id like 'eth1/49' into (module, port) ints; (0,0) on failure."""
+    m = re.match(r"eth(\d+)/(\d+)", port_id or "")
+    return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+
+def _normalize_node_interfaces(imdata: List[Dict]) -> Dict[str, Any]:
+    """Join l1PhysIf / ethpmPhysIf / pcAggrIf / pcRsMbrIfs / pcAggrMbrIf / vpcRsVpcConf
+    items from a node subtree into a normalized {interfaces, aggregates, panel} dict.
+
+    Shared by the per-node view and the fabric-wide port view so they classify ports
+    identically.
     """
-    Detailed interface view for a node.
-    Joins physical ports with operational state, Port-Channels, and vPCs.
-    """
-    aci = await _get_aci_async(session, fabric_id)
-    loop = asyncio.get_event_loop()
-
-    # 1. Resolve Node DN
-    nodes_proc, _ = await _get_processed_nodes(aci, loop, fabric_id)
-    node = next((n for n in nodes_proc if n["id"] == node_id), None)
-    if not node:
-        raise HTTPException(404, f"Node {node_id} not found in fabric {fabric_id}")
-
-    # 2. Fetch Subtree Data
-    cache_key = _fkey(fabric_id, f"node_{node_id}_interfaces")
-    raw = await loop.run_in_executor(
-        None, run_with_context(_cached),
-        cache_key,
-        lambda: aci.get_node_interfaces(node["dn"]),
-        300 # 5 min TTL for operational port data
-    )
-    imdata = raw.get("imdata", [])
-
-    # 3. Join Logic
-    phys_ifs = {}     # dn -> attributes
-    pc_ifs = {}       # dn -> attributes + members list
+    phys_ifs = {}       # dn -> attributes
+    pc_ifs = {}         # dn -> attributes + members list
     member_to_pc = {}   # phys_dn -> pc_dn
     pc_to_vpc = {}      # pc_dn -> vpc_id
     lacp_states = {}    # phys_dn -> lacp state (from pcAggrMbrIf channelingSt)
@@ -404,7 +385,6 @@ async def get_node_interfaces(
             }
         elif "ethpmPhysIf" in item:
             attr = item["ethpmPhysIf"]["attributes"]
-            # Deliverable 2d: more robust split for bracketed DNs
             parent_dn = attr["dn"].rsplit("/phys", 1)[0]
             if parent_dn in phys_ifs:
                 phys_ifs[parent_dn].update({
@@ -423,43 +403,34 @@ async def get_node_interfaces(
             pc_ifs[attr["dn"]] = {**attr, "vpc": "", "members": []}
         elif "pcRsMbrIfs" in item:
             attr = item["pcRsMbrIfs"]["attributes"]
-            # DN: .../aggr-[po10]/rsmbrIfs-[.../phys-[eth1/31]]
-            # Parent is PC, tDn is physical port
             pc_dn = attr["dn"].split("/rsmbrIfs-")[0]
             phys_dn = attr.get("tDn")
             if phys_dn:
                 member_to_pc[phys_dn] = pc_dn
         elif "pcAggrMbrIf" in item:
             attr = item["pcAggrMbrIf"]["attributes"]
-            # DN: topology/pod-1/node-208/sys/phys-[eth1/32]/aggrmbrif
             phys_dn = attr["dn"].rsplit("/aggrmbrif", 1)[0]
             if phys_dn in phys_ifs:
                 lacp_states[phys_dn] = attr.get("channelingSt")
         elif "vpcRsVpcConf" in item:
             attr = item["vpcRsVpcConf"]["attributes"]
-            # parentSKey is usually the numerical vPC ID
             vpc_id = attr.get("parentSKey")
             if vpc_id:
                 vpc_id = f"vPC-{vpc_id}"
             pc_to_vpc[attr["tDn"]] = vpc_id
 
-    # Cross-reference members into PCs
     for phys_dn, pc_dn in member_to_pc.items():
         if pc_dn in pc_ifs:
             pc_id = phys_ifs[phys_dn]["id"] if phys_dn in phys_ifs else "??"
             pc_ifs[pc_dn]["members"].append(pc_id)
 
-    # 4. Final Normalization
     interfaces = []
     for dn, p in phys_ifs.items():
         target_pc_dn = member_to_pc.get(dn)
         pc_obj = pc_ifs.get(target_pc_dn) if target_pc_dn else None
-
-        # For description, fall back to PC name if the physical port descr is empty
         descr = p.get("descr")
         if not descr and pc_obj:
             descr = pc_obj.get("name")
-
         interfaces.append({
             "id": p.get("id", "??"),
             "descr": descr or "",
@@ -496,14 +467,9 @@ async def get_node_interfaces(
             "name": a.get("name", "")
         })
 
-    # 5. Build Front Panel structure
-    def _parse_port(port_id):
-        m = re.match(r"eth(\d+)/(\d+)", port_id or "")
-        return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
-
     modules = defaultdict(lambda: {"access": [], "uplink": []})
     for i in interfaces:
-        mod, port = _parse_port(i["id"])
+        mod, port = _parse_port_id(i["id"])
         bucket = "uplink" if i.get("portT") == "fab" else "access"
         modules[mod][bucket].append({**i, "port_num": port})
 
@@ -518,6 +484,63 @@ async def get_node_interfaces(
             "uplink_top":    [p for p in upl if p["port_num"] % 2 == 1],
             "uplink_bottom": [p for p in upl if p["port_num"] % 2 == 0],
         })
+
+    return {"interfaces": interfaces, "aggregates": aggregates, "panel": panel}
+
+
+def _port_cell_class(p: Dict) -> str:
+    """Return the heatmap cell color class for a port. Mirrors the render_pip
+    macro in partials/aci_node_interfaces.html so per-node and fabric-wide views
+    classify ports identically."""
+    admin_st = p.get("adminSt")
+    oper_st = p.get("operSt")
+    oper_qual = p.get("operStQual") or ""
+    if admin_st == "down" or oper_st == "unknown":
+        return "admin-down"
+    if oper_st == "up":
+        return "up"
+    if oper_qual == "hot-standby-in-bundle":
+        return "hot-standby"
+    if oper_qual == "sfp-missing":
+        return "sfp-missing"
+    if p.get("channel") and oper_st == "down":
+        return "bundled-down"
+    if oper_st == "down":
+        return "down"
+    return "other"
+
+
+@router.get("/nodes/{node_id}/interfaces")
+async def get_node_interfaces(
+    request: Request,
+    node_id: str,
+    session: SessionEntry = Depends(require_auth),
+    fabric_id: str = Depends(get_fabric_id)
+):
+    """
+    Detailed interface view for a node.
+    Joins physical ports with operational state, Port-Channels, and vPCs.
+    """
+    aci = await _get_aci_async(session, fabric_id)
+    loop = asyncio.get_event_loop()
+
+    nodes_proc, _ = await _get_processed_nodes(aci, loop, fabric_id)
+    node = next((n for n in nodes_proc if n["id"] == node_id), None)
+    if not node:
+        raise HTTPException(404, f"Node {node_id} not found in fabric {fabric_id}")
+
+    cache_key = _fkey(fabric_id, f"node_{node_id}_interfaces")
+    raw = await loop.run_in_executor(
+        None, run_with_context(_cached),
+        cache_key,
+        lambda: aci.get_node_interfaces(node["dn"]),
+        300 # 5 min TTL for operational port data
+    )
+
+    norm = _normalize_node_interfaces(raw.get("imdata", []))
+    interfaces = norm["interfaces"]
+    aggregates = norm["aggregates"]
+    panel = norm["panel"]
 
     node_name = node.get("name") if node else f"Node-{node_id}"
 
@@ -539,6 +562,97 @@ async def get_node_interfaces(
         "aggregates": aggregates,
         "panel": panel,
         "raw": raw
+    }
+
+
+@router.get("/fabric-ports")
+async def list_fabric_ports(
+    request: Request,
+    session: SessionEntry = Depends(require_auth),
+    fabric_id: str = Depends(get_fabric_id)
+):
+    """Fabric-wide port rollup: every access port on every leaf, with status.
+
+    Reuses the per-node cache (5-min TTL per leaf) so this is cheap after the
+    first warm. Spines and fabric uplinks are excluded — this view targets
+    endpoint-facing access ports.
+    """
+    aci = await _get_aci_async(session, fabric_id)
+    loop = asyncio.get_event_loop()
+
+    nodes_proc, _ = await _get_processed_nodes(aci, loop, fabric_id)
+    leaves = [n for n in nodes_proc if n.get("role") == "leaf"]
+    leaves.sort(key=lambda n: _node_sort_key(n["id"]))
+
+    sem = get_apic_sem()
+
+    async def _fetch_leaf(node):
+        async with sem:
+            try:
+                cache_key = _fkey(fabric_id, f"node_{node['id']}_interfaces")
+                raw = await loop.run_in_executor(
+                    None, run_with_context(_cached),
+                    cache_key,
+                    lambda dn=node["dn"]: aci.get_node_interfaces(dn),
+                    300
+                )
+                return node, raw
+            except Exception as e:
+                logger.error(f"Fabric-ports fan-out failed for node {node['id']}: {e}")
+                return node, {"imdata": []}
+
+    results = await asyncio.gather(*[_fetch_leaf(n) for n in leaves])
+
+    rows = []  # flat list for the table
+    nodes_for_heatmap = []
+    max_access_port = 0
+
+    for node, raw in results:
+        norm = _normalize_node_interfaces(raw.get("imdata", []))
+        access = [i for i in norm["interfaces"] if i.get("portT") != "fab"]
+        access.sort(key=lambda p: _parse_port_id(p["id"]))
+
+        cells = []
+        for p in access:
+            mod, port = _parse_port_id(p["id"])
+            cell_cls = _port_cell_class(p)
+            cells.append({**p, "module": mod, "port_num": port, "cell_class": cell_cls})
+            if port > max_access_port:
+                max_access_port = port
+            rows.append({**p, "node_id": node["id"], "node_name": node.get("name") or f"Node-{node['id']}", "cell_class": cell_cls})
+
+        nodes_for_heatmap.append({
+            "id": node["id"],
+            "name": node.get("name") or f"Node-{node['id']}",
+            "cells": cells,
+        })
+
+    summary = {
+        "up": sum(1 for r in rows if r["cell_class"] == "up"),
+        "down": sum(1 for r in rows if r["cell_class"] == "down"),
+        "hot_standby": sum(1 for r in rows if r["cell_class"] == "hot-standby"),
+        "bundled_down": sum(1 for r in rows if r["cell_class"] == "bundled-down"),
+        "sfp_missing": sum(1 for r in rows if r["cell_class"] == "sfp-missing"),
+        "admin_down": sum(1 for r in rows if r["cell_class"] == "admin-down"),
+        "total": len(rows),
+        "leaves": len(leaves),
+    }
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/aci_fabric_ports.html", {
+            "fabric_id": fabric_id,
+            "nodes": nodes_for_heatmap,
+            "rows": rows,
+            "summary": summary,
+            "max_port": max_access_port,
+        })
+
+    return {
+        "fabric_id": fabric_id,
+        "nodes": nodes_for_heatmap,
+        "rows": rows,
+        "summary": summary,
     }
 
 # ── L3Outs ────────────────────────────────────────────────────────────────────
