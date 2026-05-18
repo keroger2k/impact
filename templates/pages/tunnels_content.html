@@ -1,0 +1,131 @@
+<div class="d-flex flex-column gap-3">
+
+  <!-- ── Stats / Toolbar ─────────────────────────────────────────────── -->
+  <div class="card shadow-sm border-0 animate-fade-in">
+    <div class="card-body py-3">
+      <div class="d-flex flex-wrap align-items-center gap-3">
+        <div class="d-flex align-items-center gap-2">
+          <i class="ph ph-lock-key fs-4 text-primary"></i>
+          <strong class="fs-5">Enterprise IPsec Tunnels</strong>
+        </div>
+
+        <div id="tunnel-stats" class="ms-3 d-flex gap-3 flex-wrap small text-muted"
+             hx-get="/api/tunnels/stats" hx-trigger="load, every 60s" hx-swap="innerHTML">
+          <span><i class="ph ph-circle-notch ph-spin"></i> Loading stats…</span>
+        </div>
+
+        <div class="ms-auto d-flex gap-2 align-items-center">
+          <input id="tun-q" type="search" class="form-control form-control-sm" style="width:240px"
+                 placeholder="Search hostname / peer / interface…"
+                 hx-get="/api/tunnels/inventory"
+                 hx-target="#tunnels-list"
+                 hx-trigger="keyup changed delay:300ms, search"
+                 hx-include="#tun-type,#tun-platform"
+                 name="q">
+
+          <select id="tun-type" class="form-select form-select-sm" style="width:140px"
+                  hx-get="/api/tunnels/inventory"
+                  hx-target="#tunnels-list"
+                  hx-trigger="change"
+                  hx-include="#tun-q,#tun-platform"
+                  name="type">
+            <option value="">All types</option>
+            <option value="dmvpn">DMVPN</option>
+            <option value="svti">sVTI</option>
+            <option value="dvti">dVTI</option>
+            <option value="crypto_map">Policy-based</option>
+            <option value="gre_over_ipsec">GRE/IPsec</option>
+            <option value="palo_ipsec">Palo IPsec</option>
+          </select>
+
+          <select id="tun-platform" class="form-select form-select-sm" style="width:130px"
+                  hx-get="/api/tunnels/inventory"
+                  hx-target="#tunnels-list"
+                  hx-trigger="change"
+                  hx-include="#tun-q,#tun-type"
+                  name="platform">
+            <option value="">All platforms</option>
+            <option value="ios">Cisco IOS</option>
+            <option value="palo">Palo Alto</option>
+          </select>
+
+          <a class="btn btn-outline btn-sm" href="/api/tunnels/export.csv" download>
+            <i class="ph ph-download-simple"></i> CSV
+          </a>
+
+          <button class="btn btn-action btn-sm"
+                  hx-post="/api/tunnels/refresh"
+                  hx-target="#tunnels-list"
+                  hx-swap="none"
+                  hx-on::after-request="htmx.trigger('#tunnels-list','refresh')">
+            <i class="ph ph-arrows-clockwise"></i> Refresh
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── List + Detail layout ────────────────────────────────────────── -->
+  <div class="row g-3">
+    <div class="col-lg-7">
+      <div id="tunnels-list"
+           hx-get="/api/tunnels/inventory"
+           hx-trigger="load, refresh"
+           hx-swap="innerHTML"
+           style="min-height: 400px;">
+        <div class="card border-0 shadow-sm">
+          <div class="card-body text-center py-5 text-muted">
+            <div class="spinner spinner-lg mb-3"></div>
+            <p>Building tunnel inventory…</p>
+            <p class="small">First load parses every cached DNAC config + queries Panorama.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-5">
+      <div id="tunnel-detail" class="sticky-top" style="top:12px;">
+        <div class="card border-0 shadow-sm">
+          <div class="card-body text-center py-5 text-muted">
+            <i class="ph ph-mouse-simple-pointer fs-1 d-block mb-2"></i>
+            <p class="mb-0">Select a tunnel for crypto + endpoint detail.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  .tunnel-row { cursor: pointer; transition: background-color .15s; }
+  .tunnel-row:hover { background-color: rgba(59,130,246,0.05); }
+  .tunnel-row.active { background-color: rgba(59,130,246,0.10); border-left: 3px solid var(--accent); }
+  .type-badge { font-family: var(--font-mono, monospace); font-size: 11px; letter-spacing: .02em; }
+  .crypto-cell { font-family: var(--font-mono, monospace); font-size: 11px; color: var(--text-muted); }
+  .weak-crypto { color: #b91c1c; font-weight: 600; }
+</style>
+
+<script>
+  (function(){
+    // Stats partial render
+    document.body.addEventListener('htmx:afterSwap', function(evt){
+      if (evt.detail.target.id === 'tunnel-stats') {
+        try {
+          const data = JSON.parse(evt.detail.xhr.responseText);
+          const s = data.stats || {};
+          const parts = [];
+          parts.push(`<span><strong>${s.total||0}</strong> total</span>`);
+          const types = s.by_type || {};
+          const labels = {dmvpn:'DMVPN', svti:'sVTI', dvti:'dVTI', crypto_map:'Policy', gre_over_ipsec:'GRE/IPsec', palo_ipsec:'Palo'};
+          for (const [k,v] of Object.entries(types)) {
+            parts.push(`<span><strong>${v}</strong> ${labels[k]||k}</span>`);
+          }
+          if (data.built_at) {
+            const age = Math.round((Date.now()/1000 - data.built_at)/60);
+            parts.push(`<span class="text-muted"><i class="ph ph-clock"></i> ${age}m ago</span>`);
+          }
+          evt.detail.target.innerHTML = parts.join('');
+        } catch(e) {/* let htmx render raw */}
+      }
+    });
+  })();
+</script>

@@ -1,0 +1,129 @@
+<div class="card border-0 shadow-sm animate-fade-in">
+  <div class="card-header bg-navy text-white d-flex align-items-center justify-content-between">
+    <div>
+      <span class="badge bg-light text-navy me-2">{{ tunnel.type|upper }}</span>
+      <span class="fw-bold">{{ tunnel.name }}</span>
+    </div>
+    <span class="badge bg-light text-muted">{{ tunnel.platform }}</span>
+  </div>
+
+  <div class="card-body p-0">
+
+    <!-- ── Phase 1 / Phase 2 side-by-side ─────────────────────── -->
+    <div class="row g-0 border-bottom">
+      <div class="col-md-6 p-3 border-end">
+        <div class="text-muted small text-uppercase fw-bold mb-2">
+          <i class="ph ph-key"></i> Phase 1 (IKE)
+        </div>
+        <table class="table table-sm mb-0">
+          <tbody>
+            <tr><td class="text-muted small" style="width:120px">Protocol</td>
+                <td class="crypto-cell">{{ tunnel.phase1.protocol or '—' }}</td></tr>
+            <tr><td class="text-muted small">Profile</td>
+                <td class="crypto-cell">{{ tunnel.phase1.profile_name or '—' }}</td></tr>
+            <tr><td class="text-muted small">Encryption</td>
+                <td class="crypto-cell">{{ tunnel.phase1.encryption|join(', ') or '—' }}</td></tr>
+            <tr><td class="text-muted small">Integrity</td>
+                <td class="crypto-cell">{{ tunnel.phase1.integrity|join(', ') or '—' }}</td></tr>
+            <tr><td class="text-muted small">DH Group</td>
+                <td class="crypto-cell">{{ tunnel.phase1.dh_group|join(', ') or '—' }}</td></tr>
+            <tr><td class="text-muted small">Auth</td>
+                <td class="crypto-cell">{{ tunnel.phase1.auth or '—' }}</td></tr>
+            <tr><td class="text-muted small">Lifetime</td>
+                <td class="crypto-cell">{{ tunnel.phase1.lifetime or '—' }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="col-md-6 p-3">
+        <div class="text-muted small text-uppercase fw-bold mb-2">
+          <i class="ph ph-lock-key"></i> Phase 2 (IPsec)
+        </div>
+        <table class="table table-sm mb-0">
+          <tbody>
+            <tr><td class="text-muted small" style="width:120px">Profile / TS</td>
+                <td class="crypto-cell">{{ tunnel.phase2.name or tunnel.phase2.transform_sets|join(', ') or '—' }}</td></tr>
+            <tr><td class="text-muted small">Encryption</td>
+                <td class="crypto-cell">{{ tunnel.phase2.encryption|join(', ') or '—' }}</td></tr>
+            <tr><td class="text-muted small">Integrity</td>
+                <td class="crypto-cell">{{ tunnel.phase2.integrity|join(', ') or '—' }}</td></tr>
+            <tr><td class="text-muted small">PFS</td>
+                <td class="crypto-cell">{{ tunnel.phase2.pfs_group or '—' }}</td></tr>
+            <tr><td class="text-muted small">SA lifetime</td>
+                <td class="crypto-cell">
+                  {% if tunnel.phase2.sa_lifetime_sec %}{{ tunnel.phase2.sa_lifetime_sec }}s{% endif %}
+                  {% if tunnel.phase2.sa_lifetime_kb %} / {{ tunnel.phase2.sa_lifetime_kb }} KB{% endif %}
+                  {% if not tunnel.phase2.sa_lifetime_sec and not tunnel.phase2.sa_lifetime_kb %}—{% endif %}
+                </td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── Endpoints ──────────────────────────────────────────── -->
+    <div class="p-3">
+      <div class="text-muted small text-uppercase fw-bold mb-2">
+        <i class="ph ph-share-network"></i> Endpoints ({{ tunnel.endpoints|length }})
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm table-striped mb-0">
+          <thead>
+            <tr>
+              <th>Device</th>
+              <th>Role</th>
+              <th>Interface</th>
+              <th>Local IP</th>
+              <th>Peer / NHS</th>
+              <th>VRF</th>
+              <th>State</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for ep in tunnel.endpoints %}
+            <tr>
+              <td class="fw-bold text-navy">{{ ep.device }}</td>
+              <td>
+                <span class="badge
+                  {% if ep.role == 'hub' %}bg-primary-subtle text-primary
+                  {% elif ep.role == 'spoke' %}bg-info-subtle text-info
+                  {% else %}bg-secondary-subtle text-secondary{% endif %}">
+                  {{ ep.role or '—' }}
+                </span>
+              </td>
+              <td class="mono">{{ ep.interface }}</td>
+              <td class="mono">{{ ep.local_ip or '—' }}</td>
+              <td class="mono">{{ ep.peer_ip or '—' }}</td>
+              <td class="mono">{{ ep.vrf or '—' }}</td>
+              <td>
+                {% if ep.shutdown %}
+                  <span class="badge bg-warning-subtle text-warning">shut</span>
+                {% else %}
+                  <span class="badge bg-success-subtle text-success">no shut</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% if ep.description %}
+            <tr><td colspan="7" class="text-muted small ps-4 fst-italic">{{ ep.description }}</td></tr>
+            {% endif %}
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {% if tunnel.tags %}
+    <div class="p-3 border-top">
+      <div class="text-muted small text-uppercase fw-bold mb-2">
+        <i class="ph ph-tag"></i> Tags
+      </div>
+      <div class="d-flex flex-wrap gap-2">
+        {% for k, v in tunnel.tags.items() %}
+          {% if v %}
+          <span class="badge bg-light text-muted">{{ k }}: <span class="text-dark">{{ v }}</span></span>
+          {% endif %}
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+  </div>
+</div>

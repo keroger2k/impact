@@ -1,0 +1,66 @@
+<div class="card border-0 shadow-sm animate-fade-in">
+  <div class="card-header bg-navy text-white d-flex align-items-center">
+    <span class="fw-bold">
+      {% if filtered %}Filtered: {{ tunnels|length }} of {{ stats.total or 0 }}{% else %}{{ tunnels|length }} tunnels{% endif %}
+    </span>
+  </div>
+  <div class="card-body p-0 overflow-auto" style="max-height: calc(100vh - 260px);">
+    {% if not tunnels %}
+      <div class="text-center text-muted py-5">
+        <i class="ph ph-empty fs-1 d-block mb-2"></i>
+        <p class="mb-0">No tunnels matched.</p>
+      </div>
+    {% else %}
+    <table class="table table-hover table-sm mb-0">
+      <thead class="bg-light sticky-top">
+        <tr>
+          <th style="width:90px">Type</th>
+          <th>Name</th>
+          <th style="width:90px">Endpoints</th>
+          <th style="width:160px">Phase 1</th>
+          <th style="width:160px">Phase 2</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in tunnels %}
+        <tr class="tunnel-row"
+            hx-get="/api/tunnels/detail/{{ t.id }}"
+            hx-target="#tunnel-detail"
+            hx-swap="innerHTML"
+            onclick="document.querySelectorAll('.tunnel-row').forEach(r=>r.classList.remove('active')); this.classList.add('active')">
+          <td>
+            <span class="badge type-badge
+              {% if t.type == 'dmvpn' %}bg-primary-subtle text-primary
+              {% elif t.type == 'svti' %}bg-success-subtle text-success
+              {% elif t.type == 'dvti' %}bg-info-subtle text-info
+              {% elif t.type == 'crypto_map' %}bg-warning-subtle text-warning
+              {% elif t.type == 'palo_ipsec' %}bg-danger-subtle text-danger
+              {% else %}bg-secondary-subtle text-secondary{% endif %}">
+              {{ t.type|upper }}
+            </span>
+          </td>
+          <td>
+            <div class="fw-bold text-navy small">{{ t.name }}</div>
+            <div class="text-muted small">
+              {% if t.tags.hubs %}{{ t.tags.hubs }} hub{{ 's' if t.tags.hubs != '1' }} · {{ t.tags.spokes }} spoke{{ 's' if t.tags.spokes != '1' }}
+              {% elif t.endpoints %}{{ t.endpoints[0].device }}{% if t.endpoints[0].peer_ip %} → {{ t.endpoints[0].peer_ip }}{% endif %}
+              {% endif %}
+            </div>
+          </td>
+          <td class="small">{{ t.endpoints|length }}</td>
+          <td class="crypto-cell">
+            {% if t.phase1.protocol %}{{ t.phase1.protocol }}{% endif %}
+            {% if t.phase1.encryption %} · {{ t.phase1.encryption|join(',') }}{% endif %}
+          </td>
+          <td class="crypto-cell">
+            {% if t.phase2.encryption %}{{ t.phase2.encryption|join(',') }}
+            {% elif t.phase2.transform_sets %}{{ t.phase2.transform_sets|join(',') }}
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</div>
