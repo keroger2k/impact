@@ -20,7 +20,7 @@
             <span class="badge bg-secondary">{{ summary.total }} Ports</span>
             <span class="badge bg-success">{{ summary.up }} Up</span>
             {% if summary.down %}<span class="badge bg-danger">{{ summary.down }} Down</span>{% endif %}
-            {% if summary.hot_standby %}<span class="badge bg-warning text-dark">{{ summary.hot_standby }} Hot-Standby</span>{% endif %}
+            {% if summary.hot_standby %}<span class="badge" style="background-color:#a855f7;color:#fff;">{{ summary.hot_standby }} Hot-Standby</span>{% endif %}
             {% if summary.bundled_down %}<span class="badge" style="background-color:#fb923c;color:#000;">{{ summary.bundled_down }} Bundled-Down</span>{% endif %}
             {% if summary.sfp_missing %}<span class="badge" style="background-color:#06b6d4;color:#000;">{{ summary.sfp_missing }} SFP-Missing</span>{% endif %}
             {% if summary.admin_down %}<span class="badge bg-secondary">{{ summary.admin_down }} Admin-Down</span>{% endif %}
@@ -163,7 +163,7 @@
     }
     .port-pip.up { background-color: #10b981; }
     .port-pip.down { background-color: #ef4444; }
-    .port-pip.hot-standby { background-color: #f59e0b; color: #000; }
+    .port-pip.hot-standby { background-color: #a855f7; color: #fff; }
     .port-pip.sfp-missing { background-color: #06b6d4; color: #000; }
     .port-pip.bundled-down { background-color: #fb923c; color: #000; }
     .port-pip.admin-down { background-color: #94a3b8; opacity: 0.6; }
@@ -179,7 +179,7 @@
     }
     .pip-legend.up { background-color: #10b981; }
     .pip-legend.down { background-color: #ef4444; }
-    .pip-legend.hot-standby { background-color: #f59e0b; }
+    .pip-legend.hot-standby { background-color: #a855f7; }
     .pip-legend.sfp-missing { background-color: #06b6d4; }
     .pip-legend.bundled-down { background-color: #fb923c; }
     .pip-legend.admin-down { background-color: #94a3b8; }
