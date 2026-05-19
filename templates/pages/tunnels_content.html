@@ -77,12 +77,19 @@
         <div class="vr d-none d-md-block mx-1" style="opacity:.4"></div>
 
         <div class="ms-auto d-flex gap-2 align-items-center">
-          <a class="btn btn-outline btn-sm" href="/api/tunnels/export.csv" download>
+          <a class="btn btn-outline btn-sm" href="/api/tunnels/export.csv" download
+             title="Export the filtered list as CSV">
             <i class="ph ph-download-simple"></i> CSV
           </a>
-          <button id="tun-refresh-btn" class="btn btn-action btn-sm"
-                  onclick="tunnelsStreamRefresh()">
-            <i class="ph ph-arrows-clockwise"></i> Rebuild
+          <button id="tun-refresh-dnac-btn" class="btn btn-outline btn-sm"
+                  onclick="tunnelsStreamRefresh('dnac')"
+                  title="Re-pull running-configs from Catalyst Center and re-parse IPsec (keeps cached Palo data)">
+            <i class="ph ph-arrows-clockwise"></i> Refresh DNAC
+          </button>
+          <button id="tun-refresh-palo-btn" class="btn btn-outline btn-sm"
+                  onclick="tunnelsStreamRefresh('palo')"
+                  title="Re-query Panorama for IKE/IPsec objects (keeps cached DNAC configs)">
+            <i class="ph ph-arrows-clockwise"></i> Refresh Palo
           </button>
         </div>
       </div>
@@ -90,43 +97,86 @@
   </div>
 
   <!-- ── Progress panel (visible during builds; stays open after) ─────── -->
-  <div id="tunnel-progress" class="card shadow-sm border-0 animate-fade-in" style="display:none;">
-    <div class="card-header bg-navy text-white d-flex align-items-center gap-2">
-      <i id="tunnel-progress-icon" class="ph ph-circle-notch ph-spin"></i>
-      <span id="tunnel-progress-title" class="fw-bold">Building tunnel inventory…</span>
-      <span id="tunnel-progress-elapsed" class="ms-2 small text-light opacity-75"></span>
-      <div class="ms-auto d-flex align-items-center gap-2 small text-light opacity-75">
-        <span id="tunnel-progress-step-label">starting…</span>
-        <button id="tunnel-progress-close" type="button"
-                class="btn btn-sm btn-link text-white p-0 ms-2"
-                style="display:none; line-height:1; text-decoration:none;"
-                title="Close (logs stay until next rebuild)"
-                onclick="document.getElementById('tunnel-progress').style.display='none'">
-          <i class="ph ph-x" style="font-size:16px"></i>
-        </button>
+  <div id="tunnel-progress" class="card shadow-sm border-0 tun-progress-card animate-fade-in"
+       style="display:none;">
+    <div class="tun-progress-header">
+      <i id="tun-progress-icon" class="ph ph-circle-notch ph-spin header-icon"></i>
+      <div class="d-flex flex-column" style="min-width:0;">
+        <span id="tun-progress-title" class="title">Refreshing tunnel inventory…</span>
+        <span id="tun-progress-live" class="live-line">starting…</span>
+      </div>
+      <span id="tun-progress-elapsed" class="elapsed ms-auto">0s</span>
+      <button id="tun-progress-close" type="button"
+              class="btn btn-sm btn-link text-white p-0"
+              style="display:none; line-height:1; text-decoration:none;"
+              title="Close (logs stay until next refresh)"
+              onclick="document.getElementById('tunnel-progress').style.display='none'">
+        <i class="ph ph-x" style="font-size:18px"></i>
+      </button>
+    </div>
+
+    <div class="tun-steps" id="tun-steps">
+      <div class="tun-step" data-step="dnac" data-status="waiting">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <div class="step-label">Load DNAC configs</div>
+          <div class="step-summary" data-role="summary">Pulling running-configs from Catalyst Center</div>
+        </div>
+        <div class="step-status" data-role="status">
+          <i class="ph ph-clock"></i> Waiting
+        </div>
+      </div>
+      <div class="tun-step" data-step="parse" data-status="waiting">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <div class="step-label">Parse IOS IPsec</div>
+          <div class="step-summary" data-role="summary">Extract tunnel interfaces, crypto-maps, virtual-templates</div>
+        </div>
+        <div class="step-status" data-role="status">
+          <i class="ph ph-clock"></i> Waiting
+        </div>
+      </div>
+      <div class="tun-step" data-step="palo" data-status="waiting">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <div class="step-label">Query Panorama</div>
+          <div class="step-summary" data-role="summary">Walk templates / template-stacks / firewalls</div>
+          <div class="step-bar-wrap">
+            <div class="step-bar-meta">
+              <span data-role="bar-label">Templates</span>
+              <span data-role="bar-count">0 / 0</span>
+            </div>
+            <div class="step-bar"><div class="step-bar-fill" data-role="bar-fill"></div></div>
+          </div>
+        </div>
+        <div class="step-status" data-role="status">
+          <i class="ph ph-clock"></i> Waiting
+        </div>
+      </div>
+      <div class="tun-step" data-step="build" data-status="waiting">
+        <div class="step-num">4</div>
+        <div class="step-body">
+          <div class="step-label">Build inventory</div>
+          <div class="step-summary" data-role="summary">Normalize, group DMVPN clouds, cache</div>
+        </div>
+        <div class="step-status" data-role="status">
+          <i class="ph ph-clock"></i> Waiting
+        </div>
       </div>
     </div>
-    <div class="card-body p-0">
-      <div id="tunnel-progress-bar-wrap" class="px-3 pt-3" style="display:none">
-        <div class="d-flex justify-content-between small text-muted mb-1">
-          <span id="tunnel-progress-bar-label">Templates</span>
-          <span id="tunnel-progress-bar-count">0 / 0</span>
-        </div>
-        <div class="progress" style="height:6px;">
-          <div id="tunnel-progress-bar" class="progress-bar" role="progressbar" style="width:0%"></div>
-        </div>
-      </div>
-      <div class="d-flex justify-content-end px-3 pt-2 pb-1">
-        <button class="btn btn-outline btn-xs" type="button" onclick="copyTunnelLog()">
-          <i class="ph ph-copy"></i> Copy log
-        </button>
-      </div>
-      <div id="tunnel-progress-log"
-           style="font-family: var(--font-mono, monospace); font-size: 12px;
-                  max-height: 520px; overflow-y: auto; padding: 12px 16px;
-                  background: #0f172a; color: #e2e8f0;">
-      </div>
+
+    <div class="tun-progress-footer">
+      <button id="tun-details-toggle" class="tun-details-toggle" type="button"
+              onclick="toggleTunnelLog()">
+        <i class="ph ph-caret-right" id="tun-details-caret"></i>
+        <span id="tun-details-toggle-label">Show detailed log</span>
+      </button>
+      <button class="btn btn-outline btn-xs" type="button" onclick="copyTunnelLog()">
+        <i class="ph ph-copy"></i> Copy log
+      </button>
     </div>
+
+    <div id="tun-progress-log" class="tun-log"></div>
   </div>
 
   <!-- ── List + Detail layout ────────────────────────────────────────── -->
@@ -147,11 +197,13 @@
       </div>
     </div>
     <div class="col-lg-5">
-      <div id="tunnel-detail" class="sticky-top" style="top:12px;">
-        <div class="card border-0 shadow-sm">
-          <div class="card-body text-center py-5 text-muted">
-            <i class="ph ph-mouse-simple-pointer fs-1 d-block mb-2"></i>
-            <p class="mb-0">Select a tunnel for crypto + endpoint detail.</p>
+      <div class="tunnel-detail-scroll">
+        <div id="tunnel-detail">
+          <div class="card border-0 shadow-sm">
+            <div class="card-body text-center py-5 text-muted">
+              <i class="ph ph-mouse-simple-pointer fs-1 d-block mb-2"></i>
+              <p class="mb-0">Select a tunnel for crypto + endpoint detail.</p>
+            </div>
           </div>
         </div>
       </div>
@@ -165,12 +217,14 @@
   .tunnel-row.active { background-color: rgba(59,130,246,0.10); border-left: 3px solid var(--accent); }
   .type-badge { font-family: var(--font-mono, monospace); font-size: 11px; letter-spacing: .02em; }
   .crypto-cell { font-family: var(--font-mono, monospace); font-size: 11px; color: var(--text-muted); }
-  .tunnel-log-line { white-space: pre-wrap; line-height: 1.5; }
-  .tunnel-log-info    { color: #cbd5e1; }
-  .tunnel-log-success { color: #86efac; }
-  .tunnel-log-warn    { color: #fbbf24; }
-  .tunnel-log-error   { color: #fca5a5; }
-  .tunnel-log-ts      { color: #64748b; margin-right: 8px; }
+
+  /* Detail panel: scroll independently of the list. Matches the left
+     side's max-height so both columns share the same scroll viewport. */
+  .tunnel-detail-scroll {
+    max-height: calc(100vh - 260px);
+    overflow-y: auto;
+    padding-right: 4px;          /* room for the scrollbar */
+  }
 
   /* Toolbar */
   .tunnels-filterbar .form-control-sm,
@@ -182,6 +236,160 @@
     color: var(--accent, #3b82f6);
   }
   .tunnels-spoke-toggle .form-check-input { cursor: pointer; }
+
+  /* ── Refresh progress UI ─────────────────────────────────────────────
+     Stepped, card-based design that replaces the dark-terminal log view.
+     The raw log is still available behind a toggle for debugging. */
+  .tun-progress-card { background: #fff; }
+  .tun-progress-header {
+    background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%);
+    color: #fff;
+    padding: 14px 18px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .tun-progress-header .title { font-weight: 600; font-size: 15px; }
+  .tun-progress-header .elapsed {
+    font-family: var(--font-mono, monospace);
+    font-size: 12px;
+    opacity: .82;
+    padding: 2px 8px;
+    background: rgba(255,255,255,.12);
+    border-radius: var(--radius-sm, 6px);
+  }
+  .tun-progress-header .live-line {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: .8;
+    font-size: 12px;
+    font-family: var(--font-mono, monospace);
+  }
+  .tun-progress-header .header-icon { font-size: 22px; }
+
+  .tun-steps { padding: 0; }
+  .tun-step {
+    display: grid;
+    grid-template-columns: 38px 1fr auto;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border-subtle, #e2e8f0);
+    transition: background-color .15s;
+  }
+  .tun-step:last-child { border-bottom: 0; }
+  .tun-step .step-num {
+    width: 30px; height: 30px; border-radius: 50%;
+    background: #f1f5f9; color: #64748b;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 13px;
+    flex-shrink: 0;
+  }
+  .tun-step .step-body { min-width: 0; }
+  .tun-step .step-label {
+    font-weight: 600;
+    color: var(--text-main, #0f172a);
+    font-size: 14px;
+  }
+  .tun-step .step-summary {
+    font-size: 12px;
+    color: var(--text-muted, #64748b);
+    margin-top: 2px;
+    font-family: var(--font-mono, monospace);
+  }
+  .tun-step .step-status {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 9999px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .tun-step[data-status="waiting"] { opacity: .55; }
+  .tun-step[data-status="waiting"]  .step-status { background: #f1f5f9; color: #64748b; }
+  .tun-step[data-status="running"]  .step-status { background: #dbeafe; color: #1e40af; }
+  .tun-step[data-status="running"]  .step-num    { background: #dbeafe; color: #1e40af; }
+  .tun-step[data-status="done"]     .step-status { background: #dcfce7; color: #166534; }
+  .tun-step[data-status="done"]     .step-num    { background: #dcfce7; color: #166534; }
+  .tun-step[data-status="skipped"]  .step-status { background: #fef3c7; color: #92400e; }
+  .tun-step[data-status="skipped"]  .step-num    { background: #fef3c7; color: #92400e; }
+  .tun-step[data-status="failed"]   .step-status { background: #fee2e2; color: #991b1b; }
+  .tun-step[data-status="failed"]   .step-num    { background: #fee2e2; color: #991b1b; }
+
+  /* Per-step progress bar — only shown for the Palo phase when we know counts. */
+  .tun-step .step-bar-wrap {
+    grid-column: 2 / 4;
+    margin-top: 8px;
+    display: none;
+  }
+  .tun-step.has-bar .step-bar-wrap { display: block; }
+  .tun-step .step-bar-meta {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--text-muted, #64748b);
+    margin-bottom: 4px;
+  }
+  .tun-step .step-bar {
+    height: 4px;
+    background: #e2e8f0;
+    border-radius: 9999px;
+    overflow: hidden;
+  }
+  .tun-step .step-bar-fill {
+    height: 100%;
+    background: var(--accent, #3b82f6);
+    width: 0%;
+    transition: width .25s;
+  }
+
+  /* Footer: details toggle + copy log */
+  .tun-progress-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 18px;
+    border-top: 1px solid var(--border-subtle, #e2e8f0);
+    background: #f8fafc;
+    font-size: 12px;
+  }
+  .tun-details-toggle {
+    background: none;
+    border: 0;
+    color: var(--accent, #3b82f6);
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .tun-details-toggle:hover { text-decoration: underline; }
+
+  /* Raw log — hidden by default, slides open when "Show details" is clicked. */
+  .tun-log {
+    display: none;
+    font-family: var(--font-mono, monospace);
+    font-size: 12px;
+    max-height: 360px;
+    overflow-y: auto;
+    padding: 12px 18px;
+    background: #0f172a;
+    color: #e2e8f0;
+    border-top: 1px solid #1e293b;
+  }
+  .tun-log.open { display: block; }
+  .tun-log-line { white-space: pre-wrap; line-height: 1.5; }
+  .tun-log-info    { color: #cbd5e1; }
+  .tun-log-success { color: #86efac; }
+  .tun-log-warn    { color: #fbbf24; }
+  .tun-log-error   { color: #fca5a5; }
+  .tun-log-ts      { color: #64748b; margin-right: 8px; }
 </style>
 
 <script>
@@ -232,10 +440,9 @@
   };
 
   window.copyTunnelLog = function() {
-    const log = document.getElementById('tunnel-progress-log');
+    const log = document.getElementById('tun-progress-log');
     if (!log) return;
-    // Convert to plain text with timestamps preserved.
-    const text = Array.from(log.querySelectorAll('.tunnel-log-line'))
+    const text = Array.from(log.querySelectorAll('.tun-log-line'))
       .map(line => line.innerText)
       .join('\n');
     navigator.clipboard.writeText(text).then(
@@ -249,63 +456,170 @@
     );
   };
 
-  // ── Streaming rebuild ──
-  // POSTs to /api/tunnels/refresh-stream, parses SSE events, and renders a
-  // live log + progress bar so the 5-minute Palo walk isn't a black box.
-  let __tunActiveES = null;
+  window.toggleTunnelLog = function() {
+    const log = document.getElementById('tun-progress-log');
+    const caret = document.getElementById('tun-details-caret');
+    const label = document.getElementById('tun-details-toggle-label');
+    const open = log.classList.toggle('open');
+    caret.className = open ? 'ph ph-caret-down' : 'ph ph-caret-right';
+    label.textContent = open ? 'Hide detailed log' : 'Show detailed log';
+  };
+
+  // ── Streaming refresh ──
+  // POSTs to /api/tunnels/refresh-stream?source=... and updates a step-based UI
+  // (4 phase cards + optional Palo progress bar) plus an opt-in detailed log.
+  let __tunActiveReader = null;
   let __tunStartTs = 0;
   let __tunElapsedTimer = null;
 
-  window.tunnelsStreamRefresh = async function() {
-    if (__tunActiveES) return;  // already running
+  const TUN_BTN_IDS = ['tun-refresh-dnac-btn', 'tun-refresh-palo-btn'];
+  const TUN_BTN_DEFAULT_HTML = {
+    'tun-refresh-dnac-btn': '<i class="ph ph-arrows-clockwise"></i> Refresh DNAC',
+    'tun-refresh-palo-btn': '<i class="ph ph-arrows-clockwise"></i> Refresh Palo',
+  };
+
+  function setStep(step, status, summary) {
+    const el = document.querySelector(`.tun-step[data-step="${step}"]`);
+    if (!el) return;
+    el.dataset.status = status;
+    if (summary !== undefined && summary !== null) {
+      const sumEl = el.querySelector('[data-role="summary"]');
+      if (sumEl) sumEl.textContent = summary;
+    }
+    const stEl = el.querySelector('[data-role="status"]');
+    if (stEl) {
+      const map = {
+        waiting: '<i class="ph ph-clock"></i> Waiting',
+        running: '<i class="ph ph-circle-notch ph-spin"></i> Running',
+        done:    '<i class="ph ph-check-circle"></i> Done',
+        skipped: '<i class="ph ph-skip-forward"></i> Skipped',
+        failed:  '<i class="ph ph-x-circle"></i> Failed',
+      };
+      stEl.innerHTML = map[status] || map.waiting;
+    }
+  }
+
+  function resetSteps() {
+    ['dnac', 'parse', 'palo', 'build'].forEach(s => {
+      setStep(s, 'waiting');
+      const el = document.querySelector(`.tun-step[data-step="${s}"]`);
+      if (el) {
+        el.classList.remove('has-bar');
+        const fill = el.querySelector('[data-role="bar-fill"]');
+        const cnt  = el.querySelector('[data-role="bar-count"]');
+        if (fill) fill.style.width = '0%';
+        if (cnt)  cnt.textContent = '0 / 0';
+      }
+    });
+    // Reset per-step default summaries.
+    const defaults = {
+      dnac:  'Pulling running-configs from Catalyst Center',
+      parse: 'Extract tunnel interfaces, crypto-maps, virtual-templates',
+      palo:  'Walk templates / template-stacks / firewalls',
+      build: 'Normalize, group DMVPN clouds, cache',
+    };
+    for (const [s, txt] of Object.entries(defaults)) {
+      const el = document.querySelector(`.tun-step[data-step="${s}"] [data-role="summary"]`);
+      if (el) el.textContent = txt;
+    }
+  }
+
+  window.tunnelsStreamRefresh = async function(source) {
+    if (__tunActiveReader) return;  // already running
+    source = source || 'all';
 
     const panel = document.getElementById('tunnel-progress');
-    const log   = document.getElementById('tunnel-progress-log');
-    const main  = document.getElementById('tunnels-main');
-    const btn   = document.getElementById('tun-refresh-btn');
-    const elapsed = document.getElementById('tunnel-progress-elapsed');
-    const stepLabel = document.getElementById('tunnel-progress-step-label');
-    const barWrap = document.getElementById('tunnel-progress-bar-wrap');
-    const bar     = document.getElementById('tunnel-progress-bar');
-    const barCount = document.getElementById('tunnel-progress-bar-count');
+    const log   = document.getElementById('tun-progress-log');
+    const elapsed = document.getElementById('tun-progress-elapsed');
+    const live    = document.getElementById('tun-progress-live');
+    const icon    = document.getElementById('tun-progress-icon');
+    const title   = document.getElementById('tun-progress-title');
+    const closeBtn = document.getElementById('tun-progress-close');
 
+    // Reset visual state.
     log.innerHTML = '';
+    log.classList.remove('open');
+    document.getElementById('tun-details-caret').className = 'ph ph-caret-right';
+    document.getElementById('tun-details-toggle-label').textContent = 'Show detailed log';
     panel.style.display = 'block';
-    btn.disabled = true;
-    btn.innerHTML = '<i class="ph ph-circle-notch ph-spin"></i> Building…';
-    __tunStartTs = Date.now();
+    resetSteps();
     elapsed.textContent = '0s';
-    stepLabel.textContent = 'starting…';
-    barWrap.style.display = 'none';
-    // Reset the spinner + title in case a prior run set them to "done"
-    document.getElementById('tunnel-progress-icon').className = 'ph ph-circle-notch ph-spin';
-    document.getElementById('tunnel-progress-title').textContent = 'Building tunnel inventory…';
-    document.getElementById('tunnel-progress-close').style.display = 'none';
+    live.textContent = 'starting…';
+    icon.className = 'ph ph-circle-notch ph-spin header-icon';
+    const titleMap = {
+      all:  'Rebuilding full tunnel inventory…',
+      dnac: 'Refreshing DNAC IPsec data…',
+      palo: 'Refreshing Palo IPsec data…',
+    };
+    title.textContent = titleMap[source] || titleMap.all;
+    closeBtn.style.display = 'none';
 
+    // Disable both refresh buttons so the user can't kick off a second run.
+    TUN_BTN_IDS.forEach(id => {
+      const b = document.getElementById(id);
+      if (!b) return;
+      b.disabled = true;
+      if (id === 'tun-refresh-dnac-btn' && source === 'dnac') {
+        b.innerHTML = '<i class="ph ph-circle-notch ph-spin"></i> Refreshing…';
+      } else if (id === 'tun-refresh-palo-btn' && source === 'palo') {
+        b.innerHTML = '<i class="ph ph-circle-notch ph-spin"></i> Refreshing…';
+      }
+    });
+
+    // If the user asked for DNAC-only / Palo-only, mark the other half as
+    // "skipped" up front so the UI is honest about what's happening.
+    if (source === 'dnac') {
+      setStep('palo', 'skipped', 'Reusing cached Panorama data');
+    } else if (source === 'palo') {
+      setStep('dnac', 'skipped', 'Reusing cached DNAC configs');
+    }
+
+    __tunStartTs = Date.now();
     __tunElapsedTimer = setInterval(() => {
       const s = Math.floor((Date.now() - __tunStartTs) / 1000);
       const mins = Math.floor(s / 60), secs = s % 60;
       elapsed.textContent = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
     }, 1000);
 
+    const escapeHtml = (s) => String(s).replace(/[&<>"']/g, c =>
+      ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
     const appendLog = (level, message) => {
       const ts = new Date().toLocaleTimeString('en-US', {hour12:false});
       const line = document.createElement('div');
-      line.className = `tunnel-log-line tunnel-log-${level||'info'}`;
-      line.innerHTML = `<span class="tunnel-log-ts">${ts}</span>${escapeHtml(message)}`;
-      // Smart auto-scroll: only follow if the user is already at the bottom.
-      // Lets them scroll up to read past lines without being yanked back.
+      line.className = `tun-log-line tun-log-${level||'info'}`;
+      line.innerHTML = `<span class="tun-log-ts">${ts}</span>${escapeHtml(message)}`;
       const stickToBottom = (log.scrollHeight - log.scrollTop - log.clientHeight) < 30;
       log.appendChild(line);
       if (stickToBottom) log.scrollTop = log.scrollHeight;
     };
-    const escapeHtml = (s) => String(s).replace(/[&<>"']/g, c =>
-      ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-    // Use fetch + ReadableStream so we can POST (EventSource is GET-only).
+    const finish = (success) => {
+      clearInterval(__tunElapsedTimer);
+      __tunActiveReader = null;
+      TUN_BTN_IDS.forEach(id => {
+        const b = document.getElementById(id);
+        if (!b) return;
+        b.disabled = false;
+        b.innerHTML = TUN_BTN_DEFAULT_HTML[id];
+      });
+      if (success) {
+        icon.className = 'ph ph-check-circle header-icon';
+        title.textContent = 'Refresh complete';
+        live.textContent = 'all phases finished';
+        htmx.ajax('GET', '/api/tunnels/stats',     {target:'#tunnel-stats', swap:'innerHTML'});
+        htmx.ajax('GET', '/api/tunnels/inventory', {target:'#tunnels-list', swap:'innerHTML'});
+      } else {
+        icon.className = 'ph ph-warning-circle header-icon';
+        title.textContent = 'Refresh failed';
+        live.textContent = 'check the detailed log for context';
+      }
+      closeBtn.style.display = '';
+    };
+
     let response;
     try {
-      response = await fetch('/api/tunnels/refresh-stream', {
+      response = await fetch(`/api/tunnels/refresh-stream?source=${encodeURIComponent(source)}`, {
         method: 'POST',
         credentials: 'include',
         headers: {
@@ -322,42 +636,17 @@
       finish(false); return;
     }
 
-    __tunActiveES = response.body.getReader();
+    __tunActiveReader = response.body.getReader();
     const decoder = new TextDecoder();
     let buf = '';
 
-    const finish = (success) => {
-      clearInterval(__tunElapsedTimer);
-      btn.disabled = false;
-      btn.innerHTML = '<i class="ph ph-arrows-clockwise"></i> Rebuild';
-      __tunActiveES = null;
-      stepLabel.textContent = success ? 'done' : 'failed';
-      // Replace the spinning header with a static one; show the × close button.
-      const headerIcon = document.getElementById('tunnel-progress-icon');
-      const headerTitle = document.getElementById('tunnel-progress-title');
-      if (success) {
-        headerIcon.className = 'ph ph-check-circle';
-        headerTitle.textContent = 'Build complete';
-      } else {
-        headerIcon.className = 'ph ph-warning';
-        headerTitle.textContent = 'Build failed';
-      }
-      document.getElementById('tunnel-progress-close').style.display = '';
-      // Re-pull stats and inventory once the build is finished.
-      // NOTE: do NOT auto-hide the panel — the user wants to review the log.
-      if (success) {
-        htmx.ajax('GET', '/api/tunnels/stats', {target:'#tunnel-stats', swap:'innerHTML'});
-        htmx.ajax('GET', '/api/tunnels/inventory', {target:'#tunnels-list', swap:'innerHTML'});
-      }
-    };
-
     try {
       while (true) {
-        const {value, done} = await __tunActiveES.read();
+        const {value, done} = await __tunActiveReader.read();
         if (done) break;
         buf += decoder.decode(value, {stream: true});
         const events = buf.split('\n\n');
-        buf = events.pop();  // last (possibly incomplete) event stays in buffer
+        buf = events.pop();
 
         for (const raw of events) {
           if (!raw.startsWith('data: ')) continue;
@@ -365,24 +654,24 @@
           try { ev = JSON.parse(raw.slice(6)); } catch { continue; }
 
           if (ev.type === 'log') {
-            appendLog(ev.level || 'info', ev.message || '');
-            if (ev.message && /Querying Panorama|Listing Panorama|Fetching template/i.test(ev.message)) {
-              stepLabel.textContent = 'palo';
-            } else if (ev.message && /Loading DNAC/i.test(ev.message)) {
-              stepLabel.textContent = 'dnac';
-            } else if (ev.message && /Parsing IPsec/i.test(ev.message)) {
-              stepLabel.textContent = 'parse';
-            } else if (ev.message && /Building normalized/i.test(ev.message)) {
-              stepLabel.textContent = 'build';
-            }
+            const msg = ev.message || '';
+            appendLog(ev.level || 'info', msg);
+            // Mirror the most recent log line into the header so the user
+            // always has a sense of "what is it doing right now?".
+            live.textContent = msg.length > 90 ? msg.slice(0, 90) + '…' : msg;
+          } else if (ev.type === 'phase') {
+            setStep(ev.phase, ev.status, ev.summary);
           } else if (ev.type === 'progress') {
             if ((ev.step === 'palo_template' || ev.step === 'palo_stack' || ev.step === 'palo_firewall') && ev.total) {
-              barWrap.style.display = 'block';
-              const pct = Math.round(100 * (ev.done||0) / ev.total);
-              bar.style.width = `${pct}%`;
-              const labels = {palo_template:'Templates', palo_stack:'Template-stacks', palo_firewall:'Firewalls'};
-              document.getElementById('tunnel-progress-bar-label').textContent = labels[ev.step] || 'Progress';
-              barCount.textContent = `${ev.done}/${ev.total}`;
+              const paloEl = document.querySelector('.tun-step[data-step="palo"]');
+              if (paloEl) {
+                paloEl.classList.add('has-bar');
+                const pct = Math.round(100 * (ev.done||0) / ev.total);
+                paloEl.querySelector('[data-role="bar-fill"]').style.width = `${pct}%`;
+                const labels = {palo_template:'Templates', palo_stack:'Template-stacks', palo_firewall:'Firewalls'};
+                paloEl.querySelector('[data-role="bar-label"]').textContent = labels[ev.step] || 'Progress';
+                paloEl.querySelector('[data-role="bar-count"]').textContent = `${ev.done} / ${ev.total}`;
+              }
             }
           } else if (ev.type === 'complete') {
             appendLog('success', `Complete. ${ev.stats?.total ?? 0} tunnels.`);
@@ -395,8 +684,8 @@
           }
         }
       }
-      // Stream ended without a 'complete' marker — treat as failure but still
-      // refresh the list, since partial cache may have been written.
+      // Stream ended without a 'complete' marker — refresh anyway in case a
+      // partial cache was written.
       finish(false);
       htmx.ajax('GET', '/api/tunnels/inventory', {target:'#tunnels-list', swap:'innerHTML'});
     } catch (e) {

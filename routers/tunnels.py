@@ -281,20 +281,35 @@ async def refresh_inventory(session: SessionEntry = Depends(require_auth)):
 # ── Streaming refresh ────────────────────────────────────────────────────────
 
 @router.post("/refresh-stream")
-async def refresh_stream(session: SessionEntry = Depends(require_auth)):
+async def refresh_stream(
+    source: str = "all",
+    session: SessionEntry = Depends(require_auth),
+):
     """Rebuild the tunnel inventory while streaming step-by-step progress as SSE.
 
     Event shape matches the rest of the app (/api/import/run, /api/nexus/refresh):
       {"type": "log", "level": "info|success|warn|error", "message": "..."}
       {"type": "progress", "done": N, "total": T, "step": "..."}
+      {"type": "phase",    "phase": "dnac|parse|palo|build", "status": "running|done|skipped", "summary": "..."}
       {"type": "complete", "stats": {...}, "built_at": ...}
-      {"type": "error", "message": "..."}
+      {"type": "error",    "message": "..."}
+
+    ``source`` controls which underlying caches get invalidated and re-fetched:
+      - "all"  — full rebuild: re-pull DNAC configs and Panorama
+      - "dnac" — refresh DNAC configs only; reuse cached Panorama data
+      - "palo" — refresh Panorama only; reuse cached DNAC configs
     """
     from dev import DEV_MODE
+    source = (source or "all").lower()
+    if source not in ("all", "dnac", "palo"):
+        source = "all"
+
     cache.invalidate(TUNNEL_INVENTORY_CACHE_KEY)
+    if source in ("all", "dnac"):
+        cache.invalidate("dnac_device_configs")
     # In DEV_MODE the Palo cache holds mock fixtures — keep them, since there's
     # no real Panorama to re-fetch from.
-    if not DEV_MODE:
+    if source in ("all", "palo") and not DEV_MODE:
         cache.invalidate("pan_ike_gateways")
         cache.invalidate("pan_ipsec_tunnels")
         cache.invalidate("pan_ike_crypto_profiles")
@@ -312,13 +327,24 @@ async def refresh_stream(session: SessionEntry = Depends(require_auth)):
         def progress_cb(**kwargs):
             q.put(kwargs)
 
+        # Tell the UI which phases will actually run this time.
+        yield emit({"type": "meta", "source": source})
+
         # ── Phase 1: DNAC configs ──
-        yield emit({"type": "log", "level": "info", "message": "Loading DNAC running-configs…"})
+        yield emit({"type": "phase", "phase": "dnac", "status": "running"})
+        if source == "palo":
+            yield emit({"type": "log", "level": "info",
+                        "message": "Reusing cached DNAC running-configs (Palo-only refresh)…"})
+        else:
+            yield emit({"type": "log", "level": "info", "message": "Loading DNAC running-configs…"})
         configs = await _load_dnac_configs(session, loop)
         yield emit({"type": "log", "level": "success",
                     "message": f"Loaded {len(configs)} cached device configs."})
+        yield emit({"type": "phase", "phase": "dnac", "status": "done",
+                    "summary": f"{len(configs)} configs"})
 
         # ── Phase 2: parse IOS ──
+        yield emit({"type": "phase", "phase": "parse", "status": "running"})
         yield emit({"type": "log", "level": "info",
                     "message": f"Parsing IPsec config from {len(configs)} devices…"})
         parsed_ios: dict[str, dict] = {}
@@ -401,10 +427,30 @@ async def refresh_stream(session: SessionEntry = Depends(require_auth)):
             yield emit({"type": "log", "level": "info",
                         "message": f"    … and {len(dmvpn_keys) - 20} more groups"})
 
+        yield emit({"type": "phase", "phase": "parse", "status": "done",
+                    "summary": f"{len(parsed_ios)} devices · {total_tun} ifaces"})
+
         # ── Phase 3: Palo (the slow one) ──
         palo = {"ike_gateways": [], "ipsec_tunnels": [], "ike_profiles": [], "ipsec_profiles": []}
 
-        if DEV_MODE:
+        if source == "dnac":
+            # DNAC-only refresh: reuse whatever's cached so the build step has
+            # something for the Palo half. If nothing cached, the build emits zero
+            # Palo rows — that's fine, the user explicitly asked for DNAC-only.
+            palo = {
+                "ike_gateways":   cache.get("pan_ike_gateways")          or [],
+                "ipsec_tunnels":  cache.get("pan_ipsec_tunnels")         or [],
+                "ike_profiles":   cache.get("pan_ike_crypto_profiles")   or [],
+                "ipsec_profiles": cache.get("pan_ipsec_crypto_profiles") or [],
+            }
+            yield emit({"type": "phase", "phase": "palo", "status": "skipped",
+                        "summary": f"using cache · {len(palo['ipsec_tunnels'])} tunnels"})
+            yield emit({"type": "log", "level": "info",
+                        "message": f"Skipping Panorama (DNAC-only refresh). "
+                                   f"Reusing cached: {len(palo['ike_gateways'])} gateways, "
+                                   f"{len(palo['ipsec_tunnels'])} tunnels."})
+            api_key = None
+        elif DEV_MODE:
             # Use seeded mock data — there's no real Panorama in dev.
             palo = {
                 "ike_gateways":   cache.get("pan_ike_gateways")          or [],
@@ -416,14 +462,19 @@ async def refresh_stream(session: SessionEntry = Depends(require_auth)):
                         "message": f"[DEV_MODE] Using mock Panorama: "
                                    f"{len(palo['ike_gateways'])} gateways, "
                                    f"{len(palo['ipsec_tunnels'])} tunnels."})
+            yield emit({"type": "phase", "phase": "palo", "status": "done",
+                        "summary": f"[mock] {len(palo['ipsec_tunnels'])} tunnels"})
             api_key = None
         else:
+            yield emit({"type": "phase", "phase": "palo", "status": "running"})
             try:
                 api_key = auth_module.get_panorama_key_for_session(session)
             except Exception as e:
                 api_key = None
                 yield emit({"type": "log", "level": "warn",
                             "message": f"Skipping Panorama: {e}"})
+                yield emit({"type": "phase", "phase": "palo", "status": "failed",
+                            "summary": "auth failed"})
 
         if api_key:
             yield emit({"type": "log", "level": "info", "message": "Querying Panorama…"})
@@ -528,7 +579,12 @@ async def refresh_stream(session: SessionEntry = Depends(require_auth)):
             cache.set("pan_ike_crypto_profiles",  palo["ike_profiles"],   TTL_PAN_POLICY)
             cache.set("pan_ipsec_crypto_profiles", palo["ipsec_profiles"], TTL_PAN_POLICY)
 
+            yield emit({"type": "phase", "phase": "palo", "status": "done",
+                        "summary": f"{len(palo['ipsec_tunnels'])} tunnels · "
+                                   f"{len(palo['ike_gateways'])} gateways"})
+
         # ── Phase 4: normalize + cache ──
+        yield emit({"type": "phase", "phase": "build", "status": "running"})
         yield emit({"type": "log", "level": "info", "message": "Building normalized inventory…"})
         from utils.tunnel_inventory import build_inventory
         inv = build_inventory(parsed_ios=parsed_ios, device_meta=device_meta, palo=palo)
@@ -584,6 +640,8 @@ async def refresh_stream(session: SessionEntry = Depends(require_auth)):
         yield emit({"type": "log", "level": "success",
                     "message": f"Inventory built: {stats.get('total', 0)} tunnels "
                                f"({', '.join(f'{n} {k}' for k, n in stats.get('by_type', {}).items())})"})
+        yield emit({"type": "phase", "phase": "build", "status": "done",
+                    "summary": f"{stats.get('total', 0)} tunnels"})
         yield emit({"type": "complete", "stats": stats, "built_at": inv.get("built_at")})
 
     return StreamingResponse(generate(), media_type="text/event-stream")

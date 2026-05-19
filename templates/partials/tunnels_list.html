@@ -22,10 +22,15 @@
         {% if not_built %}
           <i class="ph ph-hourglass fs-1 d-block mb-2"></i>
           <p class="mb-1">Tunnel inventory hasn't been built yet.</p>
-          <p class="small">Click <strong>Rebuild</strong> above to parse cached DNAC configs and query Panorama. Progress streams live.</p>
-          <button class="btn btn-action btn-sm mt-2" onclick="tunnelsStreamRefresh()">
-            <i class="ph ph-arrows-clockwise"></i> Rebuild now
-          </button>
+          <p class="small">Use <strong>Refresh DNAC</strong> and <strong>Refresh Palo</strong> above to populate the inventory. Both phases stream live progress.</p>
+          <div class="d-flex gap-2 justify-content-center mt-2">
+            <button class="btn btn-outline btn-sm" onclick="tunnelsStreamRefresh('dnac')">
+              <i class="ph ph-arrows-clockwise"></i> Refresh DNAC
+            </button>
+            <button class="btn btn-outline btn-sm" onclick="tunnelsStreamRefresh('palo')">
+              <i class="ph ph-arrows-clockwise"></i> Refresh Palo
+            </button>
+          </div>
         {% else %}
           <i class="ph ph-empty fs-1 d-block mb-2"></i>
           <p class="mb-0">No tunnels matched.</p>
