@@ -269,3 +269,109 @@ def test_build_inventory_palo():
 def test_parse_empty():
     assert parse_ipsec_config("")["hostname"] == ""
     assert parse_ipsec_config("")["tunnel_interfaces"] == []
+
+
+def test_stub_tunnel_classified_as_stub_and_skipped():
+    """interface TunnelN / no ip address declarations should not pollute the inventory."""
+    cfg = """!
+hostname TEST
+!
+interface Tunnel101
+ no ip address
+!
+end
+"""
+    p = parse_ipsec_config(cfg)
+    assert len(p["tunnel_interfaces"]) == 1
+    assert classify_tunnel(p["tunnel_interfaces"][0]) == "stub"
+
+    inv = build_inventory({"d": p}, {"d": {"hostname": "TEST", "managementIpAddress": "10.0.0.1"}})
+    assert inv["stats"]["total"] == 0  # stubs excluded
+
+
+def test_dmvpn_inferred_from_nhrp_even_without_explicit_mode():
+    """NHRP is the unambiguous DMVPN signal — trust it over a missing `tunnel mode` line."""
+    cfg = """!
+hostname TEST
+!
+crypto ipsec profile DMVPN-P
+ set transform-set TS
+!
+crypto ipsec transform-set TS esp-aes 256 esp-sha-hmac
+!
+interface Tunnel5000
+ ip nhrp network-id 5000
+ ip nhrp nhs 10.0.0.1
+ tunnel source GigabitEthernet0/0/1
+ tunnel key 5000
+ tunnel protection ipsec profile DMVPN-P
+!
+end
+"""
+    p = parse_ipsec_config(cfg)
+    iface = p["tunnel_interfaces"][0]
+    assert iface["tunnel_mode"] == ""    # no `tunnel mode` line
+    assert classify_tunnel(iface) == "dmvpn"
+
+
+def test_crypto_map_with_ikev2_profile_classifies_as_ikev2():
+    """A crypto map entry that pins `set ikev2-profile X` should NOT fall back
+    to the device's ISAKMP policy and be misreported as IKEv1."""
+    cfg = """!
+hostname TEST
+!
+crypto ikev2 proposal STRONG
+ encryption aes-cbc-256
+ integrity sha256
+ group 14
+!
+crypto ikev2 profile PARTNER
+ match identity remote address 1.2.3.4
+ authentication remote pre-share
+ authentication local pre-share
+ keyring local KR
+!
+crypto isakmp policy 10
+ encryption aes 256
+ hash sha
+ group 2
+!
+crypto ipsec transform-set TS esp-aes 256 esp-sha256-hmac
+!
+crypto map MYMAP 10 ipsec-isakmp
+ set peer 1.2.3.4
+ set transform-set TS
+ set ikev2-profile PARTNER
+ match address ACL
+!
+interface GigabitEthernet0/0/1
+ crypto map MYMAP redundancy HSRP
+!
+end
+"""
+    p = parse_ipsec_config(cfg)
+    inv = build_inventory({"d": p}, {"d": {"hostname": "TEST", "managementIpAddress": "10.0.0.1"}})
+    cm_tunnels = [t for t in inv["tunnels"] if t["type"] == "crypto_map"]
+    assert len(cm_tunnels) == 1
+    assert cm_tunnels[0]["phase1"]["protocol"] == "ikev2"
+    assert cm_tunnels[0]["phase1"]["profile_name"] == "PARTNER"
+
+
+def test_crypto_map_binding_accepts_trailing_redundancy_keyword():
+    """`crypto map NAME redundancy HSRP` on an interface should still bind."""
+    cfg = """!
+hostname TEST
+!
+crypto map MYMAP 10 ipsec-isakmp
+ set peer 1.2.3.4
+!
+interface GigabitEthernet0/0/1
+ crypto map MYMAP redundancy INTERNETHSRP
+!
+end
+"""
+    p = parse_ipsec_config(cfg)
+    bindings = p["physical_iface_crypto_maps"]
+    assert len(bindings) == 1
+    assert bindings[0]["name"] == "GigabitEthernet0/0/1"
+    assert bindings[0]["crypto_map"] == "MYMAP"

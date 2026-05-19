@@ -1226,3 +1226,98 @@ def get_ipsec_tunnels(api_key: str) -> list[dict]:
             out.extend(_parse_ipsec_tunnels(_unwrap(r, "ipsec"), f"template:{tpl}", template=tpl))
         except Exception: continue
     return out
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# COMBINED IKE / IPSEC INVENTORY FETCH
+# ──────────────────────────────────────────────────────────────────────────────
+# Replaces four separate get_* functions that each iterated every template.
+# This walks shared once and each template once, fetching the entire `network`
+# subtree per template and slicing the four object types out of it client-side.
+# Round-trips: 4*(N+1) → (N+2). On a fleet with 30 templates and ~2s per call,
+# that's a 4-minute speedup.
+#
+# The optional `progress` callback fires at meaningful boundaries with
+# kwargs: step, status ("loading"/"done"/"warn"), message, current, total.
+# Designed for SSE streaming.
+
+def _slice_network_tree(network_el, scope: str, template: str = "") -> dict:
+    """Given a parsed <network> Element, return all four IKE/IPsec object lists."""
+    if network_el is None:
+        return {"ike_profiles": [], "ipsec_profiles": [], "ike_gateways": [], "ipsec_tunnels": []}
+
+    ike_crypto   = network_el.find(".//ike/crypto-profiles/ike-crypto-profiles")
+    ipsec_crypto = network_el.find(".//ike/crypto-profiles/ipsec-crypto-profiles")
+    gateway      = network_el.find(".//ike/gateway")
+    ipsec_tun    = network_el.find(".//tunnel/ipsec")
+
+    return {
+        "ike_profiles":   _parse_ike_crypto_profiles(ike_crypto, scope),
+        "ipsec_profiles": _parse_ipsec_crypto_profiles(ipsec_crypto, scope),
+        "ike_gateways":   _parse_ike_gateways(gateway, scope, template=template),
+        "ipsec_tunnels":  _parse_ipsec_tunnels(ipsec_tun, scope, template=template),
+    }
+
+
+def get_ipsec_inventory(api_key: str, progress=None) -> dict:
+    """Fetch all IKE/IPsec objects from Panorama (shared + every template) in
+    one pass. Returns {"ike_profiles": [...], "ipsec_profiles": [...],
+    "ike_gateways": [...], "ipsec_tunnels": [...]}.
+
+    progress is an optional callable: progress(step, status, message,
+    current=None, total=None). Step is one of: "shared", "templates_list",
+    "template", "done".
+    """
+    def _emit(step, status, message, current=None, total=None):
+        if progress:
+            try:
+                progress(step=step, status=status, message=message,
+                         current=current, total=total)
+            except Exception as e:
+                logger.warning(f"tunnel progress callback failed: {e}")
+
+    out = {"ike_profiles": [], "ipsec_profiles": [], "ike_gateways": [], "ipsec_tunnels": []}
+
+    # 1. Shared — one fetch of the whole network subtree.
+    _emit("shared", "loading", "Fetching shared IKE/IPsec config…")
+    try:
+        r = _config_get("/config/shared/network", api_key)
+        shared = _slice_network_tree(r, scope="shared")
+        for k in out: out[k].extend(shared[k])
+        _emit("shared", "done",
+              f"shared: {len(shared['ike_gateways'])} gateways, "
+              f"{len(shared['ipsec_tunnels'])} tunnels, "
+              f"{len(shared['ike_profiles'])} IKE profiles, "
+              f"{len(shared['ipsec_profiles'])} IPsec profiles")
+    except Exception as e:
+        _emit("shared", "warn", f"shared fetch failed (continuing): {e}")
+
+    # 2. Templates — list them once, then one fetch per template.
+    _emit("templates_list", "loading", "Listing Panorama templates…")
+    templates = _list_templates(api_key)
+    _emit("templates_list", "done", f"Found {len(templates)} template(s).",
+          current=len(templates), total=len(templates))
+
+    for i, tpl in enumerate(templates, 1):
+        _emit("template", "loading", f"Fetching template '{tpl}' ({i}/{len(templates)})…",
+              current=i, total=len(templates))
+        xpath = (
+            f"{BASE_XPATH}/template/entry[@name='{tpl}']"
+            "/config/devices/entry[@name='localhost.localdomain']/network"
+        )
+        try:
+            r = _config_get(xpath, api_key)
+            sliced = _slice_network_tree(r, scope=f"template:{tpl}", template=tpl)
+            for k in out: out[k].extend(sliced[k])
+            counts = (
+                f"{len(sliced['ike_gateways'])} gw, "
+                f"{len(sliced['ipsec_tunnels'])} tun"
+            )
+            _emit("template", "done", f"{tpl}: {counts}", current=i, total=len(templates))
+        except Exception as e:
+            _emit("template", "warn", f"{tpl}: skipped ({e})", current=i, total=len(templates))
+
+    _emit("done", "done",
+          f"Palo done: {len(out['ike_gateways'])} gateways, "
+          f"{len(out['ipsec_tunnels'])} tunnels.")
+    return out

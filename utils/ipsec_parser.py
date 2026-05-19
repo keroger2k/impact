@@ -90,7 +90,7 @@ _RE_SET_IKEV2_PROF  = re.compile(r"^set\s+ikev2-profile\s+(\S+)")
 # Crypto map attributes
 _RE_CMAP_PEER       = re.compile(r"^set\s+peer\s+(\S+)")
 _RE_CMAP_MATCH_ACL  = re.compile(r"^match\s+address\s+(\S+)")
-_RE_IFACE_CMAP      = re.compile(r"^crypto\s+map\s+(\S+)(?:\s+local-address.*)?\s*$")
+_RE_IFACE_CMAP      = re.compile(r"^crypto\s+map\s+(\S+)(?:\s+.*)?$")
 
 
 def _iter_blocks(config: str):
@@ -505,19 +505,37 @@ def _parse_interface(name: str, children: list[str]) -> dict:
 # ── DMVPN role inference ─────────────────────────────────────────────────────
 
 def classify_tunnel(iface: dict) -> str:
-    """Return one of: 'dmvpn', 'svti', 'dvti', 'gre_over_ipsec', 'gre', 'unknown'."""
+    """Return one of: 'dmvpn', 'svti', 'dvti', 'gre_over_ipsec', 'gre', 'stub', 'unknown'.
+
+    A 'stub' is a declared tunnel interface with no real config (no mode, no
+    source, no destination, no protection, no NHRP). Common in fleet configs
+    where `interface TunnelN / no ip address` lives on every device.
+    """
     mode = (iface.get("tunnel_mode") or "").lower()
     has_protection = bool(iface.get("tunnel_protection_profile"))
     has_dest = bool(iface.get("tunnel_destination"))
+    has_source = bool(iface.get("tunnel_source"))
     has_nhrp = iface.get("nhrp_network_id") is not None
 
-    if "gre multipoint" in mode or (has_nhrp and "gre" in mode):
+    # Stub: declared but unconfigured. Don't pollute the inventory.
+    if not (mode or has_protection or has_dest or has_source or has_nhrp):
+        return "stub"
+
+    # NHRP is the unambiguous DMVPN signal. Trust it over `tunnel mode`,
+    # which may be missing (relying on the IOS default of GRE).
+    if has_nhrp:
+        return "dmvpn"
+    if "gre multipoint" in mode:
         return "dmvpn"
     if "ipsec" in mode:
         return "svti" if has_dest else "dvti"
     if has_protection and has_dest:
         return "gre_over_ipsec"
     if "gre" in mode and has_dest:
+        return "gre"
+    # If we got here it has *some* tunnel config but nothing classifying:
+    # treat as plain GRE if there's a destination, otherwise unknown.
+    if has_dest:
         return "gre"
     return "unknown"
 

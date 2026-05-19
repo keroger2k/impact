@@ -75,6 +75,9 @@ def _build_ios_tunnels(
 
         for iface in parsed.get("tunnel_interfaces", []):
             ttype = classify_tunnel(iface)
+            if ttype == "stub":
+                # Empty `interface TunnelN / no ip address` declarations — skip.
+                continue
             if ttype == "dmvpn":
                 key = (
                     iface.get("nhrp_network_id"),
@@ -313,8 +316,23 @@ def _make_cryptomap_tunnel(
             bound_iface = piface.get("name", "")
             break
 
-    # Phase 1: legacy crypto map -> ISAKMP policies (best-effort first one)
-    phase1 = _resolve_phase1("", lookups)
+    # Phase 1: if the crypto map entry pins an IKEv2 profile, resolve via that
+    # — otherwise fall back to "best-effort first ISAKMP policy".
+    ikev2_prof_name = entry.get("ikev2_profile") or ""
+    if ikev2_prof_name and ikev2_prof_name in lookups.get("ikev2_profile_by_name", {}):
+        v2prof = lookups["ikev2_profile_by_name"][ikev2_prof_name]
+        proposal = next(iter(lookups.get("ikev2_proposal_by_name", {}).values()), {})
+        phase1 = {
+            "protocol":     "ikev2",
+            "encryption":   proposal.get("encryption", []),
+            "integrity":    proposal.get("integrity", []),
+            "dh_group":     proposal.get("group", []),
+            "lifetime":     "",
+            "auth":         v2prof.get("auth_local", "") or v2prof.get("auth_remote", ""),
+            "profile_name": ikev2_prof_name,
+        }
+    else:
+        phase1 = _resolve_phase1("", lookups)
     # Phase 2: from transform-set on the entry itself
     phase2 = _resolve_phase2(
         profile_name="",

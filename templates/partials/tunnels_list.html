@@ -7,8 +7,17 @@
   <div class="card-body p-0 overflow-auto" style="max-height: calc(100vh - 260px);">
     {% if not tunnels %}
       <div class="text-center text-muted py-5">
-        <i class="ph ph-empty fs-1 d-block mb-2"></i>
-        <p class="mb-0">No tunnels matched.</p>
+        {% if not_built %}
+          <i class="ph ph-hourglass fs-1 d-block mb-2"></i>
+          <p class="mb-1">Tunnel inventory hasn't been built yet.</p>
+          <p class="small">Click <strong>Rebuild</strong> above to parse cached DNAC configs and query Panorama. Progress streams live.</p>
+          <button class="btn btn-action btn-sm mt-2" onclick="tunnelsStreamRefresh()">
+            <i class="ph ph-arrows-clockwise"></i> Rebuild now
+          </button>
+        {% else %}
+          <i class="ph ph-empty fs-1 d-block mb-2"></i>
+          <p class="mb-0">No tunnels matched.</p>
+        {% endif %}
       </div>
     {% else %}
     <table class="table table-hover table-sm mb-0">

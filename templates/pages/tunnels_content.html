@@ -53,20 +53,45 @@
             <i class="ph ph-download-simple"></i> CSV
           </a>
 
-          <button class="btn btn-action btn-sm"
-                  hx-post="/api/tunnels/refresh"
-                  hx-target="#tunnels-list"
-                  hx-swap="none"
-                  hx-on::after-request="htmx.trigger('#tunnels-list','refresh')">
-            <i class="ph ph-arrows-clockwise"></i> Refresh
+          <button id="tun-refresh-btn" class="btn btn-action btn-sm"
+                  onclick="tunnelsStreamRefresh()">
+            <i class="ph ph-arrows-clockwise"></i> Rebuild
           </button>
         </div>
       </div>
     </div>
   </div>
 
+  <!-- ── Progress panel (visible during builds) ─────────────────────── -->
+  <div id="tunnel-progress" class="card shadow-sm border-0 animate-fade-in" style="display:none;">
+    <div class="card-header bg-navy text-white d-flex align-items-center gap-2">
+      <i class="ph ph-circle-notch ph-spin"></i>
+      <span class="fw-bold">Building tunnel inventory…</span>
+      <span id="tunnel-progress-elapsed" class="ms-2 small text-light opacity-75"></span>
+      <div class="ms-auto small text-light opacity-75">
+        <span id="tunnel-progress-step-label">starting…</span>
+      </div>
+    </div>
+    <div class="card-body p-0">
+      <div id="tunnel-progress-bar-wrap" class="px-3 pt-3" style="display:none">
+        <div class="d-flex justify-content-between small text-muted mb-1">
+          <span id="tunnel-progress-bar-label">Templates</span>
+          <span id="tunnel-progress-bar-count">0 / 0</span>
+        </div>
+        <div class="progress" style="height:6px;">
+          <div id="tunnel-progress-bar" class="progress-bar" role="progressbar" style="width:0%"></div>
+        </div>
+      </div>
+      <div id="tunnel-progress-log"
+           style="font-family: var(--font-mono, monospace); font-size: 12px;
+                  max-height: 320px; overflow-y: auto; padding: 12px 16px;
+                  background: #0f172a; color: #e2e8f0;">
+      </div>
+    </div>
+  </div>
+
   <!-- ── List + Detail layout ────────────────────────────────────────── -->
-  <div class="row g-3">
+  <div id="tunnels-main" class="row g-3">
     <div class="col-lg-7">
       <div id="tunnels-list"
            hx-get="/api/tunnels/inventory"
@@ -76,8 +101,8 @@
         <div class="card border-0 shadow-sm">
           <div class="card-body text-center py-5 text-muted">
             <div class="spinner spinner-lg mb-3"></div>
-            <p>Building tunnel inventory…</p>
-            <p class="small">First load parses every cached DNAC config + queries Panorama.</p>
+            <p class="mb-1">Checking tunnel inventory…</p>
+            <p class="small text-muted">If this is the first load, hit <strong>Rebuild</strong> to start the parser.</p>
           </div>
         </div>
       </div>
@@ -101,12 +126,17 @@
   .tunnel-row.active { background-color: rgba(59,130,246,0.10); border-left: 3px solid var(--accent); }
   .type-badge { font-family: var(--font-mono, monospace); font-size: 11px; letter-spacing: .02em; }
   .crypto-cell { font-family: var(--font-mono, monospace); font-size: 11px; color: var(--text-muted); }
-  .weak-crypto { color: #b91c1c; font-weight: 600; }
+  .tunnel-log-line { white-space: pre-wrap; line-height: 1.5; }
+  .tunnel-log-info    { color: #cbd5e1; }
+  .tunnel-log-success { color: #86efac; }
+  .tunnel-log-warn    { color: #fbbf24; }
+  .tunnel-log-error   { color: #fca5a5; }
+  .tunnel-log-ts      { color: #64748b; margin-right: 8px; }
 </style>
 
 <script>
   (function(){
-    // Stats partial render
+    // Stats partial render — converts the JSON response to inline chips.
     document.body.addEventListener('htmx:afterSwap', function(evt){
       if (evt.detail.target.id === 'tunnel-stats') {
         try {
@@ -115,7 +145,9 @@
           const parts = [];
           parts.push(`<span><strong>${s.total||0}</strong> total</span>`);
           const types = s.by_type || {};
-          const labels = {dmvpn:'DMVPN', svti:'sVTI', dvti:'dVTI', crypto_map:'Policy', gre_over_ipsec:'GRE/IPsec', palo_ipsec:'Palo'};
+          const labels = {dmvpn:'DMVPN', svti:'sVTI', dvti:'dVTI',
+                          crypto_map:'Policy', gre_over_ipsec:'GRE/IPsec',
+                          palo_ipsec:'Palo', gre:'GRE'};
           for (const [k,v] of Object.entries(types)) {
             parts.push(`<span><strong>${v}</strong> ${labels[k]||k}</span>`);
           }
@@ -128,4 +160,142 @@
       }
     });
   })();
+
+  // ── Streaming rebuild ──
+  // POSTs to /api/tunnels/refresh-stream, parses SSE events, and renders a
+  // live log + progress bar so the 5-minute Palo walk isn't a black box.
+  let __tunActiveES = null;
+  let __tunStartTs = 0;
+  let __tunElapsedTimer = null;
+
+  window.tunnelsStreamRefresh = async function() {
+    if (__tunActiveES) return;  // already running
+
+    const panel = document.getElementById('tunnel-progress');
+    const log   = document.getElementById('tunnel-progress-log');
+    const main  = document.getElementById('tunnels-main');
+    const btn   = document.getElementById('tun-refresh-btn');
+    const elapsed = document.getElementById('tunnel-progress-elapsed');
+    const stepLabel = document.getElementById('tunnel-progress-step-label');
+    const barWrap = document.getElementById('tunnel-progress-bar-wrap');
+    const bar     = document.getElementById('tunnel-progress-bar');
+    const barCount = document.getElementById('tunnel-progress-bar-count');
+
+    log.innerHTML = '';
+    panel.style.display = 'block';
+    btn.disabled = true;
+    btn.innerHTML = '<i class="ph ph-circle-notch ph-spin"></i> Building…';
+    __tunStartTs = Date.now();
+    elapsed.textContent = '0s';
+    stepLabel.textContent = 'starting…';
+    barWrap.style.display = 'none';
+
+    __tunElapsedTimer = setInterval(() => {
+      const s = Math.floor((Date.now() - __tunStartTs) / 1000);
+      const mins = Math.floor(s / 60), secs = s % 60;
+      elapsed.textContent = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+    }, 1000);
+
+    const appendLog = (level, message) => {
+      const ts = new Date().toLocaleTimeString('en-US', {hour12:false});
+      const line = document.createElement('div');
+      line.className = `tunnel-log-line tunnel-log-${level||'info'}`;
+      line.innerHTML = `<span class="tunnel-log-ts">${ts}</span>${escapeHtml(message)}`;
+      log.appendChild(line);
+      log.scrollTop = log.scrollHeight;
+    };
+    const escapeHtml = (s) => String(s).replace(/[&<>"']/g, c =>
+      ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+    // Use fetch + ReadableStream so we can POST (EventSource is GET-only).
+    let response;
+    try {
+      response = await fetch('/api/tunnels/refresh-stream', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'X-CSRF-Token': (document.cookie.split('; ').find(r=>r.startsWith('csrf_token=')) || '').split('=')[1] || '',
+        },
+      });
+    } catch (e) {
+      appendLog('error', `Failed to start stream: ${e}`);
+      finish(false); return;
+    }
+
+    if (!response.ok) {
+      appendLog('error', `HTTP ${response.status} ${response.statusText}`);
+      finish(false); return;
+    }
+
+    __tunActiveES = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    const finish = (success) => {
+      clearInterval(__tunElapsedTimer);
+      btn.disabled = false;
+      btn.innerHTML = '<i class="ph ph-arrows-clockwise"></i> Rebuild';
+      __tunActiveES = null;
+      stepLabel.textContent = success ? 'done' : 'failed';
+      // Re-pull stats and inventory once the build is finished.
+      if (success) {
+        htmx.ajax('GET', '/api/tunnels/stats', {target:'#tunnel-stats', swap:'innerHTML'});
+        htmx.ajax('GET', '/api/tunnels/inventory', {target:'#tunnels-list', swap:'innerHTML'});
+        // Auto-collapse the progress panel after a brief delay so the user
+        // can still read the final stats line.
+        setTimeout(() => { panel.style.display = 'none'; }, 4000);
+      }
+    };
+
+    try {
+      while (true) {
+        const {value, done} = await __tunActiveES.read();
+        if (done) break;
+        buf += decoder.decode(value, {stream: true});
+        const events = buf.split('\n\n');
+        buf = events.pop();  // last (possibly incomplete) event stays in buffer
+
+        for (const raw of events) {
+          if (!raw.startsWith('data: ')) continue;
+          let ev;
+          try { ev = JSON.parse(raw.slice(6)); } catch { continue; }
+
+          if (ev.type === 'log') {
+            appendLog(ev.level || 'info', ev.message || '');
+            if (ev.message && /Querying Panorama|Listing Panorama|Fetching template/i.test(ev.message)) {
+              stepLabel.textContent = 'palo';
+            } else if (ev.message && /Loading DNAC/i.test(ev.message)) {
+              stepLabel.textContent = 'dnac';
+            } else if (ev.message && /Parsing IPsec/i.test(ev.message)) {
+              stepLabel.textContent = 'parse';
+            } else if (ev.message && /Building normalized/i.test(ev.message)) {
+              stepLabel.textContent = 'build';
+            }
+          } else if (ev.type === 'progress') {
+            if (ev.step === 'palo_template' && ev.total) {
+              barWrap.style.display = 'block';
+              const pct = Math.round(100 * (ev.done||0) / ev.total);
+              bar.style.width = `${pct}%`;
+              barCount.textContent = `${ev.done}/${ev.total}`;
+            }
+          } else if (ev.type === 'complete') {
+            appendLog('success', `Complete. ${ev.stats?.total ?? 0} tunnels.`);
+            finish(true);
+            return;
+          } else if (ev.type === 'error') {
+            appendLog('error', ev.message || 'Unknown error');
+            finish(false);
+            return;
+          }
+        }
+      }
+      // Stream ended without a 'complete' marker — treat as failure but still
+      // refresh the list, since partial cache may have been written.
+      finish(false);
+      htmx.ajax('GET', '/api/tunnels/inventory', {target:'#tunnels-list', swap:'innerHTML'});
+    } catch (e) {
+      appendLog('error', `Stream error: ${e}`);
+      finish(false);
+    }
+  };
 </script>

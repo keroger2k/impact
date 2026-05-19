@@ -75,7 +75,8 @@ app.add_middleware(CSRFMiddleware)
 @app.middleware("http")
 async def sse_rate_limit(request: Request, call_next):
     if request.url.path in ["/api/warm", "/api/ipam/refresh", "/api/commands/run",
-                            "/api/commands/config-run", "/api/import/run"]:
+                            "/api/commands/config-run", "/api/import/run",
+                            "/api/tunnels/refresh-stream"]:
         token = request.cookies.get("impact_token")
         if token:
             key = (token, request.url.path)
