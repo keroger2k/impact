@@ -357,6 +357,80 @@ end
     assert cm_tunnels[0]["phase1"]["profile_name"] == "PARTNER"
 
 
+def test_dnac_obfuscated_lines_dont_break_interface_block():
+    """DNAC strips leading whitespace from lines containing redacted values
+    (`tunnel key xxxxxx`, `ip nhrp authentication xxxxxxxxx`). The parser
+    must treat them as continuations, not as block terminators.
+    """
+    # Reproduces the exact shape from RTGFS005AD001's cached config:
+    # description + a couple normal child lines, then an obfuscated indent-0
+    # line, then more indent-1 children including the lines that classify
+    # the tunnel as DMVPN.
+    cfg = (
+        "hostname RTGFS005AD001\n"
+        "!\n"
+        "crypto ipsec profile SOHO-PRODUCTION\n"
+        " set transform-set TS\n"
+        "!\n"
+        "crypto ipsec transform-set TS esp-aes 256 esp-sha-hmac\n"
+        "!\n"
+        "interface Tunnel201\n"
+        " description SOHO PRODUCTION TRAFFIC\n"
+        " bandwidth 100000\n"
+        " ip address 10.36.190.17 255.255.255.128\n"
+        " ip mtu 1140\n"
+        "ip nhrp authentication xxxxxxxxx\n"     # ← DNAC-obfuscated, indent 0
+        " no ip nhrp map multicast dynamic\n"
+        " ip nhrp network-id 201\n"
+        " ip nhrp nhs 10.36.190.1 nbma 173.255.51.85 multicast\n"
+        " tunnel source GigabitEthernet0/0/1\n"
+        " tunnel mode gre multipoint\n"
+        "tunnel key xxxxxx\n"                    # ← DNAC-obfuscated, indent 0
+        " tunnel vrf INTERNET\n"
+        " tunnel protection ipsec profile SOHO-PRODUCTION shared\n"
+        " ip virtual-reassembly\n"
+        "!\n"
+        "end\n"
+    )
+    p = parse_ipsec_config(cfg)
+    assert len(p["tunnel_interfaces"]) == 1
+    iface = p["tunnel_interfaces"][0]
+
+    # All of these were lost before the fix because _block_lines stopped at
+    # the first obfuscated indent-0 line.
+    assert iface["tunnel_mode"] == "gre multipoint"
+    assert iface["tunnel_protection_profile"] == "SOHO-PRODUCTION"
+    assert iface["nhrp_network_id"] == 201
+    assert iface["tunnel_source"] == "GigabitEthernet0/0/1"
+    assert iface["tunnel_vrf"] == "INTERNET"
+    assert len(iface["nhrp_nhs"]) == 1
+    assert classify_tunnel(iface) == "dmvpn"
+
+
+def test_obfuscated_line_doesnt_swallow_next_block():
+    """Sanity: a real `interface X` following a block must still terminate
+    the previous block, even after we've made indent-0 continuation tolerant.
+    """
+    cfg = (
+        "interface Tunnel201\n"
+        " description Spoke\n"
+        " tunnel mode gre multipoint\n"
+        " ip nhrp network-id 201\n"
+        "interface Tunnel251\n"                  # ← real block-starter
+        " description Mgmt\n"
+        " tunnel mode gre multipoint\n"
+        " ip nhrp network-id 251\n"
+        "!\n"
+        "end\n"
+    )
+    p = parse_ipsec_config(cfg)
+    assert len(p["tunnel_interfaces"]) == 2
+    assert p["tunnel_interfaces"][0]["name"] == "Tunnel201"
+    assert p["tunnel_interfaces"][0]["nhrp_network_id"] == 201
+    assert p["tunnel_interfaces"][1]["name"] == "Tunnel251"
+    assert p["tunnel_interfaces"][1]["nhrp_network_id"] == 251
+
+
 def test_crypto_map_binding_accepts_trailing_redundancy_keyword():
     """`crypto map NAME redundancy HSRP` on an interface should still bind."""
     cfg = """!

@@ -103,8 +103,85 @@ def _iter_blocks(config: str):
         yield indent, s.strip(), raw
 
 
+# Lines that unambiguously start a NEW top-level block. Used by _block_lines
+# to distinguish legitimate block boundaries from DNAC obfuscation artifacts.
+#
+# DNAC strips leading whitespace from lines whose values it has redacted (e.g.
+# `ip nhrp authentication xxxxxxxxx`, `tunnel key xxxxxx`, `enable secret`,
+# `crypto isakmp key …`). Inside an interface or crypto block, these lines end
+# up at indent 0 even though they belong to the parent block. Without the
+# tolerance below, _block_lines truncates the parent block at the first such
+# line and the rest of the children get orphaned.
+_BLOCK_START_RE = re.compile(
+    r"^(?:"
+    r"interface\s+\S+"
+    r"|router\s+\S+"
+    r"|crypto\s+(?:ikev2|isakmp|ipsec|map|pki|engine|keyring)\b"
+    r"|ip\s+(?:access-list|prefix-list|dhcp\s+pool|vrf|sla|route|http|ssh|domain|nat|forward-protocol|tcp|multicast-routing|tftp|name-server|community-list|as-path|extcommunity-list|local|host|telnet|finger|bootp|gratuitous-arps|cef|tacacs|radius|flow-export|flow-cache)\b"
+    r"|ipv6\s+(?:access-list|unicast-routing|route|router|nd|prefix-list|cef)\b"
+    r"|hostname\s+\S+"
+    r"|class-map\s+"
+    r"|policy-map\s+"
+    r"|route-map\s+"
+    r"|object-group\s+"
+    r"|key\s+chain\s+"
+    r"|vrf\s+definition\s+"
+    r"|line\s+(?:con|vty|aux|tty)\b"
+    r"|banner\s+"
+    r"|track\s+\d+"
+    r"|aaa\s+"
+    r"|flow\s+(?:record|exporter|monitor)\s+"
+    r"|event\s+manager\s+(?:applet|environment|directory|history|policy|scheduler|session)\b"
+    r"|username\s+\S+"
+    r"|tacacs(?:-server|\s+server)\b"
+    r"|radius(?:-server|\s+server)\b"
+    r"|ntp\s+"
+    r"|snmp-server\s+"
+    r"|logging\s+"
+    r"|service\s+\S+"
+    r"|no\s+service\s+"
+    r"|control-plane\b"
+    r"|version\s+\d"
+    r"|boot(?:-start-marker|-end-marker|\s+system|\s+config|\s+host)\b"
+    r"|memory\s+\S+"
+    r"|license\s+"
+    r"|platform\s+"
+    r"|spanning-tree\s+"
+    r"|vtp\s+"
+    r"|clock\s+"
+    r"|enable\s+(?:secret|password)\b"
+    r"|cts\s+"
+    r"|redundancy\b"
+    r"|diagnostic\s+"
+    r"|errdisable\s+"
+    r"|file\s+(?:verify|prompt|privilege)\b"
+    r"|login\s+on-"
+    r"|exception\s+"
+    r"|scheduler\s+"
+    r"|call-home\b"
+    r"|mgcp(?:\s|$)"
+    r"|access-list\s+\d+"
+    r"|menu\s+"
+    r"|alias\s+"
+    r"|subscriber\s+templating"
+    r"|multilink\s+"
+    r"|cdp\s+"
+    r"|lldp\s+"
+    r"|password\s+encryption"
+    r"|no\s+ip\s+(?:gratuitous-arps|finger|http|bootp|domain|source-route)\b"
+    r"|ip\s+icmp\s+rate-limit"
+    r"|end\b"
+    r")"
+)
+
+
 def _block_lines(lines: list[tuple[int, str, str]], start: int) -> tuple[list[str], int]:
-    """Collect indented child lines starting at `start`. Returns (children, end_idx)."""
+    """Collect indented child lines starting at `start`. Returns (children, end_idx).
+
+    Lenient about indent-0 lines that don't match _BLOCK_START_RE — those are
+    DNAC's whitespace-stripped obfuscations (e.g. `tunnel key xxxxxx`) and
+    actually belong to the parent block.
+    """
     if start >= len(lines):
         return [], start
     parent_indent = lines[start - 1][0] if start > 0 else 0
@@ -112,8 +189,19 @@ def _block_lines(lines: list[tuple[int, str, str]], start: int) -> tuple[list[st
     i = start
     while i < len(lines):
         indent, stripped, _ = lines[i]
-        if indent <= parent_indent and stripped not in ("exit-af-interface", "exit-address-family"):
+        # Definitely a child: deeper-indented than parent.
+        if indent > parent_indent:
+            children.append(stripped)
+            i += 1
+            continue
+        # Explicit block enders.
+        if stripped in ("exit-af-interface", "exit-address-family", "exit-af-topology"):
             break
+        # Indent <= parent. Could be a real new block, OR a DNAC-obfuscated
+        # line whose whitespace got stripped. Decide by content.
+        if _BLOCK_START_RE.match(stripped):
+            break
+        # Treat as continuation of the parent block.
         children.append(stripped)
         i += 1
     return children, i
