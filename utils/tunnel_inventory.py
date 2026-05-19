@@ -253,14 +253,67 @@ def _build_crypto_lookups(parsed: dict) -> dict:
     }
 
 
+_NAME_STOPWORDS = {"profile", "ipsec", "ike", "ikev", "tunnel", "crypto"}
+
+
+def _name_tokens(s: str) -> set[str]:
+    """Tokenize a profile/binding name for similarity scoring. Splits on
+    ``_`` and ``-``, lowercases, and drops generic tokens (``profile``,
+    ``ipsec``, ...) so the *distinctive* parts of the name drive matching."""
+    import re as _re
+    out: set[str] = set()
+    for part in _re.split(r"[_\-]+", (s or "").lower()):
+        if part and part not in _NAME_STOPWORDS:
+            out.add(part)
+    return out
+
+
+def _score_binding(tunnel_ref: str, binding_name: str) -> int:
+    """Count shared distinctive tokens between the tunnel's referenced
+    profile name and an obfuscated profile's IKE-binding name. Used to
+    pick the right obfuscated profile when a device has both an IKEv1 and
+    an IKEv2 obfuscated block and the named lookup is impossible (DNAC
+    redacted both headers).
+
+    Example: ``TSA_HSDN_IPSEC_PROFILE`` vs binding ``TSA_HSDN_ISAKMP_PROFILE``
+    shares {tsa, hsdn} → score 2; vs ``TSA_PROFILE_IKEv2`` shares {tsa} →
+    score 1. The IKEv1 binding wins. For ``TSA_IPSEC_PROFILE`` both bindings
+    score 1 → tiebreaker (IKEv2) wins.
+    """
+    return len(_name_tokens(tunnel_ref) & _name_tokens(binding_name))
+
+
+def _ikev2_proposal_fields(lookups: dict) -> dict:
+    """Pull encryption/integrity/dh_group from the first IKEv2 proposal we can
+    find. The IKEv2 proposal selection in IOS is policy-driven and we don't
+    track which proposal a given session negotiated — taking the first one
+    available is the same heuristic IOS-XE's `show crypto session detail`
+    output exposes when there's only one policy/proposal pair on the device.
+    """
+    for pol in (lookups.get("ikev2_proposal_by_name") or {}).values():
+        return {
+            "encryption": pol.get("encryption", []),
+            "integrity":  pol.get("integrity", []),
+            "dh_group":   pol.get("group", []),
+        }
+    return {"encryption": [], "integrity": [], "dh_group": []}
+
+
 def _resolve_phase1(profile_name: str, lookups: dict) -> dict:
     """Best-effort phase 1: prefer IKEv2 chain (profile→proposal); fall back to first ISAKMP policy.
 
     Key signal for the IKE version is the IPsec profile body:
       - ``set ikev2-profile NAME``  → tunnel uses IKEv2 (regardless of whether
         we can find the ``crypto ikev2 profile`` block to enrich details).
-      - ``set isakmp-profile NAME`` → tunnel uses IKEv1.
-      - Neither set → fall back to the device's first ISAKMP policy as a guess.
+      - ``set isakmp-profile NAME`` → tunnel uses IKEv1 (explicit).
+      - Profile not findable by name (DNAC redacts ``crypto ipsec profile
+        <name>`` to ``crypto ipsec xxxx`` on its API output) → scan all
+        obfuscated profiles in the lookup. If any carry ``set ikev2-profile``
+        we report IKEv2; if only ``set isakmp-profile`` is present we report
+        IKEv1. In a mixed-fleet device the IKEv2 binding wins because every
+        named IKEv1 fallback would otherwise mask the IKEv2 evidence.
+      - Truly no profile binding anywhere → fall back to the first ISAKMP
+        policy as a last-resort guess.
     """
     p1 = {
         "protocol": "",
@@ -271,27 +324,94 @@ def _resolve_phase1(profile_name: str, lookups: dict) -> dict:
         "auth": "",
         "profile_name": "",
     }
+
+    def apply_ikev2(v2_prof_name: str) -> None:
+        p1["protocol"] = "ikev2"
+        p1["profile_name"] = v2_prof_name
+        v2prof = lookups["ikev2_profile_by_name"].get(v2_prof_name)
+        if v2prof:
+            p1["auth"] = v2prof.get("auth_local", "") or v2prof.get("auth_remote", "")
+        proposal = _ikev2_proposal_fields(lookups)
+        p1["encryption"] = proposal["encryption"]
+        p1["integrity"]  = proposal["integrity"]
+        p1["dh_group"]   = proposal["dh_group"]
+
     prof = lookups["ipsec_profile_by_name"].get(profile_name) if profile_name else None
     if prof:
         v2_prof_name = prof.get("ikev2_profile") or ""
+        v1_prof_name = prof.get("isakmp_profile") or ""
         if v2_prof_name:
-            # Reference alone is enough to call this IKEv2 — the v2-profile
-            # block may live on a hub config we never cached.
-            p1["protocol"] = "ikev2"
-            p1["profile_name"] = v2_prof_name
-            v2prof = lookups["ikev2_profile_by_name"].get(v2_prof_name)
-            if v2prof:
-                p1["auth"] = v2prof.get("auth_local", "") or v2prof.get("auth_remote", "")
-            # Resolve proposals via policy match. We don't always know which
-            # policy applies — take the first proposal we can find. The
-            # fleet-wide lookup means this works even when the proposal is
-            # defined on a different device.
-            for pol in (lookups.get("ikev2_proposal_by_name") or {}).values():
-                p1["encryption"] = pol.get("encryption", [])
-                p1["integrity"]  = pol.get("integrity", [])
-                p1["dh_group"]   = pol.get("group", [])
-                break
+            apply_ikev2(v2_prof_name)
+        elif v1_prof_name:
+            # Profile body says explicitly IKEv1 (set isakmp-profile). Use
+            # the device's ISAKMP policy for crypto details but tag the
+            # profile_name with the *real* binding rather than the generic
+            # "isakmp policy N" placeholder.
+            if lookups["isakmp_policies_sorted"]:
+                pol = lookups["isakmp_policies_sorted"][0]
+                p1["protocol"]   = "ikev1"
+                p1["encryption"] = [pol.get("encryption", "")] if pol.get("encryption") else []
+                p1["integrity"]  = [pol.get("hash", "")] if pol.get("hash") else []
+                p1["dh_group"]   = [pol.get("group", "")] if pol.get("group") else []
+                p1["auth"]       = pol.get("authentication", "")
+                p1["lifetime"]   = str(pol.get("lifetime", ""))
+                p1["profile_name"] = v1_prof_name
 
+    # Named lookup missed → fall back to obfuscated profiles. When a device
+    # has both IKEv1 and IKEv2 obfuscated blocks (common in mixed fleets that
+    # are mid-migration), we pick the one whose binding *name* best matches
+    # the tunnel's referenced profile name. Token-overlap scoring works well
+    # because the customer's naming convention almost always shares the same
+    # site/realm tokens between the tunnel's profile reference and the
+    # underlying IKE binding (e.g. ``TSA_HSDN_IPSEC_PROFILE`` ↔
+    # ``TSA_HSDN_ISAKMP_PROFILE``).
+    if not p1["protocol"]:
+        obfuscated = [
+            v for k, v in lookups["ipsec_profile_by_name"].items()
+            if k.startswith("__obfuscated_ipsec_profile_") or v.get("_obfuscated")
+        ]
+
+        best_v2_score, best_v2_name = -1, ""
+        best_v1_score, best_v1_name = -1, ""
+        for prof in obfuscated:
+            v2 = prof.get("ikev2_profile") or ""
+            v1 = prof.get("isakmp_profile") or ""
+            if v2:
+                s = _score_binding(profile_name, v2)
+                if s > best_v2_score:
+                    best_v2_score, best_v2_name = s, v2
+            if v1:
+                s = _score_binding(profile_name, v1)
+                if s > best_v1_score:
+                    best_v1_score, best_v1_name = s, v1
+
+        chosen = None
+        if best_v2_name and best_v1_name:
+            # Highest score wins; tie goes to IKEv2 since the modern protocol
+            # is more likely in active use and the IKEv1 path is usually a
+            # legacy holdover.
+            chosen = "v2" if best_v2_score >= best_v1_score else "v1"
+        elif best_v2_name:
+            chosen = "v2"
+        elif best_v1_name:
+            chosen = "v1"
+
+        if chosen == "v2":
+            apply_ikev2(best_v2_name)
+        elif chosen == "v1" and lookups["isakmp_policies_sorted"]:
+            pol = lookups["isakmp_policies_sorted"][0]
+            p1["protocol"]   = "ikev1"
+            p1["encryption"] = [pol.get("encryption", "")] if pol.get("encryption") else []
+            p1["integrity"]  = [pol.get("hash", "")] if pol.get("hash") else []
+            p1["dh_group"]   = [pol.get("group", "")] if pol.get("group") else []
+            p1["auth"]       = pol.get("authentication", "")
+            p1["lifetime"]   = str(pol.get("lifetime", ""))
+            p1["profile_name"] = best_v1_name
+
+    # Last resort: no IPsec profile bindings anywhere. Guess from the first
+    # ISAKMP policy. This is the only place we synthesize a "isakmp policy N"
+    # profile_name — if the user sees that string in the UI, it means we
+    # couldn't find a single profile-level binding to report on.
     if not p1["protocol"] and lookups["isakmp_policies_sorted"]:
         pol = lookups["isakmp_policies_sorted"][0]
         p1["protocol"]   = "ikev1"

@@ -32,6 +32,14 @@ _RE_IKEV2_KEYRING   = re.compile(r"^crypto\s+ikev2\s+keyring\s+(\S+)\s*$")
 
 _RE_TS              = re.compile(r"^crypto\s+ipsec\s+transform-set\s+(\S+)\s+(.+?)\s*$")
 _RE_IPSEC_PROFILE   = re.compile(r"^crypto\s+ipsec\s+profile\s+(\S+)\s*$")
+# DNAC's cached `show run` output redacts `crypto ipsec profile <name>` and
+# `crypto ipsec transform-set <name> <transforms>` lines to a literal
+# `crypto ipsec xxxx` (the keyword + name + any inline content all get
+# replaced). The block CHILDREN survive intact (`set transform-set NAME`,
+# `set ikev2-profile NAME`, etc.), so we can still recover the profile's
+# bindings — we just don't know the profile's own name. See _parse_ipsec_profile
+# for how these synthesize a placeholder name.
+_RE_IPSEC_OBFUSCATED = re.compile(r"^crypto\s+ipsec\s+x+\s*$")
 _RE_CRYPTO_MAP_HDR  = re.compile(
     r"^crypto\s+map\s+(\S+)\s+(\d+)\s+(ipsec-isakmp|ipsec-manual|gdoi)\s*(.*)$"
 )
@@ -86,6 +94,7 @@ _RE_SET_SA_KB       = re.compile(
     r"^set\s+security-association\s+lifetime\s+kilobytes\s+(\S+)"
 )
 _RE_SET_IKEV2_PROF  = re.compile(r"^set\s+ikev2-profile\s+(\S+)")
+_RE_SET_ISAKMP_PROF = re.compile(r"^set\s+isakmp-profile\s+(\S+)")
 
 # Crypto map attributes
 _RE_CMAP_PEER       = re.compile(r"^set\s+peer\s+(\S+)")
@@ -323,6 +332,22 @@ def parse_ipsec_config(config: str) -> dict:
             ipsec_profiles.append(_parse_ipsec_profile(m.group(1), children))
             continue
 
+        # DNAC obfuscates `crypto ipsec profile <name>` to `crypto ipsec xxxx`.
+        # The children still carry the real bindings (set ikev2-profile, etc.)
+        # so we parse them under a synthesized name flagged as obfuscated.
+        # `crypto ipsec xxxx` is also DNAC's redaction of the inline
+        # transform-set definition line (`crypto ipsec transform-set NAME
+        # esp-aes 256 esp-sha-hmac`), but those have NO children — they
+        # collapse to an obfuscated-profile entry with empty children, which
+        # is harmless (resolver just skips entries with no useful bindings).
+        if _RE_IPSEC_OBFUSCATED.match(stripped):
+            children, i = _block_lines(lines, i + 1)
+            synthetic_name = f"__obfuscated_ipsec_profile_{len(ipsec_profiles)}__"
+            ipsec_profiles.append(
+                _parse_ipsec_profile(synthetic_name, children, obfuscated=True)
+            )
+            continue
+
         m = _RE_CRYPTO_MAP_HDR.match(stripped)
         if m:
             children, i = _block_lines(lines, i + 1)
@@ -460,20 +485,32 @@ def _parse_ikev2_profile(name: str, children: list[str]) -> dict:
     return prof
 
 
-def _parse_ipsec_profile(name: str, children: list[str]) -> dict:
+def _parse_ipsec_profile(name: str, children: list[str], obfuscated: bool = False) -> dict:
+    """Parse an IPsec profile block. ``obfuscated=True`` flags blocks where
+    DNAC redacted the ``crypto ipsec profile <name>`` line itself (replacing
+    everything after ``crypto ipsec`` with ``xxxx``). The children survive
+    redaction so we can still capture all the ``set …`` bindings — we just
+    can't connect this block back to a tunnel's ``tunnel protection ipsec
+    profile <name>`` reference by name. The resolver uses the ``_obfuscated``
+    flag to know it should fall back to scanning these blocks when the named
+    lookup misses."""
     prof = {
         "name": name,
         "transform_sets": [],
         "ikev2_profile": "",
+        "isakmp_profile": "",
         "pfs_group": "",
         "sa_lifetime_sec": None,
         "sa_lifetime_kb": None,
+        "_obfuscated": obfuscated,
     }
     for line in children:
         m = _RE_SET_TS.match(line)
         if m: prof["transform_sets"] = _split_multi(m.group(1)); continue
         m = _RE_SET_IKEV2_PROF.match(line)
         if m: prof["ikev2_profile"] = m.group(1); continue
+        m = _RE_SET_ISAKMP_PROF.match(line)
+        if m: prof["isakmp_profile"] = m.group(1); continue
         m = _RE_SET_PFS.match(line)
         if m: prof["pfs_group"] = m.group(1); continue
         m = _RE_SET_SA_SEC.match(line)
