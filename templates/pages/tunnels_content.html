@@ -82,9 +82,14 @@
           <div id="tunnel-progress-bar" class="progress-bar" role="progressbar" style="width:0%"></div>
         </div>
       </div>
+      <div class="d-flex justify-content-end px-3 pt-2 pb-1">
+        <button class="btn btn-outline btn-xs" type="button" onclick="copyTunnelLog()">
+          <i class="ph ph-copy"></i> Copy log
+        </button>
+      </div>
       <div id="tunnel-progress-log"
            style="font-family: var(--font-mono, monospace); font-size: 12px;
-                  max-height: 320px; overflow-y: auto; padding: 12px 16px;
+                  max-height: 520px; overflow-y: auto; padding: 12px 16px;
                   background: #0f172a; color: #e2e8f0;">
       </div>
     </div>
@@ -160,6 +165,24 @@
       }
     });
   })();
+
+  window.copyTunnelLog = function() {
+    const log = document.getElementById('tunnel-progress-log');
+    if (!log) return;
+    // Convert to plain text with timestamps preserved.
+    const text = Array.from(log.querySelectorAll('.tunnel-log-line'))
+      .map(line => line.innerText)
+      .join('\n');
+    navigator.clipboard.writeText(text).then(
+      () => {
+        const btn = event.target.closest('button');
+        const orig = btn.innerHTML;
+        btn.innerHTML = '<i class="ph ph-check"></i> Copied';
+        setTimeout(() => { btn.innerHTML = orig; }, 1500);
+      },
+      (err) => alert('Copy failed: ' + err)
+    );
+  };
 
   // ── Streaming rebuild ──
   // POSTs to /api/tunnels/refresh-stream, parses SSE events, and renders a
