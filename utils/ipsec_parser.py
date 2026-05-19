@@ -635,29 +635,26 @@ def classify_tunnel(iface: dict) -> str:
 
 
 def dmvpn_role(iface: dict) -> str:
-    """Infer DMVPN role from NHRP signals. 'hub', 'spoke', or 'unknown'.
+    """Tentative per-interface DMVPN role from local signals only.
 
-    Order matters — hub signals are checked before NHS presence because in a
-    multi-hub mesh the hubs themselves carry `ip nhrp nhs` lines pointing at
-    their peer hubs. Without this ordering, every hub-of-hubs would be
-    misclassified as a spoke.
+    Returns 'hub', 'spoke', or 'unknown' based on what we can tell from this
+    one interface in isolation. The cloud-aggregation step in
+    ``utils.tunnel_inventory`` runs a second pass that overrides these
+    tentative labels using cross-member NHS reference analysis (a member whose
+    local IP is named in another member's NHS list is a hub) — that's the
+    authoritative signal in real fleets, because:
 
-    Strong hub signals: `ip nhrp redirect` (hub sends traffic-indication
-    messages; spokes never do) and `ip nhrp map multicast dynamic` (hub
-    accepts spoke registrations on the mGRE NBMA layer).
+      * ``ip nhrp redirect`` appears on spokes too in many templated configs.
+      * ``ip nhrp shortcut`` is often missing even on Phase-3 spokes.
+      * Multi-hub clusters carry NHS lines pointing at peer hubs.
 
-    Strong spoke signals: `ip nhrp shortcut` (spoke installs NHRP shortcut
-    routes — hub-only feature in reverse). Falls through to "spoke" for any
-    NHS list that doesn't already trip a hub signal.
+    The only signal that's still reliable in isolation is ``ip nhrp map
+    multicast dynamic`` — that one is hub-only (a hub accepting dynamic
+    spoke registrations). Everything else is just a guess until we have the
+    cloud context.
     """
-    has_redirect = iface.get("nhrp_redirect")
-    has_dynamic_mcast = any(
-        m.lower() == "dynamic" for m in iface.get("nhrp_map_multicast", [])
-    )
-    if has_redirect or has_dynamic_mcast:
+    if any(m.lower() == "dynamic" for m in iface.get("nhrp_map_multicast", [])):
         return "hub"
-    if iface.get("nhrp_shortcut"):
-        return "spoke"
     if iface.get("nhrp_nhs"):
         return "spoke"
     return "unknown"

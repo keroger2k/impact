@@ -112,14 +112,27 @@ def _build_global_lookups(parsed_ios: dict[str, dict]) -> dict:
 
 
 def _merge_lookups(primary: dict, fallback: dict) -> dict:
-    """Return a lookup that prefers `primary` entries but falls back to `fallback`.
-    Used so per-device crypto resolution still works when the device's snapshot
-    doesn't include a profile that's referenced by its own tunnel."""
+    """Return a lookup that prefers ``primary`` entries but falls back to
+    ``fallback``. Crucially, when both sides know about the same name we do a
+    *field-by-field* merge so a partial per-device snapshot can't blank out a
+    complete fleet-wide one.
+
+    Example: if the per-device parse of ``TSA_IPSEC_PROFILE`` is missing
+    ``set ikev2-profile`` (because the snapshot was incomplete) but the global
+    aggregate captured it from another device, plain ``dict.update`` would
+    *replace* the global entry with the local incomplete one — losing the
+    IKEv2 binding. Using :func:`_coalesce` here means truthy values from
+    either side win.
+    """
     out = {}
     for key in ("ipsec_profile_by_name", "transform_set_by_name",
                 "ikev2_profile_by_name", "ikev2_proposal_by_name"):
         merged = dict(fallback.get(key, {}))
-        merged.update(primary.get(key, {}))
+        for name, item in (primary.get(key) or {}).items():
+            if name in merged:
+                merged[name] = _coalesce(merged[name], item)
+            else:
+                merged[name] = item
         out[key] = merged
     out["isakmp_policies_sorted"] = (primary.get("isakmp_policies_sorted") or
                                      fallback.get("isakmp_policies_sorted", []))
@@ -474,6 +487,52 @@ def _make_cryptomap_tunnel(
     }
 
 
+def _classify_dmvpn_members(members: list[dict]) -> dict[int, str]:
+    """Decide hub vs spoke for every member of a DMVPN cloud by analyzing the
+    NHS reference graph across the whole cloud.
+
+    Reasoning: a hub's tunnel IP is named in *other* members' ``ip nhrp nhs``
+    lines (every spoke registers with every hub; hubs in a multi-hub mesh
+    also list peer hubs). A spoke's tunnel IP is never referenced by anyone.
+
+    So we count NHS references for each tunnel IP across all members. A
+    member whose ``local_ip`` shows up in someone else's NHS list is a hub.
+    Members with NHS entries but who aren't themselves referenced are spokes.
+    Per-interface signals (``ip nhrp map multicast dynamic``) are kept as a
+    fallback for the lone-snapshot case where the reference graph is empty.
+
+    Returns a dict mapping ``id(member)`` → role. Caller looks up roles by
+    object identity to avoid index/order coupling.
+    """
+    # NHS lines are parsed as a list of the first whitespace-separated token,
+    # which for "ip nhrp nhs <tunnel-ip> nbma <nbma-ip> multicast" is the
+    # tunnel-side IP — exactly what matches a peer's local_ip on the overlay.
+    nhs_ref_count: dict[str, int] = {}
+    for m in members:
+        for nhs_ip in (m["iface"].get("nhrp_nhs") or []):
+            nhs_ref_count[nhs_ip] = nhs_ref_count.get(nhs_ip, 0) + 1
+
+    roles: dict[int, str] = {}
+    for m in members:
+        local_ip = m["iface"].get("ip_address", "")
+        nhs_list = m["iface"].get("nhrp_nhs") or []
+        nhs_self_refs = sum(1 for nhs in nhs_list if nhs == local_ip)
+        peer_refs = nhs_ref_count.get(local_ip, 0) - nhs_self_refs
+
+        if peer_refs > 0:
+            # Someone else lists me as their NHS → I'm a hub.
+            roles[id(m)] = "hub"
+        elif any(mc.lower() == "dynamic" for mc in m["iface"].get("nhrp_map_multicast", [])):
+            # Fallback hub signal — useful when we only have the hub's own
+            # snapshot and no spoke configs in cache to vouch for it.
+            roles[id(m)] = "hub"
+        elif nhs_list:
+            roles[id(m)] = "spoke"
+        else:
+            roles[id(m)] = "unknown"
+    return roles
+
+
 def _make_dmvpn_cloud(
     key: tuple,
     members: list[dict],
@@ -490,11 +549,16 @@ def _make_dmvpn_cloud(
     phase1 = _resolve_phase1(profile_name, lookups)
     phase2 = _resolve_phase2(profile_name, lookups)
 
+    # Cloud-aware role classification — overrides the per-interface guess by
+    # cross-referencing every member's NHS list against every other member's
+    # local IP. See _classify_dmvpn_members above for why.
+    roles = _classify_dmvpn_members(members)
+
     endpoints: list[dict] = []
     hub_count = 0
     spoke_count = 0
     for m in members:
-        role = dmvpn_role(m["iface"])
+        role = roles.get(id(m), "unknown")
         if role == "hub": hub_count += 1
         elif role == "spoke": spoke_count += 1
         endpoints.append({
