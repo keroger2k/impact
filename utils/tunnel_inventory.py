@@ -33,7 +33,13 @@ def build_inventory(
 ) -> dict:
     tunnels: list[dict] = []
 
-    ios_tunnels = _build_ios_tunnels(parsed_ios, device_meta)
+    # Fleet-wide fallback lookups so crypto resolution still works when a
+    # tunnel references an ipsec profile that's only defined on another device
+    # (e.g. a DMVPN profile pushed by template that the snapshot for some
+    # spokes happens to miss).
+    global_lookups = _build_global_lookups(parsed_ios)
+
+    ios_tunnels = _build_ios_tunnels(parsed_ios, device_meta, global_lookups)
     tunnels.extend(ios_tunnels)
 
     if palo:
@@ -46,11 +52,61 @@ def build_inventory(
     }
 
 
+def _build_global_lookups(parsed_ios: dict[str, dict]) -> dict:
+    """Fleet-wide fallback for crypto resolution. Keys are profile/transform-set
+    names; values are the *last* definition seen across the fleet.
+
+    Enterprises with consistent template-driven config will end up with one
+    canonical definition per name. Fleets with divergent definitions get the
+    last-seen one — still better than empty.
+    """
+    ipsec_profiles: dict[str, dict] = {}
+    transform_sets: dict[str, dict] = {}
+    ikev2_profiles: dict[str, dict] = {}
+    ikev2_proposals: dict[str, dict] = {}
+    isakmp_policies: list[dict] = []
+
+    for parsed in parsed_ios.values():
+        for p in parsed.get("ipsec_profiles", []):
+            ipsec_profiles[p["name"]] = p
+        for t in parsed.get("transform_sets", []):
+            transform_sets[t["name"]] = t
+        for p in parsed.get("ikev2_profiles", []):
+            ikev2_profiles[p["name"]] = p
+        for p in parsed.get("ikev2_proposals", []):
+            ikev2_proposals[p["name"]] = p
+        isakmp_policies.extend(parsed.get("isakmp_policies", []))
+
+    return {
+        "ipsec_profile_by_name":   ipsec_profiles,
+        "transform_set_by_name":   transform_sets,
+        "ikev2_profile_by_name":   ikev2_profiles,
+        "ikev2_proposal_by_name":  ikev2_proposals,
+        "isakmp_policies_sorted":  sorted(isakmp_policies, key=lambda p: p.get("priority", 9999)),
+    }
+
+
+def _merge_lookups(primary: dict, fallback: dict) -> dict:
+    """Return a lookup that prefers `primary` entries but falls back to `fallback`.
+    Used so per-device crypto resolution still works when the device's snapshot
+    doesn't include a profile that's referenced by its own tunnel."""
+    out = {}
+    for key in ("ipsec_profile_by_name", "transform_set_by_name",
+                "ikev2_profile_by_name", "ikev2_proposal_by_name"):
+        merged = dict(fallback.get(key, {}))
+        merged.update(primary.get(key, {}))
+        out[key] = merged
+    out["isakmp_policies_sorted"] = (primary.get("isakmp_policies_sorted") or
+                                     fallback.get("isakmp_policies_sorted", []))
+    return out
+
+
 # ── IOS side ─────────────────────────────────────────────────────────────────
 
 def _build_ios_tunnels(
     parsed_ios:  dict[str, dict],
     device_meta: dict[str, dict],
+    global_lookups: dict | None = None,
 ) -> list[dict]:
     """
     Walk every parsed device and emit one tunnel per:
@@ -66,8 +122,11 @@ def _build_ios_tunnels(
     dmvpn_groups: dict[tuple, list[dict]] = {}     # key -> [{device_id, iface}]
     per_device_p1_p2: dict[str, dict] = {}         # device_id -> resolved p1/p2 lookups
 
+    global_lookups = global_lookups or {}
     for dev_id, parsed in parsed_ios.items():
-        per_device_p1_p2[dev_id] = _build_crypto_lookups(parsed)
+        per_device_p1_p2[dev_id] = _merge_lookups(
+            _build_crypto_lookups(parsed), global_lookups,
+        )
 
     for dev_id, parsed in parsed_ios.items():
         meta = device_meta.get(dev_id, {}) or {}
@@ -208,8 +267,13 @@ def _resolve_phase2(profile_name: str, lookups: dict, transform_set_names: list[
     ts_names: list[str] = []
 
     prof = lookups["ipsec_profile_by_name"].get(profile_name) if profile_name else None
+    # Always echo the referenced profile name even when the body can't be
+    # resolved — that way the UI shows "TSA_IPSEC_PROFILE" rather than "—"
+    # for the Profile/TS field, which is more useful than nothing.
+    if profile_name:
+        p2["name"] = profile_name
     if prof:
-        p2["name"] = prof.get("name", "")
+        p2["name"] = prof.get("name", "") or p2["name"]
         p2["pfs_group"] = prof.get("pfs_group", "")
         p2["sa_lifetime_sec"] = prof.get("sa_lifetime_sec")
         p2["sa_lifetime_kb"] = prof.get("sa_lifetime_kb")

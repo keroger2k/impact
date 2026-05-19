@@ -592,6 +592,28 @@ async def refresh_stream(
 
         stats = inv.get("stats", {})
 
+        # ── Phase-2 resolution check: how many IOS tunnels actually got their
+        # ipsec profile body resolved (not just the name echoed back)? ──
+        ios_tunnels = [t for t in inv["tunnels"] if t.get("platform") == "ios"]
+        with_p2_body = sum(
+            1 for t in ios_tunnels
+            if t["phase2"].get("encryption") or t["phase2"].get("transform_sets")
+        )
+        unresolved = [
+            t for t in ios_tunnels
+            if (t["phase2"].get("name") and not (t["phase2"].get("encryption") or t["phase2"].get("transform_sets")))
+        ]
+        if ios_tunnels:
+            yield emit({"type": "log", "level": "info",
+                        "message": f"Phase 2 resolution: {with_p2_body}/{len(ios_tunnels)} IOS tunnels "
+                                   f"have transform-set details resolved."})
+            if unresolved:
+                sample_names = ", ".join(t["phase2"]["name"] for t in unresolved[:5])
+                yield emit({"type": "log", "level": "warn",
+                            "message": f"  {len(unresolved)} tunnels reference a profile we couldn't resolve "
+                                       f"(sample: {sample_names}). Check that 'crypto ipsec profile <name>' "
+                                       f"is present in at least one cached config."})
+
         # ── Per-DMVPN-cloud member counts (helps explain "I expected 100s") ──
         dmvpn_tunnels = [t for t in inv["tunnels"] if t["type"] == "dmvpn"]
         if dmvpn_tunnels:
