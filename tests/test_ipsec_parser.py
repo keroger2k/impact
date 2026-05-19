@@ -449,3 +449,27 @@ end
     assert len(bindings) == 1
     assert bindings[0]["name"] == "GigabitEthernet0/0/1"
     assert bindings[0]["crypto_map"] == "MYMAP"
+
+
+def test_dmvpn_role_redundant_hub_with_nhs_is_hub():
+    """A DMVPN hub in a redundant dual-hub setup may have an `ip nhrp nhs`
+    pointing to its peer hub. It must still classify as a hub because it
+    has `ip nhrp redirect` and/or `dynamic` multicast maps.
+    """
+    cfg = """!
+interface Tunnel5000
+ description Redundant DMVPN Hub
+ ip address 10.0.0.1 255.255.255.0
+ ip nhrp network-id 5000
+ ip nhrp redirect
+ ip nhrp map multicast dynamic
+ ip nhrp nhs 10.0.0.2
+ tunnel source GigabitEthernet1
+ tunnel mode gre multipoint
+ tunnel key 5000
+!
+"""
+    p = parse_ipsec_config(cfg)
+    iface = p["tunnel_interfaces"][0]
+    assert classify_tunnel(iface) == "dmvpn"
+    assert dmvpn_role(iface) == "hub"

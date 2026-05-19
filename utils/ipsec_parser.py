@@ -636,10 +636,10 @@ def classify_tunnel(iface: dict) -> str:
 
 def dmvpn_role(iface: dict) -> str:
     """Infer DMVPN role from NHRP signals. 'hub', 'spoke', or 'unknown'."""
-    if iface.get("nhrp_nhs"):
-        return "spoke"
     if iface.get("nhrp_redirect") or any(
         m.lower() == "dynamic" for m in iface.get("nhrp_map_multicast", [])
     ):
         return "hub"
+    if iface.get("nhrp_nhs"):
+        return "spoke"
     return "unknown"
