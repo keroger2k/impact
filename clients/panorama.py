@@ -181,6 +181,42 @@ def _op(cmd: str, api_key: str) -> ET.Element:
         raise PanoramaAPIError(f"Panorama op error: {e}")
 
 
+def _config_get_targeted(xpath: str, api_key: str, target: str, timeout: int = 20) -> ET.Element | None:
+    """Like _config_get, but routes the query through Panorama to a specific
+    managed firewall by serial (target=SERIAL). Returns the <result> element
+    representing that firewall's view of the config — which includes anything
+    pushed via templates/stacks AND any local-only config the firewall has.
+
+    Tunnels defined directly on a firewall (not via shared/template/stack)
+    only surface here.
+    """
+    try:
+        host = _host()
+    except PanoramaAPIError:
+        return None
+    try:
+        resp = requests.get(
+            f"https://{host}/api/",
+            params={
+                "type":   "config",
+                "action": "get",
+                "xpath":  xpath,
+                "key":    api_key,
+                "target": target,
+            },
+            verify=verify_ssl(),
+            timeout=timeout,
+        )
+        if not resp.text or not resp.text.strip():
+            return None
+        root = ET.fromstring(resp.text)
+        if root.attrib.get("status") != "success":
+            return None
+        return root.find("result")
+    except Exception:
+        return None
+
+
 def _op_targeted(cmd: str, api_key: str, target: str) -> ET.Element | None:
     """Like _op but targets a specific managed firewall by serial number."""
     try:
@@ -1376,6 +1412,63 @@ def get_ipsec_inventory(api_key: str, progress=None) -> dict:
             _emit("stack", "done", f"{stack}: {counts}", current=i, total=len(stacks))
         except Exception as e:
             _emit("stack", "warn", f"{stack}: skipped ({e})", current=i, total=len(stacks))
+
+    # 4. Per-firewall config — the last place tunnels can live. Tunnels
+    #    configured directly on a firewall (not pushed via Panorama shared/
+    #    template/template-stack) only show up when we query that firewall's
+    #    view via the `target=SERIAL` parameter. This is the same mechanism
+    #    fetch_firewall_interfaces uses for the firewall-interface page.
+    #    Run in parallel since 50+ firewalls × ~500ms sequential is painful.
+    _emit("firewalls_list", "loading", "Listing managed firewalls…")
+    firewalls: list[tuple[str, str]] = []
+    try:
+        for d in get_managed_devices(api_key):
+            serial = d.get("serial")
+            host = d.get("hostname") or serial
+            if serial:
+                firewalls.append((serial, host))
+    except Exception as e:
+        _emit("firewalls_list", "warn", f"Could not list firewalls: {e}")
+    _emit("firewalls_list", "done",
+          f"Found {len(firewalls)} managed firewall(s).",
+          current=len(firewalls), total=len(firewalls))
+
+    if firewalls:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def _fetch_one(serial: str, hostname: str):
+            xpath = "/config/devices/entry[@name='localhost.localdomain']/network"
+            net = _config_get_targeted(xpath, api_key, serial, timeout=20)
+            if net is None:
+                return hostname, None, "no response"
+            return hostname, _slice_network_tree(
+                net, scope=f"firewall:{hostname}", template=hostname,
+            ), None
+
+        completed = 0
+        # 10-worker pool — Panorama handles concurrent target= queries fine.
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            futures = {ex.submit(_fetch_one, s, h): (s, h) for s, h in firewalls}
+            for fut in as_completed(futures):
+                completed += 1
+                serial, hostname = futures[fut]
+                try:
+                    _, sliced, err = fut.result()
+                except Exception as e:
+                    sliced, err = None, str(e)
+                if sliced is None:
+                    _emit("firewall", "warn",
+                          f"{hostname}: skipped ({err})",
+                          current=completed, total=len(firewalls))
+                    continue
+                # Append everything — dedup happens implicitly because we
+                # tag each entry with its scope label. The downstream
+                # normalizer can collapse duplicates if needed.
+                for k in out: out[k].extend(sliced[k])
+                _emit("firewall", "done",
+                      f"{hostname}: {len(sliced['ike_gateways'])} gw, "
+                      f"{len(sliced['ipsec_tunnels'])} tun",
+                      current=completed, total=len(firewalls))
 
     _emit("done", "done",
           f"Palo done: {len(out['ike_gateways'])} gateways, "

@@ -329,12 +329,12 @@
               stepLabel.textContent = 'build';
             }
           } else if (ev.type === 'progress') {
-            if ((ev.step === 'palo_template' || ev.step === 'palo_stack') && ev.total) {
+            if ((ev.step === 'palo_template' || ev.step === 'palo_stack' || ev.step === 'palo_firewall') && ev.total) {
               barWrap.style.display = 'block';
               const pct = Math.round(100 * (ev.done||0) / ev.total);
               bar.style.width = `${pct}%`;
-              const label = ev.step === 'palo_stack' ? 'Template-stacks' : 'Templates';
-              document.getElementById('tunnel-progress-bar-label').textContent = label;
+              const labels = {palo_template:'Templates', palo_stack:'Template-stacks', palo_firewall:'Firewalls'};
+              document.getElementById('tunnel-progress-bar-label').textContent = labels[ev.step] || 'Progress';
               barCount.textContent = `${ev.done}/${ev.total}`;
             }
           } else if (ev.type === 'complete') {

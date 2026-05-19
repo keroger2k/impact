@@ -463,7 +463,7 @@ async def refresh_stream(session: SessionEntry = Depends(require_auth)):
                 if status == "warn": level = "warn"
 
                 yield emit({"type": "log", "level": level, "message": msg})
-                if step in ("template", "stack") and cur is not None and tot is not None:
+                if step in ("template", "stack", "firewall") and cur is not None and tot is not None:
                     yield emit({"type": "progress",
                                 "step": f"palo_{step}",
                                 "done": cur, "total": tot})
