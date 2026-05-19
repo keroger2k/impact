@@ -635,11 +635,29 @@ def classify_tunnel(iface: dict) -> str:
 
 
 def dmvpn_role(iface: dict) -> str:
-    """Infer DMVPN role from NHRP signals. 'hub', 'spoke', or 'unknown'."""
+    """Infer DMVPN role from NHRP signals. 'hub', 'spoke', or 'unknown'.
+
+    Order matters — hub signals are checked before NHS presence because in a
+    multi-hub mesh the hubs themselves carry `ip nhrp nhs` lines pointing at
+    their peer hubs. Without this ordering, every hub-of-hubs would be
+    misclassified as a spoke.
+
+    Strong hub signals: `ip nhrp redirect` (hub sends traffic-indication
+    messages; spokes never do) and `ip nhrp map multicast dynamic` (hub
+    accepts spoke registrations on the mGRE NBMA layer).
+
+    Strong spoke signals: `ip nhrp shortcut` (spoke installs NHRP shortcut
+    routes — hub-only feature in reverse). Falls through to "spoke" for any
+    NHS list that doesn't already trip a hub signal.
+    """
+    has_redirect = iface.get("nhrp_redirect")
+    has_dynamic_mcast = any(
+        m.lower() == "dynamic" for m in iface.get("nhrp_map_multicast", [])
+    )
+    if has_redirect or has_dynamic_mcast:
+        return "hub"
+    if iface.get("nhrp_shortcut"):
+        return "spoke"
     if iface.get("nhrp_nhs"):
         return "spoke"
-    if iface.get("nhrp_redirect") or any(
-        m.lower() == "dynamic" for m in iface.get("nhrp_map_multicast", [])
-    ):
-        return "hub"
     return "unknown"

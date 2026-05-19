@@ -52,13 +52,32 @@ def build_inventory(
     }
 
 
-def _build_global_lookups(parsed_ios: dict[str, dict]) -> dict:
-    """Fleet-wide fallback for crypto resolution. Keys are profile/transform-set
-    names; values are the *last* definition seen across the fleet.
+def _coalesce(existing: dict, new: dict) -> dict:
+    """Merge two parses of the same named object (ipsec profile, transform-set,
+    ikev2 profile, …), preferring non-empty values from either side.
 
-    Enterprises with consistent template-driven config will end up with one
-    canonical definition per name. Fleets with divergent definitions get the
-    last-seen one — still better than empty.
+    Lists are unioned (order-preserving). Scalars keep the existing value unless
+    it's falsy, in which case the new value wins. This way, if one device's
+    snapshot of a profile is missing `set ikev2-profile` but another device's
+    snapshot includes it, the merged record has both — which is the difference
+    between "this tunnel is IKEv2" and "we fell through to ISAKMP guesswork".
+    """
+    out = dict(existing)
+    for k, v in new.items():
+        cur = out.get(k)
+        if isinstance(v, list) and isinstance(cur, list):
+            for item in v:
+                if item not in cur:
+                    cur.append(item)
+        elif not cur and v:
+            out[k] = v
+    return out
+
+
+def _build_global_lookups(parsed_ios: dict[str, dict]) -> dict:
+    """Fleet-wide fallback for crypto resolution. Definitions of the same name
+    seen on multiple devices are *merged* field-by-field via :func:`_coalesce`,
+    so the global record reflects the most complete picture available.
     """
     ipsec_profiles: dict[str, dict] = {}
     transform_sets: dict[str, dict] = {}
@@ -66,15 +85,21 @@ def _build_global_lookups(parsed_ios: dict[str, dict]) -> dict:
     ikev2_proposals: dict[str, dict] = {}
     isakmp_policies: list[dict] = []
 
+    def absorb(bucket: dict, item: dict) -> None:
+        name = item.get("name")
+        if not name:
+            return
+        bucket[name] = _coalesce(bucket.get(name, {}), item)
+
     for parsed in parsed_ios.values():
         for p in parsed.get("ipsec_profiles", []):
-            ipsec_profiles[p["name"]] = p
+            absorb(ipsec_profiles, p)
         for t in parsed.get("transform_sets", []):
-            transform_sets[t["name"]] = t
+            absorb(transform_sets, t)
         for p in parsed.get("ikev2_profiles", []):
-            ikev2_profiles[p["name"]] = p
+            absorb(ikev2_profiles, p)
         for p in parsed.get("ikev2_proposals", []):
-            ikev2_proposals[p["name"]] = p
+            absorb(ikev2_proposals, p)
         isakmp_policies.extend(parsed.get("isakmp_policies", []))
 
     return {
