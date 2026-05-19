@@ -532,13 +532,18 @@ def _palo_kb(val, unit) -> int | None:
 # ── Stats ────────────────────────────────────────────────────────────────────
 
 def _stats(tunnels: list[dict]) -> dict:
-    by_type:     dict[str, int] = {}
-    by_platform: dict[str, int] = {}
+    by_type:        dict[str, int] = {}
+    by_platform:    dict[str, int] = {}
+    endpoints_by_type: dict[str, int] = {}
     for t in tunnels:
-        by_type[t["type"]]         = by_type.get(t["type"], 0) + 1
-        by_platform[t["platform"]] = by_platform.get(t["platform"], 0) + 1
+        by_type[t["type"]]            = by_type.get(t["type"], 0) + 1
+        by_platform[t["platform"]]    = by_platform.get(t["platform"], 0) + 1
+        endpoints_by_type[t["type"]]  = endpoints_by_type.get(t["type"], 0) + len(t.get("endpoints", []))
+    total_endpoints = sum(endpoints_by_type.values())
     return {
-        "total":       len(tunnels),
-        "by_type":     by_type,
-        "by_platform": by_platform,
+        "total":              len(tunnels),
+        "total_endpoints":    total_endpoints,
+        "by_type":            by_type,
+        "by_platform":        by_platform,
+        "endpoints_by_type":  endpoints_by_type,
     }

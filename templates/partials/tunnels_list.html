@@ -1,8 +1,20 @@
 <div class="card border-0 shadow-sm animate-fade-in">
-  <div class="card-header bg-navy text-white d-flex align-items-center">
+  <div class="card-header bg-navy text-white d-flex align-items-center gap-2">
     <span class="fw-bold">
-      {% if filtered %}Filtered: {{ tunnels|length }} of {{ stats.total or 0 }}{% else %}{{ tunnels|length }} tunnels{% endif %}
+      {% if filtered %}Filtered: {{ tunnels|length }} of {{ stats.total or 0 }}{% else %}{{ tunnels|length }} {{ 'rows' if flatten else 'tunnels' }}{% endif %}
     </span>
+    {% if flatten %}
+      <span class="badge bg-info-subtle text-info" title="DMVPN clouds expanded into one row per endpoint">
+        <i class="ph ph-arrows-out-line-horizontal"></i> spokes expanded
+      </span>
+    {% endif %}
+    {% set dmvpn_eps = (stats.endpoints_by_type or {}).get('dmvpn', 0) %}
+    {% if not flatten and dmvpn_eps and (stats.by_type or {}).get('dmvpn', 0) %}
+      <span class="ms-auto small text-light opacity-75">
+        {{ (stats.by_type or {}).get('dmvpn', 0) }} DMVPN cloud{{ '' if (stats.by_type or {}).get('dmvpn', 0) == 1 else 's' }}
+        · {{ dmvpn_eps }} endpoints
+      </span>
+    {% endif %}
   </div>
   <div class="card-body p-0 overflow-auto" style="max-height: calc(100vh - 260px);">
     {% if not tunnels %}

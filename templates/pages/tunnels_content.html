@@ -1,69 +1,85 @@
 <div class="d-flex flex-column gap-3">
 
-  <!-- ── Stats / Toolbar ─────────────────────────────────────────────── -->
-  <div class="card shadow-sm border-0 animate-fade-in">
+  <!-- ── Header card (identity + stats above; filter bar + actions below) ─── -->
+  <div class="card shadow-sm border-0 animate-fade-in tunnels-toolbar">
     <div class="card-body py-3">
-      <div class="d-flex flex-wrap align-items-center gap-3">
+      <!-- Row 1: title + stats chips, full-width -->
+      <div class="d-flex flex-wrap align-items-center gap-3 mb-3">
         <div class="d-flex align-items-center gap-2">
           <i class="ph ph-lock-key fs-4 text-primary"></i>
           <strong class="fs-5">Enterprise IPsec Tunnels</strong>
         </div>
-
-        <div id="tunnel-stats" class="ms-3 d-flex gap-3 flex-wrap small text-muted"
+        <div id="tunnel-stats" class="d-flex gap-3 flex-wrap small text-muted"
              hx-get="/api/tunnels/stats" hx-trigger="load, every 60s" hx-swap="innerHTML">
           <span><i class="ph ph-circle-notch ph-spin"></i> Loading stats…</span>
         </div>
+      </div>
 
-        <div class="ms-auto d-flex gap-2 align-items-center">
-          <input id="tun-q" type="search" class="form-control form-control-sm" style="width:240px"
-                 placeholder="Search hostname / peer / interface…"
+      <!-- Row 2: filters on the left, actions on the right, separated by a divider -->
+      <div class="d-flex flex-wrap align-items-center gap-2 tunnels-filterbar">
+        <div class="position-relative flex-grow-1" style="min-width:240px; max-width:360px">
+          <i class="ph ph-magnifying-glass position-absolute text-muted"
+             style="left:10px; top:50%; transform:translateY(-50%); pointer-events:none;"></i>
+          <input id="tun-q" type="search" class="form-control form-control-sm ps-4"
+                 placeholder="Search hostname, peer, interface, profile…"
                  hx-get="/api/tunnels/inventory"
                  hx-target="#tunnels-list"
                  hx-trigger="keyup changed delay:300ms, search"
                  hx-include="#tun-type,#tun-platform,#tun-flatten"
                  name="q">
+        </div>
 
-          <select id="tun-type" class="form-select form-select-sm" style="width:140px"
-                  hx-get="/api/tunnels/inventory"
-                  hx-target="#tunnels-list"
-                  hx-trigger="change"
-                  hx-include="#tun-q,#tun-platform,#tun-flatten"
-                  name="type">
-            <option value="">All types</option>
-            <option value="dmvpn">DMVPN</option>
-            <option value="svti">sVTI</option>
-            <option value="dvti">dVTI</option>
-            <option value="crypto_map">Policy-based</option>
-            <option value="gre_over_ipsec">GRE/IPsec</option>
-            <option value="palo_ipsec">Palo IPsec</option>
-          </select>
+        <select id="tun-type" class="form-select form-select-sm" style="width:150px"
+                hx-get="/api/tunnels/inventory"
+                hx-target="#tunnels-list"
+                hx-trigger="change"
+                hx-include="#tun-q,#tun-platform,#tun-flatten"
+                name="type">
+          <option value="">All types</option>
+          <option value="dmvpn">DMVPN</option>
+          <option value="svti">sVTI</option>
+          <option value="dvti">dVTI</option>
+          <option value="crypto_map">Policy-based</option>
+          <option value="gre_over_ipsec">GRE/IPsec</option>
+          <option value="palo_ipsec">Palo IPsec</option>
+        </select>
 
-          <select id="tun-platform" class="form-select form-select-sm" style="width:130px"
-                  hx-get="/api/tunnels/inventory"
-                  hx-target="#tunnels-list"
-                  hx-trigger="change"
-                  hx-include="#tun-q,#tun-type,#tun-flatten"
-                  name="platform">
-            <option value="">All platforms</option>
-            <option value="ios">Cisco IOS</option>
-            <option value="palo">Palo Alto</option>
-          </select>
+        <select id="tun-platform" class="form-select form-select-sm" style="width:140px"
+                hx-get="/api/tunnels/inventory"
+                hx-target="#tunnels-list"
+                hx-trigger="change"
+                hx-include="#tun-q,#tun-type,#tun-flatten"
+                name="platform">
+          <option value="">All platforms</option>
+          <option value="ios">Cisco IOS</option>
+          <option value="palo">Palo Alto</option>
+        </select>
 
-          <div class="form-check form-switch d-flex align-items-center gap-2 mb-0" style="min-width:130px"
+        <!-- Flatten toggle styled as a button-shaped switch so it reads as a view modifier, not lost in the filter row -->
+        <label class="btn btn-outline btn-sm tunnels-spoke-toggle mb-0 d-inline-flex align-items-center gap-2"
+               for="tun-flatten"
                title="Show each DMVPN spoke as its own row instead of collapsing into clouds">
-            <input class="form-check-input" type="checkbox"
+          <div class="form-check form-switch mb-0 ms-0 ps-0 d-flex align-items-center" style="min-height:0;">
+            <input class="form-check-input m-0" type="checkbox"
                    id="tun-flatten" name="flatten" value="true"
                    hx-get="/api/tunnels/inventory"
                    hx-target="#tunnels-list"
                    hx-trigger="change"
                    hx-include="#tun-q,#tun-type,#tun-platform">
-            <label class="form-check-label small" for="tun-flatten">Show all spokes</label>
           </div>
+          <span><i class="ph ph-arrows-out-line-horizontal"></i> Show all spokes</span>
+        </label>
 
+        <button type="button" class="btn btn-outline btn-sm" onclick="tunnelsClearFilters()">
+          <i class="ph ph-x-circle"></i> Clear
+        </button>
+
+        <div class="vr d-none d-md-block mx-1" style="opacity:.4"></div>
+
+        <div class="ms-auto d-flex gap-2 align-items-center">
           <a class="btn btn-outline btn-sm" href="/api/tunnels/export.csv" download>
             <i class="ph ph-download-simple"></i> CSV
           </a>
-
           <button id="tun-refresh-btn" class="btn btn-action btn-sm"
                   onclick="tunnelsStreamRefresh()">
             <i class="ph ph-arrows-clockwise"></i> Rebuild
@@ -155,6 +171,17 @@
   .tunnel-log-warn    { color: #fbbf24; }
   .tunnel-log-error   { color: #fca5a5; }
   .tunnel-log-ts      { color: #64748b; margin-right: 8px; }
+
+  /* Toolbar */
+  .tunnels-filterbar .form-control-sm,
+  .tunnels-filterbar .form-select-sm { height: 32px; }
+  .tunnels-spoke-toggle { cursor: pointer; user-select: none; }
+  .tunnels-spoke-toggle:has(.form-check-input:checked) {
+    background-color: rgba(59,130,246,0.10);
+    border-color: var(--accent, #3b82f6);
+    color: var(--accent, #3b82f6);
+  }
+  .tunnels-spoke-toggle .form-check-input { cursor: pointer; }
 </style>
 
 <script>
@@ -168,11 +195,19 @@
           const parts = [];
           parts.push(`<span><strong>${s.total||0}</strong> total</span>`);
           const types = s.by_type || {};
+          const eps   = s.endpoints_by_type || {};
           const labels = {dmvpn:'DMVPN', svti:'sVTI', dvti:'dVTI',
                           crypto_map:'Policy', gre_over_ipsec:'GRE/IPsec',
                           palo_ipsec:'Palo', gre:'GRE'};
           for (const [k,v] of Object.entries(types)) {
-            parts.push(`<span><strong>${v}</strong> ${labels[k]||k}</span>`);
+            // DMVPN clouds collapse hundreds of endpoints — show both so the
+            // scale isn't hidden behind a single "16 DMVPN" chip.
+            if (k === 'dmvpn' && eps[k] && eps[k] !== v) {
+              parts.push(`<span><strong>${v}</strong> ${labels[k]||k} ` +
+                         `<span class="text-muted">(${eps[k]} endpoints)</span></span>`);
+            } else {
+              parts.push(`<span><strong>${v}</strong> ${labels[k]||k}</span>`);
+            }
           }
           if (data.built_at) {
             const age = Math.round((Date.now()/1000 - data.built_at)/60);
@@ -183,6 +218,18 @@
       }
     });
   })();
+
+  window.tunnelsClearFilters = function() {
+    const q = document.getElementById('tun-q');
+    const tp = document.getElementById('tun-type');
+    const pf = document.getElementById('tun-platform');
+    const fl = document.getElementById('tun-flatten');
+    if (q) q.value = '';
+    if (tp) tp.value = '';
+    if (pf) pf.value = '';
+    if (fl) fl.checked = false;
+    htmx.ajax('GET', '/api/tunnels/inventory', {target:'#tunnels-list', swap:'innerHTML'});
+  };
 
   window.copyTunnelLog = function() {
     const log = document.getElementById('tunnel-progress-log');

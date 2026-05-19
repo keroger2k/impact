@@ -1436,13 +1436,22 @@ def get_ipsec_inventory(api_key: str, progress=None) -> dict:
     if firewalls:
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
+        # Disambiguate HA-pair hostnames in the log: same hostname can map
+        # to two serials (active + passive). Tag with the serial suffix when
+        # we detect a collision.
+        from collections import Counter
+        host_count = Counter(h for _, h in firewalls)
+        def _label(serial: str, hostname: str) -> str:
+            return f"{hostname}/{serial[-6:]}" if host_count[hostname] > 1 else hostname
+
         def _fetch_one(serial: str, hostname: str):
             xpath = "/config/devices/entry[@name='localhost.localdomain']/network"
             net = _config_get_targeted(xpath, api_key, serial, timeout=20)
             if net is None:
-                return hostname, None, "no response"
-            return hostname, _slice_network_tree(
-                net, scope=f"firewall:{hostname}", template=hostname,
+                return None, "no response"
+            return _slice_network_tree(
+                net, scope=f"firewall:{_label(serial, hostname)}",
+                template=_label(serial, hostname),
             ), None
 
         completed = 0
@@ -1452,25 +1461,83 @@ def get_ipsec_inventory(api_key: str, progress=None) -> dict:
             for fut in as_completed(futures):
                 completed += 1
                 serial, hostname = futures[fut]
+                label = _label(serial, hostname)
                 try:
-                    _, sliced, err = fut.result()
+                    sliced, err = fut.result()
                 except Exception as e:
                     sliced, err = None, str(e)
                 if sliced is None:
                     _emit("firewall", "warn",
-                          f"{hostname}: skipped ({err})",
+                          f"{label}: skipped ({err})",
                           current=completed, total=len(firewalls))
                     continue
-                # Append everything — dedup happens implicitly because we
-                # tag each entry with its scope label. The downstream
-                # normalizer can collapse duplicates if needed.
                 for k in out: out[k].extend(sliced[k])
                 _emit("firewall", "done",
-                      f"{hostname}: {len(sliced['ike_gateways'])} gw, "
+                      f"{label}: {len(sliced['ike_gateways'])} gw, "
                       f"{len(sliced['ipsec_tunnels'])} tun",
                       current=completed, total=len(firewalls))
+
+    # ── Dedup: same tunnel can surface from multiple scopes (e.g. a tunnel
+    #    defined in template:X AND in firewall:Y where Y uses X). Firewall
+    #    scope wins because it represents the as-deployed view. HA pairs that
+    #    mirror tunnels collapse here too (same name + same peer).
+    raw_counts = {k: len(v) for k, v in out.items()}
+    out = _dedup_palo_inventory(out)
+    dedup_counts = {k: len(v) for k, v in out.items()}
+    if raw_counts != dedup_counts:
+        _emit("dedup", "done",
+              f"Deduplicated: "
+              f"{raw_counts['ike_gateways']}→{dedup_counts['ike_gateways']} gateways, "
+              f"{raw_counts['ipsec_tunnels']}→{dedup_counts['ipsec_tunnels']} tunnels, "
+              f"{raw_counts['ike_profiles']}→{dedup_counts['ike_profiles']} IKE profiles, "
+              f"{raw_counts['ipsec_profiles']}→{dedup_counts['ipsec_profiles']} IPsec profiles.")
 
     _emit("done", "done",
           f"Palo done: {len(out['ike_gateways'])} gateways, "
           f"{len(out['ipsec_tunnels'])} tunnels.")
     return out
+
+
+def _dedup_palo_inventory(palo: dict) -> dict:
+    """Collapse duplicate gateways/tunnels/profiles surfaced by multiple scopes.
+
+    Dedup keys:
+      - gateways:       (name, peer_address)   — same gateway = same name + same peer
+      - ipsec_tunnels:  (name, ike_gateway)    — same tunnel = same name + same upstream gateway
+      - profiles:       (name,)                — profile names are globally unique-ish
+
+    For each key, prefer the firewall-scoped entry (`scope` starts with
+    `firewall:`) because that's the as-deployed view. Templates/stacks are
+    intent; per-firewall is reality.
+    """
+    def _prefer_firewall(existing: dict, candidate: dict) -> dict:
+        if candidate.get("scope", "").startswith("firewall:"):
+            return candidate
+        return existing
+
+    gw_map: dict[tuple, dict] = {}
+    for gw in palo.get("ike_gateways", []):
+        key = (gw.get("name", ""), gw.get("peer_address", ""))
+        gw_map[key] = _prefer_firewall(gw_map.get(key, gw), gw)
+
+    tun_map: dict[tuple, dict] = {}
+    for t in palo.get("ipsec_tunnels", []):
+        key = (t.get("name", ""), t.get("ike_gateway", ""))
+        tun_map[key] = _prefer_firewall(tun_map.get(key, t), t)
+
+    ikep_map: dict[str, dict] = {}
+    for p in palo.get("ike_profiles", []):
+        key = p.get("name", "")
+        ikep_map[key] = _prefer_firewall(ikep_map.get(key, p), p)
+
+    ipsecp_map: dict[str, dict] = {}
+    for p in palo.get("ipsec_profiles", []):
+        key = p.get("name", "")
+        ipsecp_map[key] = _prefer_firewall(ipsecp_map.get(key, p), p)
+
+    return {
+        "ike_gateways":   list(gw_map.values()),
+        "ipsec_tunnels":  list(tun_map.values()),
+        "ike_profiles":   list(ikep_map.values()),
+        "ipsec_profiles": list(ipsecp_map.values()),
+    }
