@@ -20,14 +20,14 @@
                  hx-get="/api/tunnels/inventory"
                  hx-target="#tunnels-list"
                  hx-trigger="keyup changed delay:300ms, search"
-                 hx-include="#tun-type,#tun-platform"
+                 hx-include="#tun-type,#tun-platform,#tun-flatten"
                  name="q">
 
           <select id="tun-type" class="form-select form-select-sm" style="width:140px"
                   hx-get="/api/tunnels/inventory"
                   hx-target="#tunnels-list"
                   hx-trigger="change"
-                  hx-include="#tun-q,#tun-platform"
+                  hx-include="#tun-q,#tun-platform,#tun-flatten"
                   name="type">
             <option value="">All types</option>
             <option value="dmvpn">DMVPN</option>
@@ -42,12 +42,23 @@
                   hx-get="/api/tunnels/inventory"
                   hx-target="#tunnels-list"
                   hx-trigger="change"
-                  hx-include="#tun-q,#tun-type"
+                  hx-include="#tun-q,#tun-type,#tun-flatten"
                   name="platform">
             <option value="">All platforms</option>
             <option value="ios">Cisco IOS</option>
             <option value="palo">Palo Alto</option>
           </select>
+
+          <div class="form-check form-switch d-flex align-items-center gap-2 mb-0" style="min-width:130px"
+               title="Show each DMVPN spoke as its own row instead of collapsing into clouds">
+            <input class="form-check-input" type="checkbox"
+                   id="tun-flatten" name="flatten" value="true"
+                   hx-get="/api/tunnels/inventory"
+                   hx-target="#tunnels-list"
+                   hx-trigger="change"
+                   hx-include="#tun-q,#tun-type,#tun-platform">
+            <label class="form-check-label small" for="tun-flatten">Show all spokes</label>
+          </div>
 
           <a class="btn btn-outline btn-sm" href="/api/tunnels/export.csv" download>
             <i class="ph ph-download-simple"></i> CSV
@@ -62,14 +73,21 @@
     </div>
   </div>
 
-  <!-- ── Progress panel (visible during builds) ─────────────────────── -->
+  <!-- ── Progress panel (visible during builds; stays open after) ─────── -->
   <div id="tunnel-progress" class="card shadow-sm border-0 animate-fade-in" style="display:none;">
     <div class="card-header bg-navy text-white d-flex align-items-center gap-2">
-      <i class="ph ph-circle-notch ph-spin"></i>
-      <span class="fw-bold">Building tunnel inventory…</span>
+      <i id="tunnel-progress-icon" class="ph ph-circle-notch ph-spin"></i>
+      <span id="tunnel-progress-title" class="fw-bold">Building tunnel inventory…</span>
       <span id="tunnel-progress-elapsed" class="ms-2 small text-light opacity-75"></span>
-      <div class="ms-auto small text-light opacity-75">
+      <div class="ms-auto d-flex align-items-center gap-2 small text-light opacity-75">
         <span id="tunnel-progress-step-label">starting…</span>
+        <button id="tunnel-progress-close" type="button"
+                class="btn btn-sm btn-link text-white p-0 ms-2"
+                style="display:none; line-height:1; text-decoration:none;"
+                title="Close (logs stay until next rebuild)"
+                onclick="document.getElementById('tunnel-progress').style.display='none'">
+          <i class="ph ph-x" style="font-size:16px"></i>
+        </button>
       </div>
     </div>
     <div class="card-body p-0">
@@ -212,6 +230,10 @@
     elapsed.textContent = '0s';
     stepLabel.textContent = 'starting…';
     barWrap.style.display = 'none';
+    // Reset the spinner + title in case a prior run set them to "done"
+    document.getElementById('tunnel-progress-icon').className = 'ph ph-circle-notch ph-spin';
+    document.getElementById('tunnel-progress-title').textContent = 'Building tunnel inventory…';
+    document.getElementById('tunnel-progress-close').style.display = 'none';
 
     __tunElapsedTimer = setInterval(() => {
       const s = Math.floor((Date.now() - __tunStartTs) / 1000);
@@ -224,8 +246,11 @@
       const line = document.createElement('div');
       line.className = `tunnel-log-line tunnel-log-${level||'info'}`;
       line.innerHTML = `<span class="tunnel-log-ts">${ts}</span>${escapeHtml(message)}`;
+      // Smart auto-scroll: only follow if the user is already at the bottom.
+      // Lets them scroll up to read past lines without being yanked back.
+      const stickToBottom = (log.scrollHeight - log.scrollTop - log.clientHeight) < 30;
       log.appendChild(line);
-      log.scrollTop = log.scrollHeight;
+      if (stickToBottom) log.scrollTop = log.scrollHeight;
     };
     const escapeHtml = (s) => String(s).replace(/[&<>"']/g, c =>
       ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -260,13 +285,22 @@
       btn.innerHTML = '<i class="ph ph-arrows-clockwise"></i> Rebuild';
       __tunActiveES = null;
       stepLabel.textContent = success ? 'done' : 'failed';
+      // Replace the spinning header with a static one; show the × close button.
+      const headerIcon = document.getElementById('tunnel-progress-icon');
+      const headerTitle = document.getElementById('tunnel-progress-title');
+      if (success) {
+        headerIcon.className = 'ph ph-check-circle';
+        headerTitle.textContent = 'Build complete';
+      } else {
+        headerIcon.className = 'ph ph-warning';
+        headerTitle.textContent = 'Build failed';
+      }
+      document.getElementById('tunnel-progress-close').style.display = '';
       // Re-pull stats and inventory once the build is finished.
+      // NOTE: do NOT auto-hide the panel — the user wants to review the log.
       if (success) {
         htmx.ajax('GET', '/api/tunnels/stats', {target:'#tunnel-stats', swap:'innerHTML'});
         htmx.ajax('GET', '/api/tunnels/inventory', {target:'#tunnels-list', swap:'innerHTML'});
-        // Auto-collapse the progress panel after a brief delay so the user
-        // can still read the final stats line.
-        setTimeout(() => { panel.style.display = 'none'; }, 4000);
       }
     };
 
@@ -295,10 +329,12 @@
               stepLabel.textContent = 'build';
             }
           } else if (ev.type === 'progress') {
-            if (ev.step === 'palo_template' && ev.total) {
+            if ((ev.step === 'palo_template' || ev.step === 'palo_stack') && ev.total) {
               barWrap.style.display = 'block';
               const pct = Math.round(100 * (ev.done||0) / ev.total);
               bar.style.width = `${pct}%`;
+              const label = ev.step === 'palo_stack' ? 'Template-stacks' : 'Templates';
+              document.getElementById('tunnel-progress-bar-label').textContent = label;
               barCount.textContent = `${ev.done}/${ev.total}`;
             }
           } else if (ev.type === 'complete') {

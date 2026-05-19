@@ -1149,6 +1149,31 @@ def _list_templates(api_key: str) -> list[str]:
     return names
 
 
+def _list_template_stacks(api_key: str) -> list[str]:
+    """Panorama template-stacks that may carry network/IKE config.
+
+    In Panorama, firewalls are typically assigned to a template-stack rather
+    than a single template. The stack references multiple templates AND can
+    define its own stack-level config (which is where IPsec tunnels often
+    live in practice — they're per-firewall-pair, not per-shared-template).
+
+    Iterating templates alone misses those tunnels. We iterate template-stacks
+    separately and fetch their network/ike subtree the same way.
+    """
+    names: list[str] = []
+    try:
+        r = _config_get(f"{BASE_XPATH}/template-stack", api_key)
+        parent = _unwrap(r, "template-stack")
+        if parent is not None:
+            for entry in parent.findall("./entry"):
+                n = entry.get("name", "")
+                if n:
+                    names.append(n)
+    except Exception:
+        pass
+    return names
+
+
 def get_ike_crypto_profiles(api_key: str) -> list[dict]:
     """Fetch IKE crypto profiles from shared + every template."""
     out: list[dict] = []
@@ -1325,6 +1350,32 @@ def get_ipsec_inventory(api_key: str, progress=None) -> dict:
             _emit("template", "done", f"{tpl}: {counts}", current=i, total=len(templates))
         except Exception as e:
             _emit("template", "warn", f"{tpl}: skipped ({e})", current=i, total=len(templates))
+
+    # 3. Template-stacks — where firewalls actually live in most Panorama
+    #    deployments. Tunnels often defined here rather than in shared templates.
+    _emit("stacks_list", "loading", "Listing Panorama template-stacks…")
+    stacks = _list_template_stacks(api_key)
+    _emit("stacks_list", "done", f"Found {len(stacks)} template-stack(s).",
+          current=len(stacks), total=len(stacks))
+
+    for i, stack in enumerate(stacks, 1):
+        _emit("stack", "loading", f"Fetching template-stack '{stack}' ({i}/{len(stacks)})…",
+              current=i, total=len(stacks))
+        xpath = (
+            f"{BASE_XPATH}/template-stack/entry[@name='{stack}']"
+            "/config/devices/entry[@name='localhost.localdomain']/network"
+        )
+        try:
+            r = _config_get(xpath, api_key)
+            sliced = _slice_network_tree(r, scope=f"template-stack:{stack}", template=stack)
+            for k in out: out[k].extend(sliced[k])
+            counts = (
+                f"{len(sliced['ike_gateways'])} gw, "
+                f"{len(sliced['ipsec_tunnels'])} tun"
+            )
+            _emit("stack", "done", f"{stack}: {counts}", current=i, total=len(stacks))
+        except Exception as e:
+            _emit("stack", "warn", f"{stack}: skipped ({e})", current=i, total=len(stacks))
 
     _emit("done", "done",
           f"Palo done: {len(out['ike_gateways'])} gateways, "

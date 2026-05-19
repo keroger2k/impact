@@ -40,7 +40,7 @@ _RE_CRYPTO_MAP_HDR  = re.compile(
 _RE_TUN_SOURCE      = re.compile(r"^tunnel\s+source\s+(\S+)")
 _RE_TUN_DEST        = re.compile(r"^tunnel\s+destination\s+(\S+)")
 _RE_TUN_MODE        = re.compile(r"^tunnel\s+mode\s+(.+)$")
-_RE_TUN_KEY         = re.compile(r"^tunnel\s+key\s+(\d+)")
+_RE_TUN_KEY         = re.compile(r"^tunnel\s+key\s+(\S+)")
 _RE_TUN_VRF         = re.compile(r"^tunnel\s+vrf\s+(\S+)")
 _RE_TUN_PROTECT     = re.compile(
     r"^tunnel\s+protection\s+ipsec\s+profile\s+(\S+)"
@@ -556,7 +556,13 @@ def _parse_interface(name: str, children: list[str]) -> dict:
         m = _RE_TUN_MODE.match(line)
         if m: iface["tunnel_mode"] = m.group(1).strip(); continue
         m = _RE_TUN_KEY.match(line)
-        if m: iface["tunnel_key"] = int(m.group(1)); continue
+        if m:
+            v = m.group(1)
+            # DNAC obfuscates real keys to literal `xxxxxx`. Keep as string so
+            # the UI/grouping doesn't drop it; coerce to int when it's numeric
+            # so existing tests and downstream code still see the int.
+            iface["tunnel_key"] = int(v) if v.isdigit() else v
+            continue
         m = _RE_TUN_VRF.match(line)
         if m: iface["tunnel_vrf"] = m.group(1); continue
         m = _RE_TUN_PROTECT.match(line)

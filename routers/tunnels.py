@@ -142,6 +142,35 @@ async def _get_or_build_blocking(session: SessionEntry) -> dict:
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
+def _flatten_dmvpn(tunnels: list[dict]) -> list[dict]:
+    """Explode each DMVPN cloud into one row per endpoint.
+
+    The default inventory collapses all spokes of a cloud into a single row
+    (good for fleet-wide overview). Flattening yields one row per spoke,
+    matching the per-device view operators are used to from `show crypto
+    session` output. Non-DMVPN tunnels are left untouched.
+    """
+    import hashlib
+    out: list[dict] = []
+    for t in tunnels:
+        if t["type"] != "dmvpn" or len(t["endpoints"]) <= 1:
+            out.append(t)
+            continue
+        for ep in t["endpoints"]:
+            flat = {
+                **t,
+                "endpoints": [ep],
+                "name":      f"{ep.get('device','?')}:{ep.get('interface','?')}",
+                # Append device id to keep flat row ids stable + unique.
+                "id": hashlib.sha256(
+                    f"{t['id']}|{ep.get('device_id','')}|{ep.get('interface','')}".encode()
+                ).hexdigest()[:16],
+                "tags": {**(t.get("tags") or {}), "cloud_id": t["id"]},
+            }
+            out.append(flat)
+    return out
+
+
 def _filter_tunnels(
     tunnels: list[dict],
     *,
@@ -177,10 +206,14 @@ async def get_inventory(
     q: str = "",
     type: str = "",
     platform: str = "",
+    flatten: bool = False,
     session: SessionEntry = Depends(require_auth),
 ):
     inv = await _get_or_build(session)
-    tunnels = _filter_tunnels(inv["tunnels"], q=q, ttype=type, platform=platform)
+    tunnels = inv["tunnels"]
+    if flatten:
+        tunnels = _flatten_dmvpn(tunnels)
+    tunnels = _filter_tunnels(tunnels, q=q, ttype=type, platform=platform)
     not_built = inv.get("built_at") is None
 
     if request.headers.get("HX-Request"):
@@ -190,12 +223,14 @@ async def get_inventory(
             "stats":   inv.get("stats", {}),
             "filtered": bool(q or type or platform),
             "not_built": not_built,
+            "flatten":  flatten,
         })
 
     return {
         "tunnels": tunnels,
         "stats":   inv.get("stats", {}),
         "built_at": inv.get("built_at"),
+        "flatten":  flatten,
     }
 
 
@@ -207,6 +242,10 @@ async def get_tunnel_detail(
 ):
     inv = await _get_or_build(session)
     tunnel = next((t for t in inv["tunnels"] if t["id"] == tunnel_id), None)
+    if tunnel is None:
+        # Could be a flattened-view id (synthesized per-endpoint). Look there.
+        flat = _flatten_dmvpn(inv["tunnels"])
+        tunnel = next((t for t in flat if t["id"] == tunnel_id), None)
     if not tunnel:
         return HTMLResponse("<div class='alert alert-warning m-3'>Tunnel not found in current inventory. The data may have been refreshed.</div>", status_code=404)
 
@@ -424,8 +463,9 @@ async def refresh_stream(session: SessionEntry = Depends(require_auth)):
                 if status == "warn": level = "warn"
 
                 yield emit({"type": "log", "level": level, "message": msg})
-                if step == "template" and cur is not None and tot is not None:
-                    yield emit({"type": "progress", "step": "palo_template",
+                if step in ("template", "stack") and cur is not None and tot is not None:
+                    yield emit({"type": "progress",
+                                "step": f"palo_{step}",
                                 "done": cur, "total": tot})
 
             # Propagate any exception from the Palo fetch.
