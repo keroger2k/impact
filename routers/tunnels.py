@@ -283,19 +283,84 @@ async def refresh_stream(session: SessionEntry = Depends(require_auth)):
         yield emit({"type": "log", "level": "info",
                     "message": f"Parsing IPsec config from {len(configs)} devices…"})
         parsed_ios: dict[str, dict] = {}
+        parse_failed = 0
+        empty_configs = 0
+        device_meta = {d["id"]: d for d in (cache.get("devices") or [])}
         for dev_id, cfg in (configs or {}).items():
             if not cfg:
+                empty_configs += 1
                 continue
             try:
                 parsed_ios[dev_id] = parse_ipsec_config(cfg)
             except Exception as e:
+                parse_failed += 1
                 logger.warning(f"IPsec parse failed for {dev_id}: {e}")
+
         total_tun = sum(len(p.get("tunnel_interfaces", [])) for p in parsed_ios.values())
         total_vt  = sum(len(p.get("virtual_templates", [])) for p in parsed_ios.values())
         total_cm  = sum(len(p.get("crypto_map_entries", [])) for p in parsed_ios.values())
         yield emit({"type": "log", "level": "success",
-                    "message": f"Parsed IOS: {total_tun} tunnel interfaces, "
-                               f"{total_vt} virtual-templates, {total_cm} crypto-map entries."})
+                    "message": f"Parsed IOS from {len(parsed_ios)} devices: {total_tun} tunnel ifaces, "
+                               f"{total_vt} virtual-templates, {total_cm} crypto-map entries "
+                               f"({empty_configs} empty configs, {parse_failed} parse failures)."})
+
+        # ── Phase 2.5: classification breakdown (helps explain inventory totals) ──
+        from utils.ipsec_parser import classify_tunnel as _classify, dmvpn_role as _drole
+        from collections import Counter
+
+        iface_class: Counter = Counter()
+        examples: dict[str, list[str]] = {}
+        dmvpn_keys: Counter = Counter()       # (nhrp_id, tunnel_key, profile) -> count
+        dmvpn_no_key: list[str] = []          # DMVPN tunnels with NULL nhrp_id or tunnel_key
+        per_iface_name: Counter = Counter()   # Tunnel5000, Tunnel201, ... distribution
+
+        for dev_id, parsed in parsed_ios.items():
+            host = parsed.get("hostname") or device_meta.get(dev_id, {}).get("hostname", dev_id[:8])
+            for iface in parsed.get("tunnel_interfaces", []):
+                cls = _classify(iface)
+                iface_class[cls] += 1
+                per_iface_name[iface.get("name", "?")] += 1
+                ex = examples.setdefault(cls, [])
+                if len(ex) < 8:
+                    ex.append(f"{host}:{iface.get('name','')}")
+                if cls == "dmvpn":
+                    key = (iface.get("nhrp_network_id"),
+                           iface.get("tunnel_key"),
+                           iface.get("tunnel_protection_profile") or "")
+                    dmvpn_keys[key] += 1
+                    if key[0] is None or key[1] is None:
+                        if len(dmvpn_no_key) < 8:
+                            dmvpn_no_key.append(f"{host}:{iface.get('name','')}")
+
+        yield emit({"type": "log", "level": "info",
+                    "message": "── IOS classification breakdown ──"})
+        for cls, n in iface_class.most_common():
+            sample = ", ".join(examples.get(cls, [])[:4])
+            yield emit({"type": "log", "level": "info",
+                        "message": f"  {cls}: {n}   (sample: {sample})"})
+
+        if dmvpn_no_key:
+            yield emit({"type": "log", "level": "warn",
+                        "message": f"  DMVPN with missing nhrp-id or tunnel-key (won't group cleanly): "
+                                   f"{', '.join(dmvpn_no_key)}"})
+
+        # Top interface names — gives the user a feel for fleet shape.
+        top_names = per_iface_name.most_common(8)
+        if top_names:
+            yield emit({"type": "log", "level": "info",
+                        "message": "  Top interface names: " +
+                                   ", ".join(f"{name} ({n})" for name, n in top_names)})
+
+        # Preview the DMVPN groups that will be created.
+        yield emit({"type": "log", "level": "info",
+                    "message": f"  DMVPN distinct (nhrp_id, tunnel_key, profile) groups: {len(dmvpn_keys)}"})
+        for key, n in dmvpn_keys.most_common(20):
+            yield emit({"type": "log", "level": "info",
+                        "message": f"    nhrp-{key[0]}/key-{key[1]}/{key[2] or '(no-profile)'}: "
+                                   f"{n} endpoints"})
+        if len(dmvpn_keys) > 20:
+            yield emit({"type": "log", "level": "info",
+                        "message": f"    … and {len(dmvpn_keys) - 20} more groups"})
 
         # ── Phase 3: Palo (the slow one) ──
         palo = {"ike_gateways": [], "ipsec_tunnels": [], "ike_profiles": [], "ipsec_profiles": []}
@@ -370,6 +435,53 @@ async def refresh_stream(session: SessionEntry = Depends(require_auth)):
                 yield emit({"type": "log", "level": "error",
                             "message": f"Panorama fetch failed: {e}"})
 
+            # ── Per-scope Palo breakdown — shows where tunnels actually live ──
+            yield emit({"type": "log", "level": "info",
+                        "message": "── Panorama scope breakdown ──"})
+            scope_counts: dict[str, dict[str, int]] = {}
+            for kind, items in (("gateways", palo["ike_gateways"]),
+                                ("tunnels",  palo["ipsec_tunnels"]),
+                                ("ike_prof", palo["ike_profiles"]),
+                                ("ipsec_prof", palo["ipsec_profiles"])):
+                for it in items:
+                    scope = it.get("scope") or "?"
+                    scope_counts.setdefault(scope, {"gateways": 0, "tunnels": 0,
+                                                     "ike_prof": 0, "ipsec_prof": 0})
+                    scope_counts[scope][kind] += 1
+
+            # Sort: shared first, then templates with the most tunnels
+            def _scope_sort_key(item):
+                s, v = item
+                return (0 if s == "shared" else 1, -v["tunnels"], s)
+            for scope, counts in sorted(scope_counts.items(), key=_scope_sort_key)[:30]:
+                yield emit({"type": "log", "level": "info",
+                            "message": f"  {scope}: {counts['gateways']} gw, "
+                                       f"{counts['tunnels']} tun, "
+                                       f"{counts['ike_prof']} ike-prof, "
+                                       f"{counts['ipsec_prof']} ipsec-prof"})
+            if len(scope_counts) > 30:
+                yield emit({"type": "log", "level": "info",
+                            "message": f"  … and {len(scope_counts) - 30} more scopes"})
+
+            yield emit({"type": "log", "level": "success",
+                        "message": f"Panorama totals: {len(palo['ike_gateways'])} gateways, "
+                                   f"{len(palo['ipsec_tunnels'])} tunnels, "
+                                   f"{len(palo['ike_profiles'])} IKE profiles, "
+                                   f"{len(palo['ipsec_profiles'])} IPsec profiles "
+                                   f"across {len(scope_counts)} scopes."})
+
+            # Diagnostic if the count is suspiciously low: check whether we
+            # found ZERO tunnels in templates (only shared) — symptom of either
+            # a template structure we don't understand, or templates that
+            # genuinely don't carry network config.
+            tpl_tunnels = sum(s["tunnels"] for k, s in scope_counts.items() if k != "shared")
+            if len(palo["ipsec_tunnels"]) > 0 and tpl_tunnels == 0:
+                yield emit({"type": "log", "level": "warn",
+                            "message": "  ⚠ All Palo tunnels came from 'shared' scope only — "
+                                       "no template returned any. May indicate template-stack "
+                                       "config (different XPath needed) or templates without "
+                                       "network/tunnel/ipsec entries."})
+
             # Cache the raw Palo data for parity with the non-streaming path.
             cache.set("pan_ike_gateways",         palo["ike_gateways"],   TTL_PAN_POLICY)
             cache.set("pan_ipsec_tunnels",        palo["ipsec_tunnels"],  TTL_PAN_POLICY)
@@ -378,12 +490,57 @@ async def refresh_stream(session: SessionEntry = Depends(require_auth)):
 
         # ── Phase 4: normalize + cache ──
         yield emit({"type": "log", "level": "info", "message": "Building normalized inventory…"})
-        device_meta = {d["id"]: d for d in (cache.get("devices") or [])}
         from utils.tunnel_inventory import build_inventory
         inv = build_inventory(parsed_ios=parsed_ios, device_meta=device_meta, palo=palo)
         cache.set(TUNNEL_INVENTORY_CACHE_KEY, inv, TTL_TUNNEL_INVENTORY)
 
         stats = inv.get("stats", {})
+
+        # ── Per-DMVPN-cloud member counts (helps explain "I expected 100s") ──
+        dmvpn_tunnels = [t for t in inv["tunnels"] if t["type"] == "dmvpn"]
+        if dmvpn_tunnels:
+            yield emit({"type": "log", "level": "info",
+                        "message": f"── DMVPN clouds ({len(dmvpn_tunnels)} total) ──"})
+            for t in sorted(dmvpn_tunnels, key=lambda t: -len(t["endpoints"]))[:25]:
+                hubs = sum(1 for ep in t["endpoints"] if ep.get("role") == "hub")
+                spokes = sum(1 for ep in t["endpoints"] if ep.get("role") == "spoke")
+                unk = len(t["endpoints"]) - hubs - spokes
+                yield emit({"type": "log", "level": "info",
+                            "message": f"  {t['name']}: {len(t['endpoints'])} endpoints "
+                                       f"({hubs} hub, {spokes} spoke, {unk} unknown)"})
+            if len(dmvpn_tunnels) > 25:
+                yield emit({"type": "log", "level": "info",
+                            "message": f"  … and {len(dmvpn_tunnels) - 25} more clouds"})
+
+        # ── Final summary block — formatted for copy/paste ──
+        total_dmvpn_endpoints = sum(len(t["endpoints"]) for t in dmvpn_tunnels)
+        yield emit({"type": "log", "level": "info", "message": "════════ SUMMARY ════════"})
+        yield emit({"type": "log", "level": "info",
+                    "message": f"  DNAC devices loaded:    {len(configs)}"})
+        yield emit({"type": "log", "level": "info",
+                    "message": f"  IOS configs parsed:     {len(parsed_ios)} "
+                               f"({empty_configs} empty, {parse_failed} failed)"})
+        yield emit({"type": "log", "level": "info",
+                    "message": f"  Tunnel interfaces seen: {total_tun}"})
+        yield emit({"type": "log", "level": "info",
+                    "message": f"  Virtual-templates seen: {total_vt}"})
+        yield emit({"type": "log", "level": "info",
+                    "message": f"  Crypto-map entries seen:{total_cm}"})
+        yield emit({"type": "log", "level": "info",
+                    "message": f"  Classifications:        " +
+                               ", ".join(f"{k}={n}" for k, n in iface_class.most_common())})
+        yield emit({"type": "log", "level": "info",
+                    "message": f"  DMVPN clouds:           {len(dmvpn_tunnels)} "
+                               f"(collapsing {total_dmvpn_endpoints} spoke/hub endpoints)"})
+        yield emit({"type": "log", "level": "info",
+                    "message": f"  Palo gateways:          {len(palo['ike_gateways'])}"})
+        yield emit({"type": "log", "level": "info",
+                    "message": f"  Palo IPsec tunnels:     {len(palo['ipsec_tunnels'])}"})
+        yield emit({"type": "log", "level": "info",
+                    "message": f"  Inventory rows total:   {stats.get('total', 0)} "
+                               f"(" + ", ".join(f"{n} {k}" for k, n in stats.get('by_type', {}).items()) + ")"})
+        yield emit({"type": "log", "level": "info", "message": "═════════════════════════"})
+
         yield emit({"type": "log", "level": "success",
                     "message": f"Inventory built: {stats.get('total', 0)} tunnels "
                                f"({', '.join(f'{n} {k}' for k, n in stats.get('by_type', {}).items())})"})
