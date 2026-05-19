@@ -216,7 +216,14 @@ def _build_crypto_lookups(parsed: dict) -> dict:
 
 
 def _resolve_phase1(profile_name: str, lookups: dict) -> dict:
-    """Best-effort phase 1: prefer IKEv2 chain (profile→proposal); fall back to first ISAKMP policy."""
+    """Best-effort phase 1: prefer IKEv2 chain (profile→proposal); fall back to first ISAKMP policy.
+
+    Key signal for the IKE version is the IPsec profile body:
+      - ``set ikev2-profile NAME``  → tunnel uses IKEv2 (regardless of whether
+        we can find the ``crypto ikev2 profile`` block to enrich details).
+      - ``set isakmp-profile NAME`` → tunnel uses IKEv1.
+      - Neither set → fall back to the device's first ISAKMP policy as a guess.
+    """
     p1 = {
         "protocol": "",
         "encryption": [],
@@ -228,14 +235,19 @@ def _resolve_phase1(profile_name: str, lookups: dict) -> dict:
     }
     prof = lookups["ipsec_profile_by_name"].get(profile_name) if profile_name else None
     if prof:
-        v2_prof_name = prof.get("ikev2_profile")
-        v2prof = lookups["ikev2_profile_by_name"].get(v2_prof_name) if v2_prof_name else None
-        if v2prof:
+        v2_prof_name = prof.get("ikev2_profile") or ""
+        if v2_prof_name:
+            # Reference alone is enough to call this IKEv2 — the v2-profile
+            # block may live on a hub config we never cached.
             p1["protocol"] = "ikev2"
-            p1["profile_name"] = v2prof.get("name", "")
-            p1["auth"] = v2prof.get("auth_local", "") or v2prof.get("auth_remote", "")
+            p1["profile_name"] = v2_prof_name
+            v2prof = lookups["ikev2_profile_by_name"].get(v2_prof_name)
+            if v2prof:
+                p1["auth"] = v2prof.get("auth_local", "") or v2prof.get("auth_remote", "")
             # Resolve proposals via policy match. We don't always know which
-            # policy applies — take the first proposal we can find.
+            # policy applies — take the first proposal we can find. The
+            # fleet-wide lookup means this works even when the proposal is
+            # defined on a different device.
             for pol in (lookups.get("ikev2_proposal_by_name") or {}).values():
                 p1["encryption"] = pol.get("encryption", [])
                 p1["integrity"]  = pol.get("integrity", [])
