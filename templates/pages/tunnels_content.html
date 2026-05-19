@@ -197,13 +197,11 @@
       </div>
     </div>
     <div class="col-lg-5">
-      <div class="tunnel-detail-scroll">
-        <div id="tunnel-detail">
-          <div class="card border-0 shadow-sm">
-            <div class="card-body text-center py-5 text-muted">
-              <i class="ph ph-mouse-simple-pointer fs-1 d-block mb-2"></i>
-              <p class="mb-0">Select a tunnel for crypto + endpoint detail.</p>
-            </div>
+      <div id="tunnel-detail">
+        <div class="card border-0 shadow-sm">
+          <div class="card-body text-center py-5 text-muted">
+            <i class="ph ph-mouse-simple-pointer fs-1 d-block mb-2"></i>
+            <p class="mb-0">Select a tunnel for crypto + endpoint detail.</p>
           </div>
         </div>
       </div>
@@ -218,12 +216,24 @@
   .type-badge { font-family: var(--font-mono, monospace); font-size: 11px; letter-spacing: .02em; }
   .crypto-cell { font-family: var(--font-mono, monospace); font-size: 11px; color: var(--text-muted); }
 
-  /* Detail panel: scroll independently of the list. Matches the left
-     side's max-height so both columns share the same scroll viewport. */
-  .tunnel-detail-scroll {
+  /* Detail panel: the *card itself* gets the height budget. Header and the
+     Phase 1 / Phase 2 row stay pinned; only the endpoints table scrolls. */
+  .tunnel-detail-card {
+    display: flex;
+    flex-direction: column;
     max-height: calc(100vh - 260px);
+  }
+  .tunnel-detail-card .tunnel-detail-fixed { flex: 0 0 auto; }
+  .tunnel-detail-card .tunnel-detail-endpoints {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .tunnel-detail-card .tunnel-detail-endpoints-scroll {
+    flex: 1 1 auto;
     overflow-y: auto;
-    padding-right: 4px;          /* room for the scrollbar */
+    min-height: 0;
   }
 
   /* Toolbar */
