@@ -564,6 +564,71 @@ async def debug_unknowns(
     return {"limit": limit, "count": len(out), "unknowns": out}
 
 
+@router.get("/debug/raw/{device_query}")
+async def debug_raw_config(
+    device_query: str,
+    section: str = "",
+    lines: int = 80,
+    session: SessionEntry = Depends(require_auth),
+):
+    """Dump what _iter_blocks actually sees for a device's cached config.
+
+    Optional `section` greps the iter_blocks output for the first match of the
+    given substring (case-insensitive) and returns lines around it.
+    `lines` caps the response (default 80).
+
+    Returns:
+        {
+            "device_id": ..., "hostname": ...,
+            "config_length": N,
+            "total_lines_iter": M,    # lines after iter_blocks filters !-comments + blanks
+            "lines": [{"indent": int, "stripped": str, "raw_repr": str}, ...]
+        }
+    """
+    from utils.ipsec_parser import _iter_blocks
+    configs = cache.get("dnac_device_configs") or {}
+    devices = cache.get("devices") or []
+
+    dev_id = None
+    if device_query in configs:
+        dev_id = device_query
+    else:
+        ql = device_query.lower()
+        for d in devices:
+            if ql in (d.get("hostname", "") or "").lower():
+                dev_id = d["id"]
+                break
+
+    if not dev_id:
+        return {"error": f"No device matching '{device_query}'."}
+    cfg = configs.get(dev_id)
+    if not cfg:
+        return {"error": f"No cached config for {dev_id}."}
+
+    iter_out = list(_iter_blocks(cfg))
+    rows = [
+        {"indent": ind, "stripped": stripped, "raw_repr": repr(raw)}
+        for ind, stripped, raw in iter_out
+    ]
+
+    if section:
+        sl = section.lower()
+        hit = next((i for i, r in enumerate(rows) if sl in r["stripped"].lower()), None)
+        if hit is None:
+            return {"error": f"section '{section}' not found", "total_lines_iter": len(iter_out)}
+        start = max(0, hit - 3)
+        end = min(len(rows), hit + lines)
+        rows = rows[start:end]
+
+    return {
+        "device_id":         dev_id,
+        "hostname":          next((d.get("hostname") for d in devices if d["id"] == dev_id), ""),
+        "config_length":     len(cfg),
+        "total_lines_iter":  len(iter_out),
+        "lines":             rows[:lines],
+    }
+
+
 @router.get("/debug/device/{device_query}")
 async def debug_device(
     device_query: str,

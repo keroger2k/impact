@@ -987,7 +987,7 @@ def get_client() -> str | None:
 
 def _members_text(parent: ET.Element | None, path: str) -> list[str]:
     if parent is None: return []
-    return [m.text for m in parent.findall(path) if m and m.text]
+    return [m.text for m in parent.findall(path) if m is not None and m.text]
 
 
 def _parse_ike_crypto_profiles(parent: ET.Element | None, scope: str) -> list[dict]:
@@ -1127,14 +1127,23 @@ def _network_xpath_roots() -> dict[str, str]:
 
 
 def _list_templates(api_key: str) -> list[str]:
-    """Panorama templates that may carry network/IKE config."""
+    """Panorama templates that may carry network/IKE config.
+
+    Only direct <entry> children of the <template> element count. Earlier
+    versions used `.//entry`, which recursively matched every nested entry
+    (device entries, vsys entries, interfaces, subnets, crypto profile
+    names, QoS classes) and treated them all as templates — producing
+    hundreds of bogus XPath fetches per refresh.
+    """
     names: list[str] = []
     try:
         r = _config_get(f"{BASE_XPATH}/template", api_key)
-        if r is not None:
-            for entry in r.findall(".//entry") + r.findall("./entry"):
+        parent = _unwrap(r, "template")
+        if parent is not None:
+            for entry in parent.findall("./entry"):
                 n = entry.get("name", "")
-                if n: names.append(n)
+                if n:
+                    names.append(n)
     except Exception:
         pass
     return names
