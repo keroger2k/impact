@@ -93,10 +93,13 @@
             <th>Peer / NHS</th>
             <th>VRF</th>
             <th>State</th>
+            <th class="text-end">Live</th>
           </tr>
         </thead>
         <tbody>
           {% for ep in tunnel.endpoints %}
+          {% set live_id = "live-" ~ tunnel.id ~ "-" ~ loop.index0 %}
+          {% set spin_id = "spin-" ~ tunnel.id ~ "-" ~ loop.index0 %}
           <tr>
             <td class="fw-bold text-navy">{{ ep.device }}</td>
             <td>
@@ -118,10 +121,22 @@
                 <span class="badge bg-success-subtle text-success">no shut</span>
               {% endif %}
             </td>
+            <td class="text-end">
+              <button class="btn btn-sm btn-outline-primary py-0 px-2"
+                      hx-get="/api/tunnels/live/{{ tunnel.id }}/{{ loop.index0 }}"
+                      hx-target="#{{ live_id }}"
+                      hx-swap="innerHTML"
+                      hx-indicator="#{{ spin_id }}"
+                      title="Fetch live status from {{ ep.device }}">
+                <span id="{{ spin_id }}" class="htmx-indicator spinner-border spinner-border-sm me-1" role="status"></span>
+                <i class="ph ph-pulse"></i> Fetch live
+              </button>
+            </td>
           </tr>
           {% if ep.description %}
-          <tr><td colspan="7" class="text-muted small ps-4 fst-italic">{{ ep.description }}</td></tr>
+          <tr><td colspan="8" class="text-muted small ps-4 fst-italic">{{ ep.description }}</td></tr>
           {% endif %}
+          <tr><td colspan="8" class="p-0 border-0" id="{{ live_id }}"></td></tr>
           {% endfor %}
         </tbody>
       </table>

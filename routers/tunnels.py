@@ -12,6 +12,7 @@ import io
 import json
 import logging
 import queue
+import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
@@ -276,6 +277,282 @@ async def refresh_inventory(session: SessionEntry = Depends(require_auth)):
     inv = await _build_inventory(session)
     cache.set(TUNNEL_INVENTORY_CACHE_KEY, inv, TTL_TUNNEL_INVENTORY)
     return {"status": "ok", "stats": inv.get("stats", {}), "built_at": inv.get("built_at")}
+
+
+# ── Live status (on-demand, never cached) ────────────────────────────────────
+
+LIVE_FETCH_TIMEOUT_SEC = 20
+PALO_LIVE_PARALLEL     = 5
+
+
+@router.get("/live/{tunnel_id}/{endpoint_idx}")
+async def get_live_status(
+    request: Request,
+    tunnel_id: str,
+    endpoint_idx: int,
+    session: SessionEntry = Depends(require_auth),
+):
+    """Fetch real-time IPsec state for ONE endpoint of a tunnel. Never cached —
+    every click is a fresh device query. Returns an HTML fragment for htmx to
+    swap into the row immediately below the endpoint."""
+    from templates_module import templates
+
+    def err(msg: str) -> HTMLResponse:
+        return HTMLResponse(
+            f"<div class='alert alert-warning small mb-0 m-2'>"
+            f"<i class='ph ph-warning'></i> {msg}</div>",
+        )
+
+    inv = await _get_or_build(session)
+    tunnel = next((t for t in inv["tunnels"] if t["id"] == tunnel_id), None)
+    if tunnel is None:
+        flat = _flatten_dmvpn(inv["tunnels"])
+        tunnel = next((t for t in flat if t["id"] == tunnel_id), None)
+    if not tunnel:
+        return err("Tunnel not in current inventory (try refreshing).")
+
+    endpoints = tunnel.get("endpoints") or []
+    if endpoint_idx < 0 or endpoint_idx >= len(endpoints):
+        return err(f"Endpoint #{endpoint_idx} out of range.")
+    endpoint = endpoints[endpoint_idx]
+
+    loop     = asyncio.get_event_loop()
+    platform = tunnel.get("platform", "")
+
+    try:
+        if platform == "ios":
+            state = await loop.run_in_executor(
+                None, run_with_context(_fetch_ios_live),
+                session, tunnel, endpoint,
+            )
+        elif platform == "palo":
+            state = await loop.run_in_executor(
+                None, run_with_context(_fetch_palo_live),
+                session, tunnel, endpoint,
+            )
+        else:
+            return err(f"Live status not supported for platform '{platform}'.")
+    except Exception as e:
+        logger.exception("live-fetch failed for %s/%d", tunnel_id, endpoint_idx)
+        return err(f"Fetch failed: {type(e).__name__}: {str(e)[:200]}")
+
+    return templates.TemplateResponse(request, "partials/tunnel_live.html", {
+        "tunnel":   tunnel,
+        "endpoint": endpoint,
+        "state":    state,
+    })
+
+
+def _fetch_ios_live(session: SessionEntry, tunnel: dict, endpoint: dict) -> dict:
+    """Run a set of show commands on the IOS device, tailored to tunnel type.
+    Parses each into the normalized state shape from utils.ipsec_live."""
+    from dev import DEV_MODE
+    from utils.ipsec_live import (
+        merge_ios_state,
+        parse_show_crypto_session, parse_show_dmvpn, parse_show_interface,
+        parse_show_ikev2_sa, parse_show_isakmp_sa,
+    )
+
+    iface = endpoint.get("interface", "")
+    peer  = (endpoint.get("peer_ip") or "").split(",")[0].strip()
+    ttype = tunnel.get("type", "")
+
+    commands: list[tuple[str, str]] = []
+    if ttype == "dmvpn":
+        commands.append(("show dmvpn", "show dmvpn detail"))
+        commands.append(("show crypto session",
+                         f"show crypto session detail interface {iface}" if iface
+                         else "show crypto session detail"))
+        commands.append(("show crypto ikev2 sa", "show crypto ikev2 sa detailed"))
+        if iface:
+            commands.append(("show interface", f"show interface {iface}"))
+    elif ttype in ("svti", "dvti"):
+        commands.append(("show crypto session",
+                         f"show crypto session detail interface {iface}" if iface
+                         else "show crypto session detail"))
+        if iface:
+            commands.append(("show interface", f"show interface {iface}"))
+        commands.append(("show crypto ikev2 sa", "show crypto ikev2 sa detailed"))
+    else:
+        commands.append(("show crypto session",  "show crypto session detail"))
+        commands.append(("show crypto isakmp sa", "show crypto isakmp sa detail"))
+
+    ip = endpoint.get("device_ip", "")
+    if not ip:
+        return _live_error("device IP missing for this endpoint")
+
+    if DEV_MODE:
+        return _mock_ios_state(tunnel, endpoint)
+
+    from routers.commands import guess_device_type
+    device_meta = {d["id"]: d for d in (cache.get("devices") or [])}
+    meta = device_meta.get(endpoint.get("device_id", "")) or {}
+    device_type = guess_device_type(meta.get("platformId", ""))
+
+    raw: dict[str, str] = {}
+    try:
+        from netmiko import ConnectHandler
+        with ConnectHandler(
+            device_type=device_type,
+            host=ip,
+            username=session.username,
+            password=session.password,
+            timeout=LIVE_FETCH_TIMEOUT_SEC,
+            conn_timeout=LIVE_FETCH_TIMEOUT_SEC,
+            fast_cli=False,
+        ) as conn:
+            for label, cmd in commands:
+                try:
+                    raw[label] = conn.send_command(cmd, read_timeout=LIVE_FETCH_TIMEOUT_SEC) or ""
+                except Exception as e:
+                    raw[label] = f"!! {type(e).__name__}: {e}"
+    except Exception as e:
+        return _live_error(f"SSH to {ip} failed: {type(e).__name__}: {str(e)[:200]}")
+
+    crypto_session  = parse_show_crypto_session(raw.get("show crypto session", ""), iface)
+    dmvpn_state     = parse_show_dmvpn(raw.get("show dmvpn", ""), iface) if "show dmvpn" in raw else {}
+    interface_state = parse_show_interface(raw.get("show interface", "")) if "show interface" in raw else {}
+    ikev2_sa        = parse_show_ikev2_sa(raw.get("show crypto ikev2 sa", ""), peer)
+    isakmp_sa       = parse_show_isakmp_sa(raw.get("show crypto isakmp sa", ""), peer)
+
+    return merge_ios_state(crypto_session, ikev2_sa, isakmp_sa, interface_state, dmvpn_state, raw)
+
+
+def _fetch_palo_live(session: SessionEntry, tunnel: dict, endpoint: dict) -> dict:
+    """For Palo, the inventory only knows template/scope — not which managed
+    firewall actually runs the tunnel. Fan out to managed firewalls in parallel
+    and keep whichever ones report a matching vpn flow entry."""
+    from dev import DEV_MODE
+    import clients.panorama as pc
+    from utils.ipsec_live import (
+        merge_palo_state,
+        parse_pan_vpn_flow, parse_pan_ipsec_sa, parse_pan_ike_sa,
+    )
+
+    if DEV_MODE:
+        return _mock_palo_state(tunnel, endpoint)
+
+    tunnel_name = (endpoint.get("interface") or tunnel.get("name") or "").strip()
+    if not tunnel_name:
+        return _live_error("Palo tunnel has no name to query")
+
+    try:
+        api_key = auth_module.get_panorama_key_for_session(session)
+    except Exception as e:
+        return _live_error(f"Panorama auth failed: {e}")
+
+    devices = cache.get("pan_managed_devices") or pc.get_managed_devices(api_key)
+    if not devices:
+        return _live_error("No managed firewalls available to query")
+
+    flow_cmd = f"<show><vpn><flow><name>{tunnel_name}</name></flow></vpn></show>"
+    sa_cmd   = f"<show><vpn><ipsec-sa><tunnel>{tunnel_name}</tunnel></ipsec-sa></vpn></show>"
+    ike_cmd  =  "<show><vpn><ike-sa></ike-sa></vpn></show>"
+
+    def query_one(d: dict) -> Optional[dict]:
+        serial = d.get("serial", "")
+        if not serial:
+            return None
+        flow_xml = pc._op_targeted(flow_cmd, api_key, serial)
+        flow = parse_pan_vpn_flow(flow_xml, tunnel_name)
+        if not flow.get("found"):
+            return None
+        sa_xml  = pc._op_targeted(sa_cmd,  api_key, serial)
+        ike_xml = pc._op_targeted(ike_cmd, api_key, serial)
+        sa  = parse_pan_ipsec_sa(sa_xml, tunnel_name)
+        ike = parse_pan_ike_sa(ike_xml, flow.get("peer_ip", ""), flow.get("gwid", ""))
+        host = d.get("hostname", serial)
+        raw = {
+            f"{host}: show vpn flow":     _et_text(flow_xml),
+            f"{host}: show vpn ipsec-sa": _et_text(sa_xml),
+            f"{host}: show vpn ike-sa":   _et_text(ike_xml),
+        }
+        state = merge_palo_state(flow, sa, ike, raw)
+        state["__firewall"] = host
+        return state
+
+    matches: list[dict] = []
+    with ThreadPoolExecutor(max_workers=PALO_LIVE_PARALLEL) as ex:
+        for result in ex.map(query_one, devices):
+            if result is not None:
+                matches.append(result)
+
+    if not matches:
+        return _live_error(
+            f"Tunnel '{tunnel_name}' not running on any of {len(devices)} managed firewalls"
+        )
+
+    if len(matches) == 1:
+        return matches[0]
+
+    primary = next((m for m in matches if m.get("status") == "up"), matches[0])
+    primary["__additional"] = [m for m in matches if m is not primary]
+    return primary
+
+
+def _et_text(elem) -> str:
+    if elem is None:
+        return "(no response)"
+    try:
+        return ET.tostring(elem, encoding="unicode")
+    except Exception:
+        return str(elem)
+
+
+def _live_error(msg: str) -> dict:
+    from utils.ipsec_live import empty_state
+    s = empty_state()
+    s["errors"].append(msg)
+    return s
+
+
+def _mock_ios_state(tunnel: dict, endpoint: dict) -> dict:
+    from utils.ipsec_live import empty_state
+    s = empty_state()
+    iface = endpoint.get("interface", "Tunnel?")
+    peer  = (endpoint.get("peer_ip") or "192.0.2.1").split(",")[0]
+    s.update({
+        "status": "up", "peer_ip": peer, "uptime": "1d18h",
+        "encap_pkts": 123456, "decap_pkts": 123450,
+        "encap_bytes": 12345678, "decap_bytes": 12345600,
+        "phase1": {"protocol": "ikev2", "state": "ready",
+                   "encryption": "AES-CBC-256", "integrity": "SHA256",
+                   "dh_group": "14", "lifetime_remaining_sec": 73215},
+        "phase2": {"lifetime_remaining_sec": 3120,
+                   "spi_in": "0xABCDEF12", "spi_out": "0x12FEDCBA"},
+        "interface_state": {"line": "up", "protocol": "up",
+                            "last_input": "00:00:01", "last_output": "00:00:00",
+                            "input_errors": 0, "output_errors": 0,
+                            "input_rate_bps": 4321, "output_rate_bps": 5678},
+        "raw": {
+            "show crypto session": f"[DEV_MODE] mock output for {iface} peer {peer}\n"
+                                   f"Session status: UP-ACTIVE\nUptime: 1d18h\n"
+                                   f"Peer: {peer}\n  IKEv2 SA: ... Active\n",
+            "show interface":      f"[DEV_MODE] mock interface {iface}\n"
+                                   f"{iface} is up, line protocol is up\n...",
+        },
+    })
+    return s
+
+
+def _mock_palo_state(tunnel: dict, endpoint: dict) -> dict:
+    from utils.ipsec_live import empty_state
+    s = empty_state()
+    s.update({
+        "status": "up",
+        "peer_ip": endpoint.get("peer_ip", "192.0.2.99"),
+        "encap_pkts": 9001, "decap_pkts": 8999,
+        "encap_bytes": 9876543, "decap_bytes": 9876521,
+        "phase1": {"protocol": "ikev2", "state": "established",
+                   "encryption": "aes-256", "integrity": "sha256", "dh_group": "14",
+                   "lifetime_remaining_sec": 21345},
+        "phase2": {"encryption": "aes-256-cbc", "integrity": "sha256", "pfs": "14",
+                   "spi_in": "0x11223344", "spi_out": "0x44332211",
+                   "lifetime_remaining_sec": 2940},
+        "raw": {"[DEV_MODE] show vpn flow":
+                "<entry><name>mock</name><state>active</state></entry>"},
+    })
+    return s
 
 
 # ── Streaming refresh ────────────────────────────────────────────────────────

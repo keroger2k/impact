@@ -1,0 +1,215 @@
+{# Live tunnel status fragment — swapped into an endpoint row's expand slot.
+   The wrapping <td colspan> is supplied by the parent tunnel_detail.html row,
+   so this fragment starts inside that <td>. #}
+
+{% set st = state %}
+{% set status = st.status or "unknown" %}
+{% set status_class = (
+    "bg-success-subtle text-success border-success" if status == "up"
+    else "bg-danger-subtle text-danger border-danger" if status == "down"
+    else "bg-warning-subtle text-warning border-warning" if status == "degraded"
+    else "bg-secondary-subtle text-secondary border-secondary"
+) %}
+
+<div class="tunnel-live-card border rounded-2 p-3 my-2 bg-light-subtle">
+
+  <div class="d-flex align-items-center flex-wrap gap-2 mb-3">
+    <span class="badge border {{ status_class }}">
+      <i class="ph ph-pulse"></i> {{ status|upper }}
+    </span>
+    {% if st.__firewall %}
+      <span class="badge bg-light text-muted">on {{ st.__firewall }}</span>
+    {% endif %}
+    {% if st.peer_ip %}
+      <span class="small text-muted">peer <span class="mono">{{ st.peer_ip }}</span></span>
+    {% endif %}
+    {% if st.uptime %}
+      <span class="small text-muted">uptime <span class="mono">{{ st.uptime }}</span></span>
+    {% endif %}
+    <span class="ms-auto small text-muted">
+      <i class="ph ph-clock-clockwise"></i> live · just now
+    </span>
+  </div>
+
+  {% if st.errors %}
+    <div class="alert alert-warning small py-2 mb-3">
+      {% for e in st.errors %}<div><i class="ph ph-warning"></i> {{ e }}</div>{% endfor %}
+    </div>
+  {% endif %}
+
+  {# ── Counters row ───────────────────────────────────────────── #}
+  {% if st.encap_pkts or st.decap_pkts or st.encap_bytes or st.decap_bytes %}
+  <div class="row g-2 mb-3">
+    <div class="col-sm-3">
+      <div class="small text-muted text-uppercase">Encap pkts</div>
+      <div class="mono fw-bold">
+        {% if st.encap_pkts is not none %}{{ "{:,}".format(st.encap_pkts) }}{% else %}—{% endif %}
+      </div>
+    </div>
+    <div class="col-sm-3">
+      <div class="small text-muted text-uppercase">Decap pkts</div>
+      <div class="mono fw-bold">
+        {% if st.decap_pkts is not none %}{{ "{:,}".format(st.decap_pkts) }}{% else %}—{% endif %}
+      </div>
+    </div>
+    <div class="col-sm-3">
+      <div class="small text-muted text-uppercase">Encap bytes</div>
+      <div class="mono fw-bold">
+        {% if st.encap_bytes is not none %}{{ "{:,}".format(st.encap_bytes) }}{% else %}—{% endif %}
+      </div>
+    </div>
+    <div class="col-sm-3">
+      <div class="small text-muted text-uppercase">Decap bytes</div>
+      <div class="mono fw-bold">
+        {% if st.decap_bytes is not none %}{{ "{:,}".format(st.decap_bytes) }}{% else %}—{% endif %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {# ── Negotiated Phase 1 / Phase 2 ────────────────────────────── #}
+  {% if st.phase1 or st.phase2 %}
+  <div class="row g-3 mb-3">
+    {% if st.phase1 %}
+    <div class="col-md-6">
+      <div class="text-muted small text-uppercase fw-bold mb-1">
+        <i class="ph ph-key"></i> Negotiated Phase 1
+      </div>
+      <table class="table table-sm table-borderless mb-0">
+        <tbody>
+          {% if st.phase1.protocol %}
+          <tr><td class="text-muted small" style="width:140px">Protocol</td>
+              <td class="mono">{{ st.phase1.protocol }}</td></tr>{% endif %}
+          {% if st.phase1.state %}
+          <tr><td class="text-muted small">State</td>
+              <td class="mono">{{ st.phase1.state }}</td></tr>{% endif %}
+          {% if st.phase1.encryption %}
+          <tr><td class="text-muted small">Encryption</td>
+              <td class="mono">{{ st.phase1.encryption }}</td></tr>{% endif %}
+          {% if st.phase1.integrity %}
+          <tr><td class="text-muted small">Integrity</td>
+              <td class="mono">{{ st.phase1.integrity }}</td></tr>{% endif %}
+          {% if st.phase1.dh_group %}
+          <tr><td class="text-muted small">DH group</td>
+              <td class="mono">{{ st.phase1.dh_group }}</td></tr>{% endif %}
+          {% if st.phase1.lifetime_remaining_sec is not none %}
+          <tr><td class="text-muted small">Lifetime left</td>
+              <td class="mono">{{ st.phase1.lifetime_remaining_sec }}s</td></tr>{% endif %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+    {% if st.phase2 %}
+    <div class="col-md-6">
+      <div class="text-muted small text-uppercase fw-bold mb-1">
+        <i class="ph ph-lock-key"></i> Negotiated Phase 2
+      </div>
+      <table class="table table-sm table-borderless mb-0">
+        <tbody>
+          {% if st.phase2.encryption %}
+          <tr><td class="text-muted small" style="width:140px">Encryption</td>
+              <td class="mono">{{ st.phase2.encryption }}</td></tr>{% endif %}
+          {% if st.phase2.integrity %}
+          <tr><td class="text-muted small">Integrity</td>
+              <td class="mono">{{ st.phase2.integrity }}</td></tr>{% endif %}
+          {% if st.phase2.pfs %}
+          <tr><td class="text-muted small">PFS</td>
+              <td class="mono">{{ st.phase2.pfs }}</td></tr>{% endif %}
+          {% if st.phase2.spi_in %}
+          <tr><td class="text-muted small">SPI (in)</td>
+              <td class="mono">{{ st.phase2.spi_in }}</td></tr>{% endif %}
+          {% if st.phase2.spi_out %}
+          <tr><td class="text-muted small">SPI (out)</td>
+              <td class="mono">{{ st.phase2.spi_out }}</td></tr>{% endif %}
+          {% if st.phase2.lifetime_remaining_sec is not none %}
+          <tr><td class="text-muted small">Lifetime left</td>
+              <td class="mono">{{ st.phase2.lifetime_remaining_sec }}s
+                {% if st.phase2.lifetime_remaining_kb %}
+                  / {{ "{:,}".format(st.phase2.lifetime_remaining_kb) }} KB
+                {% endif %}
+              </td></tr>{% endif %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {# ── Interface state (IOS) ──────────────────────────────────── #}
+  {% if st.interface_state %}
+  {% set is_ = st.interface_state %}
+  <div class="mb-3">
+    <div class="text-muted small text-uppercase fw-bold mb-1">
+      <i class="ph ph-network"></i> Interface
+    </div>
+    <div class="d-flex flex-wrap gap-3 small">
+      <span>line: <span class="badge {% if is_.line == 'up' %}bg-success-subtle text-success{% else %}bg-danger-subtle text-danger{% endif %}">{{ is_.line or '?' }}</span></span>
+      <span>proto: <span class="badge {% if is_.protocol == 'up' %}bg-success-subtle text-success{% else %}bg-danger-subtle text-danger{% endif %}">{{ is_.protocol or '?' }}</span></span>
+      {% if is_.last_input %}<span class="text-muted">last in: <span class="mono">{{ is_.last_input }}</span></span>{% endif %}
+      {% if is_.last_output %}<span class="text-muted">last out: <span class="mono">{{ is_.last_output }}</span></span>{% endif %}
+      {% if is_.input_rate_bps is defined %}<span class="text-muted">in: <span class="mono">{{ "{:,}".format(is_.input_rate_bps) }} bps</span></span>{% endif %}
+      {% if is_.output_rate_bps is defined %}<span class="text-muted">out: <span class="mono">{{ "{:,}".format(is_.output_rate_bps) }} bps</span></span>{% endif %}
+      {% if is_.input_errors is defined %}<span class="{% if is_.input_errors %}text-danger{% else %}text-muted{% endif %}">in err: <span class="mono">{{ is_.input_errors }}</span></span>{% endif %}
+      {% if is_.output_errors is defined %}<span class="{% if is_.output_errors %}text-danger{% else %}text-muted{% endif %}">out err: <span class="mono">{{ is_.output_errors }}</span></span>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  {# ── DMVPN peers (when hub or spoke reports them) ───────────── #}
+  {% if st.dmvpn_peers %}
+  <div class="mb-3">
+    <div class="text-muted small text-uppercase fw-bold mb-1">
+      <i class="ph ph-share-network"></i> DMVPN peers ({{ st.dmvpn_peers|length }})
+    </div>
+    <div class="table-responsive" style="max-height: 240px; overflow-y: auto;">
+      <table class="table table-sm table-striped mb-0 small">
+        <thead class="bg-light sticky-top">
+          <tr>
+            <th>NBMA</th><th>Tunnel</th><th>State</th><th>Uptime</th><th>Attrb</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in st.dmvpn_peers %}
+          <tr>
+            <td class="mono">{{ p.nbma }}</td>
+            <td class="mono">{{ p.tunnel }}</td>
+            <td>
+              <span class="badge {% if p.state == 'UP' %}bg-success-subtle text-success{% else %}bg-warning-subtle text-warning{% endif %}">{{ p.state }}</span>
+            </td>
+            <td class="mono">{{ p.uptime }}</td>
+            <td class="mono text-muted">{{ p.attrb }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
+  {# ── Additional firewalls running this Palo tunnel ──────────── #}
+  {% if st.__additional %}
+  <div class="alert alert-info small py-2 mb-3">
+    <i class="ph ph-info"></i> Tunnel also present on
+    {% for ad in st.__additional %}
+      <span class="badge bg-light text-muted">{{ ad.__firewall }} · {{ ad.status }}</span>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {# ── Raw command outputs ────────────────────────────────────── #}
+  {% if st.raw %}
+  <div class="mt-2">
+    <div class="text-muted small text-uppercase fw-bold mb-1">
+      <i class="ph ph-terminal"></i> Raw output
+    </div>
+    {% for label, text in st.raw.items() %}
+    <details class="mb-1">
+      <summary class="small text-secondary"><span class="mono">{{ label }}</span></summary>
+      <pre class="bg-dark text-light p-2 small mono mb-0" style="max-height: 320px; overflow: auto; white-space: pre-wrap;">{{ text }}</pre>
+    </details>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+</div>
