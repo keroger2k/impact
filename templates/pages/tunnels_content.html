@@ -224,6 +224,17 @@
     max-height: calc(100vh - 260px);
   }
   .tunnel-detail-card .tunnel-detail-fixed { flex: 0 0 auto; }
+  /* Cap the Phase 1 / Phase 2 row so it can never crowd out the endpoints
+     table — if a tunnel has lots of crypto rows, it scrolls inside the
+     panel instead of pushing endpoints off-screen. */
+  .tunnel-detail-card > .tunnel-detail-fixed.row {
+    max-height: 32vh;
+    overflow-y: auto;
+  }
+  /* Tighter padding inside the Phase 1 / Phase 2 panels so the common case
+     (7 rows each) fits without needing the inner scroll. */
+  .tunnel-detail-card > .tunnel-detail-fixed.row > [class*="col-"] { padding: 0.6rem 1rem; }
+  .tunnel-detail-card > .tunnel-detail-fixed.row table td { padding-top: 0.15rem; padding-bottom: 0.15rem; }
   .tunnel-detail-card .tunnel-detail-endpoints {
     flex: 1 1 auto;
     min-height: 0;
@@ -233,7 +244,7 @@
   .tunnel-detail-card .tunnel-detail-endpoints-scroll {
     flex: 1 1 auto;
     overflow-y: auto;
-    min-height: 0;
+    min-height: 240px;          /* always show ~5-6 rows even on short viewports */
   }
 
   /* Toolbar */
