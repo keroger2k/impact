@@ -14,6 +14,7 @@ import xml.etree.ElementTree as ET
 
 import requests
 from dotenv import load_dotenv
+from panos.firewall import Firewall
 from panos.panorama import DeviceGroup, Panorama
 
 from clients import verify_ssl
@@ -214,6 +215,38 @@ def _config_get_targeted(xpath: str, api_key: str, target: str, timeout: int = 2
             return None
         return root.find("result")
     except Exception:
+        return None
+
+
+def op_via_sdk(
+    cmd: str,
+    api_key: str,
+    target: str | None = None,
+    timeout: int = 20,
+) -> ET.Element | None:
+    """Run an operational command via pan-os-python — preferred over hand-rolled XML.
+
+    `cmd` is the plain CLI string (e.g. ``show vpn flow name "my-tunnel"``); the SDK
+    tokenizes and builds the XML, which avoids the injection / escaping foot-guns we'd
+    otherwise hit by interpolating user data into ``<show>...</show>`` literals. Quote
+    any non-keyword tokens per ``panos.string_to_xml`` semantics.
+
+    When ``target`` is set, the request is routed through Panorama to that managed
+    firewall by attaching a ``Firewall(serial=target)`` to the Panorama parent.
+    """
+    try:
+        host = _host()
+    except PanoramaAPIError:
+        return None
+    try:
+        pan = Panorama(hostname=host, api_key=api_key, timeout=timeout)
+        if target:
+            fw = Firewall(serial=target)
+            pan.add(fw)
+            return fw.op(cmd)
+        return pan.op(cmd)
+    except Exception:
+        logger.exception("panos op failed (target=%s): %s", target, cmd)
         return None
 
 

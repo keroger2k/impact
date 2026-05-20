@@ -431,7 +431,12 @@ def _fetch_palo_live(session: SessionEntry, tunnel: dict, endpoint: dict) -> dic
     if DEV_MODE:
         return _mock_palo_state(tunnel, endpoint)
 
-    tunnel_name = (endpoint.get("interface") or tunnel.get("name") or "").strip()
+    # PAN-OS `show vpn flow name X` / `show vpn ipsec-sa tunnel X` both match
+    # against the *IPsec tunnel configuration name* (the `entry name=` under
+    # /network/tunnel/ipsec) — NOT the tunnel.N interface name. tunnel["name"]
+    # is that config name; endpoint["interface"] is the tunnel interface and
+    # would silently return zero matches.
+    tunnel_name = (tunnel.get("name") or endpoint.get("interface") or "").strip()
     if not tunnel_name:
         return _live_error("Palo tunnel has no name to query")
 
@@ -444,20 +449,20 @@ def _fetch_palo_live(session: SessionEntry, tunnel: dict, endpoint: dict) -> dic
     if not devices:
         return _live_error("No managed firewalls available to query")
 
-    flow_cmd = f"<show><vpn><flow><name>{tunnel_name}</name></flow></vpn></show>"
-    sa_cmd   = f"<show><vpn><ipsec-sa><tunnel>{tunnel_name}</tunnel></ipsec-sa></vpn></show>"
-    ike_cmd  =  "<show><vpn><ike-sa></ike-sa></vpn></show>"
+    flow_cmd = f'show vpn flow name "{tunnel_name}"'
+    sa_cmd   = f'show vpn ipsec-sa tunnel "{tunnel_name}"'
+    ike_cmd  = 'show vpn ike-sa'
 
     def query_one(d: dict) -> Optional[dict]:
         serial = d.get("serial", "")
         if not serial:
             return None
-        flow_xml = pc._op_targeted(flow_cmd, api_key, serial)
+        flow_xml = pc.op_via_sdk(flow_cmd, api_key, serial)
         flow = parse_pan_vpn_flow(flow_xml, tunnel_name)
         if not flow.get("found"):
             return None
-        sa_xml  = pc._op_targeted(sa_cmd,  api_key, serial)
-        ike_xml = pc._op_targeted(ike_cmd, api_key, serial)
+        sa_xml  = pc.op_via_sdk(sa_cmd,  api_key, serial)
+        ike_xml = pc.op_via_sdk(ike_cmd, api_key, serial)
         sa  = parse_pan_ipsec_sa(sa_xml, tunnel_name)
         ike = parse_pan_ike_sa(ike_xml, flow.get("peer_ip", ""), flow.get("gwid", ""))
         host = d.get("hostname", serial)
