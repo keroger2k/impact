@@ -419,6 +419,21 @@ def _parse_ts_side(elem: ET.Element | None) -> dict:
     }
 
 
+def list_pan_flow_names(elem: ET.Element | None) -> list[str]:
+    """Return every IPSec flow entry name present in a `show vpn flow` response.
+
+    Used to surface the real names on a device when our inventory name doesn't
+    match (so the user can see whether it's a config-vs-runtime naming gap)."""
+    if elem is None:
+        return []
+    out: list[str] = []
+    for entry in elem.findall(".//IPSec/entry") or elem.findall(".//entry"):
+        n = (entry.findtext("name") or "").strip()
+        if n:
+            out.append(n)
+    return out
+
+
 def parse_pan_vpn_flow(elem: ET.Element | None, tunnel_name: str) -> dict:
     """Parse the result of `show vpn flow`.
 
@@ -427,12 +442,18 @@ def parse_pan_vpn_flow(elem: ET.Element | None, tunnel_name: str) -> dict:
     cipher, error/drop counts, lifetime timers, and the tunnel-monitor sub-state.
     `show vpn ipsec-sa` does NOT carry counters or TS on PAN-OS, so this parser
     must capture them.
+
+    Matching is exact first, then case-insensitive — guards against the
+    occasional inventory-vs-runtime casing drift on PAN-OS.
     """
     if elem is None:
         return {}
-    for entry in elem.findall(".//IPSec/entry") or elem.findall(".//entry"):
+    target_lower = tunnel_name.lower()
+    entries = elem.findall(".//IPSec/entry") or elem.findall(".//entry")
+    # Two-pass: exact match wins; fall back to case-insensitive.
+    for entry in entries:
         name = (entry.findtext("name") or "").strip()
-        if name != tunnel_name:
+        if name != tunnel_name and name.lower() != target_lower:
             continue
         state_raw = (entry.findtext("state") or "").lower()
 

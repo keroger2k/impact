@@ -426,6 +426,7 @@ def _fetch_palo_live(session: SessionEntry, tunnel: dict, endpoint: dict) -> dic
     from utils.ipsec_live import (
         merge_palo_state,
         parse_pan_vpn_flow, parse_pan_ipsec_sa, parse_pan_ike_sa,
+        list_pan_flow_names,
     )
 
     if DEV_MODE:
@@ -458,7 +459,13 @@ def _fetch_palo_live(session: SessionEntry, tunnel: dict, endpoint: dict) -> dic
     if not candidates:
         return _live_error(f"All {total} managed firewalls report disconnected from Panorama")
 
-    flow_cmd = f'show vpn flow name "{tunnel_name}"'
+    # Fetch ALL flows (no `name X` filter). Two reasons:
+    #   1. The PAN-OS `name` filter is fragile across versions / SDK escaping —
+    #      it returned empty on devices that demonstrably had the tunnel.
+    #   2. Fetching everything lets us list the *actual* names present so a
+    #      naming mismatch (inventory-vs-runtime) is immediately visible in the
+    #      error rather than hidden behind a silent miss.
+    flow_cmd = 'show vpn flow'
     sa_cmd   = f'show vpn ipsec-sa tunnel "{tunnel_name}"'
     ike_cmd  = 'show vpn ike-sa'
 
@@ -479,7 +486,15 @@ def _fetch_palo_live(session: SessionEntry, tunnel: dict, endpoint: dict) -> dic
             return None
         flow = parse_pan_vpn_flow(flow_xml, tunnel_name)
         if not flow.get("found"):
-            probe_log.append(f"{host} ({serial}): no flow entry matching '{tunnel_name}'")
+            names = list_pan_flow_names(flow_xml)
+            if names:
+                # Cap the per-device name list so a hub with 200 spokes doesn't
+                # bury the diagnostic.
+                shown = ", ".join(names[:8])
+                more = f" (+{len(names) - 8} more)" if len(names) > 8 else ""
+                probe_log.append(f"{host}: has {len(names)} flows but none named '{tunnel_name}' — saw: {shown}{more}")
+            else:
+                probe_log.append(f"{host}: no IPSec flows at all")
             return None
         sa_xml  = pc.op_via_sdk(sa_cmd,  api_key, serial)
         ike_xml = pc.op_via_sdk(ike_cmd, api_key, serial)
