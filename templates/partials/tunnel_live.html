@@ -1,6 +1,7 @@
-{# Live tunnel status fragment — swapped into an endpoint row's expand slot.
-   The wrapping <td colspan> is supplied by the parent tunnel_detail.html row,
-   so this fragment starts inside that <td>. #}
+{# Live tunnel status fragment — swapped into the live-state offcanvas body
+   (#liveTunnelOffcanvasBody in tunnel_detail.html). The offcanvas provides
+   the surrounding chrome, header, and close button, so this fragment starts
+   inside that body with no wrapping card or border of its own. #}
 
 {% set st = state %}
 {% set status = st.status or "unknown" %}
@@ -18,7 +19,7 @@
    |sort(reverse=true, attribute='decap_drops')
 %}
 
-<div class="tunnel-live-card border rounded-2 p-3 my-2 bg-light-subtle">
+<div class="tunnel-live-card">
 
   <div class="d-flex align-items-center flex-wrap gap-2 mb-3">
     <span class="badge border {{ status_class }}">
@@ -126,7 +127,7 @@
       </div>
       <div class="small text-muted">sorted by decap drops, then status</div>
     </div>
-    <div class="table-responsive" style="max-height: 360px; overflow-y: auto;">
+    <div class="table-responsive" style="max-height: 60vh; overflow-y: auto;">
       <table class="table table-sm table-striped mb-0 small">
         <thead class="bg-light sticky-top">
           <tr>

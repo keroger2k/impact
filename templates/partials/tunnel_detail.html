@@ -98,7 +98,6 @@
         </thead>
         <tbody>
           {% for ep in tunnel.endpoints %}
-          {% set live_id = "live-" ~ tunnel.id ~ "-" ~ loop.index0 %}
           {% set spin_id = "spin-" ~ tunnel.id ~ "-" ~ loop.index0 %}
           <tr>
             <td class="fw-bold text-navy">{{ ep.device }}</td>
@@ -124,9 +123,10 @@
             <td class="text-end">
               <button class="btn btn-sm btn-outline-primary py-0 px-2"
                       hx-get="/api/tunnels/live/{{ tunnel.id }}/{{ loop.index0 }}"
-                      hx-target="#{{ live_id }}"
+                      hx-target="#liveTunnelOffcanvasBody"
                       hx-swap="innerHTML"
                       hx-indicator="#{{ spin_id }}"
+                      hx-on::before-request="openLiveTunnelOffcanvas('{{ tunnel.name|e }}', '{{ ep.device|e }}')"
                       title="Fetch live status from {{ ep.device }}">
                 <span id="{{ spin_id }}" class="htmx-indicator spinner-border spinner-border-sm me-1" role="status"></span>
                 <i class="ph ph-pulse"></i> Fetch live
@@ -136,7 +136,6 @@
           {% if ep.description %}
           <tr><td colspan="8" class="text-muted small ps-4 fst-italic">{{ ep.description }}</td></tr>
           {% endif %}
-          <tr><td colspan="8" class="p-0 border-0" id="{{ live_id }}"></td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -159,3 +158,48 @@
   {% endif %}
 
 </div>
+
+{# ── Live-state offcanvas (one per tunnel detail render) ──────────────────
+   Endpoint "Fetch live" buttons target #liveTunnelOffcanvasBody and call
+   openLiveTunnelOffcanvas() in hx-on::before-request, so the panel slides
+   in immediately with a spinner while the data is being fetched. #}
+<div class="offcanvas offcanvas-end live-tunnel-offcanvas" tabindex="-1"
+     id="liveTunnelOffcanvas" aria-labelledby="liveTunnelOffcanvasLabel">
+  <div class="offcanvas-header border-bottom bg-light">
+    <div>
+      <div class="text-muted small text-uppercase fw-bold" style="letter-spacing:.05em;">
+        <i class="ph ph-pulse"></i> Live state
+      </div>
+      <h5 class="offcanvas-title mb-0 mt-1" id="liveTunnelOffcanvasLabel">
+        {{ tunnel.name }}
+      </h5>
+    </div>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+  </div>
+  <div class="offcanvas-body p-3" id="liveTunnelOffcanvasBody">
+    <div class="text-center text-muted py-5">
+      <i class="ph ph-pulse" style="font-size:2rem;"></i>
+      <div class="mt-2">Click <strong>Fetch live</strong> on an endpoint to load live state.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Open the offcanvas immediately on click and show a loading placeholder,
+  // before the htmx response arrives. Updates the title to the endpoint that
+  // is being queried so the user sees which probe is in flight.
+  function openLiveTunnelOffcanvas(tunnelName, device) {
+    const el   = document.getElementById('liveTunnelOffcanvas');
+    const body = document.getElementById('liveTunnelOffcanvasBody');
+    const title = document.getElementById('liveTunnelOffcanvasLabel');
+    if (title) title.textContent = tunnelName + '  ·  ' + device;
+    if (body) {
+      body.innerHTML =
+        '<div class="text-center text-muted py-5">' +
+        '<div class="spinner-border text-primary mb-2" role="status"></div>' +
+        '<div>Fetching live state from <span class="mono">' + device + '</span>…</div>' +
+        '</div>';
+    }
+    bootstrap.Offcanvas.getOrCreateInstance(el).show();
+  }
+</script>
