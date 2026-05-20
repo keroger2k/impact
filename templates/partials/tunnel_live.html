@@ -12,12 +12,9 @@
     else "bg-secondary-subtle text-secondary border-secondary"
 ) %}
 {% set total_drops = (st.encap_drops or 0) + (st.decap_drops or 0) %}
-{# Sort sessions: worst drops first, then status (down before up), so the
-   problematic peers surface at the top of the per-peer table. #}
-{% set sorted_sessions = (st.sessions or [])
-   |sort(attribute='peer')
-   |sort(reverse=true, attribute='decap_drops')
-%}
+{# Sessions are pre-sorted in Python (merge_*_state) so the sort key handles
+   None values cleanly — Jinja's `sort` filter can't compare None to int. #}
+{% set sorted_sessions = st.sessions or [] %}
 
 <div class="tunnel-live-card">
 

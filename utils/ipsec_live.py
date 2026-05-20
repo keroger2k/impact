@@ -791,6 +791,22 @@ def parse_pan_ike_sa(elem: ET.Element | None, peer_ip: str = "", gwid: str = "")
 
 # ── Aggregation helpers ─────────────────────────────────────────────────────
 
+def _sort_sessions(sessions: list[dict]) -> list[dict]:
+    """Pre-sort sessions for the per-peer/per-proxy table.
+
+    Order: worst-drops first, then `down` before `up`, then peer asc.
+    Done here (not in the template) because Jinja's `sort` filter can't
+    compare None to int — and parser regexes can leave drops as None when a
+    counter line is absent for some peers but present for others.
+    """
+    def key(s: dict):
+        drops  = s.get("decap_drops") or 0
+        status_rank = 0 if s.get("status") == "down" else 1
+        peer = s.get("peer") or ""
+        return (-int(drops), status_rank, peer)
+    return sorted(sessions, key=key)
+
+
 def merge_ios_state(
     crypto_session: dict,
     ikev2_sa:       dict,
@@ -809,7 +825,7 @@ def merge_ios_state(
     state = empty_state()
     state["raw"]    = raw
     state["errors"] = list(crypto_session.get("errors", []))
-    sessions: list[dict] = crypto_session.get("sessions", [])
+    sessions: list[dict] = _sort_sessions(crypto_session.get("sessions", []))
     state["sessions"]      = sessions
     state["session_count"] = len(sessions)
 
@@ -997,7 +1013,9 @@ def merge_palo_state(
         else:
             state["status"] = "degraded"
         ike_proto = (ike or {}).get("protocol", "")
-        state["sessions"] = [_palo_session_from_entry(m, ike_proto) for m in matches]
+        state["sessions"] = _sort_sessions(
+            [_palo_session_from_entry(m, ike_proto) for m in matches]
+        )
     else:
         # Single-flow case: surface counters straight from the primary entry.
         state["status"]      = primary.get("status", "unknown")
