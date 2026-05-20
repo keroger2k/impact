@@ -114,12 +114,15 @@
   </div>
   {% endif %}
 
-  {# ── Per-peer session table (the centerpiece for DMVPN hubs) ── #}
+  {# ── Per-peer session table (DMVPN spokes / Palo proxy-IDs) ── #}
   {% if sorted_sessions|length > 1 %}
+  {% set is_palo_proxy = st.palo and st.palo.proxy_id_count and st.palo.proxy_id_count > 1 %}
   <div class="mb-3">
     <div class="d-flex align-items-center justify-content-between mb-1">
       <div class="text-muted small text-uppercase fw-bold">
-        <i class="ph ph-users-three"></i> Per-peer sessions ({{ sorted_sessions|length }})
+        <i class="ph ph-users-three"></i>
+        {% if is_palo_proxy %}Per-proxy-ID SAs ({{ sorted_sessions|length }})
+        {% else %}Per-peer sessions ({{ sorted_sessions|length }}){% endif %}
       </div>
       <div class="small text-muted">sorted by decap drops, then status</div>
     </div>
@@ -127,9 +130,9 @@
       <table class="table table-sm table-striped mb-0 small">
         <thead class="bg-light sticky-top">
           <tr>
-            <th>Peer</th>
+            <th>{% if is_palo_proxy %}Proxy ID{% else %}Peer{% endif %}</th>
             <th>Status</th>
-            <th>Uptime</th>
+            <th>{% if is_palo_proxy %}Traffic selector{% else %}Uptime{% endif %}</th>
             <th>IKE</th>
             <th class="text-end">Encap pkts</th>
             <th class="text-end">Enc drops</th>

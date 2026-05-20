@@ -434,88 +434,84 @@ def list_pan_flow_names(elem: ET.Element | None) -> list[str]:
     return out
 
 
-def parse_pan_vpn_flow(elem: ET.Element | None, tunnel_name: str) -> dict:
-    """Parse the result of `show vpn flow`.
+def _flow_entry_matches(name: str, tunnel_name: str) -> tuple[bool, str]:
+    """Match a flow entry name against a tunnel name.
 
-    The IPSec entry under `<IPSec><entry>` is the source-of-truth for runtime
-    state: it holds packet/byte counters, SPIs, traffic selectors, the active
-    cipher, error/drop counts, lifetime timers, and the tunnel-monitor sub-state.
-    `show vpn ipsec-sa` does NOT carry counters or TS on PAN-OS, so this parser
-    must capture them.
-
-    Matching is exact first, then case-insensitive — guards against the
-    occasional inventory-vs-runtime casing drift on PAN-OS.
+    PAN-OS names per-proxy-id SAs as ``{tunnel_name}:{label}`` (one entry per
+    traffic selector). A "match" is therefore the bare name *or* anything with
+    a `:` suffix off the same base. Returns (matched, proxy_id_label).
     """
-    if elem is None:
-        return {}
-    target_lower = tunnel_name.lower()
-    entries = elem.findall(".//IPSec/entry") or elem.findall(".//entry")
-    # Two-pass: exact match wins; fall back to case-insensitive.
-    for entry in entries:
-        name = (entry.findtext("name") or "").strip()
-        if name != tunnel_name and name.lower() != target_lower:
-            continue
-        state_raw = (entry.findtext("state") or "").lower()
+    if not name:
+        return False, ""
+    tl = tunnel_name.lower()
+    nl = name.lower()
+    if nl == tl:
+        return True, ""
+    base, sep, label = name.partition(":")
+    if sep and base.lower() == tl:
+        return True, label
+    return False, ""
 
-        mon = entry.find("monitor")
-        monitor = {}
-        if mon is not None:
-            monitor = {
-                "enabled":   (mon.findtext("on") or "").lower() == "true",
-                "up":        (mon.findtext("status") or "").lower() == "true",
-                "ka_status": _int_or_none(mon.findtext("ka-status")),
-                "interval":  _int_or_none(mon.findtext("interval")),
-                "threshold": _int_or_none(mon.findtext("threshold")),
-                "pkt_sent":  _int_or_none(mon.findtext("pkt-sent")),
-                "pkt_recv":  _int_or_none(mon.findtext("pkt-recv")),
-            }
 
-        ts_elem = entry.find("ts")
-        ts = {}
-        if ts_elem is not None:
-            ts = {
-                "local":  _parse_ts_side(ts_elem.find("local")),
-                "remote": _parse_ts_side(ts_elem.find("remote")),
-            }
+def _parse_pan_vpn_entry(entry: ET.Element) -> dict:
+    """Parse one `<IPSec><entry>` block from `show vpn flow` into a dict."""
+    state_raw = (entry.findtext("state") or "").lower()
 
-        auth_err  = _int_or_none(entry.findtext("auth-err"))   or 0
-        dec_err   = _int_or_none(entry.findtext("dec-err"))    or 0
-        replay    = _int_or_none(entry.findtext("pkt-replay")) or 0
-        inner_wn  = _int_or_none(entry.findtext("inner-warn")) or 0
+    mon = entry.find("monitor")
+    monitor = {}
+    if mon is not None:
+        monitor = {
+            "enabled":   (mon.findtext("on") or "").lower() == "true",
+            "up":        (mon.findtext("status") or "").lower() == "true",
+            "ka_status": _int_or_none(mon.findtext("ka-status")),
+            "interval":  _int_or_none(mon.findtext("interval")),
+            "threshold": _int_or_none(mon.findtext("threshold")),
+            "pkt_sent":  _int_or_none(mon.findtext("pkt-sent")),
+            "pkt_recv":  _int_or_none(mon.findtext("pkt-recv")),
+        }
 
-        return {
-            "found":       True,
-            "gwid":        entry.findtext("gwid") or "",
-            "peer_ip":     (entry.findtext("peerip") or "").strip(),
-            "local_ip":    (entry.findtext("localip") or "").strip(),
-            "state":       state_raw,
-            "inner_if":    entry.findtext("inner-if") or "",
-            "outer_if":    entry.findtext("outer-if") or "",
-            "status":      "up" if ("active" in state_raw or "estab" in state_raw) else "down",
-            # phase 2 cipher (PAN reports the negotiated AEAD here, not in ipsec-sa)
-            "enc":         (entry.findtext("enc")  or "").strip(),
-            "auth":        (entry.findtext("auth") or "").strip(),
-            "proto":       (entry.findtext("proto") or "").strip(),
-            "ipsec_mode":  (entry.findtext("ipsec-mode") or "").strip(),
-            # SPIs (hex, no direction split needed — flow gives them directly)
-            "local_spi":   (entry.findtext("local-spi")  or "").strip(),
-            "remote_spi":  (entry.findtext("remote-spi") or "").strip(),
-            # lifetime
-            "soft_lifetime_sec":      _int_or_none(entry.findtext("softtime")),
-            "hard_lifetime_sec":      _int_or_none(entry.findtext("hardtime")),
-            "lifetime_remaining_sec": _int_or_none(entry.findtext("remaintime")),
-            "last_rekey_sec":         _int_or_none(entry.findtext("last-rekey")),
-            # transport / capabilities
-            "mtu":         _int_or_none(entry.findtext("mtu")),
-            "natt":        (entry.findtext("natt") or "").lower() == "true",
-            "initiator":   (entry.findtext("initiator") or "").lower() == "true",
-            "keytype":     (entry.findtext("keytype") or "").strip(),
-            "anti_replay": (entry.findtext("anti-replay") or "").lower() == "true",
-            "anti_replay_window": _int_or_none(entry.findtext("anti-replay-window")),
-            # counters (these are the *real* packet/byte totals; ipsec-sa has none)
-            "encap_pkts":  _int_or_none(entry.findtext("pkt-encap")),
-            "decap_pkts":  _int_or_none(entry.findtext("pkt-decap")),
-            "encap_bytes": _int_or_none(entry.findtext("byte-encap")),
+    ts_elem = entry.find("ts")
+    ts = {}
+    if ts_elem is not None:
+        ts = {
+            "local":  _parse_ts_side(ts_elem.find("local")),
+            "remote": _parse_ts_side(ts_elem.find("remote")),
+        }
+
+    auth_err  = _int_or_none(entry.findtext("auth-err"))   or 0
+    dec_err   = _int_or_none(entry.findtext("dec-err"))    or 0
+    replay    = _int_or_none(entry.findtext("pkt-replay")) or 0
+    inner_wn  = _int_or_none(entry.findtext("inner-warn")) or 0
+
+    return {
+        "name":        (entry.findtext("name") or "").strip(),
+        "gwid":        entry.findtext("gwid") or "",
+        "peer_ip":     (entry.findtext("peerip") or "").strip(),
+        "local_ip":    (entry.findtext("localip") or "").strip(),
+        "state":       state_raw,
+        "inner_if":    entry.findtext("inner-if") or "",
+        "outer_if":    entry.findtext("outer-if") or "",
+        # Word-boundary check: "inactive" must NOT count as up (substring trap).
+        "status":      "up" if state_raw in ("active", "up", "established") or "estab" in state_raw else "down",
+        "enc":         (entry.findtext("enc")  or "").strip(),
+        "auth":        (entry.findtext("auth") or "").strip(),
+        "proto":       (entry.findtext("proto") or "").strip(),
+        "ipsec_mode":  (entry.findtext("ipsec-mode") or "").strip(),
+        "local_spi":   (entry.findtext("local-spi")  or "").strip(),
+        "remote_spi":  (entry.findtext("remote-spi") or "").strip(),
+        "soft_lifetime_sec":      _int_or_none(entry.findtext("softtime")),
+        "hard_lifetime_sec":      _int_or_none(entry.findtext("hardtime")),
+        "lifetime_remaining_sec": _int_or_none(entry.findtext("remaintime")),
+        "last_rekey_sec":         _int_or_none(entry.findtext("last-rekey")),
+        "mtu":         _int_or_none(entry.findtext("mtu")),
+        "natt":        (entry.findtext("natt") or "").lower() == "true",
+        "initiator":   (entry.findtext("initiator") or "").lower() == "true",
+        "keytype":     (entry.findtext("keytype") or "").strip(),
+        "anti_replay": (entry.findtext("anti-replay") or "").lower() == "true",
+        "anti_replay_window": _int_or_none(entry.findtext("anti-replay-window")),
+        "encap_pkts":  _int_or_none(entry.findtext("pkt-encap")),
+        "decap_pkts":  _int_or_none(entry.findtext("pkt-decap")),
+        "encap_bytes": _int_or_none(entry.findtext("byte-encap")),
             "decap_bytes": _int_or_none(entry.findtext("byte-decap")),
             "seq_send":    _int_or_none(entry.findtext("seq-send")),
             "seq_recv":    _int_or_none(entry.findtext("seq-recv")),
@@ -532,46 +528,102 @@ def parse_pan_vpn_flow(elem: ET.Element | None, tunnel_name: str) -> dict:
             "monitor":     monitor,
             "ts":          ts,
         }
-    return {"found": False}
+
+
+def parse_pan_vpn_flow(elem: ET.Element | None, tunnel_name: str) -> dict:
+    """Match every flow entry belonging to this tunnel.
+
+    Returns ``{"found": bool, "primary": dict, "matches": [entry_dict, ...]}``.
+    The primary entry is the bare-name match if present, else the first
+    proxy-id-suffixed match (e.g. ``CAL_TO_ITE:a``). When the tunnel has
+    proxy-IDs, ``matches`` contains one dict per proxy-id; each carries the
+    parsed ``proxy_id`` label.
+
+    Matching is case-insensitive on both the bare name and the prefix.
+    """
+    if elem is None:
+        return {"found": False, "matches": [], "primary": {}}
+    matches: list[dict] = []
+    primary: dict = {}
+    for entry in elem.findall(".//IPSec/entry") or elem.findall(".//entry"):
+        name = (entry.findtext("name") or "").strip()
+        ok, proxy_id = _flow_entry_matches(name, tunnel_name)
+        if not ok:
+            continue
+        parsed = _parse_pan_vpn_entry(entry)
+        parsed["proxy_id"] = proxy_id
+        matches.append(parsed)
+        if not proxy_id and not primary:
+            primary = parsed
+    if not primary and matches:
+        primary = matches[0]
+    return {"found": bool(matches), "matches": matches, "primary": primary}
+
+
+def _spi_hex(raw: str | None) -> str:
+    """PAN reports SPIs as decimal integers in `show vpn ipsec-sa`. Convert
+    to hex (8-char, zero-padded, uppercase) so they line up with what
+    `show vpn flow` shows."""
+    v = _int_or_none(raw)
+    return f"{v:08X}" if v is not None else (raw or "")
+
+
+def _parse_pan_sa_entry(entry: ET.Element) -> dict:
+    """Parse one `<entries><entry>` from `show vpn ipsec-sa` into a dict."""
+    return {
+        "name":        (entry.findtext("name") or "").strip(),
+        "gateway":     (entry.findtext("gateway") or "").strip(),
+        "tid":         _int_or_none(entry.findtext("tid")),
+        "proto":       (entry.findtext("proto") or "").strip(),
+        "encryption":  (entry.findtext("enc")  or "").strip(),
+        "integrity":   (entry.findtext("hash") or "").strip(),
+        "pfs":         (entry.findtext("dh")   or "").strip(),
+        "spi_in":      _spi_hex(entry.findtext("i_spi")),
+        "spi_out":     _spi_hex(entry.findtext("o_spi")),
+        "lifetime_sec":           _int_or_none(entry.findtext("life")),
+        "lifetime_remaining_sec": _int_or_none(entry.findtext("remain")),
+        "lifetime_kb":            (entry.findtext("kb") or "").strip(),
+    }
 
 
 def parse_pan_ipsec_sa(elem: ET.Element | None, tunnel_name: str) -> dict:
     """Parse `show vpn ipsec-sa` — one `<entry>` per SA tunnel.
 
-    PAN-OS does NOT include per-SA byte/packet counters or `dir`-split entries
-    here (those live in `show vpn flow`). What this command does carry is the
-    gateway name, the inbound/outbound SPIs (already pre-split as `i_spi`/
-    `o_spi`), the phase-2 lifetime, DH group, and crypto suite labels.
+    Returns ``{"matches": [sa_dict, ...], "primary": sa_dict, "phase2": {...}}``.
+    For proxy-ID tunnels, every per-proxy SA is returned in `matches`. The
+    `phase2` field reflects the *primary* (bare-name or first) entry, kept
+    for backward compatibility with the single-SA call path.
     """
     if elem is None:
-        return {}
+        return {"matches": [], "primary": {}, "phase2": {}}
+    matches: list[dict] = []
+    primary: dict = {}
     for entry in elem.findall(".//entries/entry") or elem.findall(".//entry"):
         name = (entry.findtext("name") or "").strip()
-        if not (name == tunnel_name or name.startswith(tunnel_name + ":")
-                or (":" + tunnel_name) in name):
+        ok, _ = _flow_entry_matches(name, tunnel_name)
+        if not ok:
             continue
-        # PAN reports SPIs as decimal integers — convert to hex (8-char zero-
-        # padded, uppercase) to match what `show vpn flow` shows.
-        def _spi_hex(raw: str | None) -> str:
-            v = _int_or_none(raw)
-            return f"{v:08X}" if v is not None else (raw or "")
-
-        return {
-            "gateway":     (entry.findtext("gateway") or "").strip(),
-            "tid":         _int_or_none(entry.findtext("tid")),
-            "proto":       (entry.findtext("proto") or "").strip(),
-            "phase2": {
-                "encryption":             (entry.findtext("enc")  or "").strip(),
-                "integrity":              (entry.findtext("hash") or "").strip(),
-                "pfs":                    (entry.findtext("dh")   or "").strip(),
-                "spi_in":                 _spi_hex(entry.findtext("i_spi")),
-                "spi_out":                _spi_hex(entry.findtext("o_spi")),
-                "lifetime_sec":           _int_or_none(entry.findtext("life")),
-                "lifetime_remaining_sec": _int_or_none(entry.findtext("remain")),
-                "lifetime_kb":            (entry.findtext("kb") or "").strip(),
-            },
-        }
-    return {}
+        parsed = _parse_pan_sa_entry(entry)
+        matches.append(parsed)
+        if name.lower() == tunnel_name.lower() and not primary:
+            primary = parsed
+    if not primary and matches:
+        primary = matches[0]
+    return {
+        "matches": matches,
+        "primary": primary,
+        # Backward-compatible: a phase2 dict derived from the primary entry.
+        "phase2": {
+            "encryption":             primary.get("encryption", ""),
+            "integrity":              primary.get("integrity", ""),
+            "pfs":                    primary.get("pfs", ""),
+            "spi_in":                 primary.get("spi_in", ""),
+            "spi_out":                primary.get("spi_out", ""),
+            "lifetime_sec":           primary.get("lifetime_sec"),
+            "lifetime_remaining_sec": primary.get("lifetime_remaining_sec"),
+            "lifetime_kb":            primary.get("lifetime_kb", ""),
+        } if primary else {},
+    }
 
 
 _IKE_MODE_TS = re.compile(r"^([A-Z][a-z]{2})\.(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})$")
@@ -764,6 +816,51 @@ def merge_ios_state(
     return state
 
 
+def _ts_label(side: dict) -> str:
+    """Short human label for one side of a traffic selector — "any" when wide
+    open, otherwise the network range."""
+    if not side:
+        return ""
+    s, e = side.get("start_ip", ""), side.get("end_ip", "")
+    if s == "0.0.0.0" and e == "255.255.255.255":
+        return "any"
+    if s == e:
+        return s
+    return f"{s}–{e}"
+
+
+def _ts_pair_label(ts: dict) -> str:
+    """`local → remote` label for a traffic-selector pair."""
+    if not ts:
+        return ""
+    l = _ts_label(ts.get("local") or {})
+    r = _ts_label(ts.get("remote") or {})
+    if not l and not r:
+        return ""
+    return f"{l or '?'} → {r or '?'}"
+
+
+def _palo_session_from_entry(entry: dict, ike_protocol: str) -> dict:
+    """Build a per-proxy session row in the shape the per-peer table expects."""
+    drops = entry.get("decap_drops")
+    return {
+        # `peer` column doubles as the proxy-id identifier in the table.
+        "peer":            entry.get("proxy_id") or entry.get("name", ""),
+        "status":          entry.get("status") or "unknown",
+        # PAN flow doesn't expose uptime per SA; the TS pair is more useful
+        # for identifying which proxy-id this row corresponds to.
+        "uptime":          _ts_pair_label(entry.get("ts") or {}),
+        "phase1":          {"protocol": ike_protocol} if ike_protocol else {},
+        "encap_pkts":      entry.get("encap_pkts"),
+        "decap_pkts":      entry.get("decap_pkts"),
+        # PAN has no encap-side drop counter; only decap drops are meaningful.
+        "encap_drops":     None,
+        "decap_drops":     drops,
+        "p2_lifetime_sec": entry.get("lifetime_remaining_sec"),
+        "p2_lifetime_kb":  None,
+    }
+
+
 def merge_palo_state(
     flow:  dict,
     sa:    dict,
@@ -776,6 +873,11 @@ def merge_palo_state(
     cipher, lifetime timers, traffic selectors, and drop counters. `sa` adds
     the configured phase-2 lifetime and the gateway label. `ike` carries the
     phase-1 proposal (parsed out of the slash-delimited `algo`).
+
+    When the tunnel has multiple proxy-IDs, `flow["matches"]` contains one
+    entry per proxy and we aggregate top-level counters across them while
+    surfacing the per-proxy breakdown via the `sessions` list (same shape as
+    DMVPN per-peer rendering).
     """
     state = empty_state()
     state["raw"] = raw
@@ -784,43 +886,85 @@ def merge_palo_state(
         state["errors"].append("tunnel not present in vpn flow on this firewall")
         return state
 
-    state["status"]      = flow.get("status", "unknown")
-    state["peer_ip"]     = flow.get("peer_ip", "")
-    # Counters come from flow; ipsec-sa does not carry them on PAN-OS.
-    state["encap_pkts"]  = flow.get("encap_pkts")
-    state["decap_pkts"]  = flow.get("decap_pkts")
-    state["encap_bytes"] = flow.get("encap_bytes")
-    state["decap_bytes"] = flow.get("decap_bytes")
-    state["decap_drops"] = flow.get("decap_drops")
-    # PAN has no encap-side drop counter in `show vpn flow`; leave None.
+    matches: list[dict] = flow.get("matches") or []
+    # `primary` is the bare-name match or first proxy-id match — used for
+    # tunnel-level fields that are the same across all proxies (cipher,
+    # gateway, peer IP, interfaces).
+    primary: dict = flow.get("primary") or (matches[0] if matches else {})
+    multi = sum(1 for m in matches if m.get("proxy_id")) > 0 and len(matches) > 1
 
-    # Phase 2: start from flow (active cipher, SPIs, remaining lifetime), then
-    # overlay anything from ipsec-sa that adds info (configured lifetime, kb).
+    state["peer_ip"] = primary.get("peer_ip", "")
+
+    if multi:
+        # Aggregate counters across all per-proxy SAs.
+        any_encap_pkts = any(m.get("encap_pkts")  is not None for m in matches)
+        any_decap_pkts = any(m.get("decap_pkts")  is not None for m in matches)
+        any_encap_byte = any(m.get("encap_bytes") is not None for m in matches)
+        any_decap_byte = any(m.get("decap_bytes") is not None for m in matches)
+        state["encap_pkts"]  = sum(m.get("encap_pkts")  or 0 for m in matches) if any_encap_pkts else None
+        state["decap_pkts"]  = sum(m.get("decap_pkts")  or 0 for m in matches) if any_decap_pkts else None
+        state["encap_bytes"] = sum(m.get("encap_bytes") or 0 for m in matches) if any_encap_byte else None
+        state["decap_bytes"] = sum(m.get("decap_bytes") or 0 for m in matches) if any_decap_byte else None
+        state["decap_drops"] = sum(m.get("decap_drops") or 0 for m in matches)
+        # Status: all-up → up, all-down → down, mixed → degraded.
+        up   = sum(1 for m in matches if m.get("status") == "up")
+        down = sum(1 for m in matches if m.get("status") == "down")
+        state["peers_up"]      = up
+        state["peers_down"]    = down
+        state["session_count"] = len(matches)
+        if up == len(matches):
+            state["status"] = "up"
+        elif up == 0:
+            state["status"] = "down"
+        else:
+            state["status"] = "degraded"
+        ike_proto = (ike or {}).get("protocol", "")
+        state["sessions"] = [_palo_session_from_entry(m, ike_proto) for m in matches]
+    else:
+        # Single-flow case: surface counters straight from the primary entry.
+        state["status"]      = primary.get("status", "unknown")
+        state["encap_pkts"]  = primary.get("encap_pkts")
+        state["decap_pkts"]  = primary.get("decap_pkts")
+        state["encap_bytes"] = primary.get("encap_bytes")
+        state["decap_bytes"] = primary.get("decap_bytes")
+        state["decap_drops"] = primary.get("decap_drops")
+
+    # Phase 2: start from primary entry (active cipher, SPIs, remaining
+    # lifetime), then overlay anything from ipsec-sa (configured lifetime,
+    # pfs, kb). For multi-proxy tunnels these are the proxy-id `:a` values —
+    # cipher/PFS are shared across proxies; lifetime is per-proxy but `:a`
+    # is a reasonable representative and the per-proxy table shows the rest.
     phase2 = {
-        "encryption":             flow.get("enc"),
-        "integrity":              flow.get("auth"),
-        "protocol":               flow.get("proto"),
-        "mode":                   flow.get("ipsec_mode"),
+        "encryption":             primary.get("enc"),
+        "integrity":              primary.get("auth"),
+        "protocol":               primary.get("proto"),
+        "mode":                   primary.get("ipsec_mode"),
         # PAN's `local-spi` is the SPI we receive on (inbound); `remote-spi` is
         # what we put on packets we send (outbound). Cross-checked against
         # `show vpn ipsec-sa` where i_spi == local-spi (hex).
-        "spi_in":                 flow.get("local_spi"),
-        "spi_out":                flow.get("remote_spi"),
-        "lifetime_remaining_sec": flow.get("lifetime_remaining_sec"),
-        "soft_lifetime_sec":      flow.get("soft_lifetime_sec"),
-        "hard_lifetime_sec":      flow.get("hard_lifetime_sec"),
-        "last_rekey_sec":         flow.get("last_rekey_sec"),
+        "spi_in":                 primary.get("local_spi"),
+        "spi_out":                primary.get("remote_spi"),
+        "lifetime_remaining_sec": primary.get("lifetime_remaining_sec"),
+        "soft_lifetime_sec":      primary.get("soft_lifetime_sec"),
+        "hard_lifetime_sec":      primary.get("hard_lifetime_sec"),
+        "last_rekey_sec":         primary.get("last_rekey_sec"),
     }
     if sa and sa.get("phase2"):
         sa_p2 = sa["phase2"]
-        # SA-derived fields fill in only where flow didn't have them, except
-        # for pfs/lifetime_kb which only ipsec-sa carries.
         phase2["pfs"]         = sa_p2.get("pfs")
         phase2["lifetime_kb"] = sa_p2.get("lifetime_kb")
         if not phase2["lifetime_remaining_sec"]:
             phase2["lifetime_remaining_sec"] = sa_p2.get("lifetime_remaining_sec")
         if not phase2.get("lifetime_sec"):
             phase2["lifetime_sec"] = sa_p2.get("lifetime_sec")
+    if multi:
+        # For multi-proxy, surface the min remaining across *active* proxies as
+        # "next rekey across all". Inactive proxies report remain=0 and would
+        # otherwise drown out the real near-rekey signal.
+        rem = [m.get("lifetime_remaining_sec") for m in matches
+               if m.get("status") == "up" and m.get("lifetime_remaining_sec")]
+        if rem:
+            phase2["lifetime_remaining_sec"] = min(rem)
     state["phase2"] = {k: v for k, v in phase2.items() if v not in (None, "")}
 
     if ike:
@@ -828,21 +972,23 @@ def merge_palo_state(
 
     # Bundle PAN-specific extras that don't fit the cross-platform shape.
     state["palo"] = {
-        "gateway":      (sa or {}).get("gateway") or (ike or {}).get("gateway", ""),
-        "local_ip":     flow.get("local_ip"),
-        "inner_if":     flow.get("inner_if"),
-        "outer_if":     flow.get("outer_if"),
-        "mtu":          flow.get("mtu"),
-        "natt":         flow.get("natt"),
-        "initiator":    flow.get("initiator"),
-        "keytype":      flow.get("keytype"),
-        "anti_replay":  flow.get("anti_replay"),
-        "anti_replay_window": flow.get("anti_replay_window"),
-        "seq_send":     flow.get("seq_send"),
-        "seq_recv":     flow.get("seq_recv"),
-        "errors":       flow.get("errors") or {},
-        "monitor":      flow.get("monitor") or {},
-        "ts":           flow.get("ts") or {},
+        "gateway":      (sa or {}).get("primary", {}).get("gateway")
+                        or (ike or {}).get("gateway", ""),
+        "local_ip":     primary.get("local_ip"),
+        "inner_if":     primary.get("inner_if"),
+        "outer_if":     primary.get("outer_if"),
+        "mtu":          primary.get("mtu"),
+        "natt":         primary.get("natt"),
+        "initiator":    primary.get("initiator"),
+        "keytype":      primary.get("keytype"),
+        "anti_replay":  primary.get("anti_replay"),
+        "anti_replay_window": primary.get("anti_replay_window"),
+        "seq_send":     primary.get("seq_send"),
+        "seq_recv":     primary.get("seq_recv"),
+        "errors":       primary.get("errors") or {},
+        "monitor":      primary.get("monitor") or {},
+        "ts":           primary.get("ts") or {},
+        "proxy_id_count": len([m for m in matches if m.get("proxy_id")]),
         "ike_role":     (ike or {}).get("role", ""),
         "ike_created":  (ike or {}).get("created", ""),
         "ike_expires":  (ike or {}).get("expires", ""),

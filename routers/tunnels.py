@@ -499,7 +499,10 @@ def _fetch_palo_live(session: SessionEntry, tunnel: dict, endpoint: dict) -> dic
         sa_xml  = pc.op_via_sdk(sa_cmd,  api_key, serial)
         ike_xml = pc.op_via_sdk(ike_cmd, api_key, serial)
         sa  = parse_pan_ipsec_sa(sa_xml, tunnel_name)
-        ike = parse_pan_ike_sa(ike_xml, flow.get("peer_ip", ""), flow.get("gwid", ""))
+        # flow["primary"] is the bare-name or first-proxy entry; use it to
+        # pick the right IKE SA on devices that host multiple gateways.
+        prim = flow.get("primary") or {}
+        ike = parse_pan_ike_sa(ike_xml, prim.get("peer_ip", ""), prim.get("gwid", ""))
         raw = {
             f"{host}: show vpn flow":     _et_text(flow_xml),
             f"{host}: show vpn ipsec-sa": _et_text(sa_xml),
