@@ -165,6 +165,7 @@
    in immediately with a spinner while the data is being fetched. #}
 <div class="offcanvas offcanvas-end live-tunnel-offcanvas" tabindex="-1"
      id="liveTunnelOffcanvas" aria-labelledby="liveTunnelOffcanvasLabel">
+  <div class="resize-handle" title="Drag to resize"></div>
   <div class="offcanvas-header border-bottom bg-light">
     <div>
       <div class="text-muted small text-uppercase fw-bold" style="letter-spacing:.05em;">
@@ -202,4 +203,64 @@
     }
     bootstrap.Offcanvas.getOrCreateInstance(el).show();
   }
+
+  // ── Resize handle wiring ─────────────────────────────────────────
+  // Drag the left edge of the offcanvas to resize. Persists width to
+  // localStorage so it stays the size the user picked across sessions.
+  (function() {
+    const offcanvas = document.getElementById('liveTunnelOffcanvas');
+    if (!offcanvas) return;
+    const handle = offcanvas.querySelector('.resize-handle');
+    if (!handle) return;
+
+    const STORAGE_KEY = 'liveTunnelOffcanvasWidth';
+    const MIN_W = 480;
+
+    // Restore prior width (skip on narrow viewports where CSS forces 100vw).
+    if (window.innerWidth > 768) {
+      const saved = parseInt(localStorage.getItem(STORAGE_KEY) || '', 10);
+      if (saved && saved >= MIN_W && saved <= window.innerWidth) {
+        offcanvas.style.width = saved + 'px';
+      }
+    }
+
+    let startX = 0;
+    let startWidth = 0;
+    let dragging = false;
+
+    function onMove(e) {
+      if (!dragging) return;
+      // Right-anchored panel: dragging LEFT (smaller clientX) widens it.
+      const dx = startX - e.clientX;
+      const maxW = window.innerWidth - 40;
+      const w = Math.max(MIN_W, Math.min(maxW, startWidth + dx));
+      offcanvas.style.width = w + 'px';
+    }
+    function onUp() {
+      if (!dragging) return;
+      dragging = false;
+      offcanvas.classList.remove('resizing');
+      handle.classList.remove('resizing');
+      document.body.classList.remove('live-tunnel-resizing');
+      try { localStorage.setItem(STORAGE_KEY, offcanvas.offsetWidth); } catch (_) {}
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    }
+    handle.addEventListener('mousedown', function(e) {
+      dragging = true;
+      startX = e.clientX;
+      startWidth = offcanvas.offsetWidth;
+      offcanvas.classList.add('resizing');
+      handle.classList.add('resizing');
+      document.body.classList.add('live-tunnel-resizing');
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+      e.preventDefault();
+    });
+    // Double-click resets to the CSS default.
+    handle.addEventListener('dblclick', function() {
+      offcanvas.style.width = '';
+      try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
+    });
+  })();
 </script>

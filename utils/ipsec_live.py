@@ -512,22 +512,22 @@ def _parse_pan_vpn_entry(entry: ET.Element) -> dict:
         "encap_pkts":  _int_or_none(entry.findtext("pkt-encap")),
         "decap_pkts":  _int_or_none(entry.findtext("pkt-decap")),
         "encap_bytes": _int_or_none(entry.findtext("byte-encap")),
-            "decap_bytes": _int_or_none(entry.findtext("byte-decap")),
-            "seq_send":    _int_or_none(entry.findtext("seq-send")),
-            "seq_recv":    _int_or_none(entry.findtext("seq-recv")),
-            # errors / drops — PAN splits these across four counters
-            "errors": {
-                "auth":       auth_err,
-                "decrypt":    dec_err,
-                "replay":     replay,
-                "inner_warn": inner_wn,
-            },
-            # decap drops = sum of the three real drop counters (inner-warn is
-            # an anomaly, not a drop)
-            "decap_drops": auth_err + dec_err + replay,
-            "monitor":     monitor,
-            "ts":          ts,
-        }
+        "decap_bytes": _int_or_none(entry.findtext("byte-decap")),
+        "seq_send":    _int_or_none(entry.findtext("seq-send")),
+        "seq_recv":    _int_or_none(entry.findtext("seq-recv")),
+        # errors / drops — PAN splits these across four counters
+        "errors": {
+            "auth":       auth_err,
+            "decrypt":    dec_err,
+            "replay":     replay,
+            "inner_warn": inner_wn,
+        },
+        # decap drops = sum of the three real drop counters (inner-warn is
+        # an anomaly, not a drop)
+        "decap_drops": auth_err + dec_err + replay,
+        "monitor":     monitor,
+        "ts":          ts,
+    }
 
 
 def parse_pan_vpn_flow(elem: ET.Element | None, tunnel_name: str) -> dict:
