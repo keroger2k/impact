@@ -29,7 +29,10 @@ ALLOWED_PREFIXES = {
     "show ", "display ", "get ", "ping ", "traceroute ",
     "tracert ",
 }
-DISALLOWED_CHARS = {";", "&", "`", "$", "(", ")", "{", "}", ">", "<", "\n", "\r", "\t"}
+# Block only chars that let a user chain multiple commands on one line.
+# Netmiko writes to the Cisco CLI, not a shell, so regex chars used in
+# `| include <regex>` filters (parens, braces, anchors, etc.) are safe.
+DISALLOWED_CHARS = {"\n", "\r", "\t"}
 
 PLATFORM_MAP = [
     ("N9K", "cisco_nxos"), ("N7K", "cisco_nxos"), ("N5K", "cisco_nxos"), ("N3K", "cisco_nxos"),
@@ -122,16 +125,7 @@ async def run_command(req: CommandRequest, session: SessionEntry = Depends(requi
         raise HTTPException(400, "Only read-only show/display commands are permitted")
 
     if any(c in command for c in DISALLOWED_CHARS):
-        raise HTTPException(400, "Command contains disallowed characters")
-
-    import shlex
-    try:
-        parts = shlex.split(command)
-        for p in parts:
-            if any(c in p for c in DISALLOWED_CHARS):
-                raise HTTPException(400, "Command contains disallowed characters")
-    except ValueError as e:
-        raise HTTPException(400, f"Invalid command format: {e}")
+        raise HTTPException(400, "Command must be a single line")
 
     # Log each command execution
     for dev in req.devices:
