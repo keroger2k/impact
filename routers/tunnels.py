@@ -426,6 +426,7 @@ def _fetch_palo_live(session: SessionEntry, tunnel: dict, endpoint: dict) -> dic
     from utils.ipsec_live import (
         merge_palo_state,
         parse_pan_vpn_flow, parse_pan_ipsec_sa, parse_pan_ike_sa,
+        parse_pan_vpn_flow_one, parse_pan_ipsec_sa_one,
         list_pan_flow_names,
     )
 
@@ -459,14 +460,19 @@ def _fetch_palo_live(session: SessionEntry, tunnel: dict, endpoint: dict) -> dic
     if not candidates:
         return _live_error(f"All {total} managed firewalls report disconnected from Panorama")
 
-    # Fetch ALL flows (no `name X` filter). Two reasons:
-    #   1. The PAN-OS `name` filter is fragile across versions / SDK escaping —
-    #      it returned empty on devices that demonstrably had the tunnel.
-    #   2. Fetching everything lets us list the *actual* names present so a
-    #      naming mismatch (inventory-vs-runtime) is immediately visible in the
-    #      error rather than hidden behind a silent miss.
+    # Two-phase fetch.
+    #
+    # Phase 1: `show vpn flow` returns a SUMMARY only (name, state, peer,
+    # interfaces). No counters, no SPIs, no TS, no lifetimes. But it's cheap,
+    # works without knowing exact proxy-ID names, and tells us which firewall
+    # has SAs matching our tunnel.
+    #
+    # Phase 2 (on the matched firewall, in parallel): for each `active` SA, run
+    # `show vpn flow name "FULL_NAME"` and `show vpn ipsec-sa tunnel
+    # "FULL_NAME"` to pull the rich per-SA detail. Inactive SAs have no
+    # counters to fetch, so we skip them to keep the fanout bounded
+    # (K150FWL001 has 42 proxy-IDs on CAL_TO_ITE, most inactive).
     flow_cmd = 'show vpn flow'
-    sa_cmd   = f'show vpn ipsec-sa tunnel "{tunnel_name}"'
     ike_cmd  = 'show vpn ike-sa'
 
     # Per-device probe outcomes — surfaced in the error when no match found,
@@ -496,17 +502,86 @@ def _fetch_palo_live(session: SessionEntry, tunnel: dict, endpoint: dict) -> dic
             else:
                 probe_log.append(f"{host}: no IPSec flows at all")
             return None
-        sa_xml  = pc.op_via_sdk(sa_cmd,  api_key, serial)
+        # Phase 2: enrich each *active* match with rich per-SA detail.
+        # Inactive SAs have no counters/SPIs/TS in PAN-OS, so we skip them
+        # (and just keep their summary status in the result). This caps the
+        # second-phase fanout at the number of active proxies — usually a
+        # small fraction of the total.
+        active_matches = [m for m in flow["matches"] if m.get("status") == "up"]
+
+        def fetch_detail(m: dict) -> dict:
+            full_name = m.get("name", "")
+            f_xml = pc.op_via_sdk(f'show vpn flow name "{full_name}"', api_key, serial)
+            s_xml = pc.op_via_sdk(f'show vpn ipsec-sa tunnel "{full_name}"', api_key, serial)
+            return {
+                "name":     full_name,
+                "flow_xml": f_xml,
+                "sa_xml":   s_xml,
+                "detail":   parse_pan_vpn_flow_one(f_xml, full_name),
+                "sa":       parse_pan_ipsec_sa_one(s_xml, full_name),
+            }
+
+        raw_details: dict[str, str] = {}
+        if active_matches:
+            with ThreadPoolExecutor(max_workers=min(len(active_matches), 8)) as ex:
+                details = list(ex.map(fetch_detail, active_matches))
+            # Build a {name -> detail-record} index for fast merge.
+            by_name = {d["name"]: d for d in details}
+            for m in flow["matches"]:
+                rec = by_name.get(m.get("name", ""))
+                if not rec:
+                    continue
+                if rec["detail"]:
+                    # Overlay the rich fields into the summary entry — preserve
+                    # proxy_id and any summary-only fields not overwritten.
+                    pid = m.get("proxy_id", "")
+                    m.update(rec["detail"])
+                    m["proxy_id"] = pid
+                if rec["sa"]:
+                    # Carry the per-SA crypto/SPI info on the match for the
+                    # per-proxy session row.
+                    m["_sa"] = rec["sa"]
+                raw_details[f"{host}: show vpn flow name {m['name']}"]  = _et_text(rec["flow_xml"])
+                raw_details[f"{host}: show vpn ipsec-sa {m['name']}"]   = _et_text(rec["sa_xml"])
+            # Refresh `primary` to point at the now-enriched bare-name match
+            # (if any) or the first active match.
+            new_primary = None
+            for m in flow["matches"]:
+                if not m.get("proxy_id"):
+                    new_primary = m; break
+            if not new_primary:
+                for m in flow["matches"]:
+                    if m.get("status") == "up":
+                        new_primary = m; break
+            if new_primary:
+                flow["primary"] = new_primary
+
+        # Build the SA-aggregate shape merge_palo_state expects, from the
+        # primary match's enriched _sa (if any).
+        primary_sa = (flow.get("primary") or {}).get("_sa") or {}
+        sa = {
+            "matches": [m.get("_sa") for m in flow["matches"] if m.get("_sa")],
+            "primary": primary_sa,
+            "phase2": {
+                "encryption":             primary_sa.get("encryption", ""),
+                "integrity":              primary_sa.get("integrity", ""),
+                "pfs":                    primary_sa.get("pfs", ""),
+                "spi_in":                 primary_sa.get("spi_in", ""),
+                "spi_out":                primary_sa.get("spi_out", ""),
+                "lifetime_sec":           primary_sa.get("lifetime_sec"),
+                "lifetime_remaining_sec": primary_sa.get("lifetime_remaining_sec"),
+                "lifetime_kb":            primary_sa.get("lifetime_kb", ""),
+            } if primary_sa else {},
+        }
+
         ike_xml = pc.op_via_sdk(ike_cmd, api_key, serial)
-        sa  = parse_pan_ipsec_sa(sa_xml, tunnel_name)
-        # flow["primary"] is the bare-name or first-proxy entry; use it to
-        # pick the right IKE SA on devices that host multiple gateways.
         prim = flow.get("primary") or {}
         ike = parse_pan_ike_sa(ike_xml, prim.get("peer_ip", ""), prim.get("gwid", ""))
+
         raw = {
-            f"{host}: show vpn flow":     _et_text(flow_xml),
-            f"{host}: show vpn ipsec-sa": _et_text(sa_xml),
-            f"{host}: show vpn ike-sa":   _et_text(ike_xml),
+            f"{host}: show vpn flow (summary)": _et_text(flow_xml),
+            f"{host}: show vpn ike-sa":         _et_text(ike_xml),
+            **raw_details,
         }
         state = merge_palo_state(flow, sa, ike, raw)
         state["__firewall"] = host

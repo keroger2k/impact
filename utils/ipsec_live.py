@@ -530,6 +530,28 @@ def _parse_pan_vpn_entry(entry: ET.Element) -> dict:
     }
 
 
+def parse_pan_vpn_flow_one(elem: ET.Element | None, exact_name: str) -> dict | None:
+    """Parse a `show vpn flow name "X"` response that's expected to return a
+    single matching IPSec entry. Returns the per-entry dict (same shape as
+    `_parse_pan_vpn_entry`) with `proxy_id` populated, or None if no match.
+
+    The unfiltered `show vpn flow` returns only a *summary* (name/state/peer);
+    the rich counter/TS/SPI/lifetime fields are only present in the filtered
+    `show vpn flow name "FULL_NAME"` response. This helper parses that.
+    """
+    if elem is None:
+        return None
+    for entry in elem.findall(".//IPSec/entry") or elem.findall(".//entry"):
+        n = (entry.findtext("name") or "").strip()
+        if n != exact_name:
+            continue
+        parsed = _parse_pan_vpn_entry(entry)
+        base, sep, label = exact_name.partition(":")
+        parsed["proxy_id"] = label if sep else ""
+        return parsed
+    return None
+
+
 def parse_pan_vpn_flow(elem: ET.Element | None, tunnel_name: str) -> dict:
     """Match every flow entry belonging to this tunnel.
 
@@ -584,6 +606,19 @@ def _parse_pan_sa_entry(entry: ET.Element) -> dict:
         "lifetime_remaining_sec": _int_or_none(entry.findtext("remain")),
         "lifetime_kb":            (entry.findtext("kb") or "").strip(),
     }
+
+
+def parse_pan_ipsec_sa_one(elem: ET.Element | None, exact_name: str) -> dict | None:
+    """Parse a `show vpn ipsec-sa tunnel "X"` response that's expected to
+    return a single matching SA entry. Returns the per-entry SA dict (same
+    shape as `_parse_pan_sa_entry`) or None."""
+    if elem is None:
+        return None
+    for entry in elem.findall(".//entries/entry") or elem.findall(".//entry"):
+        n = (entry.findtext("name") or "").strip()
+        if n == exact_name:
+            return _parse_pan_sa_entry(entry)
+    return None
 
 
 def parse_pan_ipsec_sa(elem: ET.Element | None, tunnel_name: str) -> dict:
