@@ -34,6 +34,23 @@ import xml.etree.ElementTree as ET
 from typing import Any
 
 
+_IOS_ERROR_PATTERNS = (
+    "% Invalid input",
+    "% Incomplete command",
+    "% Ambiguous command",
+    "% Unrecognized",
+    "% No such",
+)
+
+
+def _is_ios_error(text: str) -> bool:
+    """True if the output is an IOS command-not-supported response."""
+    if not text:
+        return False
+    head = text[:400]
+    return any(p in head for p in _IOS_ERROR_PATTERNS)
+
+
 _EMPTY_STATE: dict = {
     "status":      "unknown",
     "peer_ip":     "",
@@ -94,6 +111,8 @@ def parse_show_crypto_session(text: str, target_iface: str = "") -> dict:
     """
     if not text:
         return {"errors": ["empty output from show crypto session"]}
+    if _is_ios_error(text):
+        return {"errors": ["device rejected 'show crypto session detail' — IOS version may not support it"]}
 
     out: dict = {
         "peer_ip":     "",
@@ -205,6 +224,9 @@ def parse_show_dmvpn(text: str, target_iface: str = "") -> dict:
     if not text:
         out["errors"].append("empty output from show dmvpn")
         return out
+    if _is_ios_error(text):
+        # Non-DMVPN devices reject this — that's expected, not an error to surface.
+        return {"dmvpn_peers": []}
 
     capture = not bool(target_iface)
     role = ""
@@ -247,7 +269,7 @@ _RE_IF_OUT_ERR    = re.compile(r"^\s*(\d+)\s+output errors")
 def parse_show_interface(text: str) -> dict:
     """Parse `show interface TunnelN` for line/proto state, last input/output,
     rates, and error counters."""
-    if not text:
+    if not text or _is_ios_error(text):
         return {}
     iface: dict[str, Any] = {}
     for line in text.splitlines():
@@ -280,9 +302,9 @@ _RE_IKEV2_LIFE = re.compile(r"Life/Active Time:\s*(\d+)/(\d+)\s*sec", re.I)
 
 
 def parse_show_ikev2_sa(text: str, peer_ip: str = "") -> dict:
-    """Parse `show crypto ikev2 sa detailed` for the SA matching peer_ip
+    """Parse `show crypto ikev2 sa detail` for the SA matching peer_ip
     (or the first SA if peer_ip is empty)."""
-    if not text:
+    if not text or _is_ios_error(text):
         return {}
     phase1: dict = {"protocol": "ikev2"}
     found_match = not bool(peer_ip)
@@ -316,8 +338,8 @@ _RE_ISAKMP_LINE = re.compile(
 
 
 def parse_show_isakmp_sa(text: str, peer_ip: str = "") -> dict:
-    """Parse `show crypto isakmp sa detail` for the SA matching peer_ip."""
-    if not text:
+    """Parse `show crypto isakmp sa` for the SA matching peer_ip."""
+    if not text or _is_ios_error(text):
         return {}
     for line in text.splitlines():
         m = _RE_ISAKMP_LINE.match(line)

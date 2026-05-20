@@ -357,25 +357,24 @@ def _fetch_ios_live(session: SessionEntry, tunnel: dict, endpoint: dict) -> dict
     peer  = (endpoint.get("peer_ip") or "").split(",")[0].strip()
     ttype = tunnel.get("type", "")
 
+    # Use the bare forms — `show crypto session detail interface X` is
+    # rejected on some IOS variants ("% Invalid input"). The parser filters
+    # to the right block client-side via target_iface.
     commands: list[tuple[str, str]] = []
     if ttype == "dmvpn":
-        commands.append(("show dmvpn", "show dmvpn detail"))
-        commands.append(("show crypto session",
-                         f"show crypto session detail interface {iface}" if iface
-                         else "show crypto session detail"))
-        commands.append(("show crypto ikev2 sa", "show crypto ikev2 sa detailed"))
+        commands.append(("show dmvpn",           "show dmvpn detail"))
+        commands.append(("show crypto session",  "show crypto session detail"))
+        commands.append(("show crypto ikev2 sa", "show crypto ikev2 sa"))
         if iface:
             commands.append(("show interface", f"show interface {iface}"))
     elif ttype in ("svti", "dvti"):
-        commands.append(("show crypto session",
-                         f"show crypto session detail interface {iface}" if iface
-                         else "show crypto session detail"))
+        commands.append(("show crypto session",  "show crypto session detail"))
         if iface:
             commands.append(("show interface", f"show interface {iface}"))
-        commands.append(("show crypto ikev2 sa", "show crypto ikev2 sa detailed"))
+        commands.append(("show crypto ikev2 sa", "show crypto ikev2 sa"))
     else:
         commands.append(("show crypto session",  "show crypto session detail"))
-        commands.append(("show crypto isakmp sa", "show crypto isakmp sa detail"))
+        commands.append(("show crypto isakmp sa", "show crypto isakmp sa"))
 
     ip = endpoint.get("device_ip", "")
     if not ip:
