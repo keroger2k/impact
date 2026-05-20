@@ -83,24 +83,29 @@
       <i class="ph ph-share-network"></i> Endpoints ({{ tunnel.endpoints|length }})
     </div>
     <div class="tunnel-detail-endpoints-scroll">
-      <table class="table table-sm table-striped mb-0">
+      <table class="table table-sm table-striped mb-0 data-table">
         <thead class="bg-light sticky-top">
           <tr>
-            <th>Device</th>
-            <th>Role</th>
-            <th>Interface</th>
-            <th>Local IP</th>
-            <th>Peer / NHS</th>
-            <th>VRF</th>
-            <th>State</th>
-            <th class="text-end">Live</th>
+            <th data-type="text">Device</th>
+            <th data-type="text">Role</th>
+            <th data-type="text">Interface</th>
+            <th data-type="ip">Local IP</th>
+            <th data-type="ip">Peer / NHS</th>
+            <th data-type="text">VRF</th>
+            <th data-type="text">State</th>
+            <th class="text-end data-table-no-sort data-table-no-filter">Live</th>
           </tr>
         </thead>
         <tbody>
           {% for ep in tunnel.endpoints %}
           {% set spin_id = "spin-" ~ tunnel.id ~ "-" ~ loop.index0 %}
           <tr>
-            <td class="fw-bold text-navy">{{ ep.device }}</td>
+            <td>
+              <div class="fw-bold text-navy">{{ ep.device }}</div>
+              {% if ep.description %}
+              <div class="text-muted small fst-italic">{{ ep.description }}</div>
+              {% endif %}
+            </td>
             <td>
               <span class="badge
                 {% if ep.role == 'hub' %}bg-primary-subtle text-primary
@@ -133,9 +138,6 @@
               </button>
             </td>
           </tr>
-          {% if ep.description %}
-          <tr><td colspan="8" class="text-muted small ps-4 fst-italic">{{ ep.description }}</td></tr>
-          {% endif %}
           {% endfor %}
         </tbody>
       </table>

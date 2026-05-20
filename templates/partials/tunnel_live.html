@@ -125,19 +125,21 @@
       <div class="small text-muted">sorted by decap drops, then status</div>
     </div>
     <div class="table-responsive" style="max-height: 60vh; overflow-y: auto;">
-      <table class="table table-sm table-striped mb-0 small">
+      <table class="table table-sm table-striped mb-0 small data-table">
         <thead class="bg-light sticky-top">
           <tr>
-            <th>{% if is_palo_proxy %}Proxy ID{% else %}Peer{% endif %}</th>
-            <th>Status</th>
-            <th>{% if is_palo_proxy %}Traffic selector{% else %}Uptime{% endif %}</th>
-            {% if not is_palo_proxy %}<th>IKE</th>{% endif %}
-            <th class="text-end">Encap pkts</th>
-            {% if not is_palo_proxy %}<th class="text-end">Enc drops</th>{% endif %}
-            <th class="text-end">Decap pkts</th>
-            <th class="text-end">Dec drops</th>
-            {% if is_palo_proxy %}<th class="text-end" title="Sequence numbers — the most reliable activity indicator on PAN-OS when packet counters stall at 0">Seq send / recv</th>{% endif %}
-            <th class="text-end">P2 left</th>
+            <th data-type="{% if is_palo_proxy %}text{% else %}ip{% endif %}">
+              {% if is_palo_proxy %}Proxy ID{% else %}Peer{% endif %}
+            </th>
+            <th data-type="text">Status</th>
+            <th data-type="text">{% if is_palo_proxy %}Traffic selector{% else %}Uptime{% endif %}</th>
+            {% if not is_palo_proxy %}<th data-type="text">IKE</th>{% endif %}
+            <th class="text-end" data-type="number">Encap pkts</th>
+            {% if not is_palo_proxy %}<th class="text-end" data-type="number">Enc drops</th>{% endif %}
+            <th class="text-end" data-type="number">Decap pkts</th>
+            <th class="text-end" data-type="number">Dec drops</th>
+            {% if is_palo_proxy %}<th class="text-end" data-type="number" title="Sequence numbers — the most reliable activity indicator on PAN-OS when packet counters stall at 0. Sort key is send+recv total.">Seq send / recv</th>{% endif %}
+            <th class="text-end" data-type="number">P2 left</th>
           </tr>
         </thead>
         <tbody>
@@ -173,14 +175,16 @@
               {% if s.decap_drops is not none %}{{ "{:,}".format(s.decap_drops) }}{% else %}—{% endif %}
             </td>
             {% if is_palo_proxy %}
-            <td class="mono text-end small">
+            <td class="mono text-end small"
+                data-sort-value="{{ (s.seq_send or 0) + (s.seq_recv or 0) }}">
               {% if s.seq_send is not none or s.seq_recv is not none %}
                 <span class="{% if s.seq_send %}text-body{% else %}text-muted{% endif %}">{{ "{:,}".format(s.seq_send or 0) }}</span>
                 / <span class="{% if s.seq_recv %}text-body{% else %}text-muted{% endif %}">{{ "{:,}".format(s.seq_recv or 0) }}</span>
               {% else %}—{% endif %}
             </td>
             {% endif %}
-            <td class="mono text-end small text-muted">
+            <td class="mono text-end small text-muted"
+                data-sort-value="{{ s.p2_lifetime_sec if s.p2_lifetime_sec is not none else '' }}">
               {% if s.p2_lifetime_sec is not none %}{{ s.p2_lifetime_sec }}s{% else %}—{% endif %}
             </td>
           </tr>
