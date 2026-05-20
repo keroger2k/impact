@@ -134,11 +134,12 @@
             <th>{% if is_palo_proxy %}Proxy ID{% else %}Peer{% endif %}</th>
             <th>Status</th>
             <th>{% if is_palo_proxy %}Traffic selector{% else %}Uptime{% endif %}</th>
-            <th>IKE</th>
+            {% if not is_palo_proxy %}<th>IKE</th>{% endif %}
             <th class="text-end">Encap pkts</th>
-            <th class="text-end">Enc drops</th>
+            {% if not is_palo_proxy %}<th class="text-end">Enc drops</th>{% endif %}
             <th class="text-end">Decap pkts</th>
             <th class="text-end">Dec drops</th>
+            {% if is_palo_proxy %}<th class="text-end" title="Sequence numbers — the most reliable activity indicator on PAN-OS when packet counters stall at 0">Seq send / recv</th>{% endif %}
             <th class="text-end">P2 left</th>
           </tr>
         </thead>
@@ -154,22 +155,34 @@
                 {{ s.status }}
               </span>
             </td>
-            <td class="mono">{{ s.uptime or '—' }}</td>
+            <td class="mono small">{{ s.uptime or '—' }}</td>
+            {% if not is_palo_proxy %}
             <td class="mono small">
               {% if s.phase1 and s.phase1.protocol %}{{ s.phase1.protocol }}{% else %}—{% endif %}
             </td>
+            {% endif %}
             <td class="mono text-end">
               {% if s.encap_pkts is not none %}{{ "{:,}".format(s.encap_pkts) }}{% else %}—{% endif %}
             </td>
+            {% if not is_palo_proxy %}
             <td class="mono text-end {% if s.encap_drops %}text-danger fw-bold{% endif %}">
               {% if s.encap_drops is not none %}{{ "{:,}".format(s.encap_drops) }}{% else %}—{% endif %}
             </td>
+            {% endif %}
             <td class="mono text-end">
               {% if s.decap_pkts is not none %}{{ "{:,}".format(s.decap_pkts) }}{% else %}—{% endif %}
             </td>
             <td class="mono text-end {% if s.decap_drops %}text-danger fw-bold{% endif %}">
               {% if s.decap_drops is not none %}{{ "{:,}".format(s.decap_drops) }}{% else %}—{% endif %}
             </td>
+            {% if is_palo_proxy %}
+            <td class="mono text-end small">
+              {% if s.seq_send is not none or s.seq_recv is not none %}
+                <span class="{% if s.seq_send %}text-body{% else %}text-muted{% endif %}">{{ "{:,}".format(s.seq_send or 0) }}</span>
+                / <span class="{% if s.seq_recv %}text-body{% else %}text-muted{% endif %}">{{ "{:,}".format(s.seq_recv or 0) }}</span>
+              {% else %}—{% endif %}
+            </td>
+            {% endif %}
             <td class="mono text-end small text-muted">
               {% if s.p2_lifetime_sec is not none %}{{ s.p2_lifetime_sec }}s{% else %}—{% endif %}
             </td>

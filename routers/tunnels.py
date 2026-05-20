@@ -577,6 +577,17 @@ def _fetch_palo_live(session: SessionEntry, tunnel: dict, endpoint: dict) -> dic
         ike_xml = pc.op_via_sdk(ike_cmd, api_key, serial)
         prim = flow.get("primary") or {}
         ike = parse_pan_ike_sa(ike_xml, prim.get("peer_ip", ""), prim.get("gwid", ""))
+        # Fallback: `show vpn ike-sa` (unfiltered) sometimes returns empty on
+        # HA peers or particular versions. The per-SA detail carries the IKE
+        # gateway name (e.g. CAL_IKE_GTWY) — retry against that gateway
+        # explicitly if the unfiltered query gave us nothing.
+        if not ike and primary_sa.get("gateway"):
+            gw_name = primary_sa["gateway"]
+            ike_xml2 = pc.op_via_sdk(f'show vpn ike-sa gateway "{gw_name}"', api_key, serial)
+            if ike_xml2 is not None:
+                ike = parse_pan_ike_sa(ike_xml2, prim.get("peer_ip", ""), prim.get("gwid", ""))
+                if ike:
+                    raw_details[f"{host}: show vpn ike-sa gateway {gw_name}"] = _et_text(ike_xml2)
 
         raw = {
             f"{host}: show vpn flow (summary)": _et_text(flow_xml),

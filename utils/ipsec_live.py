@@ -419,6 +419,30 @@ def _parse_ts_side(elem: ET.Element | None) -> dict:
     }
 
 
+def _parse_proxy_id_ts(elem: ET.Element | None) -> dict:
+    """Parse a PAN `<proxy-id>` block — the alternative TS shape used for
+    proxy-ID-style SAs (lip/lprefix → rip/rprefix CIDR pairs). Produces the
+    same outer ``{"local":..., "remote":...}`` shape as `_parse_ts_side` so
+    template logic doesn't need to branch."""
+    if elem is None:
+        return {}
+    def side(ip_tag: str, prefix_tag: str, port_tag: str) -> dict:
+        ip = (elem.findtext(ip_tag) or "").strip()
+        prefix = (elem.findtext(prefix_tag) or "").strip()
+        return {
+            "network":    f"{ip}/{prefix}" if ip and prefix else ip,
+            "start_ip":   ip,
+            "end_ip":     "",
+            "protocol":   _int_or_none(elem.findtext("proto")),
+            "start_port": _int_or_none(elem.findtext(port_tag)),
+            "end_port":   None,
+        }
+    return {
+        "local":  side("lip", "lprefix", "lport"),
+        "remote": side("rip", "rprefix", "rport"),
+    }
+
+
 def list_pan_flow_names(elem: ET.Element | None) -> list[str]:
     """Return every IPSec flow entry name present in a `show vpn flow` response.
 
@@ -470,13 +494,20 @@ def _parse_pan_vpn_entry(entry: ET.Element) -> dict:
             "pkt_recv":  _int_or_none(mon.findtext("pkt-recv")),
         }
 
+    # PAN reports the traffic selector under one of two shapes depending on
+    # the SA type: `<ts>` with nested `<local>`/`<remote>` for VPN-flow style,
+    # or `<proxy-id>` with `<lip>/<lprefix>/<rip>/<rprefix>` for proxy-ID SAs.
     ts_elem = entry.find("ts")
-    ts = {}
+    proxy_elem = entry.find("proxy-id")
     if ts_elem is not None:
         ts = {
             "local":  _parse_ts_side(ts_elem.find("local")),
             "remote": _parse_ts_side(ts_elem.find("remote")),
         }
+    elif proxy_elem is not None:
+        ts = _parse_proxy_id_ts(proxy_elem)
+    else:
+        ts = {}
 
     auth_err  = _int_or_none(entry.findtext("auth-err"))   or 0
     dec_err   = _int_or_none(entry.findtext("dec-err"))    or 0
@@ -853,9 +884,16 @@ def merge_ios_state(
 
 def _ts_label(side: dict) -> str:
     """Short human label for one side of a traffic selector — "any" when wide
-    open, otherwise the network range."""
+    open, otherwise the network range or CIDR."""
     if not side:
         return ""
+    # CIDR (proxy-id style) wins when present.
+    cidr = side.get("network", "")
+    if cidr:
+        # "0.0.0.0/0" reads better as "any".
+        if cidr in ("0.0.0.0/0", "::/0"):
+            return "any"
+        return cidr
     s, e = side.get("start_ip", ""), side.get("end_ip", "")
     if s == "0.0.0.0" and e == "255.255.255.255":
         return "any"
@@ -891,6 +929,11 @@ def _palo_session_from_entry(entry: dict, ike_protocol: str) -> dict:
         # PAN has no encap-side drop counter; only decap drops are meaningful.
         "encap_drops":     None,
         "decap_drops":     drops,
+        # Sequence numbers — on some firewalls these are the only reliable
+        # traffic-flowing indicator (pkt-encap/byte-encap stay 0 even when
+        # seq-send/seq-recv are clearly incrementing).
+        "seq_send":        entry.get("seq_send"),
+        "seq_recv":        entry.get("seq_recv"),
         "p2_lifetime_sec": entry.get("lifetime_remaining_sec"),
         "p2_lifetime_kb":  None,
     }
