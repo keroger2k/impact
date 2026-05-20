@@ -814,6 +814,17 @@ def get_managed_devices(api_key: str) -> list[dict]:
             if not hostname and not model:
                 continue
 
+            # Tri-state connected: True / False / None (unknown). The PAN-OS
+            # `<connected>` tag is normally yes/no, but on some versions or for
+            # certain pseudo-entries it may be absent — treat absent as unknown
+            # rather than disconnected so callers don't silently skip the device.
+            conn_raw = (entry.findtext("connected") or "").strip().lower()
+            if conn_raw in ("yes", "true"):
+                conn_state: bool | None = True
+            elif conn_raw in ("no", "false"):
+                conn_state = False
+            else:
+                conn_state = None
             devices.append({
                 "serial":        serial,
                 "hostname":      hostname,
@@ -823,7 +834,7 @@ def get_managed_devices(api_key: str) -> list[dict]:
                 "os_version":    entry.findtext("os-version") or "",
                 "ha_state":      entry.findtext("ha-state") or "",
                 "ha_enabled":    entry.findtext("ha-enabled") == "yes",
-                "connected":     entry.findtext("connected") == "yes",
+                "connected":     conn_state,
             })
 
         devices.sort(key=lambda d: (d.get("hostname", "").lower(), d.get("model", "")))

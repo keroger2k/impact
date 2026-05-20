@@ -450,27 +450,41 @@ def _fetch_palo_live(session: SessionEntry, tunnel: dict, endpoint: dict) -> dic
         return _live_error("No managed firewalls available to query")
 
     total = len(devices)
-    devices = [d for d in devices if d.get("connected", True)]
-    if not devices:
-        return _live_error(f"None of {total} managed firewalls are currently connected to Panorama")
+    # Only filter EXPLICITLY disconnected. Treat unknown (None) as "include
+    # and let the query fail naturally" so a missing/odd `<connected>` field
+    # doesn't silently hide the one firewall that has the tunnel.
+    candidates = [d for d in devices if d.get("connected") is not False]
+    skipped_disconnected = total - len(candidates)
+    if not candidates:
+        return _live_error(f"All {total} managed firewalls report disconnected from Panorama")
 
     flow_cmd = f'show vpn flow name "{tunnel_name}"'
     sa_cmd   = f'show vpn ipsec-sa tunnel "{tunnel_name}"'
     ike_cmd  = 'show vpn ike-sa'
 
+    # Per-device probe outcomes — surfaced in the error when no match found,
+    # so the user can see whether a specific firewall was queried-and-empty,
+    # errored, or filtered out.
+    probe_log: list[str] = []
+
     def query_one(d: dict) -> Optional[dict]:
         serial = d.get("serial", "")
+        host = d.get("hostname", serial)
         if not serial:
+            probe_log.append(f"{host}: no serial")
             return None
         flow_xml = pc.op_via_sdk(flow_cmd, api_key, serial)
+        if flow_xml is None:
+            probe_log.append(f"{host} ({serial}): op failed or returned no result")
+            return None
         flow = parse_pan_vpn_flow(flow_xml, tunnel_name)
         if not flow.get("found"):
+            probe_log.append(f"{host} ({serial}): no flow entry matching '{tunnel_name}'")
             return None
         sa_xml  = pc.op_via_sdk(sa_cmd,  api_key, serial)
         ike_xml = pc.op_via_sdk(ike_cmd, api_key, serial)
         sa  = parse_pan_ipsec_sa(sa_xml, tunnel_name)
         ike = parse_pan_ike_sa(ike_xml, flow.get("peer_ip", ""), flow.get("gwid", ""))
-        host = d.get("hostname", serial)
         raw = {
             f"{host}: show vpn flow":     _et_text(flow_xml),
             f"{host}: show vpn ipsec-sa": _et_text(sa_xml),
@@ -482,14 +496,21 @@ def _fetch_palo_live(session: SessionEntry, tunnel: dict, endpoint: dict) -> dic
 
     matches: list[dict] = []
     with ThreadPoolExecutor(max_workers=PALO_LIVE_PARALLEL) as ex:
-        for result in ex.map(query_one, devices):
+        for result in ex.map(query_one, candidates):
             if result is not None:
                 matches.append(result)
 
     if not matches:
-        return _live_error(
-            f"Tunnel '{tunnel_name}' not running on any of {len(devices)} managed firewalls"
+        err = _live_error(
+            f"Tunnel '{tunnel_name}' not running on any of {len(candidates)} queried firewalls "
+            f"({total} total, {skipped_disconnected} skipped as disconnected)"
         )
+        # Cap the probe log so we don't blow up the UI on huge fleets.
+        for line in probe_log[:40]:
+            err["errors"].append(line)
+        if len(probe_log) > 40:
+            err["errors"].append(f"… and {len(probe_log) - 40} more firewalls queried")
+        return err
 
     if len(matches) == 1:
         return matches[0]
