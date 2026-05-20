@@ -509,26 +509,50 @@ def _mock_ios_state(tunnel: dict, endpoint: dict) -> dict:
     from utils.ipsec_live import empty_state
     s = empty_state()
     iface = endpoint.get("interface", "Tunnel?")
-    peer  = (endpoint.get("peer_ip") or "192.0.2.1").split(",")[0]
+    # Simulate a small DMVPN hub with mixed peer health to exercise the table.
+    sessions = [
+        {"peer": "1.1.3.124", "uptime": "00:00:07", "status": "up",
+         "phase1": {"protocol": "ikev2", "state": "active"},
+         "encap_pkts": 1, "encap_drops": 0, "decap_pkts": 2, "decap_drops": 0,
+         "p2_lifetime_sec": 3593, "p2_lifetime_kb": 4607999},
+        {"peer": "1.1.5.212", "uptime": "19:48:29", "status": "up",
+         "phase1": {"protocol": "ikev2", "state": "active"},
+         "encap_pkts": 6273, "encap_drops": 0, "decap_pkts": 4363880, "decap_drops": 0,
+         "p2_lifetime_sec": 3042, "p2_lifetime_kb": 4607443},
+        {"peer": "3.3.20.95", "uptime": "00:48:06", "status": "up",
+         "phase1": {"protocol": "ikev2", "state": "active"},
+         "encap_pkts": 26839981, "encap_drops": 0, "decap_pkts": 84465744, "decap_drops": 151765,
+         "p2_lifetime_sec": 2203, "p2_lifetime_kb": 4187641},
+        {"peer": "2.2.50.200", "uptime": "00:48:23", "status": "up",
+         "phase1": {"protocol": "ikev2", "state": "active"},
+         "encap_pkts": 110886733, "encap_drops": 0, "decap_pkts": 126221088, "decap_drops": 2314542,
+         "p2_lifetime_sec": 1985, "p2_lifetime_kb": 4394965},
+    ]
     s.update({
-        "status": "up", "peer_ip": peer, "uptime": "1d18h",
-        "encap_pkts": 123456, "decap_pkts": 123450,
-        "encap_bytes": 12345678, "decap_bytes": 12345600,
+        "status": "up",
+        "uptime": sessions[0]["uptime"],
+        "sessions": sessions,
+        "session_count": len(sessions),
+        "peers_up": len(sessions),
+        "peers_down": 0,
+        "encap_pkts":  sum(x["encap_pkts"]  for x in sessions),
+        "decap_pkts":  sum(x["decap_pkts"]  for x in sessions),
+        "encap_drops": sum(x["encap_drops"] for x in sessions),
+        "decap_drops": sum(x["decap_drops"] for x in sessions),
         "phase1": {"protocol": "ikev2", "state": "ready",
                    "encryption": "AES-CBC-256", "integrity": "SHA256",
                    "dh_group": "14", "lifetime_remaining_sec": 73215},
-        "phase2": {"lifetime_remaining_sec": 3120,
-                   "spi_in": "0xABCDEF12", "spi_out": "0x12FEDCBA"},
+        "phase2": {"lifetime_remaining_sec": min(x["p2_lifetime_sec"] for x in sessions),
+                   "lifetime_remaining_kb":  min(x["p2_lifetime_kb"]  for x in sessions)},
         "interface_state": {"line": "up", "protocol": "up",
                             "last_input": "00:00:01", "last_output": "00:00:00",
                             "input_errors": 0, "output_errors": 0,
                             "input_rate_bps": 4321, "output_rate_bps": 5678},
         "raw": {
-            "show crypto session": f"[DEV_MODE] mock output for {iface} peer {peer}\n"
-                                   f"Session status: UP-ACTIVE\nUptime: 1d18h\n"
-                                   f"Peer: {peer}\n  IKEv2 SA: ... Active\n",
+            "show crypto session": f"[DEV_MODE] mock output for {iface}\n"
+                                   f"4 peer sessions simulated\n",
             "show interface":      f"[DEV_MODE] mock interface {iface}\n"
-                                   f"{iface} is up, line protocol is up\n...",
+                                   f"{iface} is up, line protocol is up\n",
         },
     })
     return s

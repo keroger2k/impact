@@ -10,6 +10,13 @@
     else "bg-warning-subtle text-warning border-warning" if status == "degraded"
     else "bg-secondary-subtle text-secondary border-secondary"
 ) %}
+{% set total_drops = (st.encap_drops or 0) + (st.decap_drops or 0) %}
+{# Sort sessions: worst drops first, then status (down before up), so the
+   problematic peers surface at the top of the per-peer table. #}
+{% set sorted_sessions = (st.sessions or [])
+   |sort(attribute='peer')
+   |sort(reverse=true, attribute='decap_drops')
+%}
 
 <div class="tunnel-live-card border rounded-2 p-3 my-2 bg-light-subtle">
 
@@ -17,6 +24,13 @@
     <span class="badge border {{ status_class }}">
       <i class="ph ph-pulse"></i> {{ status|upper }}
     </span>
+    {% if st.session_count > 1 %}
+      <span class="badge bg-light text-muted">
+        {{ st.session_count }} peers
+        {% if st.peers_up %}· <span class="text-success">{{ st.peers_up }} up</span>{% endif %}
+        {% if st.peers_down %}· <span class="text-danger">{{ st.peers_down }} down</span>{% endif %}
+      </span>
+    {% endif %}
     {% if st.__firewall %}
       <span class="badge bg-light text-muted">on {{ st.__firewall }}</span>
     {% endif %}
@@ -25,6 +39,11 @@
     {% endif %}
     {% if st.uptime %}
       <span class="small text-muted">uptime <span class="mono">{{ st.uptime }}</span></span>
+    {% endif %}
+    {% if total_drops %}
+      <span class="badge bg-danger-subtle text-danger">
+        <i class="ph ph-warning-octagon"></i> {{ "{:,}".format(total_drops) }} drops
+      </span>
     {% endif %}
     <span class="ms-auto small text-muted">
       <i class="ph ph-clock-clockwise"></i> live · just now
@@ -37,8 +56,8 @@
     </div>
   {% endif %}
 
-  {# ── Counters row ───────────────────────────────────────────── #}
-  {% if st.encap_pkts or st.decap_pkts or st.encap_bytes or st.decap_bytes %}
+  {# ── Aggregate counters ─────────────────────────────────────── #}
+  {% if st.encap_pkts is not none or st.decap_pkts is not none or st.encap_drops or st.decap_drops or st.encap_bytes or st.decap_bytes %}
   <div class="row g-2 mb-3">
     <div class="col-sm-3">
       <div class="small text-muted text-uppercase">Encap pkts</div>
@@ -53,6 +72,19 @@
       </div>
     </div>
     <div class="col-sm-3">
+      <div class="small text-muted text-uppercase">Encap drops</div>
+      <div class="mono fw-bold {% if st.encap_drops %}text-danger{% endif %}">
+        {% if st.encap_drops is not none %}{{ "{:,}".format(st.encap_drops) }}{% else %}—{% endif %}
+      </div>
+    </div>
+    <div class="col-sm-3">
+      <div class="small text-muted text-uppercase">Decap drops</div>
+      <div class="mono fw-bold {% if st.decap_drops %}text-danger{% endif %}">
+        {% if st.decap_drops is not none %}{{ "{:,}".format(st.decap_drops) }}{% else %}—{% endif %}
+      </div>
+    </div>
+    {% if st.encap_bytes or st.decap_bytes %}
+    <div class="col-sm-3">
       <div class="small text-muted text-uppercase">Encap bytes</div>
       <div class="mono fw-bold">
         {% if st.encap_bytes is not none %}{{ "{:,}".format(st.encap_bytes) }}{% else %}—{% endif %}
@@ -63,6 +95,70 @@
       <div class="mono fw-bold">
         {% if st.decap_bytes is not none %}{{ "{:,}".format(st.decap_bytes) }}{% else %}—{% endif %}
       </div>
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {# ── Per-peer session table (the centerpiece for DMVPN hubs) ── #}
+  {% if sorted_sessions|length > 1 %}
+  <div class="mb-3">
+    <div class="d-flex align-items-center justify-content-between mb-1">
+      <div class="text-muted small text-uppercase fw-bold">
+        <i class="ph ph-users-three"></i> Per-peer sessions ({{ sorted_sessions|length }})
+      </div>
+      <div class="small text-muted">sorted by decap drops, then status</div>
+    </div>
+    <div class="table-responsive" style="max-height: 360px; overflow-y: auto;">
+      <table class="table table-sm table-striped mb-0 small">
+        <thead class="bg-light sticky-top">
+          <tr>
+            <th>Peer</th>
+            <th>Status</th>
+            <th>Uptime</th>
+            <th>IKE</th>
+            <th class="text-end">Encap pkts</th>
+            <th class="text-end">Enc drops</th>
+            <th class="text-end">Decap pkts</th>
+            <th class="text-end">Dec drops</th>
+            <th class="text-end">P2 left</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in sorted_sessions %}
+          <tr>
+            <td class="mono">{{ s.peer or '—' }}</td>
+            <td>
+              <span class="badge
+                {% if s.status == 'up' %}bg-success-subtle text-success
+                {% elif s.status == 'down' %}bg-danger-subtle text-danger
+                {% else %}bg-secondary-subtle text-secondary{% endif %}">
+                {{ s.status }}
+              </span>
+            </td>
+            <td class="mono">{{ s.uptime or '—' }}</td>
+            <td class="mono small">
+              {% if s.phase1 and s.phase1.protocol %}{{ s.phase1.protocol }}{% else %}—{% endif %}
+            </td>
+            <td class="mono text-end">
+              {% if s.encap_pkts is not none %}{{ "{:,}".format(s.encap_pkts) }}{% else %}—{% endif %}
+            </td>
+            <td class="mono text-end {% if s.encap_drops %}text-danger fw-bold{% endif %}">
+              {% if s.encap_drops is not none %}{{ "{:,}".format(s.encap_drops) }}{% else %}—{% endif %}
+            </td>
+            <td class="mono text-end">
+              {% if s.decap_pkts is not none %}{{ "{:,}".format(s.decap_pkts) }}{% else %}—{% endif %}
+            </td>
+            <td class="mono text-end {% if s.decap_drops %}text-danger fw-bold{% endif %}">
+              {% if s.decap_drops is not none %}{{ "{:,}".format(s.decap_drops) }}{% else %}—{% endif %}
+            </td>
+            <td class="mono text-end small text-muted">
+              {% if s.p2_lifetime_sec is not none %}{{ s.p2_lifetime_sec }}s{% else %}—{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
   </div>
   {% endif %}
@@ -103,7 +199,8 @@
     {% if st.phase2 %}
     <div class="col-md-6">
       <div class="text-muted small text-uppercase fw-bold mb-1">
-        <i class="ph ph-lock-key"></i> Negotiated Phase 2
+        <i class="ph ph-lock-key"></i> Phase 2
+        {% if st.session_count > 1 %}<span class="text-muted small">(min across {{ st.session_count }} peers)</span>{% endif %}
       </div>
       <table class="table table-sm table-borderless mb-0">
         <tbody>
@@ -156,11 +253,11 @@
   </div>
   {% endif %}
 
-  {# ── DMVPN peers (when hub or spoke reports them) ───────────── #}
+  {# ── DMVPN peers (from show dmvpn — useful when hub) ────────── #}
   {% if st.dmvpn_peers %}
   <div class="mb-3">
     <div class="text-muted small text-uppercase fw-bold mb-1">
-      <i class="ph ph-share-network"></i> DMVPN peers ({{ st.dmvpn_peers|length }})
+      <i class="ph ph-share-network"></i> DMVPN NHRP cache ({{ st.dmvpn_peers|length }})
     </div>
     <div class="table-responsive" style="max-height: 240px; overflow-y: auto;">
       <table class="table table-sm table-striped mb-0 small">

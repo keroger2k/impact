@@ -52,19 +52,25 @@ def _is_ios_error(text: str) -> bool:
 
 
 _EMPTY_STATE: dict = {
-    "status":      "unknown",
-    "peer_ip":     "",
-    "uptime":      "",
-    "encap_pkts":  None,
-    "decap_pkts":  None,
-    "encap_bytes": None,
-    "decap_bytes": None,
-    "phase1":      {},
-    "phase2":      {},
+    "status":          "unknown",
+    "peer_ip":         "",      # the peer when one session — empty when many
+    "uptime":          "",      # earliest uptime when many sessions
+    "encap_pkts":      None,    # aggregate across sessions
+    "decap_pkts":      None,
+    "encap_drops":     None,
+    "decap_drops":     None,
+    "encap_bytes":     None,    # only populated for Palo; IOS show crypto session
+    "decap_bytes":     None,    #   has no byte counters
+    "session_count":   0,       # number of per-peer sessions parsed
+    "sessions":        [],      # per-peer session list (for table rendering)
+    "peers_up":        0,
+    "peers_down":      0,
+    "phase1":          {},      # negotiated phase1 (from ikev2/isakmp sa)
+    "phase2":          {},      # phase2 lifetime remaining (min across sessions)
     "interface_state": None,
-    "dmvpn_peers": None,
-    "errors":      [],
-    "raw":         {},
+    "dmvpn_peers":     None,
+    "errors":          [],
+    "raw":             {},
 }
 
 
@@ -72,16 +78,18 @@ def empty_state() -> dict:
     """Fresh deep copy of the normalized state skeleton."""
     return {
         **_EMPTY_STATE,
-        "phase1":  {},
-        "phase2":  {},
-        "errors":  [],
-        "raw":     {},
+        "phase1":   {},
+        "phase2":   {},
+        "errors":   [],
+        "raw":      {},
+        "sessions": [],
     }
 
 
 # ── IOS: show crypto session detail ─────────────────────────────────────────
 
 _RE_CS_INTERFACE   = re.compile(r"^Interface:\s*(\S+)")
+_RE_CS_PROFILE     = re.compile(r"^\s*Profile:\s*(\S+)")
 _RE_CS_UPTIME      = re.compile(r"^\s*Uptime:\s*(\S+)")
 _RE_CS_STATUS      = re.compile(r"^\s*Session status:\s*(\S+)")
 _RE_CS_PEER        = re.compile(r"^\s*Peer:\s*(\S+)")
@@ -89,104 +97,57 @@ _RE_CS_IKEV2       = re.compile(
     r"^\s*IKEv2 SA:\s*local\s+(\S+)\s+remote\s+(\S+)\s+(\S+)"
 )
 _RE_CS_IKEV1       = re.compile(
-    r"^\s*IKE SA:\s*local\s+(\S+)\s+remote\s+(\S+)\s+(\S+)"
+    r"^\s*IKEv1?\s+SA:\s*local\s+(\S+)\s+remote\s+(\S+)\s+(\S+)"
 )
-_RE_CS_LIFETIME    = re.compile(r"lifetime[:\s]+(\d+):(\d+):(\d+)", re.I)
+_RE_CS_IKE_LIFE    = re.compile(r"lifetime[:\s]+(\d+):(\d+):(\d+)", re.I)
+# Inbound:  #pkts dec'ed N drop M life (KB/Sec) KB/SEC
 _RE_CS_INBOUND     = re.compile(
-    r"^\s*Inbound:\s+#pkts\s+dec(?:'|’)ed\s+(\d+).*?life\s*\(KB/Sec\)\s*(\d+)/(\d+)",
+    r"^\s*Inbound:\s+#pkts\s+dec(?:'|’)ed\s+(\d+)\s+drop\s+(\d+)\s+life\s*\(KB/Sec\)\s*(\d+)/(\d+)",
     re.I,
 )
 _RE_CS_OUTBOUND    = re.compile(
-    r"^\s*Outbound:\s+#pkts\s+enc(?:'|’)ed\s+(\d+).*?life\s*\(KB/Sec\)\s*(\d+)/(\d+)",
+    r"^\s*Outbound:\s+#pkts\s+enc(?:'|’)ed\s+(\d+)\s+drop\s+(\d+)\s+life\s*\(KB/Sec\)\s*(\d+)/(\d+)",
     re.I,
 )
 
 
 def parse_show_crypto_session(text: str, target_iface: str = "") -> dict:
-    """Parse `show crypto session detail`.
+    """Parse `show crypto session detail` into per-peer session records.
 
-    If ``target_iface`` is provided, only that interface's block is used.
-    Otherwise the first session block found is used. Aggregates encap/decap
-    across all IPSEC FLOW entries within the chosen block.
+    A DMVPN hub will have one session block per spoke (all under the same
+    ``Interface: TunnelN``), so the output is structurally a list, not a
+    single value. ``target_iface`` filters to one logical tunnel.
+
+    Returns:
+        {"sessions": [ {peer, uptime, status, profile, phase1, encap_pkts,
+                        encap_drops, decap_pkts, decap_drops,
+                        p2_lifetime_sec, p2_lifetime_kb}, ... ],
+         "errors": [...]}
     """
     if not text:
-        return {"errors": ["empty output from show crypto session"]}
+        return {"sessions": [], "errors": ["empty output from show crypto session"]}
     if _is_ios_error(text):
-        return {"errors": ["device rejected 'show crypto session detail' — IOS version may not support it"]}
-
-    out: dict = {
-        "peer_ip":     "",
-        "uptime":      "",
-        "encap_pkts":  None,
-        "decap_pkts":  None,
-        "encap_bytes": None,
-        "decap_bytes": None,
-        "status":      "unknown",
-        "phase1":      {},
-        "phase2":      {},
-        "errors":      [],
-    }
+        return {"sessions": [], "errors":
+                ["device rejected 'show crypto session detail' — IOS version may not support it"]}
 
     blocks = _split_session_blocks(text)
-    block: list[str] | None = None
     if target_iface:
         target_norm = target_iface.lower()
-        for b in blocks:
-            for line in b[:3]:
-                m = _RE_CS_INTERFACE.match(line)
-                if m and m.group(1).lower() == target_norm:
-                    block = b
-                    break
-            if block:
-                break
-        if not block:
-            out["errors"].append(f"interface {target_iface} not found in crypto session output")
-            return out
-    elif blocks:
-        block = blocks[0]
-    else:
-        out["errors"].append("no crypto session blocks found")
-        return out
+        blocks = [b for b in blocks if _block_interface(b).lower() == target_norm]
+        if not blocks:
+            return {"sessions": [],
+                    "errors": [f"interface {target_iface} not found in crypto session output"]}
 
-    encap_pkts = decap_pkts = 0
-    encap_kb = decap_kb = 0
-    lifetime_sec_min: int | None = None
-    for line in block:
-        if (m := _RE_CS_UPTIME.match(line)):
-            out["uptime"] = m.group(1).strip(",")
-        elif (m := _RE_CS_STATUS.match(line)):
-            s = m.group(1).upper()
-            out["status"] = "up" if s.startswith("UP") else "down" if s.startswith("DOWN") else "degraded"
-        elif (m := _RE_CS_PEER.match(line)):
-            out["peer_ip"] = m.group(1)
-        elif (m := _RE_CS_IKEV2.match(line)):
-            out["phase1"] = {"protocol": "ikev2", "state": m.group(3).lower()}
-        elif (m := _RE_CS_IKEV1.match(line)):
-            out["phase1"] = {"protocol": "ikev1", "state": m.group(3).lower()}
-        elif (m := _RE_CS_INBOUND.match(line)):
-            decap_pkts += int(m.group(1))
-            decap_kb   += int(m.group(2))
-            sec = int(m.group(3))
-            lifetime_sec_min = sec if lifetime_sec_min is None else min(lifetime_sec_min, sec)
-        elif (m := _RE_CS_OUTBOUND.match(line)):
-            encap_pkts += int(m.group(1))
-            encap_kb   += int(m.group(2))
-            sec = int(m.group(3))
-            lifetime_sec_min = sec if lifetime_sec_min is None else min(lifetime_sec_min, sec)
-
-    out["encap_pkts"]  = encap_pkts or None
-    out["decap_pkts"]  = decap_pkts or None
-    out["encap_bytes"] = encap_kb * 1024 if encap_kb else None
-    out["decap_bytes"] = decap_kb * 1024 if decap_kb else None
-    if lifetime_sec_min is not None:
-        out["phase2"]["lifetime_remaining_sec"] = lifetime_sec_min
-
-    return out
+    sessions: list[dict] = []
+    for b in blocks:
+        s = _parse_session_block(b)
+        if s:
+            sessions.append(s)
+    return {"sessions": sessions, "errors": []}
 
 
 def _split_session_blocks(text: str) -> list[list[str]]:
-    """Split the output into per-interface session blocks. A block starts at
-    each ``Interface:`` line."""
+    """Split into per-session blocks — each starts at an ``Interface:`` line."""
     lines = text.splitlines()
     blocks: list[list[str]] = []
     current: list[str] = []
@@ -200,6 +161,86 @@ def _split_session_blocks(text: str) -> list[list[str]]:
     if current:
         blocks.append(current)
     return blocks
+
+
+def _block_interface(block: list[str]) -> str:
+    if not block:
+        return ""
+    m = _RE_CS_INTERFACE.match(block[0])
+    return m.group(1) if m else ""
+
+
+def _parse_session_block(block: list[str]) -> dict:
+    """Parse a single session block into one peer record. Captures uptime,
+    status, peer IP, profile, phase1 + lifetime, packet/drop counters, and
+    phase2 lifetime remaining."""
+    s: dict = {
+        "peer":            "",
+        "uptime":          "",
+        "status":          "unknown",
+        "profile":         "",
+        "phase1":          {},
+        "encap_pkts":      None,
+        "encap_drops":     None,
+        "decap_pkts":      None,
+        "decap_drops":     None,
+        "p2_lifetime_sec": None,
+        "p2_lifetime_kb":  None,
+    }
+
+    encap_pkts = decap_pkts = 0
+    encap_drops = decap_drops = 0
+    has_inbound = has_outbound = False
+    life_sec_min: int | None = None
+    life_kb_min:  int | None = None
+
+    for line in block:
+        if (m := _RE_CS_PROFILE.match(line)):
+            s["profile"] = m.group(1)
+        elif (m := _RE_CS_UPTIME.match(line)):
+            s["uptime"] = m.group(1).strip(",")
+        elif (m := _RE_CS_STATUS.match(line)):
+            st = m.group(1).upper()
+            s["status"] = ("up" if st.startswith("UP")
+                           else "down" if st.startswith("DOWN")
+                           else "degraded")
+        elif (m := _RE_CS_PEER.match(line)):
+            s["peer"] = m.group(1)
+        elif (m := _RE_CS_IKEV2.match(line)):
+            s["phase1"] = {"protocol": "ikev2", "state": m.group(3).lower()}
+        elif (m := _RE_CS_IKEV1.match(line)):
+            s["phase1"] = {"protocol": "ikev1", "state": m.group(3).lower()}
+        elif "lifetime:" in line and s["phase1"]:
+            # IKE SA detail line includes lifetime:HH:MM:SS — capture remaining.
+            if (lm := _RE_CS_IKE_LIFE.search(line)):
+                hours, minutes, seconds = int(lm.group(1)), int(lm.group(2)), int(lm.group(3))
+                s["phase1"]["lifetime_remaining_sec"] = hours * 3600 + minutes * 60 + seconds
+        elif (m := _RE_CS_INBOUND.match(line)):
+            has_inbound  = True
+            decap_pkts  += int(m.group(1))
+            decap_drops += int(m.group(2))
+            kb  = int(m.group(3)); sec = int(m.group(4))
+            life_kb_min  = kb  if life_kb_min  is None else min(life_kb_min,  kb)
+            life_sec_min = sec if life_sec_min is None else min(life_sec_min, sec)
+        elif (m := _RE_CS_OUTBOUND.match(line)):
+            has_outbound = True
+            encap_pkts  += int(m.group(1))
+            encap_drops += int(m.group(2))
+            kb  = int(m.group(3)); sec = int(m.group(4))
+            life_kb_min  = kb  if life_kb_min  is None else min(life_kb_min,  kb)
+            life_sec_min = sec if life_sec_min is None else min(life_sec_min, sec)
+
+    s["encap_pkts"]      = encap_pkts  if has_outbound else None
+    s["encap_drops"]     = encap_drops if has_outbound else None
+    s["decap_pkts"]      = decap_pkts  if has_inbound  else None
+    s["decap_drops"]     = decap_drops if has_inbound  else None
+    s["p2_lifetime_sec"] = life_sec_min
+    s["p2_lifetime_kb"]  = life_kb_min
+
+    # Skip empty blocks (would happen on malformed input).
+    if not s["peer"] and not s["status"] != "unknown":
+        return {}
+    return s
 
 
 # ── IOS: show dmvpn detail ──────────────────────────────────────────────────
@@ -486,28 +527,77 @@ def merge_ios_state(
     dmvpn_state:    dict,
     raw:            dict,
 ) -> dict:
-    """Combine the IOS per-command parses into one normalized state dict."""
-    state = empty_state()
-    state["raw"] = raw
-    state.update({k: v for k, v in crypto_session.items() if k != "errors"})
-    state["errors"] = list(crypto_session.get("errors", []))
+    """Combine the IOS per-command parses into one normalized state dict.
 
+    `crypto_session` is now ``{"sessions": [...], "errors": [...]}`` —
+    one entry per peer (a DMVPN hub yields many). We aggregate packet/drop
+    counters across sessions, expose the per-peer list for the table view,
+    and pick min phase2 lifetime as the conservative "rekey soonest" value.
+    """
+    state = empty_state()
+    state["raw"]    = raw
+    state["errors"] = list(crypto_session.get("errors", []))
+    sessions: list[dict] = crypto_session.get("sessions", [])
+    state["sessions"]      = sessions
+    state["session_count"] = len(sessions)
+
+    if sessions:
+        encap_pkts  = sum((s.get("encap_pkts")  or 0) for s in sessions)
+        decap_pkts  = sum((s.get("decap_pkts")  or 0) for s in sessions)
+        encap_drops = sum((s.get("encap_drops") or 0) for s in sessions)
+        decap_drops = sum((s.get("decap_drops") or 0) for s in sessions)
+        state["encap_pkts"]  = encap_pkts  if any(s.get("encap_pkts")  is not None for s in sessions) else None
+        state["decap_pkts"]  = decap_pkts  if any(s.get("decap_pkts")  is not None for s in sessions) else None
+        state["encap_drops"] = encap_drops if any(s.get("encap_drops") is not None for s in sessions) else None
+        state["decap_drops"] = decap_drops if any(s.get("decap_drops") is not None for s in sessions) else None
+
+        peers_up   = sum(1 for s in sessions if s.get("status") == "up")
+        peers_down = sum(1 for s in sessions if s.get("status") == "down")
+        state["peers_up"]   = peers_up
+        state["peers_down"] = peers_down
+
+        if peers_up == len(sessions):
+            state["status"] = "up"
+        elif peers_up == 0:
+            state["status"] = "down"
+        else:
+            state["status"] = "degraded"
+
+        # Single-session case: surface the peer in the header.
+        if len(sessions) == 1:
+            state["peer_ip"] = sessions[0].get("peer", "")
+            state["uptime"]  = sessions[0].get("uptime", "")
+        else:
+            # Many sessions: don't show a single peer IP; uptime = newest peer's
+            # uptime (most recent connection = most informative for "is this
+            # tunnel actively forming new sessions").
+            state["uptime"] = sessions[0].get("uptime", "") if sessions else ""
+
+        # Phase 2 lifetime remaining: min across sessions = the SA that's
+        # closest to rekey.
+        kb_vals  = [s["p2_lifetime_kb"]  for s in sessions if s.get("p2_lifetime_kb")  is not None]
+        sec_vals = [s["p2_lifetime_sec"] for s in sessions if s.get("p2_lifetime_sec") is not None]
+        if kb_vals:  state["phase2"]["lifetime_remaining_kb"]  = min(kb_vals)
+        if sec_vals: state["phase2"]["lifetime_remaining_sec"] = min(sec_vals)
+
+    # Phase 1 negotiated crypto comes from the dedicated SA show.
     p1 = dict(state.get("phase1") or {})
     p1.update({k: v for k, v in (ikev2_sa or {}).items() if v})
     if not p1.get("encryption"):
         p1.update({k: v for k, v in (isakmp_sa or {}).items() if v})
+    # If no negotiated info, inherit phase1.protocol/state from the first session.
+    if not p1 and sessions:
+        p1 = dict(sessions[0].get("phase1") or {})
     state["phase1"] = p1
 
     if interface_state:
         state["interface_state"] = interface_state
-        # Tunnel line/proto down trumps "session UP" — surface as degraded.
         if interface_state.get("line") == "down" or interface_state.get("protocol") == "down":
             state["status"] = "down"
 
     if dmvpn_state.get("dmvpn_peers"):
         state["dmvpn_peers"] = dmvpn_state["dmvpn_peers"]
         if state["status"] == "unknown":
-            # No crypto session block but DMVPN reports peers → derive status.
             up = sum(1 for p in dmvpn_state["dmvpn_peers"] if p["state"].upper() == "UP")
             total = len(dmvpn_state["dmvpn_peers"])
             if up == total and total > 0:
