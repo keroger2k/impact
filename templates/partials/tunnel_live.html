@@ -40,6 +40,20 @@
     {% if st.uptime %}
       <span class="small text-muted">uptime <span class="mono">{{ st.uptime }}</span></span>
     {% endif %}
+    {% if st.palo %}
+      {% if st.palo.ike_role %}
+        <span class="badge bg-light text-muted">{{ st.palo.ike_role }}</span>
+      {% endif %}
+      {% if st.phase2 and st.phase2.mode %}
+        <span class="badge bg-light text-muted">{{ st.phase2.mode }}</span>
+      {% endif %}
+      {% if st.palo.natt %}
+        <span class="badge bg-info-subtle text-info">NAT-T</span>
+      {% endif %}
+      {% if st.palo.mtu %}
+        <span class="small text-muted">MTU <span class="mono">{{ st.palo.mtu }}</span></span>
+      {% endif %}
+    {% endif %}
     {% if total_drops %}
       <span class="badge bg-danger-subtle text-danger">
         <i class="ph ph-warning-octagon"></i> {{ "{:,}".format(total_drops) }} drops
@@ -188,9 +202,27 @@
           {% if st.phase1.dh_group %}
           <tr><td class="text-muted small">DH group</td>
               <td class="mono">{{ st.phase1.dh_group }}</td></tr>{% endif %}
+          {% if st.phase1.auth %}
+          <tr><td class="text-muted small">Auth method</td>
+              <td class="mono">{{ st.phase1.auth }}</td></tr>{% endif %}
+          {% if st.phase1.role %}
+          <tr><td class="text-muted small">Role</td>
+              <td class="mono">{{ st.phase1.role }}</td></tr>{% endif %}
+          {% if st.phase1.gateway %}
+          <tr><td class="text-muted small">Gateway</td>
+              <td class="mono">{{ st.phase1.gateway }}</td></tr>{% endif %}
           {% if st.phase1.lifetime_remaining_sec is not none %}
           <tr><td class="text-muted small">Lifetime left</td>
               <td class="mono">{{ st.phase1.lifetime_remaining_sec }}s</td></tr>{% endif %}
+          {% if st.phase1.lifetime_sec is not none %}
+          <tr><td class="text-muted small">Lifetime</td>
+              <td class="mono">{{ st.phase1.lifetime_sec }}s</td></tr>{% endif %}
+          {% if st.phase1.created %}
+          <tr><td class="text-muted small">Created</td>
+              <td class="mono">{{ st.phase1.created }}</td></tr>{% endif %}
+          {% if st.phase1.expires %}
+          <tr><td class="text-muted small">Expires</td>
+              <td class="mono">{{ st.phase1.expires }}</td></tr>{% endif %}
         </tbody>
       </table>
     </div>
@@ -219,6 +251,12 @@
           {% if st.phase2.spi_out %}
           <tr><td class="text-muted small">SPI (out)</td>
               <td class="mono">{{ st.phase2.spi_out }}</td></tr>{% endif %}
+          {% if st.phase2.protocol %}
+          <tr><td class="text-muted small">Protocol</td>
+              <td class="mono">{{ st.phase2.protocol }}</td></tr>{% endif %}
+          {% if st.phase2.mode %}
+          <tr><td class="text-muted small">Mode</td>
+              <td class="mono">{{ st.phase2.mode }}</td></tr>{% endif %}
           {% if st.phase2.lifetime_remaining_sec is not none %}
           <tr><td class="text-muted small">Lifetime left</td>
               <td class="mono">{{ st.phase2.lifetime_remaining_sec }}s
@@ -226,6 +264,113 @@
                   / {{ "{:,}".format(st.phase2.lifetime_remaining_kb) }} KB
                 {% endif %}
               </td></tr>{% endif %}
+          {% if st.phase2.soft_lifetime_sec is not none or st.phase2.hard_lifetime_sec is not none %}
+          <tr><td class="text-muted small">Rekey window</td>
+              <td class="mono">
+                {% if st.phase2.soft_lifetime_sec is not none %}soft {{ st.phase2.soft_lifetime_sec }}s{% endif %}
+                {% if st.phase2.hard_lifetime_sec is not none %} / hard {{ st.phase2.hard_lifetime_sec }}s{% endif %}
+              </td></tr>{% endif %}
+          {% if st.phase2.last_rekey_sec is not none %}
+          <tr><td class="text-muted small">Since last rekey</td>
+              <td class="mono">{{ st.phase2.last_rekey_sec }}s</td></tr>{% endif %}
+          {% if st.phase2.lifetime_kb %}
+          <tr><td class="text-muted small">Lifesize</td>
+              <td class="mono">{{ st.phase2.lifetime_kb }}</td></tr>{% endif %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {# ── Palo: traffic selectors / monitor / drop breakdown ─────── #}
+  {% if st.palo %}
+  {% set p = st.palo %}
+  {% set ts_l = p.ts.local if p.ts else None %}
+  {% set ts_r = p.ts.remote if p.ts else None %}
+  <div class="row g-3 mb-3">
+    {% if ts_l or ts_r %}
+    <div class="col-md-6">
+      <div class="text-muted small text-uppercase fw-bold mb-1">
+        <i class="ph ph-arrows-left-right"></i> Proxy IDs (traffic selectors)
+      </div>
+      <table class="table table-sm table-borderless mb-0 small">
+        <thead><tr>
+          <th></th><th>Network</th><th>Proto</th><th>Ports</th>
+        </tr></thead>
+        <tbody>
+          {% for label, side in [('local', ts_l), ('remote', ts_r)] if side %}
+          <tr>
+            <td class="text-muted">{{ label }}</td>
+            <td class="mono">
+              {% if side.start_ip == '0.0.0.0' and side.end_ip == '255.255.255.255' %}any
+              {% else %}{{ side.start_ip }}–{{ side.end_ip }}{% endif %}
+            </td>
+            <td class="mono">{% if not side.protocol %}any{% else %}{{ side.protocol }}{% endif %}</td>
+            <td class="mono">
+              {% if (side.start_port or 0) == 0 and (side.end_port or 0) in (0, 65535) %}any
+              {% else %}{{ side.start_port }}–{{ side.end_port }}{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+    {% set has_drops = p.errors and (p.errors.auth or p.errors.decrypt or p.errors.replay or p.errors.inner_warn) %}
+    {% if has_drops or p.monitor.enabled or p.seq_send is not none %}
+    <div class="col-md-6">
+      <div class="text-muted small text-uppercase fw-bold mb-1">
+        <i class="ph ph-activity"></i> Runtime diagnostics
+      </div>
+      <table class="table table-sm table-borderless mb-0 small">
+        <tbody>
+          {% if has_drops %}
+          <tr><td class="text-muted" style="width:160px">Drops (auth/dec/replay)</td>
+              <td class="mono {% if p.errors.auth or p.errors.decrypt or p.errors.replay %}text-danger{% endif %}">
+                {{ p.errors.auth or 0 }} / {{ p.errors.decrypt or 0 }} / {{ p.errors.replay or 0 }}
+              </td></tr>
+          {% if p.errors.inner_warn %}
+          <tr><td class="text-muted">Inner warnings</td>
+              <td class="mono text-warning">{{ p.errors.inner_warn }}</td></tr>{% endif %}
+          {% endif %}
+          {% if p.seq_send is not none or p.seq_recv is not none %}
+          <tr><td class="text-muted">Seq send / recv</td>
+              <td class="mono">{{ p.seq_send if p.seq_send is not none else '—' }} / {{ p.seq_recv if p.seq_recv is not none else '—' }}</td></tr>
+          {% endif %}
+          {% if p.anti_replay is not none %}
+          <tr><td class="text-muted">Anti-replay</td>
+              <td class="mono">{% if p.anti_replay %}on{% if p.anti_replay_window %} (window {{ p.anti_replay_window }}){% endif %}{% else %}off{% endif %}</td></tr>
+          {% endif %}
+          {% if p.monitor.enabled %}
+          <tr><td class="text-muted">Tunnel monitor</td>
+              <td>
+                <span class="badge {% if p.monitor.up %}bg-success-subtle text-success{% else %}bg-danger-subtle text-danger{% endif %}">
+                  {{ 'up' if p.monitor.up else 'down' }}
+                </span>
+                {% if p.monitor.interval %}<span class="mono small text-muted">every {{ p.monitor.interval }}s × {{ p.monitor.threshold or '?' }}</span>{% endif %}
+              </td></tr>
+          {% if p.monitor.pkt_sent is not none or p.monitor.pkt_recv is not none %}
+          <tr><td class="text-muted">Monitor sent / recv</td>
+              <td class="mono">{{ p.monitor.pkt_sent or 0 }} / {{ p.monitor.pkt_recv or 0 }}</td></tr>{% endif %}
+          {% endif %}
+          {% if p.inner_if or p.outer_if %}
+          <tr><td class="text-muted">Interfaces</td>
+              <td class="mono">{{ p.inner_if or '—' }} → {{ p.outer_if or '—' }}</td></tr>
+          {% endif %}
+          {% if p.local_ip %}
+          <tr><td class="text-muted">Local IP</td>
+              <td class="mono">{{ p.local_ip }}</td></tr>
+          {% endif %}
+          {% if p.gateway %}
+          <tr><td class="text-muted">Gateway</td>
+              <td class="mono">{{ p.gateway }}</td></tr>
+          {% endif %}
+          {% if p.keytype %}
+          <tr><td class="text-muted">Key type</td>
+              <td class="mono">{{ p.keytype }}</td></tr>
+          {% endif %}
         </tbody>
       </table>
     </div>

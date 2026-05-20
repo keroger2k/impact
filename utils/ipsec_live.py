@@ -69,6 +69,7 @@ _EMPTY_STATE: dict = {
     "phase2":          {},      # phase2 lifetime remaining (min across sessions)
     "interface_state": None,
     "dmvpn_peers":     None,
+    "palo":            None,    # PAN-specific extras (TS, monitor, NAT-T, mode, …)
     "errors":          [],
     "raw":             {},
 }
@@ -398,11 +399,34 @@ def parse_show_isakmp_sa(text: str, peer_ip: str = "") -> dict:
 
 # ── PAN: op-cmd XML parsers ─────────────────────────────────────────────────
 
-def parse_pan_vpn_flow(elem: ET.Element | None, tunnel_name: str) -> dict:
-    """Parse the result of `<show><vpn><flow></vpn></show>`.
+def _int_or_none(s: str | None) -> int | None:
+    try:
+        return int(s) if s not in (None, "", "N/A") else None
+    except (TypeError, ValueError):
+        return None
 
-    Find the IPSec entry whose <name> matches tunnel_name. Returns peer_ip,
-    state, gwid, monitor status, and interfaces.
+
+def _parse_ts_side(elem: ET.Element | None) -> dict:
+    """Parse one side of a PAN `<ts>` (traffic selector) block."""
+    if elem is None:
+        return {}
+    return {
+        "start_ip":   (elem.findtext("sip") or "").strip(),
+        "end_ip":     (elem.findtext("eip") or "").strip(),
+        "protocol":   _int_or_none(elem.findtext("proto")),
+        "start_port": _int_or_none(elem.findtext("sport")),
+        "end_port":   _int_or_none(elem.findtext("eport")),
+    }
+
+
+def parse_pan_vpn_flow(elem: ET.Element | None, tunnel_name: str) -> dict:
+    """Parse the result of `show vpn flow`.
+
+    The IPSec entry under `<IPSec><entry>` is the source-of-truth for runtime
+    state: it holds packet/byte counters, SPIs, traffic selectors, the active
+    cipher, error/drop counts, lifetime timers, and the tunnel-monitor sub-state.
+    `show vpn ipsec-sa` does NOT carry counters or TS on PAN-OS, so this parser
+    must capture them.
     """
     if elem is None:
         return {}
@@ -411,108 +435,217 @@ def parse_pan_vpn_flow(elem: ET.Element | None, tunnel_name: str) -> dict:
         if name != tunnel_name:
             continue
         state_raw = (entry.findtext("state") or "").lower()
+
+        mon = entry.find("monitor")
+        monitor = {}
+        if mon is not None:
+            monitor = {
+                "enabled":   (mon.findtext("on") or "").lower() == "true",
+                "up":        (mon.findtext("status") or "").lower() == "true",
+                "ka_status": _int_or_none(mon.findtext("ka-status")),
+                "interval":  _int_or_none(mon.findtext("interval")),
+                "threshold": _int_or_none(mon.findtext("threshold")),
+                "pkt_sent":  _int_or_none(mon.findtext("pkt-sent")),
+                "pkt_recv":  _int_or_none(mon.findtext("pkt-recv")),
+            }
+
+        ts_elem = entry.find("ts")
+        ts = {}
+        if ts_elem is not None:
+            ts = {
+                "local":  _parse_ts_side(ts_elem.find("local")),
+                "remote": _parse_ts_side(ts_elem.find("remote")),
+            }
+
+        auth_err  = _int_or_none(entry.findtext("auth-err"))   or 0
+        dec_err   = _int_or_none(entry.findtext("dec-err"))    or 0
+        replay    = _int_or_none(entry.findtext("pkt-replay")) or 0
+        inner_wn  = _int_or_none(entry.findtext("inner-warn")) or 0
+
         return {
             "found":       True,
             "gwid":        entry.findtext("gwid") or "",
-            "peer_ip":     entry.findtext("peerip") or "",
-            "local_ip":    entry.findtext("localip") or "",
+            "peer_ip":     (entry.findtext("peerip") or "").strip(),
+            "local_ip":    (entry.findtext("localip") or "").strip(),
             "state":       state_raw,
-            "monitor":     (entry.findtext("mon") or "").lower(),
             "inner_if":    entry.findtext("inner-if") or "",
             "outer_if":    entry.findtext("outer-if") or "",
-            "status":      "up" if "active" in state_raw or "estab" in state_raw else "down",
+            "status":      "up" if ("active" in state_raw or "estab" in state_raw) else "down",
+            # phase 2 cipher (PAN reports the negotiated AEAD here, not in ipsec-sa)
+            "enc":         (entry.findtext("enc")  or "").strip(),
+            "auth":        (entry.findtext("auth") or "").strip(),
+            "proto":       (entry.findtext("proto") or "").strip(),
+            "ipsec_mode":  (entry.findtext("ipsec-mode") or "").strip(),
+            # SPIs (hex, no direction split needed — flow gives them directly)
+            "local_spi":   (entry.findtext("local-spi")  or "").strip(),
+            "remote_spi":  (entry.findtext("remote-spi") or "").strip(),
+            # lifetime
+            "soft_lifetime_sec":      _int_or_none(entry.findtext("softtime")),
+            "hard_lifetime_sec":      _int_or_none(entry.findtext("hardtime")),
+            "lifetime_remaining_sec": _int_or_none(entry.findtext("remaintime")),
+            "last_rekey_sec":         _int_or_none(entry.findtext("last-rekey")),
+            # transport / capabilities
+            "mtu":         _int_or_none(entry.findtext("mtu")),
+            "natt":        (entry.findtext("natt") or "").lower() == "true",
+            "initiator":   (entry.findtext("initiator") or "").lower() == "true",
+            "keytype":     (entry.findtext("keytype") or "").strip(),
+            "anti_replay": (entry.findtext("anti-replay") or "").lower() == "true",
+            "anti_replay_window": _int_or_none(entry.findtext("anti-replay-window")),
+            # counters (these are the *real* packet/byte totals; ipsec-sa has none)
+            "encap_pkts":  _int_or_none(entry.findtext("pkt-encap")),
+            "decap_pkts":  _int_or_none(entry.findtext("pkt-decap")),
+            "encap_bytes": _int_or_none(entry.findtext("byte-encap")),
+            "decap_bytes": _int_or_none(entry.findtext("byte-decap")),
+            "seq_send":    _int_or_none(entry.findtext("seq-send")),
+            "seq_recv":    _int_or_none(entry.findtext("seq-recv")),
+            # errors / drops — PAN splits these across four counters
+            "errors": {
+                "auth":       auth_err,
+                "decrypt":    dec_err,
+                "replay":     replay,
+                "inner_warn": inner_wn,
+            },
+            # decap drops = sum of the three real drop counters (inner-warn is
+            # an anomaly, not a drop)
+            "decap_drops": auth_err + dec_err + replay,
+            "monitor":     monitor,
+            "ts":          ts,
         }
     return {"found": False}
 
 
 def parse_pan_ipsec_sa(elem: ET.Element | None, tunnel_name: str) -> dict:
-    """Parse `<show><vpn><ipsec-sa></vpn></show>` for the entry whose <name>
-    starts with the tunnel name (PAN names SAs as 'TUN:TUN-i0' etc.)."""
+    """Parse `show vpn ipsec-sa` — one `<entry>` per SA tunnel.
+
+    PAN-OS does NOT include per-SA byte/packet counters or `dir`-split entries
+    here (those live in `show vpn flow`). What this command does carry is the
+    gateway name, the inbound/outbound SPIs (already pre-split as `i_spi`/
+    `o_spi`), the phase-2 lifetime, DH group, and crypto suite labels.
+    """
     if elem is None:
         return {}
-    encap_bytes = decap_bytes = 0
-    encap_pkts  = decap_pkts  = 0
-    enc = integ = pfs = ""
-    spi_in = spi_out = ""
-    life_rem: int | None = None
-    matched = False
-
     for entry in elem.findall(".//entries/entry") or elem.findall(".//entry"):
         name = (entry.findtext("name") or "").strip()
-        if not (name == tunnel_name or name.startswith(tunnel_name + ":") or tunnel_name + ":" in name):
+        if not (name == tunnel_name or name.startswith(tunnel_name + ":")
+                or (":" + tunnel_name) in name):
             continue
-        matched = True
-        direction = (entry.findtext("dir") or "").lower()
-        b = entry.findtext("bytes")
-        p = entry.findtext("packets")
-        try:
-            b_int = int(b) if b else 0
-            p_int = int(p) if p else 0
-        except ValueError:
-            b_int = p_int = 0
-        if direction in ("inbound", "in"):
-            decap_bytes += b_int; decap_pkts += p_int
-            spi_in = entry.findtext("spi") or spi_in
-        elif direction in ("outbound", "out"):
-            encap_bytes += b_int; encap_pkts += p_int
-            spi_out = entry.findtext("spi") or spi_out
-        else:
-            # 'both' or absent: split the counters between in/out
-            decap_bytes += b_int; encap_bytes += b_int
-            decap_pkts  += p_int; encap_pkts  += p_int
-        enc   = enc   or entry.findtext("enc")  or ""
-        integ = integ or entry.findtext("hash") or ""
-        pfs   = pfs   or entry.findtext("dh")   or ""
-        life  = entry.findtext("life")
-        if life:
-            try:
-                life_rem = int(life) if life_rem is None else min(life_rem, int(life))
-            except ValueError:
-                pass
+        # PAN reports SPIs as decimal integers — convert to hex (8-char zero-
+        # padded, uppercase) to match what `show vpn flow` shows.
+        def _spi_hex(raw: str | None) -> str:
+            v = _int_or_none(raw)
+            return f"{v:08X}" if v is not None else (raw or "")
 
-    if not matched:
-        return {}
-    return {
-        "encap_bytes": encap_bytes or None,
-        "decap_bytes": decap_bytes or None,
-        "encap_pkts":  encap_pkts  or None,
-        "decap_pkts":  decap_pkts  or None,
-        "phase2": {
-            "encryption": enc,
-            "integrity":  integ,
-            "pfs":        pfs,
-            "spi_in":     spi_in,
-            "spi_out":    spi_out,
-            "lifetime_remaining_sec": life_rem,
-        },
-    }
+        return {
+            "gateway":     (entry.findtext("gateway") or "").strip(),
+            "tid":         _int_or_none(entry.findtext("tid")),
+            "proto":       (entry.findtext("proto") or "").strip(),
+            "phase2": {
+                "encryption":             (entry.findtext("enc")  or "").strip(),
+                "integrity":              (entry.findtext("hash") or "").strip(),
+                "pfs":                    (entry.findtext("dh")   or "").strip(),
+                "spi_in":                 _spi_hex(entry.findtext("i_spi")),
+                "spi_out":                _spi_hex(entry.findtext("o_spi")),
+                "lifetime_sec":           _int_or_none(entry.findtext("life")),
+                "lifetime_remaining_sec": _int_or_none(entry.findtext("remain")),
+                "lifetime_kb":            (entry.findtext("kb") or "").strip(),
+            },
+        }
+    return {}
+
+
+_IKE_MODE_TS = re.compile(r"^([A-Z][a-z]{2})\.(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})$")
+_IKE_MONTHS = {m: i for i, m in enumerate(
+    ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"], start=1)}
+
+
+def _ike_lifetime_remaining(created: str, expires: str) -> int | None:
+    """PAN reports IKE SA timestamps as ``MMM.D HH:MM:SS`` with no year. The
+    difference between created and expires is the configured lifetime; that is
+    a reliable, year-independent value to surface as `lifetime_sec`. We don't
+    try to compute "remaining" without a year — the caller can show created/
+    expires directly for the absolute view."""
+    def _to_seconds(s: str) -> int | None:
+        m = _IKE_MODE_TS.match((s or "").strip())
+        if not m:
+            return None
+        mon, day, hh, mm, ss = m.groups()
+        mon_i = _IKE_MONTHS.get(mon)
+        if not mon_i:
+            return None
+        # Treat the date as occurring in a notional non-leap year. We only use
+        # this for diffs, so the absolute origin doesn't matter — as long as
+        # both endpoints use the same origin.
+        from datetime import datetime
+        try:
+            return int(datetime(2001, mon_i, int(day),
+                                int(hh), int(mm), int(ss)).timestamp())
+        except ValueError:
+            return None
+    a = _to_seconds(created)
+    b = _to_seconds(expires)
+    if a is None or b is None:
+        return None
+    # Handle year wrap (expires in next year): if negative, add a year.
+    diff = b - a
+    if diff < 0:
+        diff += 365 * 86400
+    return diff if diff > 0 else None
+
+
+def _parse_ike_algo(algo: str) -> dict:
+    """PAN packs the IKE proposal into a single slash-delimited string like
+    ``PSK/DH20/AES256-CBC/SHA256``. Split it into named fields. Tokens that
+    don't match a known prefix are kept as-is so we don't silently drop info."""
+    out = {"auth": "", "dh_group": "", "encryption": "", "integrity": ""}
+    for tok in (algo or "").split("/"):
+        t = tok.strip()
+        if not t:
+            continue
+        tl = t.lower()
+        if tl in ("psk", "rsa", "ecdsa", "cert"):
+            out["auth"] = t
+        elif tl.startswith("dh") or tl.startswith("group"):
+            out["dh_group"] = t
+        elif tl.startswith(("aes", "3des", "des", "null")):
+            out["encryption"] = t
+        elif tl.startswith(("sha", "md5")):
+            out["integrity"] = t
+    return out
 
 
 def parse_pan_ike_sa(elem: ET.Element | None, peer_ip: str = "", gwid: str = "") -> dict:
-    """Parse `<show><vpn><ike-sa></vpn></show>` for the phase1 SA matching peer
-    or gateway id."""
+    """Parse `show vpn ike-sa`.
+
+    Real PAN-OS shape: top-level `<entry>` per IKE SA with fields `gwid`,
+    `name`, `role` (Init/Resp), `mode` (IKEv1/IKEv2), `algo` (slash-delimited
+    proposal), `created`, `expires`. No state/peer-ip/encryption/hash/dh
+    fields exist directly — `algo` must be parsed.
+    """
     if elem is None:
         return {}
     for entry in elem.findall(".//phase1-sa/entry") or elem.findall(".//entry"):
-        e_peer = entry.findtext("peer-ip") or ""
-        e_gwid = entry.findtext("gwid")    or ""
-        if peer_ip and e_peer and e_peer != peer_ip:
-            continue
+        e_gwid = (entry.findtext("gwid") or "").strip()
         if gwid and e_gwid and e_gwid != gwid:
             continue
-        state_raw = (entry.findtext("state") or "").lower()
-        lt = entry.findtext("lifetime")
-        try:
-            lt_int = int(lt) if lt else None
-        except ValueError:
-            lt_int = None
+        mode = (entry.findtext("mode") or "").strip()
+        algo = (entry.findtext("algo") or "").strip()
+        role = (entry.findtext("role") or "").strip()
+        created = (entry.findtext("created") or "").strip()
+        expires = (entry.findtext("expires") or "").strip()
+        crypto = _parse_ike_algo(algo)
         return {
-            "protocol":   "ikev2" if entry.findtext("ike-version") == "2" else "ikev1",
-            "state":      state_raw,
-            "encryption": entry.findtext("enc")  or "",
-            "integrity":  entry.findtext("hash") or "",
-            "dh_group":   entry.findtext("dh")   or "",
-            "lifetime_remaining_sec": lt_int,
+            "protocol":   "ikev2" if mode.lower() == "ikev2" else ("ikev1" if mode else ""),
+            "state":      "established" if expires else "",
+            "encryption": crypto["encryption"],
+            "integrity":  crypto["integrity"],
+            "dh_group":   crypto["dh_group"],
+            "auth":       crypto["auth"],
+            "role":       role,
+            "gateway":    (entry.findtext("name") or "").strip(),
+            "created":    created,
+            "expires":    expires,
+            "lifetime_sec": _ike_lifetime_remaining(created, expires),
+            "raw_algo":   algo,
         }
     return {}
 
@@ -616,21 +749,82 @@ def merge_palo_state(
     ike:   dict,
     raw:   dict,
 ) -> dict:
-    """Combine the PAN per-command parses into one normalized state dict."""
+    """Combine the PAN per-command parses into one normalized state dict.
+
+    `flow` is the source-of-truth for counters, SPIs, the active phase-2
+    cipher, lifetime timers, traffic selectors, and drop counters. `sa` adds
+    the configured phase-2 lifetime and the gateway label. `ike` carries the
+    phase-1 proposal (parsed out of the slash-delimited `algo`).
+    """
     state = empty_state()
     state["raw"] = raw
     if not flow.get("found"):
         state["status"] = "down"
         state["errors"].append("tunnel not present in vpn flow on this firewall")
         return state
+
     state["status"]      = flow.get("status", "unknown")
     state["peer_ip"]     = flow.get("peer_ip", "")
-    if sa:
-        state["encap_pkts"]  = sa.get("encap_pkts")
-        state["decap_pkts"]  = sa.get("decap_pkts")
-        state["encap_bytes"] = sa.get("encap_bytes")
-        state["decap_bytes"] = sa.get("decap_bytes")
-        state["phase2"]      = sa.get("phase2", {})
+    # Counters come from flow; ipsec-sa does not carry them on PAN-OS.
+    state["encap_pkts"]  = flow.get("encap_pkts")
+    state["decap_pkts"]  = flow.get("decap_pkts")
+    state["encap_bytes"] = flow.get("encap_bytes")
+    state["decap_bytes"] = flow.get("decap_bytes")
+    state["decap_drops"] = flow.get("decap_drops")
+    # PAN has no encap-side drop counter in `show vpn flow`; leave None.
+
+    # Phase 2: start from flow (active cipher, SPIs, remaining lifetime), then
+    # overlay anything from ipsec-sa that adds info (configured lifetime, kb).
+    phase2 = {
+        "encryption":             flow.get("enc"),
+        "integrity":              flow.get("auth"),
+        "protocol":               flow.get("proto"),
+        "mode":                   flow.get("ipsec_mode"),
+        # PAN's `local-spi` is the SPI we receive on (inbound); `remote-spi` is
+        # what we put on packets we send (outbound). Cross-checked against
+        # `show vpn ipsec-sa` where i_spi == local-spi (hex).
+        "spi_in":                 flow.get("local_spi"),
+        "spi_out":                flow.get("remote_spi"),
+        "lifetime_remaining_sec": flow.get("lifetime_remaining_sec"),
+        "soft_lifetime_sec":      flow.get("soft_lifetime_sec"),
+        "hard_lifetime_sec":      flow.get("hard_lifetime_sec"),
+        "last_rekey_sec":         flow.get("last_rekey_sec"),
+    }
+    if sa and sa.get("phase2"):
+        sa_p2 = sa["phase2"]
+        # SA-derived fields fill in only where flow didn't have them, except
+        # for pfs/lifetime_kb which only ipsec-sa carries.
+        phase2["pfs"]         = sa_p2.get("pfs")
+        phase2["lifetime_kb"] = sa_p2.get("lifetime_kb")
+        if not phase2["lifetime_remaining_sec"]:
+            phase2["lifetime_remaining_sec"] = sa_p2.get("lifetime_remaining_sec")
+        if not phase2.get("lifetime_sec"):
+            phase2["lifetime_sec"] = sa_p2.get("lifetime_sec")
+    state["phase2"] = {k: v for k, v in phase2.items() if v not in (None, "")}
+
     if ike:
-        state["phase1"] = ike
+        state["phase1"] = {k: v for k, v in ike.items() if v not in (None, "")}
+
+    # Bundle PAN-specific extras that don't fit the cross-platform shape.
+    state["palo"] = {
+        "gateway":      (sa or {}).get("gateway") or (ike or {}).get("gateway", ""),
+        "local_ip":     flow.get("local_ip"),
+        "inner_if":     flow.get("inner_if"),
+        "outer_if":     flow.get("outer_if"),
+        "mtu":          flow.get("mtu"),
+        "natt":         flow.get("natt"),
+        "initiator":    flow.get("initiator"),
+        "keytype":      flow.get("keytype"),
+        "anti_replay":  flow.get("anti_replay"),
+        "anti_replay_window": flow.get("anti_replay_window"),
+        "seq_send":     flow.get("seq_send"),
+        "seq_recv":     flow.get("seq_recv"),
+        "errors":       flow.get("errors") or {},
+        "monitor":      flow.get("monitor") or {},
+        "ts":           flow.get("ts") or {},
+        "ike_role":     (ike or {}).get("role", ""),
+        "ike_created":  (ike or {}).get("created", ""),
+        "ike_expires":  (ike or {}).get("expires", ""),
+        "ike_raw_algo": (ike or {}).get("raw_algo", ""),
+    }
     return state
