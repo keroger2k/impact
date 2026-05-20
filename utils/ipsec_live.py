@@ -965,10 +965,14 @@ def merge_palo_state(
                if m.get("status") == "up" and m.get("lifetime_remaining_sec")]
         if rem:
             phase2["lifetime_remaining_sec"] = min(rem)
-    state["phase2"] = {k: v for k, v in phase2.items() if v not in (None, "")}
+    # Keep keys with None values intact — the template uses `is not none` to
+    # decide whether to render each row, and Jinja's `is none` test matches
+    # only actual None (not undefined). Stripping None keys here would cause
+    # the rows to render with empty values, e.g. "Lifetime left: s".
+    state["phase2"] = phase2
 
     if ike:
-        state["phase1"] = {k: v for k, v in ike.items() if v not in (None, "")}
+        state["phase1"] = ike
 
     # Bundle PAN-specific extras that don't fit the cross-platform shape.
     state["palo"] = {
