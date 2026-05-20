@@ -14,6 +14,7 @@ import xml.etree.ElementTree as ET
 
 import requests
 from dotenv import load_dotenv
+from panos.errors import PanDeviceXapiError
 from panos.firewall import Firewall
 from panos.panorama import DeviceGroup, Panorama
 
@@ -245,6 +246,13 @@ def op_via_sdk(
             pan.add(fw)
             return fw.op(cmd)
         return pan.op(cmd)
+    except PanDeviceXapiError as e:
+        msg = str(e)
+        if "not connected" in msg:
+            logger.debug("panos op skipped (target=%s not connected): %s", target, cmd)
+        else:
+            logger.warning("panos op failed (target=%s): %s — %s", target, cmd, msg)
+        return None
     except Exception:
         logger.exception("panos op failed (target=%s): %s", target, cmd)
         return None
@@ -815,6 +823,7 @@ def get_managed_devices(api_key: str) -> list[dict]:
                 "os_version":    entry.findtext("os-version") or "",
                 "ha_state":      entry.findtext("ha-state") or "",
                 "ha_enabled":    entry.findtext("ha-enabled") == "yes",
+                "connected":     entry.findtext("connected") == "yes",
             })
 
         devices.sort(key=lambda d: (d.get("hostname", "").lower(), d.get("model", "")))

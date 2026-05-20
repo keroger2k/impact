@@ -449,6 +449,11 @@ def _fetch_palo_live(session: SessionEntry, tunnel: dict, endpoint: dict) -> dic
     if not devices:
         return _live_error("No managed firewalls available to query")
 
+    total = len(devices)
+    devices = [d for d in devices if d.get("connected", True)]
+    if not devices:
+        return _live_error(f"None of {total} managed firewalls are currently connected to Panorama")
+
     flow_cmd = f'show vpn flow name "{tunnel_name}"'
     sa_cmd   = f'show vpn ipsec-sa tunnel "{tunnel_name}"'
     ike_cmd  = 'show vpn ike-sa'
