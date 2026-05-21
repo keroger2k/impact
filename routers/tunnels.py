@@ -1267,6 +1267,80 @@ async def tunnel_cache_info():
     return {"key": TUNNEL_INVENTORY_CACHE_KEY, "info": info}
 
 
+@router.get("/debug/resolution")
+async def debug_resolution(
+    ip: str = "",
+    session: SessionEntry = Depends(require_auth),
+):
+    """Diagnostic for the IP → device/site resolver. Returns:
+      - whether device_site_map / dnac_interfaces / tunnel inventory are present,
+      - size of each, plus a sample row,
+      - per-source breakdown of the live ip_index,
+      - and an end-to-end resolve() for one or more IPs passed via `?ip=` (comma-separated).
+
+    Use this when site columns are empty or every peer is "(external)" — the
+    output names the missing input in one shot.
+    """
+    devices         = cache.get("devices") or []
+    device_site_map = cache.get("device_site_map") or {}
+    dnac_interfaces = cache.get("dnac_interfaces") or []
+    inv             = cache.get(TUNNEL_INVENTORY_CACHE_KEY) or {}
+    ip_index        = inv.get("ip_index") or {}
+
+    # Per-source breakdown of the ip_index
+    sources: dict[str, int] = {}
+    for matches in ip_index.values():
+        for m in matches:
+            src = m.get("source", "?")
+            sources[src] = sources.get(src, 0) + 1
+
+    # Sanity-check device_site_map keys against the devices cache. A mismatch
+    # is what produces "I have a site map but no endpoint has a site": the
+    # tunnel inventory keys endpoints by DNAC instanceUuid (d["id"]), and
+    # device_site_map MUST be keyed by that same id.
+    device_ids = {d.get("id") for d in devices if d.get("id")}
+    site_keys  = set(device_site_map.keys())
+    overlap = len(device_ids & site_keys)
+
+    out: dict = {
+        "device_site_map": {
+            "size":     len(device_site_map),
+            "ok":       len(device_site_map) > 0,
+            "sample":   dict(list(device_site_map.items())[:3]),
+            "key_overlap_with_devices_cache": f"{overlap}/{len(device_ids)} device ids appear in device_site_map",
+        },
+        "dnac_interfaces": {
+            "size":   len(dnac_interfaces),
+            "ok":     len(dnac_interfaces) > 0,
+            "sample": [
+                {"deviceName": i.get("deviceName"), "portName": i.get("portName"),
+                 "ipv4Address": i.get("ipv4Address")}
+                for i in dnac_interfaces[:3]
+            ],
+        },
+        "ip_index": {
+            "distinct_ips":     len(ip_index),
+            "ok":               len(ip_index) > 0,
+            "by_source":        sources,
+            "built_at":         inv.get("built_at"),
+            "needs_rebuild":    inv.get("built_at") is None or "ip_index" not in inv,
+        },
+        "hint": (
+            "If `device_site_map.size` is 0 — refresh DNAC Sites in Cache Management (or visit the Devices page once). "
+            "If `dnac_interfaces.size` is 0 — refresh DNAC Interfaces. "
+            "If both are non-zero but `ip_index.needs_rebuild` is true — click Refresh on the Tunnels page so the new annotation pass runs."
+        ),
+    }
+
+    if ip:
+        from utils.tunnel_inventory import resolve_ip
+        targets = [s.strip() for s in ip.split(",") if s.strip()]
+        out["resolve"] = {
+            t: resolve_ip(t, ip_index) for t in targets
+        }
+    return out
+
+
 # ── Debug endpoints ──────────────────────────────────────────────────────────
 # These exist purely to diagnose why tunnels are landing in the wrong bucket.
 # All return JSON, no UI; they read from cached configs so they don't hit DNAC.
