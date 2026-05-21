@@ -539,3 +539,33 @@ def test_resolver_returns_all_candidates_for_duplicate_ip():
     assert devices == ["DEV-A", "DEV-B"]
     sites = sorted(m["site"] for m in matches)
     assert sites == ["SITE-A", "SITE-B"]
+
+
+def test_build_ip_index_uses_dnac_interfaces_for_wan_ips():
+    """DMVPN NBMA peers are the spoke's WAN-facing physical IP. The parser
+    never sees those (only tunnel + crypto-map interfaces). The DNAC
+    interface inventory is the source that closes that gap."""
+    meta = {"dev-1": {"hostname": "SPOKE-01", "managementIpAddress": "10.0.0.1"}}
+    site_map = {"dev-1": "BRANCH-42"}
+    dnac_ifaces = [
+        # The WAN-facing physical — never appears in parse_ipsec_config output
+        # unless it has a crypto map bound. But DMVPN uses tunnel protection,
+        # so this interface never lands in our parsed view.
+        {"deviceId": "dev-1", "deviceName": "SPOKE-01",
+         "portName": "GigabitEthernet0/0/0", "ipv4Address": "203.0.113.42"},
+        # Loopback (control-plane / EIGRP router-id)
+        {"deviceId": "dev-1", "deviceName": "SPOKE-01",
+         "portName": "Loopback0", "ipv4Address": "10.99.99.42"},
+    ]
+    idx = build_ip_index({}, meta, site_map, dnac_interfaces=dnac_ifaces)
+
+    assert "203.0.113.42" in idx
+    m = idx["203.0.113.42"][0]
+    assert m["device"] == "SPOKE-01"
+    assert m["site"] == "BRANCH-42"
+    assert m["interface"] == "GigabitEthernet0/0/0"
+    assert m["source"] == "interface"
+
+    # Loopback too
+    assert "10.99.99.42" in idx
+    assert idx["10.99.99.42"][0]["source"] == "interface"

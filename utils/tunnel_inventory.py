@@ -31,6 +31,7 @@ def build_inventory(
     device_meta: dict[str, dict],
     palo:        dict[str, list] | None = None,
     device_site_map: dict[str, str] | None = None,
+    dnac_interfaces: list[dict] | None = None,
 ) -> dict:
     tunnels: list[dict] = []
 
@@ -50,7 +51,9 @@ def build_inventory(
     # walk every endpoint to attach local_site + peer_matches. The same index
     # is stashed in the returned dict so the live-fetch path can resolve
     # session peer IPs without rebuilding it on every click.
-    ip_index = build_ip_index(parsed_ios, device_meta, device_site_map or {})
+    ip_index = build_ip_index(
+        parsed_ios, device_meta, device_site_map or {}, dnac_interfaces or [],
+    )
     _annotate_endpoints(tunnels, ip_index, device_site_map or {})
 
     return {
@@ -67,18 +70,22 @@ def build_ip_index(
     parsed_ios:      dict[str, dict],
     device_meta:     dict[str, dict],
     device_site_map: dict[str, str],
+    dnac_interfaces: list[dict] | None = None,
 ) -> dict[str, list[dict]]:
     """Reverse index from IP (bare, no CIDR) to a list of resolution candidates.
 
     Candidates carry source so the UI can show *why* something matched:
       - "mgmt"          — the device's DNAC management IP
+      - "interface"     — any interface IPv4 from the DNAC interface inventory
+                          (covers WAN-facing physicals — the underlay/NBMA
+                          address DMVPN `show crypto session detail` reports)
       - "tunnel-overlay"— an IP on a Tunnel/VT/Virtual-Template interface
-      - "crypto-map"    — an IP on a physical interface that has a crypto map bound
+      - "crypto-map"    — an IP on a physical interface with a crypto map bound
 
     A single IP may map to multiple devices (RFC1918 reuse across sites). We
     surface every match rather than first-wins; the UI marks ambiguity. Same
-    device hitting via multiple sources (mgmt + tunnel overlay) collapses into
-    one entry per (device_id, source).
+    device hitting via multiple sources (mgmt + interface) collapses into
+    one entry per (device_id, source, interface).
     """
     index: dict[str, list[dict]] = {}
 
@@ -112,9 +119,30 @@ def build_ip_index(
         site = (device_site_map or {}).get(dev_id, "")
         add(mgmt, dev_id, hostname, site, "(management)", "mgmt")
 
-    # 2) Tunnel-interface overlay IPs + physical crypto-map interface IPs from
-    #    every parsed config. This catches DMVPN overlay tunnel-address peers
-    #    that won't match the device's mgmt IP.
+    # 2) Fleet-wide DNAC interface inventory. Critical for DMVPN — the NBMA
+    #    address reported by `show crypto session` / `show dmvpn` is the
+    #    underlay/WAN-facing physical interface IP, which we never get from
+    #    parsing the IPsec subset of the running-config. DNAC has every iface.
+    if dnac_interfaces:
+        # Resolve deviceId → hostname via device_meta (DNAC's per-interface
+        # `deviceName` field is occasionally blank or stale).
+        host_by_id = {
+            dev_id: (meta or {}).get("hostname") or dev_id
+            for dev_id, meta in (device_meta or {}).items()
+        }
+        for iface in dnac_interfaces:
+            ip = iface.get("ipv4Address") or ""
+            if not ip:
+                continue
+            dev_id = iface.get("deviceId") or ""
+            hostname = host_by_id.get(dev_id) or iface.get("deviceName") or dev_id
+            site = (device_site_map or {}).get(dev_id, "")
+            port = iface.get("portName") or ""
+            add(ip, dev_id, hostname, site, port, "interface")
+
+    # 3) Tunnel-interface overlay IPs + physical crypto-map interface IPs from
+    #    every parsed config. The tunnel-overlay source is what resolves
+    #    `show dmvpn` *tunnel* column entries (the NHRP overlay address).
     for dev_id, parsed in (parsed_ios or {}).items():
         meta = (device_meta or {}).get(dev_id, {}) or {}
         hostname = parsed.get("hostname") or meta.get("hostname", dev_id)

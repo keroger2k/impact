@@ -116,11 +116,12 @@ async def _build_inventory(session: SessionEntry) -> dict:
 
     device_meta = {d["id"]: d for d in (cache.get("devices") or [])}
     device_site_map = cache.get("device_site_map") or {}
+    dnac_interfaces = cache.get("dnac_interfaces") or []
     palo = await _load_palo(session, loop)
 
     return build_inventory(
         parsed_ios=parsed_ios, device_meta=device_meta, palo=palo,
-        device_site_map=device_site_map,
+        device_site_map=device_site_map, dnac_interfaces=dnac_interfaces,
     )
 
 
@@ -1076,9 +1077,10 @@ async def refresh_stream(
         yield emit({"type": "log", "level": "info", "message": "Building normalized inventory…"})
         from utils.tunnel_inventory import build_inventory
         device_site_map = cache.get("device_site_map") or {}
+        dnac_interfaces = cache.get("dnac_interfaces") or []
         inv = build_inventory(
             parsed_ios=parsed_ios, device_meta=device_meta, palo=palo,
-            device_site_map=device_site_map,
+            device_site_map=device_site_map, dnac_interfaces=dnac_interfaces,
         )
         cache.set(TUNNEL_INVENTORY_CACHE_KEY, inv, TTL_TUNNEL_INVENTORY)
 
@@ -1105,6 +1107,48 @@ async def refresh_stream(
                             "message": f"  {len(unresolved)} tunnels reference a profile we couldn't resolve "
                                        f"(sample: {sample_names}). Check that 'crypto ipsec profile <name>' "
                                        f"is present in at least one cached config."})
+
+        # ── IP → device/site resolver coverage ──
+        # Surface enough state that "every endpoint site is empty" or "every
+        # SA peer is external" become diagnosable from the refresh log alone,
+        # without me having to ask which of device_site_map / dnac_interfaces
+        # the user is missing.
+        ip_index = inv.get("ip_index") or {}
+        sources_count: dict[str, int] = {}
+        for matches in ip_index.values():
+            for m in matches:
+                src = m.get("source", "?")
+                sources_count[src] = sources_count.get(src, 0) + 1
+
+        endpoints_total = sum(len(t["endpoints"]) for t in inv["tunnels"])
+        with_site   = sum(1 for t in inv["tunnels"] for ep in t["endpoints"] if ep.get("local_site"))
+        peers_attempted = 0
+        peers_resolved  = 0
+        for t in inv["tunnels"]:
+            for ep in t["endpoints"]:
+                for pm in ep.get("peer_matches", []):
+                    peers_attempted += 1
+                    if pm.get("matches"):
+                        peers_resolved += 1
+
+        yield emit({"type": "log", "level": "info",
+                    "message": "── IP → device/site resolver coverage ──"})
+        yield emit({"type": "log", "level": "info",
+                    "message": f"  device_site_map:  {len(device_site_map):,} device→site entries "
+                               f"({'EMPTY — site column will be blank everywhere' if not device_site_map else 'OK'})"})
+        yield emit({"type": "log", "level": "info",
+                    "message": f"  dnac_interfaces:  {len(dnac_interfaces):,} interfaces "
+                               f"({'EMPTY — NBMA peers in live view will all show (external)' if not dnac_interfaces else 'OK'})"})
+        yield emit({"type": "log", "level": "info",
+                    "message": f"  ip_index built:   {len(ip_index):,} distinct IPs · " +
+                               ", ".join(f"{k}={v}" for k, v in sorted(sources_count.items()))})
+        yield emit({"type": "log", "level": "info",
+                    "message": f"  endpoints w/site: {with_site}/{endpoints_total}"})
+        if peers_attempted:
+            yield emit({"type": "log", "level": "info",
+                        "message": f"  peer IPs resolved: {peers_resolved}/{peers_attempted} "
+                                   f"({100*peers_resolved//max(1,peers_attempted)}%) — unresolved peers "
+                                   f"are external (Internet/3rd-party) or not in DNAC inventory."})
 
         # ── Per-DMVPN-cloud member counts (helps explain "I expected 100s") ──
         dmvpn_tunnels = [t for t in inv["tunnels"] if t["type"] == "dmvpn"]
