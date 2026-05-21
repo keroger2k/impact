@@ -30,6 +30,7 @@ def build_inventory(
     parsed_ios:  dict[str, dict],
     device_meta: dict[str, dict],
     palo:        dict[str, list] | None = None,
+    device_site_map: dict[str, str] | None = None,
 ) -> dict:
     tunnels: list[dict] = []
 
@@ -45,11 +46,151 @@ def build_inventory(
     if palo:
         tunnels.extend(_build_palo_tunnels(palo))
 
+    # Build a fleet-wide reverse index from IP → device/site/interface, then
+    # walk every endpoint to attach local_site + peer_matches. The same index
+    # is stashed in the returned dict so the live-fetch path can resolve
+    # session peer IPs without rebuilding it on every click.
+    ip_index = build_ip_index(parsed_ios, device_meta, device_site_map or {})
+    _annotate_endpoints(tunnels, ip_index, device_site_map or {})
+
     return {
         "tunnels":  tunnels,
         "built_at": time.time(),
         "stats":    _stats(tunnels),
+        "ip_index": ip_index,
     }
+
+
+# ── IP → device/site resolution ──────────────────────────────────────────────
+
+def build_ip_index(
+    parsed_ios:      dict[str, dict],
+    device_meta:     dict[str, dict],
+    device_site_map: dict[str, str],
+) -> dict[str, list[dict]]:
+    """Reverse index from IP (bare, no CIDR) to a list of resolution candidates.
+
+    Candidates carry source so the UI can show *why* something matched:
+      - "mgmt"          — the device's DNAC management IP
+      - "tunnel-overlay"— an IP on a Tunnel/VT/Virtual-Template interface
+      - "crypto-map"    — an IP on a physical interface that has a crypto map bound
+
+    A single IP may map to multiple devices (RFC1918 reuse across sites). We
+    surface every match rather than first-wins; the UI marks ambiguity. Same
+    device hitting via multiple sources (mgmt + tunnel overlay) collapses into
+    one entry per (device_id, source).
+    """
+    index: dict[str, list[dict]] = {}
+
+    def add(ip: str, device_id: str, device: str, site: str, interface: str, source: str) -> None:
+        ip = _normalize_ip(ip)
+        if not ip:
+            return
+        bucket = index.setdefault(ip, [])
+        # Dedupe by (device_id, source, interface) so re-runs / overlapping
+        # parses don't pile up duplicates for the same logical match.
+        for existing in bucket:
+            if (existing.get("device_id") == device_id
+                    and existing.get("source") == source
+                    and existing.get("interface") == interface):
+                return
+        bucket.append({
+            "device_id": device_id,
+            "device":    device,
+            "site":      site,
+            "interface": interface,
+            "source":    source,
+        })
+
+    # 1) DNAC management IPs — the strongest anchor: peer = mgmt IP means the
+    #    peer is a managed device we know about.
+    for dev_id, meta in (device_meta or {}).items():
+        mgmt = meta.get("managementIpAddress") or ""
+        if not mgmt:
+            continue
+        hostname = meta.get("hostname") or dev_id
+        site = (device_site_map or {}).get(dev_id, "")
+        add(mgmt, dev_id, hostname, site, "(management)", "mgmt")
+
+    # 2) Tunnel-interface overlay IPs + physical crypto-map interface IPs from
+    #    every parsed config. This catches DMVPN overlay tunnel-address peers
+    #    that won't match the device's mgmt IP.
+    for dev_id, parsed in (parsed_ios or {}).items():
+        meta = (device_meta or {}).get(dev_id, {}) or {}
+        hostname = parsed.get("hostname") or meta.get("hostname", dev_id)
+        site = (device_site_map or {}).get(dev_id, "")
+        for iface in parsed.get("tunnel_interfaces", []) + parsed.get("virtual_templates", []):
+            add(iface.get("ip_address", ""), dev_id, hostname, site,
+                iface.get("name", ""), "tunnel-overlay")
+        for iface in parsed.get("physical_iface_crypto_maps", []):
+            add(iface.get("ip_address", ""), dev_id, hostname, site,
+                iface.get("name", ""), "crypto-map")
+
+    return index
+
+
+def _normalize_ip(ip: str) -> str:
+    """Strip CIDR suffix, whitespace, port suffix, etc. Returns "" for inputs
+    that aren't a single bare IPv4. Multi-peer placeholders like "(multipoint)"
+    fall through to "" so callers can skip them."""
+    if not ip:
+        return ""
+    s = ip.strip()
+    if not s or s.startswith("("):
+        return ""
+    # Strip CIDR
+    if "/" in s:
+        s = s.split("/", 1)[0]
+    # Strip optional ":port" or zone IDs — we only care about the address
+    if s.count(".") == 3 and ":" in s:
+        s = s.split(":", 1)[0]
+    return s
+
+
+def resolve_ip(ip: str, ip_index: dict[str, list[dict]]) -> list[dict]:
+    """Look up a single peer IP. Returns [] when unknown (external peer)."""
+    if not ip_index:
+        return []
+    norm = _normalize_ip(ip)
+    if not norm:
+        return []
+    return list(ip_index.get(norm, []))
+
+
+def _split_peer_ips(peer: str) -> list[str]:
+    """`peer_ip` is sometimes a comma-joined list (DMVPN NHS, crypto map peers).
+    Split and de-dupe in order."""
+    if not peer or peer.startswith("("):
+        return []
+    out: list[str] = []
+    for chunk in peer.split(","):
+        norm = _normalize_ip(chunk)
+        if norm and norm not in out:
+            out.append(norm)
+    return out
+
+
+def _annotate_endpoints(
+    tunnels:         list[dict],
+    ip_index:        dict[str, list[dict]],
+    device_site_map: dict[str, str],
+) -> None:
+    """Walk every endpoint and attach local_site (from device_site_map) and
+    peer_matches (resolved through ip_index). Mutates tunnels in-place."""
+    for t in tunnels:
+        for ep in t.get("endpoints", []):
+            # local_site — exact device_id we already know
+            dev_id = ep.get("device_id") or ""
+            ep["local_site"] = device_site_map.get(dev_id, "") if dev_id else ""
+
+            # peer_matches — each unique peer IP gets a list of candidates.
+            # The shape is [{ip, matches: [...]}, ...] so the template can
+            # render multi-peer (NHS list) cases cleanly.
+            peer_ips = _split_peer_ips(ep.get("peer_ip", ""))
+            ep["peer_matches"] = [
+                {"ip": ip, "matches": resolve_ip(ip, ip_index)}
+                for ip in peer_ips
+            ]
 
 
 def _coalesce(existing: dict, new: dict) -> dict:

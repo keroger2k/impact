@@ -33,7 +33,17 @@
       <span class="badge bg-light text-muted">on {{ st.__firewall }}</span>
     {% endif %}
     {% if st.peer_ip %}
-      <span class="small text-muted">peer <span class="mono">{{ st.peer_ip }}</span></span>
+      <span class="small text-muted">
+        peer <span class="mono">{{ st.peer_ip }}</span>
+        {% if st.peer_match %}
+          {% if st.peer_match|length == 1 %}
+            · <span class="text-navy">{{ st.peer_match[0].device }}</span>
+            {% if st.peer_match[0].site %}<span class="text-muted">· {{ st.peer_match[0].site }}</span>{% endif %}
+          {% else %}
+            · <span class="text-warning" title="{{ st.peer_match|length }} candidate devices">{{ st.peer_match|length }} candidates</span>
+          {% endif %}
+        {% endif %}
+      </span>
     {% endif %}
     {% if st.uptime %}
       <span class="small text-muted">uptime <span class="mono">{{ st.uptime }}</span></span>
@@ -131,6 +141,7 @@
             <th data-type="{% if is_palo_proxy %}text{% else %}ip{% endif %}">
               {% if is_palo_proxy %}Proxy ID{% else %}Peer{% endif %}
             </th>
+            {% if not is_palo_proxy %}<th data-type="text">Device / Site</th>{% endif %}
             <th data-type="text">Status</th>
             <th data-type="text">{% if is_palo_proxy %}Traffic selector{% else %}Uptime{% endif %}</th>
             {% if not is_palo_proxy %}<th data-type="text">IKE</th>{% endif %}
@@ -146,6 +157,24 @@
           {% for s in sorted_sessions %}
           <tr>
             <td class="mono">{{ s.peer or '—' }}</td>
+            {% if not is_palo_proxy %}
+            <td>
+              {% if s.peer_match %}
+                {% if s.peer_match|length == 1 %}
+                  {% set m = s.peer_match[0] %}
+                  <div class="text-navy">{{ m.device }}</div>
+                  {% if m.site %}<div class="small text-muted">{{ m.site }}</div>{% endif %}
+                {% else %}
+                  <div class="text-warning small"
+                       title="{% for m in s.peer_match %}{{ m.device }} ({{ m.site or 'no site' }}){% if not loop.last %} · {% endif %}{% endfor %}">
+                    <i class="ph ph-warning"></i> {{ s.peer_match|length }} candidates
+                  </div>
+                {% endif %}
+              {% else %}
+                <span class="text-muted small fst-italic">(external)</span>
+              {% endif %}
+            </td>
+            {% endif %}
             <td>
               <span class="badge
                 {% if s.status == 'up' %}bg-success-subtle text-success
@@ -426,14 +455,32 @@
       <table class="table table-sm table-striped mb-0 small">
         <thead class="bg-light sticky-top">
           <tr>
-            <th>NBMA</th><th>Tunnel</th><th>State</th><th>Uptime</th><th>Attrb</th>
+            <th>NBMA</th><th>Tunnel</th><th>Device / Site</th><th>State</th><th>Uptime</th><th>Attrb</th>
           </tr>
         </thead>
         <tbody>
           {% for p in st.dmvpn_peers %}
+          {# Prefer NBMA match (the underlay/public IP), fall back to the
+             tunnel/overlay match — whichever resolves to a known device. #}
+          {% set match = p.nbma_match or p.tunnel_match %}
           <tr>
             <td class="mono">{{ p.nbma }}</td>
             <td class="mono">{{ p.tunnel }}</td>
+            <td>
+              {% if match %}
+                {% if match|length == 1 %}
+                  <div class="text-navy">{{ match[0].device }}</div>
+                  {% if match[0].site %}<div class="small text-muted">{{ match[0].site }}</div>{% endif %}
+                {% else %}
+                  <div class="text-warning"
+                       title="{% for m in match %}{{ m.device }} ({{ m.site or 'no site' }}){% if not loop.last %} · {% endif %}{% endfor %}">
+                    <i class="ph ph-warning"></i> {{ match|length }} candidates
+                  </div>
+                {% endif %}
+              {% else %}
+                <span class="text-muted fst-italic">(external)</span>
+              {% endif %}
+            </td>
             <td>
               <span class="badge {% if p.state == 'UP' %}bg-success-subtle text-success{% else %}bg-warning-subtle text-warning{% endif %}">{{ p.state }}</span>
             </td>

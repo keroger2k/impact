@@ -6,7 +6,7 @@ from utils.ipsec_parser import (
     classify_tunnel,
     dmvpn_role,
 )
-from utils.tunnel_inventory import build_inventory
+from utils.tunnel_inventory import build_inventory, build_ip_index, resolve_ip
 
 
 DMVPN_HUB = """!
@@ -449,3 +449,93 @@ end
     assert len(bindings) == 1
     assert bindings[0]["name"] == "GigabitEthernet0/0/1"
     assert bindings[0]["crypto_map"] == "MYMAP"
+
+
+# ── IP → device/site resolution ─────────────────────────────────────────────
+
+def test_build_ip_index_indexes_mgmt_and_tunnel_ips():
+    """Both DNAC mgmt IPs and parsed tunnel overlay IPs should land in the index."""
+    parsed = {
+        "dev-hub":   parse_ipsec_config(DMVPN_HUB),
+        "dev-spoke": parse_ipsec_config(DMVPN_SPOKE),
+    }
+    meta = {
+        "dev-hub":   {"hostname": "HUB-DCA-01",   "managementIpAddress": "10.10.5.1"},
+        "dev-spoke": {"hostname": "SPOKE-BOS-01", "managementIpAddress": "10.20.5.1"},
+    }
+    site_map = {"dev-hub": "TSA-DCA-HQ", "dev-spoke": "TSA-BOS-T1"}
+    idx = build_ip_index(parsed, meta, site_map)
+
+    # mgmt IPs resolve to their device + site
+    assert "10.10.5.1" in idx
+    assert idx["10.10.5.1"][0]["device"] == "HUB-DCA-01"
+    assert idx["10.10.5.1"][0]["site"] == "TSA-DCA-HQ"
+    assert idx["10.10.5.1"][0]["source"] == "mgmt"
+
+    # tunnel overlay IP also resolved
+    assert "172.16.0.1" in idx
+    assert idx["172.16.0.1"][0]["source"] == "tunnel-overlay"
+
+
+def test_resolve_ip_strips_cidr():
+    """A resolver lookup with a /24 suffix should still hit the bare IP."""
+    idx = {"10.0.0.1": [{"device": "R1", "site": "S", "source": "mgmt"}]}
+    assert resolve_ip("10.0.0.1/24", idx)[0]["device"] == "R1"
+    assert resolve_ip("(multipoint)", idx) == []
+    assert resolve_ip("", idx) == []
+
+
+def test_inventory_annotates_endpoints_with_site_and_peer_match():
+    """build_inventory should attach local_site + peer_matches to every endpoint."""
+    parsed = {
+        "dev-hub":   parse_ipsec_config(DMVPN_HUB),
+        "dev-spoke": parse_ipsec_config(DMVPN_SPOKE),
+    }
+    meta = {
+        "dev-hub":   {"hostname": "HUB-DCA-01",   "managementIpAddress": "10.10.5.1"},
+        "dev-spoke": {"hostname": "SPOKE-BOS-01", "managementIpAddress": "10.20.5.1"},
+    }
+    site_map = {"dev-hub": "TSA-DCA-HQ", "dev-spoke": "TSA-BOS-T1"}
+    inv = build_inventory(
+        parsed_ios=parsed, device_meta=meta, palo=None, device_site_map=site_map,
+    )
+
+    cloud = next(t for t in inv["tunnels"] if t["type"] == "dmvpn")
+    by_role = {ep["role"]: ep for ep in cloud["endpoints"]}
+
+    # Local site populated from device_site_map
+    assert by_role["hub"]["local_site"] == "TSA-DCA-HQ"
+    assert by_role["spoke"]["local_site"] == "TSA-BOS-T1"
+
+    # Spoke's NHS list (its peer_ip is the hub overlay 172.16.0.1) resolves
+    # to the hub device + site through the tunnel-overlay source.
+    spoke_pm = by_role["spoke"]["peer_matches"]
+    assert spoke_pm and spoke_pm[0]["ip"] == "172.16.0.1"
+    assert spoke_pm[0]["matches"][0]["device"] == "HUB-DCA-01"
+    assert spoke_pm[0]["matches"][0]["site"] == "TSA-DCA-HQ"
+
+    # The inventory also stashes the ip_index for the live router to reuse.
+    assert "172.16.0.1" in inv["ip_index"]
+
+
+def test_resolver_returns_all_candidates_for_duplicate_ip():
+    """If two devices share an IP (RFC1918 reuse across sites), the index keeps both."""
+    parsed = {
+        "dev-a": {"hostname": "DEV-A", "tunnel_interfaces": [
+            {"name": "Tunnel0", "ip_address": "10.0.0.1"}
+        ]},
+        "dev-b": {"hostname": "DEV-B", "tunnel_interfaces": [
+            {"name": "Tunnel0", "ip_address": "10.0.0.1"}
+        ]},
+    }
+    meta = {
+        "dev-a": {"hostname": "DEV-A", "managementIpAddress": "192.168.1.1"},
+        "dev-b": {"hostname": "DEV-B", "managementIpAddress": "192.168.2.1"},
+    }
+    site_map = {"dev-a": "SITE-A", "dev-b": "SITE-B"}
+    idx = build_ip_index(parsed, meta, site_map)
+    matches = idx["10.0.0.1"]
+    devices = sorted(m["device"] for m in matches)
+    assert devices == ["DEV-A", "DEV-B"]
+    sites = sorted(m["site"] for m in matches)
+    assert sites == ["SITE-A", "SITE-B"]

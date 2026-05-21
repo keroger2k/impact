@@ -87,6 +87,7 @@
         <thead class="bg-light sticky-top">
           <tr>
             <th data-type="text">Device</th>
+            <th data-type="text">Site</th>
             <th data-type="text">Role</th>
             <th data-type="text">Interface</th>
             <th data-type="ip">Local IP</th>
@@ -107,6 +108,13 @@
               {% endif %}
             </td>
             <td>
+              {% if ep.local_site %}
+                <span class="small">{{ ep.local_site }}</span>
+              {% else %}
+                <span class="text-muted small">—</span>
+              {% endif %}
+            </td>
+            <td>
               <span class="badge
                 {% if ep.role == 'hub' %}bg-primary-subtle text-primary
                 {% elif ep.role == 'spoke' %}bg-info-subtle text-info
@@ -116,7 +124,39 @@
             </td>
             <td class="mono">{{ ep.interface }}</td>
             <td class="mono">{{ ep.local_ip or '—' }}</td>
-            <td class="mono">{{ ep.peer_ip or '—' }}</td>
+            <td>
+              {% if ep.peer_matches %}
+                {% for pm in ep.peer_matches %}
+                  <div class="{% if not loop.first %}mt-1{% endif %}">
+                    <span class="mono">{{ pm.ip }}</span>
+                    {% if pm.matches %}
+                      {% if pm.matches|length == 1 %}
+                        {% set m = pm.matches[0] %}
+                        <div class="small">
+                          <span class="text-navy">{{ m.device }}</span>
+                          {% if m.site %}<span class="text-muted">· {{ m.site }}</span>{% endif %}
+                        </div>
+                      {% else %}
+                        <div class="small text-warning" title="Same IP resolves on {{ pm.matches|length }} devices — likely RFC1918 reuse across sites. VRF context would disambiguate.">
+                          <i class="ph ph-warning"></i> {{ pm.matches|length }} candidate devices
+                        </div>
+                        {% for m in pm.matches %}
+                          <div class="small text-muted ms-2">
+                            {{ m.device }}{% if m.site %} · {{ m.site }}{% endif %}
+                          </div>
+                        {% endfor %}
+                      {% endif %}
+                    {% else %}
+                      <div class="small text-muted fst-italic">(external)</div>
+                    {% endif %}
+                  </div>
+                {% endfor %}
+              {% elif ep.peer_ip %}
+                <span class="mono">{{ ep.peer_ip }}</span>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </td>
             <td class="mono">{{ ep.vrf or '—' }}</td>
             <td>
               {% if ep.shutdown %}

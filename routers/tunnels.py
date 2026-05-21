@@ -32,7 +32,7 @@ from cache import (
 )
 from logger_config import run_with_context
 from utils.ipsec_parser import parse_ipsec_config
-from utils.tunnel_inventory import build_inventory
+from utils.tunnel_inventory import build_inventory, resolve_ip
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -115,9 +115,13 @@ async def _build_inventory(session: SessionEntry) -> dict:
             logger.warning(f"IPsec parse failed for {dev_id}: {e}")
 
     device_meta = {d["id"]: d for d in (cache.get("devices") or [])}
+    device_site_map = cache.get("device_site_map") or {}
     palo = await _load_palo(session, loop)
 
-    return build_inventory(parsed_ios=parsed_ios, device_meta=device_meta, palo=palo)
+    return build_inventory(
+        parsed_ios=parsed_ios, device_meta=device_meta, palo=palo,
+        device_site_map=device_site_map,
+    )
 
 
 async def _get_or_build(session: SessionEntry) -> dict:
@@ -336,11 +340,38 @@ async def get_live_status(
         logger.exception("live-fetch failed for %s/%d", tunnel_id, endpoint_idx)
         return err(f"Fetch failed: {type(e).__name__}: {str(e)[:200]}")
 
+    # Walk every peer IP in the live state through the inventory's IP index so
+    # the UI can render device/site alongside the raw IP. The index is built
+    # once during inventory refresh and lives inside the inventory cache.
+    _annotate_live_state(state, inv.get("ip_index") or {})
+
     return templates.TemplateResponse(request, "partials/tunnel_live.html", {
         "tunnel":   tunnel,
         "endpoint": endpoint,
         "state":    state,
     })
+
+
+def _annotate_live_state(state: dict, ip_index: dict[str, list[dict]]) -> None:
+    """Attach `peer_match` / `nbma_match` / `tunnel_match` to live state rows.
+
+    Each annotation is a list of resolution candidates (usually 0 or 1, but
+    can be >1 when the same RFC1918 IP exists on multiple devices). The
+    template renders the device/site alongside the IP. Mutates state in-place.
+    """
+    if not ip_index:
+        return
+
+    # Top-level peer IP (single-session case)
+    if state.get("peer_ip"):
+        state["peer_match"] = resolve_ip(state["peer_ip"], ip_index)
+
+    for s in state.get("sessions") or []:
+        s["peer_match"] = resolve_ip(s.get("peer") or "", ip_index)
+
+    for p in state.get("dmvpn_peers") or []:
+        p["nbma_match"]   = resolve_ip(p.get("nbma") or "", ip_index)
+        p["tunnel_match"] = resolve_ip(p.get("tunnel") or "", ip_index)
 
 
 def _fetch_ios_live(session: SessionEntry, tunnel: dict, endpoint: dict) -> dict:
@@ -644,30 +675,52 @@ def _mock_ios_state(tunnel: dict, endpoint: dict) -> dict:
     from utils.ipsec_live import empty_state
     s = empty_state()
     iface = endpoint.get("interface", "Tunnel?")
-    # Simulate a small DMVPN hub with mixed peer health to exercise the table.
+    # Simulate a small DMVPN hub with mixed peer health. Peer IPs are mock
+    # spoke management IPs from dev.py — the inventory's IP index resolves
+    # them to real (mock) devices/sites so the resolution column populates.
     sessions = [
-        {"peer": "1.1.3.124", "uptime": "00:00:07", "status": "up",
+        {"peer": "10.20.1.1", "uptime": "00:00:07", "status": "up",
          "phase1": {"protocol": "ikev2", "state": "active"},
          "encap_pkts": 1, "encap_drops": 0, "decap_pkts": 2, "decap_drops": 0,
          "p2_lifetime_sec": 3593, "p2_lifetime_kb": 4607999},
-        {"peer": "1.1.5.212", "uptime": "19:48:29", "status": "up",
+        {"peer": "10.30.1.1", "uptime": "19:48:29", "status": "up",
          "phase1": {"protocol": "ikev2", "state": "active"},
          "encap_pkts": 6273, "encap_drops": 0, "decap_pkts": 4363880, "decap_drops": 0,
          "p2_lifetime_sec": 3042, "p2_lifetime_kb": 4607443},
-        {"peer": "3.3.20.95", "uptime": "00:48:06", "status": "up",
+        {"peer": "10.40.1.1", "uptime": "00:48:06", "status": "up",
          "phase1": {"protocol": "ikev2", "state": "active"},
          "encap_pkts": 26839981, "encap_drops": 0, "decap_pkts": 84465744, "decap_drops": 151765,
          "p2_lifetime_sec": 2203, "p2_lifetime_kb": 4187641},
-        {"peer": "2.2.50.200", "uptime": "00:48:23", "status": "up",
+        {"peer": "10.50.1.1", "uptime": "00:48:23", "status": "up",
          "phase1": {"protocol": "ikev2", "state": "active"},
          "encap_pkts": 110886733, "encap_drops": 0, "decap_pkts": 126221088, "decap_drops": 2314542,
          "p2_lifetime_sec": 1985, "p2_lifetime_kb": 4394965},
+        # Intentionally external (Internet-side) peer to exercise the
+        # "(external)" branch in the resolution column.
+        {"peer": "203.0.113.42", "uptime": "00:12:11", "status": "up",
+         "phase1": {"protocol": "ikev2", "state": "active"},
+         "encap_pkts": 412, "encap_drops": 0, "decap_pkts": 388, "decap_drops": 0,
+         "p2_lifetime_sec": 3501, "p2_lifetime_kb": 4607999},
+    ]
+    # NHRP cache mirrors the sessions list — NBMA = the spoke's WAN IP
+    # (mock = mgmt IP), Tunnel = the spoke's overlay IP (172.16.x.1 in
+    # dev mocks). Both should resolve through the IP index.
+    dmvpn_peers = [
+        {"nbma": "10.20.1.1", "tunnel": "172.16.2.1", "state": "UP",
+         "uptime": "19:48:29", "attrb": "S"},
+        {"nbma": "10.30.1.1", "tunnel": "172.16.3.1", "state": "UP",
+         "uptime": "00:48:06", "attrb": "S"},
+        {"nbma": "10.40.1.1", "tunnel": "172.16.4.1", "state": "UP",
+         "uptime": "00:48:23", "attrb": "S"},
+        {"nbma": "10.50.1.1", "tunnel": "172.16.5.1", "state": "UP",
+         "uptime": "00:00:07", "attrb": "S"},
     ]
     s.update({
         "status": "up",
         "uptime": sessions[0]["uptime"],
         "sessions": sessions,
         "session_count": len(sessions),
+        "dmvpn_peers": dmvpn_peers,
         "peers_up": len(sessions),
         "peers_down": 0,
         "encap_pkts":  sum(x["encap_pkts"]  for x in sessions),
@@ -1022,7 +1075,11 @@ async def refresh_stream(
         yield emit({"type": "phase", "phase": "build", "status": "running"})
         yield emit({"type": "log", "level": "info", "message": "Building normalized inventory…"})
         from utils.tunnel_inventory import build_inventory
-        inv = build_inventory(parsed_ios=parsed_ios, device_meta=device_meta, palo=palo)
+        device_site_map = cache.get("device_site_map") or {}
+        inv = build_inventory(
+            parsed_ios=parsed_ios, device_meta=device_meta, palo=palo,
+            device_site_map=device_site_map,
+        )
         cache.set(TUNNEL_INVENTORY_CACHE_KEY, inv, TTL_TUNNEL_INVENTORY)
 
         stats = inv.get("stats", {})
@@ -1118,7 +1175,9 @@ async def export_csv(
     w = csv.writer(buf)
     w.writerow([
         "id", "type", "platform", "name",
-        "device", "interface", "role", "local_ip", "peer_ip", "shutdown", "vrf",
+        "device", "site", "interface", "role", "local_ip",
+        "peer_ip", "peer_device", "peer_site",
+        "shutdown", "vrf",
         "p1_protocol", "p1_encryption", "p1_integrity", "p1_dh_group", "p1_auth",
         "p2_name", "p2_encryption", "p2_integrity", "p2_pfs",
         "p2_lifetime_sec", "p2_lifetime_kb",
@@ -1127,10 +1186,21 @@ async def export_csv(
         p1 = t.get("phase1", {})
         p2 = t.get("phase2", {})
         for ep in t["endpoints"]:
+            # Flatten peer_matches (a list of {ip, matches}) into pipe-separated
+            # "device|device|…" / "site|site|…" columns so a row stays one row
+            # even when an endpoint has multiple peers or candidates.
+            peer_devices, peer_sites = [], []
+            for pm in ep.get("peer_matches", []):
+                for m in pm.get("matches", []):
+                    if m.get("device"): peer_devices.append(m["device"])
+                    if m.get("site"):   peer_sites.append(m["site"])
             w.writerow([
                 t["id"], t["type"], t["platform"], t["name"],
-                ep.get("device", ""), ep.get("interface", ""), ep.get("role", ""),
-                ep.get("local_ip", ""), ep.get("peer_ip", ""),
+                ep.get("device", ""), ep.get("local_site", ""),
+                ep.get("interface", ""), ep.get("role", ""),
+                ep.get("local_ip", ""),
+                ep.get("peer_ip", ""),
+                "|".join(peer_devices), "|".join(peer_sites),
                 "yes" if ep.get("shutdown") else "no", ep.get("vrf", ""),
                 p1.get("protocol", ""), ",".join(p1.get("encryption", [])),
                 ",".join(p1.get("integrity", [])), ",".join(p1.get("dh_group", [])),
