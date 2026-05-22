@@ -43,14 +43,16 @@
     <div class="small opacity-75 tunnel-detail-peer-summary">
       {% if ep_total == 1 %}
         {% set ep = tunnel.endpoints[0] %}
-        <span class="fw-semibold">{{ ep.device }}</span>{% if ep.local_site_code %} <span class="opacity-75" title="{{ ep.local_site or ep.device }}">[{{ ep.local_site_code }}]</span>{% endif %}
+        {% set hero_src = ep.local_site_code or (ep.local_site|site_code) or (ep.device|site_code_from_hostname) %}
+        <span class="fw-semibold">{{ ep.device }}</span>{% if hero_src %} <span class="opacity-75" title="{{ ep.local_site or ep.device }}">[{{ hero_src }}]</span>{% endif %}
         <i class="ph ph-arrow-right mx-1"></i>
         {% if ep.peer_matches %}
           {% set first_pm = ep.peer_matches[0] %}
           <span class="mono">{{ first_pm.ip }}</span>
           {% if first_pm.matches %}
             {% set m = first_pm.matches[0] %}
-            <span class="opacity-75">→ {{ m.device }}{% if m.site_code %} <span title="{{ m.site or m.device }}">[{{ m.site_code }}]</span>{% endif %}</span>
+            {% set hero_dst = m.site_code or (m.site|site_code) or (m.device|site_code_from_hostname) %}
+            <span class="opacity-75">→ {{ m.device }}{% if hero_dst %} <span title="{{ m.site or m.device }}">[{{ hero_dst }}]</span>{% endif %}</span>
             {% if first_pm.matches|length > 1 %}
               <span class="opacity-50" title="{% for c in first_pm.matches %}{{ c.device }}{% if not loop.last %} · {% endif %}{% endfor %}">+{{ first_pm.matches|length - 1 }}</span>
             {% endif %}
@@ -131,10 +133,14 @@
         <tbody>
           {% for ep in tunnel.endpoints %}
           {% set spin_id = "spin-" ~ tunnel.id ~ "-" ~ loop.index0 %}
-          {# local_site_code is pre-computed: site path first, then hostname.
-             local_site holds the DNAC path when available; falls back to
-             empty for non-DNAC devices (Palo). #}
-          {% set src_code = ep.local_site_code %}
+          {# Site-code fallback chain so stale caches (built before
+             local_site_code was pre-computed) still render:
+               1. ep.local_site_code  — pre-computed at build time
+               2. site_code(local_site) — DNAC path → code via filter
+               3. site_code_from_hostname(device) — hostname → code
+             This means refreshing the inventory isn't required for SRC to
+             show up; it only buys you the IP-index extension (Dst column). #}
+          {% set src_code = ep.local_site_code or (ep.local_site|site_code) or (ep.device|site_code_from_hostname) %}
           {% set src_tooltip = ep.local_site or ep.device %}
           <tr>
             <td class="td-device">
@@ -201,8 +207,10 @@
                   <div class="{% if not loop.first %}mt-1{% endif %}">
                     {% if pm.matches %}
                       {% set m = pm.matches[0] %}
-                      {% if m.site_code %}
-                        <span class="site-code-badge mono" title="{{ m.site or m.device }}">{{ m.site_code }}</span>
+                      {# Same fallback chain as SRC. #}
+                      {% set dst_code = m.site_code or (m.site|site_code) or (m.device|site_code_from_hostname) %}
+                      {% if dst_code %}
+                        <span class="site-code-badge mono" title="{{ m.site or m.device }}">{{ dst_code }}</span>
                       {% else %}
                         <span class="text-muted small">—</span>
                       {% endif %}
