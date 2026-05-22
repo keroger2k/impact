@@ -339,8 +339,12 @@
   {% set p = st.palo %}
   {% set ts_l = p.ts.local if p.ts else None %}
   {% set ts_r = p.ts.remote if p.ts else None %}
+  {# When the tunnel has multiple proxy-IDs, the per-SA table above already
+     shows each TS in its `Traffic selector` column — repeating just the
+     primary SA's TS here is misleading, so we hide this section. #}
+  {% set hide_ts_section = is_palo_proxy %}
   <div class="row g-3 mb-3">
-    {% if ts_l or ts_r %}
+    {% if (ts_l or ts_r) and not hide_ts_section %}
     <div class="col-md-6">
       <div class="text-muted small text-uppercase fw-bold mb-1">
         <i class="ph ph-arrows-left-right"></i> Proxy IDs (traffic selectors)
@@ -354,7 +358,14 @@
           <tr>
             <td class="text-muted">{{ label }}</td>
             <td class="mono">
-              {% if side.start_ip == '0.0.0.0' and side.end_ip == '255.255.255.255' %}any
+              {# CIDR (proxy-id style: lip/lprefix) wins when present —
+                 falls back to start–end range otherwise. Wide-open shows
+                 as "any" in both shapes. #}
+              {% if side.network %}
+                {% if side.network in ('0.0.0.0/0', '::/0') %}any
+                {% else %}{{ side.network }}{% endif %}
+              {% elif side.start_ip == '0.0.0.0' and side.end_ip == '255.255.255.255' %}any
+              {% elif side.start_ip and not side.end_ip %}{{ side.start_ip }}
               {% else %}{{ side.start_ip }}–{{ side.end_ip }}{% endif %}
             </td>
             <td class="mono">{% if not side.protocol %}any{% else %}{{ side.protocol }}{% endif %}</td>
