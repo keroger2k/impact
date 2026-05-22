@@ -37,9 +37,9 @@
         peer <span class="mono">{{ st.peer_ip }}</span>
         {% if st.peer_match %}
           {% set m = st.peer_match[0] %}
-          {% set site_leaf = (m.site or '').split('/')[-1]|trim %}
+          {% set code = m.site|site_code %}
           · <span class="text-navy">{{ m.device }}</span>
-          {% if site_leaf %}<span class="text-muted">· {{ site_leaf }}</span>{% endif %}
+          {% if code %}<span class="site-code-badge mono ms-1" title="{{ m.site }}">{{ code }}</span>{% endif %}
           {% if st.peer_match|length > 1 %}
             <span class="badge bg-warning-subtle text-warning ms-1" title="{{ st.peer_match|length }} candidate devices">+{{ st.peer_match|length - 1 }}</span>
           {% endif %}
@@ -142,7 +142,7 @@
             <th data-type="{% if is_palo_proxy %}text{% else %}ip{% endif %}">
               {% if is_palo_proxy %}Proxy ID{% else %}Peer{% endif %}
             </th>
-            {% if not is_palo_proxy %}<th data-type="text">Device / Site</th>{% endif %}
+            {% if not is_palo_proxy %}<th data-type="text" title="Destination site code">Dst</th>{% endif %}
             <th data-type="text">Status</th>
             <th data-type="text">{% if is_palo_proxy %}Traffic selector{% else %}Uptime{% endif %}</th>
             {% if not is_palo_proxy %}<th data-type="text">IKE</th>{% endif %}
@@ -162,17 +162,20 @@
             <td>
               {% if s.peer_match %}
                 {% set m = s.peer_match[0] %}
-                {% set site_leaf = (m.site or '').split('/')[-1]|trim %}
-                <div class="text-navy">{{ m.device }}</div>
-                {% if site_leaf %}
-                  <div class="small text-muted" title="{{ m.site }}">{{ site_leaf }}</div>
+                {% set code = m.site|site_code %}
+                {% if code %}
+                  <span class="site-code-badge mono" title="{{ m.device }} — {{ m.site }}">{{ code }}</span>
+                {% elif m.site %}
+                  <span class="text-muted small fst-italic" title="{{ m.device }} — {{ m.site }}">no code</span>
+                {% else %}
+                  <span class="text-muted small" title="{{ m.device }}">—</span>
                 {% endif %}
                 {% if s.peer_match|length > 1 %}
-                  {% set tip %}{% for c in s.peer_match %}{{ c.device }} ({{ (c.site or 'no site').split('/')[-1]|trim }}){% if not loop.last %} · {% endif %}{% endfor %}{% endset %}
-                  <span class="badge bg-warning-subtle text-warning" title="{{ tip }}">+{{ s.peer_match|length - 1 }}</span>
+                  {% set tip %}{% for c in s.peer_match %}{{ c.device }} ({{ c.site|site_code or '?' }}){% if not loop.last %} · {% endif %}{% endfor %}{% endset %}
+                  <span class="badge bg-warning-subtle text-warning ms-1" title="{{ tip }}">+{{ s.peer_match|length - 1 }}</span>
                 {% endif %}
               {% else %}
-                <span class="text-muted small fst-italic">(external)</span>
+                <span class="text-muted small fst-italic">(ext)</span>
               {% endif %}
             </td>
             {% endif %}
@@ -456,7 +459,7 @@
       <table class="table table-sm table-striped mb-0 small">
         <thead class="bg-light sticky-top">
           <tr>
-            <th>NBMA</th><th>Tunnel</th><th>Device / Site</th><th>State</th><th>Uptime</th><th>Attrb</th>
+            <th>NBMA</th><th>Tunnel</th><th title="Destination site code">Dst</th><th>State</th><th>Uptime</th><th>Attrb</th>
           </tr>
         </thead>
         <tbody>
@@ -470,17 +473,20 @@
             <td>
               {% if match %}
                 {% set m = match[0] %}
-                {% set site_leaf = (m.site or '').split('/')[-1]|trim %}
-                <div class="text-navy">{{ m.device }}</div>
-                {% if site_leaf %}
-                  <div class="small text-muted" title="{{ m.site }}">{{ site_leaf }}</div>
+                {% set code = m.site|site_code %}
+                {% if code %}
+                  <span class="site-code-badge mono" title="{{ m.device }} — {{ m.site }}">{{ code }}</span>
+                {% elif m.site %}
+                  <span class="text-muted small fst-italic" title="{{ m.device }} — {{ m.site }}">no code</span>
+                {% else %}
+                  <span class="text-muted small" title="{{ m.device }}">—</span>
                 {% endif %}
                 {% if match|length > 1 %}
-                  {% set tip %}{% for c in match %}{{ c.device }} ({{ (c.site or 'no site').split('/')[-1]|trim }}){% if not loop.last %} · {% endif %}{% endfor %}{% endset %}
-                  <span class="badge bg-warning-subtle text-warning" title="{{ tip }}">+{{ match|length - 1 }}</span>
+                  {% set tip %}{% for c in match %}{{ c.device }} ({{ c.site|site_code or '?' }}){% if not loop.last %} · {% endif %}{% endfor %}{% endset %}
+                  <span class="badge bg-warning-subtle text-warning ms-1" title="{{ tip }}">+{{ match|length - 1 }}</span>
                 {% endif %}
               {% else %}
-                <span class="text-muted fst-italic">(external)</span>
+                <span class="text-muted fst-italic">(ext)</span>
               {% endif %}
             </td>
             <td>

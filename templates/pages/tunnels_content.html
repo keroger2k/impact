@@ -269,6 +269,24 @@
   .status-dot-secondary { background: #9ca3af; }
   .status-dot-danger    { background: #ef4444; }
 
+  /* ── Site code badge ─────────────────────────────────────────────
+     Short 3-5 char codes (K024, SDCZ, IXXX, ...) rendered like a chip
+     so the Src/Dst columns scan instantly. Uses the navy accent so it
+     reads as a primary identifier, not a generic tag. */
+  .site-code-badge {
+    display: inline-block;
+    padding: 0.1rem 0.4rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    line-height: 1.3;
+    color: var(--navy, #0f172a);
+    background: #eef2ff;
+    border: 1px solid #c7d2fe;
+    border-radius: 4px;
+    white-space: nowrap;
+  }
+
   /* ── Endpoints table column constraints ──────────────────────────
      Without these, fleet-grade hostnames and DNAC site hierarchies
      blow up row heights and squeeze the more important columns. */
@@ -278,8 +296,10 @@
     overflow: hidden;
   }
   .tunnel-endpoints-table .td-device > div { overflow: hidden; }
-  .tunnel-endpoints-table .td-site {
-    max-width: 16rem;
+  .tunnel-endpoints-table .td-code {
+    /* Narrow column for the 3-5 char site codes — keeps the table compact. */
+    width: 1%;
+    white-space: nowrap;
   }
   /* Peer column: rows are stacked vertically but each individual
      peer-row stays on one line. Hide overflow from long device names. */
