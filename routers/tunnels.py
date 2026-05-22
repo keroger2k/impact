@@ -353,6 +353,24 @@ async def get_live_status(
     })
 
 
+def _palo_traffic_score(state: dict) -> int:
+    """Heuristic score for ranking which firewall is actually carrying
+    traffic on a tunnel that's present on multiple firewalls (HA pair,
+    anycast, template-stack with multiple devices).
+
+    Prefer packets when reported, fall back to IPsec sequence numbers when
+    pkt counters are zero (PAN-OS sometimes reports 0 packets even on the
+    active node, but sequence numbers always increment with real traffic).
+    """
+    pkts = (state.get("encap_pkts") or 0) + (state.get("decap_pkts") or 0)
+    if pkts:
+        return pkts
+    seq = 0
+    for s in (state.get("sessions") or []):
+        seq += (s.get("seq_send") or 0) + (s.get("seq_recv") or 0)
+    return seq
+
+
 def _annotate_live_state(state: dict, ip_index: dict[str, list[dict]]) -> None:
     """Attach `peer_match` / `nbma_match` / `tunnel_match` to live state rows.
 
@@ -648,6 +666,13 @@ def _fetch_palo_live(session: SessionEntry, tunnel: dict, endpoint: dict) -> dic
         if len(probe_log) > 40:
             err["errors"].append(f"… and {len(probe_log) - 40} more firewalls queried")
         return err
+
+    # Rank matches so the HA-active firewall (the one actually carrying
+    # traffic) becomes the primary display, not whichever fanout finished
+    # first. Standby members report state=active with all-zero counters,
+    # which previously hijacked the panel and made the live view show "0
+    # encap/decap" while Panorama showed millions on the active node.
+    matches.sort(key=_palo_traffic_score, reverse=True)
 
     if len(matches) == 1:
         return matches[0]

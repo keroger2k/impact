@@ -518,8 +518,13 @@
   <div class="alert alert-info small py-2 mb-3">
     <i class="ph ph-info"></i> Tunnel also present on
     {% for ad in st.__additional %}
-      <span class="badge bg-light text-muted">{{ ad.__firewall }} · {{ ad.status }}</span>
+      {% set ad_pkts = (ad.encap_pkts or 0) + (ad.decap_pkts or 0) %}
+      <span class="badge bg-light text-muted">
+        {{ ad.__firewall }} · {{ ad.status }}
+        {% if ad_pkts %} · {{ "{:,}".format(ad_pkts) }} pkts{% endif %}
+      </span>
     {% endfor %}
+    <span class="text-muted">— showing the firewall with the most traffic; others are likely HA-standby or have stale SAs.</span>
   </div>
   {% endif %}
 
