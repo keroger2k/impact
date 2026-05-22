@@ -36,11 +36,12 @@
       <span class="small text-muted">
         peer <span class="mono">{{ st.peer_ip }}</span>
         {% if st.peer_match %}
-          {% if st.peer_match|length == 1 %}
-            · <span class="text-navy">{{ st.peer_match[0].device }}</span>
-            {% if st.peer_match[0].site %}<span class="text-muted">· {{ st.peer_match[0].site }}</span>{% endif %}
-          {% else %}
-            · <span class="text-warning" title="{{ st.peer_match|length }} candidate devices">{{ st.peer_match|length }} candidates</span>
+          {% set m = st.peer_match[0] %}
+          {% set site_leaf = (m.site or '').split('/')[-1]|trim %}
+          · <span class="text-navy">{{ m.device }}</span>
+          {% if site_leaf %}<span class="text-muted">· {{ site_leaf }}</span>{% endif %}
+          {% if st.peer_match|length > 1 %}
+            <span class="badge bg-warning-subtle text-warning ms-1" title="{{ st.peer_match|length }} candidate devices">+{{ st.peer_match|length - 1 }}</span>
           {% endif %}
         {% endif %}
       </span>
@@ -160,15 +161,15 @@
             {% if not is_palo_proxy %}
             <td>
               {% if s.peer_match %}
-                {% if s.peer_match|length == 1 %}
-                  {% set m = s.peer_match[0] %}
-                  <div class="text-navy">{{ m.device }}</div>
-                  {% if m.site %}<div class="small text-muted">{{ m.site }}</div>{% endif %}
-                {% else %}
-                  <div class="text-warning small"
-                       title="{% for m in s.peer_match %}{{ m.device }} ({{ m.site or 'no site' }}){% if not loop.last %} · {% endif %}{% endfor %}">
-                    <i class="ph ph-warning"></i> {{ s.peer_match|length }} candidates
-                  </div>
+                {% set m = s.peer_match[0] %}
+                {% set site_leaf = (m.site or '').split('/')[-1]|trim %}
+                <div class="text-navy">{{ m.device }}</div>
+                {% if site_leaf %}
+                  <div class="small text-muted" title="{{ m.site }}">{{ site_leaf }}</div>
+                {% endif %}
+                {% if s.peer_match|length > 1 %}
+                  {% set tip %}{% for c in s.peer_match %}{{ c.device }} ({{ (c.site or 'no site').split('/')[-1]|trim }}){% if not loop.last %} · {% endif %}{% endfor %}{% endset %}
+                  <span class="badge bg-warning-subtle text-warning" title="{{ tip }}">+{{ s.peer_match|length - 1 }}</span>
                 {% endif %}
               {% else %}
                 <span class="text-muted small fst-italic">(external)</span>
@@ -468,14 +469,15 @@
             <td class="mono">{{ p.tunnel }}</td>
             <td>
               {% if match %}
-                {% if match|length == 1 %}
-                  <div class="text-navy">{{ match[0].device }}</div>
-                  {% if match[0].site %}<div class="small text-muted">{{ match[0].site }}</div>{% endif %}
-                {% else %}
-                  <div class="text-warning"
-                       title="{% for m in match %}{{ m.device }} ({{ m.site or 'no site' }}){% if not loop.last %} · {% endif %}{% endfor %}">
-                    <i class="ph ph-warning"></i> {{ match|length }} candidates
-                  </div>
+                {% set m = match[0] %}
+                {% set site_leaf = (m.site or '').split('/')[-1]|trim %}
+                <div class="text-navy">{{ m.device }}</div>
+                {% if site_leaf %}
+                  <div class="small text-muted" title="{{ m.site }}">{{ site_leaf }}</div>
+                {% endif %}
+                {% if match|length > 1 %}
+                  {% set tip %}{% for c in match %}{{ c.device }} ({{ (c.site or 'no site').split('/')[-1]|trim }}){% if not loop.last %} · {% endif %}{% endfor %}{% endset %}
+                  <span class="badge bg-warning-subtle text-warning" title="{{ tip }}">+{{ match|length - 1 }}</span>
                 {% endif %}
               {% else %}
                 <span class="text-muted fst-italic">(external)</span>

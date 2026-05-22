@@ -269,6 +269,41 @@
   .status-dot-secondary { background: #9ca3af; }
   .status-dot-danger    { background: #ef4444; }
 
+  /* ── Endpoints table column constraints ──────────────────────────
+     Without these, fleet-grade hostnames and DNAC site hierarchies
+     blow up row heights and squeeze the more important columns. */
+  .tunnel-endpoints-table { table-layout: auto; }
+  .tunnel-endpoints-table .td-device {
+    max-width: 14rem;
+    overflow: hidden;
+  }
+  .tunnel-endpoints-table .td-device > div { overflow: hidden; }
+  .tunnel-endpoints-table .td-site {
+    max-width: 16rem;
+  }
+  /* Peer column: rows are stacked vertically but each individual
+     peer-row stays on one line. Hide overflow from long device names. */
+  .tunnel-endpoints-table .td-peer {
+    max-width: 22rem;
+    min-width: 16rem;
+  }
+  .tunnel-endpoints-table .td-peer .peer-row {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    gap: 0.15rem;
+    line-height: 1.5;
+  }
+  .tunnel-endpoints-table .td-peer .peer-row > .text-navy,
+  .tunnel-endpoints-table .td-peer .peer-row > .text-muted {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+
   /* ── Crypto <details> at the bottom ───────────────────────────── */
   .tunnel-detail-crypto {
     /* Cap how tall the expanded panel can grow so it can't push the

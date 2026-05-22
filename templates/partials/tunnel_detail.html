@@ -43,16 +43,18 @@
     <div class="small opacity-75 tunnel-detail-peer-summary">
       {% if ep_total == 1 %}
         {% set ep = tunnel.endpoints[0] %}
-        <span class="fw-semibold">{{ ep.device }}</span>{% if ep.local_site %} <span class="opacity-75">({{ ep.local_site }})</span>{% endif %}
+        {% set local_leaf = (ep.local_site or '').split('/')[-1]|trim %}
+        <span class="fw-semibold">{{ ep.device }}</span>{% if local_leaf %} <span class="opacity-75" title="{{ ep.local_site }}">({{ local_leaf }})</span>{% endif %}
         <i class="ph ph-arrow-right mx-1"></i>
         {% if ep.peer_matches %}
           {% set first_pm = ep.peer_matches[0] %}
           <span class="mono">{{ first_pm.ip }}</span>
           {% if first_pm.matches %}
-            {% if first_pm.matches|length == 1 %}
-              <span class="opacity-75">→ {{ first_pm.matches[0].device }}{% if first_pm.matches[0].site %} · {{ first_pm.matches[0].site }}{% endif %}</span>
-            {% else %}
-              <span class="opacity-75">→ {{ first_pm.matches|length }} candidates</span>
+            {% set m = first_pm.matches[0] %}
+            {% set peer_leaf = (m.site or '').split('/')[-1]|trim %}
+            <span class="opacity-75">→ {{ m.device }}{% if peer_leaf %} · {{ peer_leaf }}{% endif %}</span>
+            {% if first_pm.matches|length > 1 %}
+              <span class="opacity-50" title="{% for c in first_pm.matches %}{{ c.device }}{% if not loop.last %} · {% endif %}{% endfor %}">+{{ first_pm.matches|length - 1 }}</span>
             {% endif %}
           {% else %}
             <span class="opacity-50 fst-italic">(external)</span>
@@ -105,12 +107,15 @@
   </div>
 
   {# ── ENDPOINTS ──────────────────────────────────────────────────── #}
+  {# Hide VRF column when no endpoint uses one — reclaims horizontal space
+     in the common case (fleets that don't VRF-segment their tunnels). #}
+  {% set show_vrf = tunnel.endpoints|selectattr('vrf')|list|length > 0 %}
   <div class="tunnel-detail-endpoints p-3">
     <div class="tunnel-detail-fixed text-muted small text-uppercase fw-bold mb-2">
       <i class="ph ph-share-network"></i> Endpoints ({{ ep_total }})
     </div>
     <div class="tunnel-detail-endpoints-scroll">
-      <table class="table table-sm table-striped mb-0 data-table">
+      <table class="table table-sm table-striped mb-0 data-table tunnel-endpoints-table">
         <thead class="bg-light sticky-top">
           <tr>
             <th data-type="text">Device</th>
@@ -119,7 +124,7 @@
             <th data-type="text">Interface</th>
             <th data-type="ip">Local IP</th>
             <th data-type="ip">Peer / NHS</th>
-            <th data-type="text">VRF</th>
+            {% if show_vrf %}<th data-type="text">VRF</th>{% endif %}
             <th data-type="text">State</th>
             <th class="text-end data-table-no-sort data-table-no-filter">Live</th>
           </tr>
@@ -127,16 +132,21 @@
         <tbody>
           {% for ep in tunnel.endpoints %}
           {% set spin_id = "spin-" ~ tunnel.id ~ "-" ~ loop.index0 %}
+          {# Site leaf — only the last segment of the DNAC hierarchy
+             ("Global/Mississippi/.../Stennis Space Center" → "Stennis
+             Space Center"). The full path goes in the title tooltip so
+             the data isn't lost, just visually shortened. #}
+          {% set local_site_leaf = (ep.local_site or '').split('/')[-1]|trim %}
           <tr>
-            <td>
-              <div class="fw-bold text-navy">{{ ep.device }}</div>
+            <td class="td-device">
+              <div class="fw-bold text-navy text-truncate" title="{{ ep.device }}">{{ ep.device }}</div>
               {% if ep.description %}
-              <div class="text-muted small fst-italic">{{ ep.description }}</div>
+              <div class="text-muted small fst-italic text-truncate" title="{{ ep.description }}">{{ ep.description }}</div>
               {% endif %}
             </td>
-            <td>
-              {% if ep.local_site %}
-                <span class="small">{{ ep.local_site }}</span>
+            <td class="td-site">
+              {% if local_site_leaf %}
+                <span class="small text-truncate d-inline-block" style="max-width:14rem;" title="{{ ep.local_site }}">{{ local_site_leaf }}</span>
               {% else %}
                 <span class="text-muted small">—</span>
               {% endif %}
@@ -151,30 +161,32 @@
             </td>
             <td class="mono">{{ ep.interface }}</td>
             <td class="mono">{{ ep.local_ip or '—' }}</td>
-            <td>
+            <td class="td-peer">
               {% if ep.peer_matches %}
                 {% for pm in ep.peer_matches %}
-                  <div class="{% if not loop.first %}mt-1{% endif %}">
+                  {# One line per peer: IP, then arrow, then resolved info.
+                     Ambiguous matches collapse to "first-device · site
+                     (+N)" with the full candidate list in the tooltip. #}
+                  <div class="peer-row{% if not loop.first %} mt-1{% endif %}">
                     <span class="mono">{{ pm.ip }}</span>
                     {% if pm.matches %}
-                      {% if pm.matches|length == 1 %}
-                        {% set m = pm.matches[0] %}
-                        <div class="small">
-                          <span class="text-navy">{{ m.device }}</span>
-                          {% if m.site %}<span class="text-muted">· {{ m.site }}</span>{% endif %}
-                        </div>
-                      {% else %}
-                        <div class="small text-warning" title="Same IP resolves on {{ pm.matches|length }} devices — likely RFC1918 reuse across sites. VRF context would disambiguate.">
-                          <i class="ph ph-warning"></i> {{ pm.matches|length }} candidate devices
-                        </div>
-                        {% for m in pm.matches %}
-                          <div class="small text-muted ms-2">
-                            {{ m.device }}{% if m.site %} · {{ m.site }}{% endif %}
-                          </div>
-                        {% endfor %}
+                      {% set m = pm.matches[0] %}
+                      {% set site_leaf = (m.site or '').split('/')[-1]|trim %}
+                      <span class="mx-1 opacity-50">→</span>
+                      <span class="text-navy">{{ m.device }}</span>
+                      {% if site_leaf %}
+                        <span class="text-muted">· {{ site_leaf }}</span>
+                      {% endif %}
+                      {% if pm.matches|length > 1 %}
+                        {% set extra_tip %}{% for x in pm.matches %}{{ x.device }} ({{ (x.site or 'no site').split('/')[-1]|trim }}){% if not loop.last %} · {% endif %}{% endfor %}{% endset %}
+                        <span class="badge bg-warning-subtle text-warning ms-1"
+                              title="Same IP resolves on {{ pm.matches|length }} devices — likely RFC1918 reuse across sites. Candidates: {{ extra_tip }}">
+                          +{{ pm.matches|length - 1 }}
+                        </span>
                       {% endif %}
                     {% else %}
-                      <div class="small text-muted fst-italic">(external)</div>
+                      <span class="mx-1 opacity-50">→</span>
+                      <span class="text-muted fst-italic small">(external)</span>
                     {% endif %}
                   </div>
                 {% endfor %}
@@ -184,7 +196,7 @@
                 <span class="text-muted">—</span>
               {% endif %}
             </td>
-            <td class="mono">{{ ep.vrf or '—' }}</td>
+            {% if show_vrf %}<td class="mono">{{ ep.vrf or '—' }}</td>{% endif %}
             <td>
               {% if ep.shutdown %}
                 <span class="badge bg-warning-subtle text-warning">shut</span>
