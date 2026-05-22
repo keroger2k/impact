@@ -594,16 +594,34 @@ def _fetch_palo_live(session: SessionEntry, tunnel: dict, endpoint: dict) -> dic
                     m["_sa"] = rec["sa"]
                 raw_details[f"{host}: show vpn flow name {m['name']}"]  = _et_text(rec["flow_xml"])
                 raw_details[f"{host}: show vpn ipsec-sa {m['name']}"]   = _et_text(rec["sa_xml"])
+
+            # Reclassify status from traffic counters. Older PAN-OS reports
+            # state="init" / state="inactive" on SAs that are passing real
+            # traffic (billions of packets). The <state> field then says
+            # the whole tunnel is DOWN even though it's clearly up. If pkt
+            # counters > 0 OR sequence numbers are advancing, this SA is
+            # flowing — call it up regardless of what PAN-OS says.
+            for m in flow["matches"]:
+                pkts = (m.get("encap_pkts") or 0) + (m.get("decap_pkts") or 0)
+                seq  = (m.get("seq_send")   or 0) + (m.get("seq_recv")   or 0)
+                if pkts > 0 or seq > 0:
+                    m["status"] = "up"
+
             # Refresh `primary` to point at the now-enriched bare-name match
-            # (if any) or the first active match.
+            # (if any), otherwise the most-active match. Prefer flowing
+            # traffic over a generic "first up" — operator wants headline
+            # numbers to come from the SA they actually care about.
             new_primary = None
             for m in flow["matches"]:
                 if not m.get("proxy_id"):
                     new_primary = m; break
             if not new_primary:
-                for m in flow["matches"]:
-                    if m.get("status") == "up":
-                        new_primary = m; break
+                active = [m for m in flow["matches"] if m.get("status") == "up"]
+                if active:
+                    new_primary = max(
+                        active,
+                        key=lambda m: (m.get("encap_pkts") or 0) + (m.get("decap_pkts") or 0),
+                    )
             if new_primary:
                 flow["primary"] = new_primary
 

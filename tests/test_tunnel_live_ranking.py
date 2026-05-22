@@ -7,6 +7,7 @@ firewall actually carrying traffic so the live panel shows real numbers
 instead of zeros.
 """
 from routers.tunnels import _palo_traffic_score
+from utils.ipsec_live import _sort_sessions
 
 
 def test_packets_win_over_zeros():
@@ -67,3 +68,51 @@ def test_multi_session_sums():
         ],
     }
     assert _palo_traffic_score(state) == 19_113 + 17_151
+
+
+# ── Per-SA session sort (older Palo "42 inactive + 3 flowing" case) ──
+
+def test_sort_floats_traffic_flowing_sessions_to_top():
+    """Older PAN-OS reports state=init/inactive on SAs that ARE flowing
+    real traffic. The sort key must use packet counters, not the unreliable
+    state field, so the 3 actively-flowing SAs surface above the 39 stale
+    proxy-id slots."""
+    sessions = [
+        {"peer": "CrowdStrike-15.205.117.51-32", "status": "down", "encap_pkts": 0, "decap_pkts": 0},
+        {"peer": "CrowdStrike-3.30.16.243-32",   "status": "down", "encap_pkts": 0, "decap_pkts": 0},
+        {"peer": "Default",      "status": "down", "encap_pkts": 12_167_127_872, "decap_pkts": 18_826_351_728},
+        {"peer": "cal_ite_ipv6", "status": "down", "encap_pkts": 0,             "decap_pkts": 4_875_365_540},
+        {"peer": "j",            "status": "down", "encap_pkts": 5_318_548_289, "decap_pkts": 8},
+    ]
+    out = _sort_sessions(sessions)
+    # Three flowing SAs (Default, cal_ite_ipv6, j) all come before the
+    # CrowdStrike-* stale ones, ordered by traffic volume.
+    top3 = [s["peer"] for s in out[:3]]
+    assert "Default"      in top3  # 30B+ pkts
+    assert "j"            in top3  # 5B+ pkts
+    assert "cal_ite_ipv6" in top3  # 4B+ pkts
+    # CrowdStrike entries land at the bottom.
+    assert out[-1]["peer"].startswith("CrowdStrike-")
+
+
+def test_sort_uses_sequence_numbers_when_pkts_zero():
+    """When pkt counters are zero across all SAs (PAN-OS quirk), fall back
+    to sequence numbers — still floats flowing SAs above truly idle ones."""
+    sessions = [
+        {"peer": "a", "encap_pkts": 0, "decap_pkts": 0, "seq_send": 19_113, "seq_recv": 17_151},
+        {"peer": "b", "encap_pkts": 0, "decap_pkts": 0, "seq_send": 0,      "seq_recv": 0},
+    ]
+    out = _sort_sessions(sessions)
+    assert out[0]["peer"] == "a"
+    assert out[1]["peer"] == "b"
+
+
+def test_sort_drops_visible_when_no_traffic():
+    """An SA with drops but no traffic should still surface above a fully
+    idle one (drops indicate something broken — operator wants to see it)."""
+    sessions = [
+        {"peer": "fine",    "encap_pkts": 0, "decap_pkts": 0, "decap_drops": 0},
+        {"peer": "broken",  "encap_pkts": 0, "decap_pkts": 0, "decap_drops": 1_234},
+    ]
+    out = _sort_sessions(sessions)
+    assert out[0]["peer"] == "broken"

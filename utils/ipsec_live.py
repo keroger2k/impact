@@ -794,16 +794,29 @@ def parse_pan_ike_sa(elem: ET.Element | None, peer_ip: str = "", gwid: str = "")
 def _sort_sessions(sessions: list[dict]) -> list[dict]:
     """Pre-sort sessions for the per-peer/per-proxy table.
 
-    Order: worst-drops first, then `down` before `up`, then peer asc.
-    Done here (not in the template) because Jinja's `sort` filter can't
-    compare None to int — and parser regexes can leave drops as None when a
-    counter line is absent for some peers but present for others.
+    Priority order:
+      1. Traffic volume DESC — SAs actually flowing packets/bytes float to
+         the top. Critical for older Palos where a tunnel may have 40+
+         proxy-id slots but only 3 are flowing (CrowdStrike-style stale
+         rules); we want the operator to see the flowing ones immediately.
+      2. Drops DESC — failing SAs visible next so they're not buried.
+      3. Status — up before down within ties.
+      4. Peer asc — deterministic tiebreak.
+
+    Sorted in Python (not Jinja) because Jinja's `sort` filter can't compare
+    None to int and parser regexes leave drops/pkts as None when a counter
+    line is absent for some sessions but present for others.
     """
     def key(s: dict):
+        pkts   = (s.get("encap_pkts") or 0) + (s.get("decap_pkts") or 0)
+        seq    = (s.get("seq_send")   or 0) + (s.get("seq_recv")   or 0)
+        # Pkts dominate when present; sequence numbers are the fallback signal
+        # (some PAN-OS configs report 0 pkts but ticking seq numbers).
+        traffic = pkts if pkts else seq
         drops  = s.get("decap_drops") or 0
-        status_rank = 0 if s.get("status") == "down" else 1
+        status_rank = 0 if s.get("status") == "up" else 1
         peer = s.get("peer") or ""
-        return (-int(drops), status_rank, peer)
+        return (-int(traffic), -int(drops), status_rank, peer)
     return sorted(sessions, key=key)
 
 
