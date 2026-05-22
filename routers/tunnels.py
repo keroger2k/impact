@@ -117,11 +117,13 @@ async def _build_inventory(session: SessionEntry) -> dict:
     device_meta = {d["id"]: d for d in (cache.get("devices") or [])}
     device_site_map = cache.get("device_site_map") or {}
     dnac_interfaces = cache.get("dnac_interfaces") or []
+    pan_interfaces  = cache.get("pan_interfaces") or []
     palo = await _load_palo(session, loop)
 
     return build_inventory(
         parsed_ios=parsed_ios, device_meta=device_meta, palo=palo,
         device_site_map=device_site_map, dnac_interfaces=dnac_interfaces,
+        pan_interfaces=pan_interfaces,
     )
 
 
@@ -1122,9 +1124,11 @@ async def refresh_stream(
         from utils.tunnel_inventory import build_inventory
         device_site_map = cache.get("device_site_map") or {}
         dnac_interfaces = cache.get("dnac_interfaces") or []
+        pan_interfaces  = cache.get("pan_interfaces") or []
         inv = build_inventory(
             parsed_ios=parsed_ios, device_meta=device_meta, palo=palo,
             device_site_map=device_site_map, dnac_interfaces=dnac_interfaces,
+            pan_interfaces=pan_interfaces,
         )
         cache.set(TUNNEL_INVENTORY_CACHE_KEY, inv, TTL_TUNNEL_INVENTORY)
 
@@ -1183,6 +1187,9 @@ async def refresh_stream(
         yield emit({"type": "log", "level": "info",
                     "message": f"  dnac_interfaces:  {len(dnac_interfaces):,} interfaces "
                                f"({'EMPTY — NBMA peers in live view will all show (external)' if not dnac_interfaces else 'OK'})"})
+        yield emit({"type": "log", "level": "info",
+                    "message": f"  pan_interfaces:   {len(pan_interfaces):,} firewalls "
+                               f"({'EMPTY — Palo↔Palo peer IPs will not resolve' if not pan_interfaces else 'OK'})"})
         yield emit({"type": "log", "level": "info",
                     "message": f"  ip_index built:   {len(ip_index):,} distinct IPs · " +
                                ", ".join(f"{k}={v}" for k, v in sorted(sources_count.items()))})

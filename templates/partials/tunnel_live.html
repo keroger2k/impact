@@ -37,9 +37,8 @@
         peer <span class="mono">{{ st.peer_ip }}</span>
         {% if st.peer_match %}
           {% set m = st.peer_match[0] %}
-          {% set code = m.site|site_code %}
           · <span class="text-navy">{{ m.device }}</span>
-          {% if code %}<span class="site-code-badge mono ms-1" title="{{ m.site }}">{{ code }}</span>{% endif %}
+          {% if m.site_code %}<span class="site-code-badge mono ms-1" title="{{ m.site or m.device }}">{{ m.site_code }}</span>{% endif %}
           {% if st.peer_match|length > 1 %}
             <span class="badge bg-warning-subtle text-warning ms-1" title="{{ st.peer_match|length }} candidate devices">+{{ st.peer_match|length - 1 }}</span>
           {% endif %}
@@ -162,16 +161,13 @@
             <td>
               {% if s.peer_match %}
                 {% set m = s.peer_match[0] %}
-                {% set code = m.site|site_code %}
-                {% if code %}
-                  <span class="site-code-badge mono" title="{{ m.device }} — {{ m.site }}">{{ code }}</span>
-                {% elif m.site %}
-                  <span class="text-muted small fst-italic" title="{{ m.device }} — {{ m.site }}">no code</span>
+                {% if m.site_code %}
+                  <span class="site-code-badge mono" title="{{ m.device }} — {{ m.site or m.device }}">{{ m.site_code }}</span>
                 {% else %}
                   <span class="text-muted small" title="{{ m.device }}">—</span>
                 {% endif %}
                 {% if s.peer_match|length > 1 %}
-                  {% set tip %}{% for c in s.peer_match %}{{ c.device }} ({{ c.site|site_code or '?' }}){% if not loop.last %} · {% endif %}{% endfor %}{% endset %}
+                  {% set tip %}{% for c in s.peer_match %}{{ c.device }} ({{ c.site_code or '?' }}){% if not loop.last %} · {% endif %}{% endfor %}{% endset %}
                   <span class="badge bg-warning-subtle text-warning ms-1" title="{{ tip }}">+{{ s.peer_match|length - 1 }}</span>
                 {% endif %}
               {% else %}
@@ -484,16 +480,13 @@
             <td>
               {% if match %}
                 {% set m = match[0] %}
-                {% set code = m.site|site_code %}
-                {% if code %}
-                  <span class="site-code-badge mono" title="{{ m.device }} — {{ m.site }}">{{ code }}</span>
-                {% elif m.site %}
-                  <span class="text-muted small fst-italic" title="{{ m.device }} — {{ m.site }}">no code</span>
+                {% if m.site_code %}
+                  <span class="site-code-badge mono" title="{{ m.device }} — {{ m.site or m.device }}">{{ m.site_code }}</span>
                 {% else %}
                   <span class="text-muted small" title="{{ m.device }}">—</span>
                 {% endif %}
                 {% if match|length > 1 %}
-                  {% set tip %}{% for c in match %}{{ c.device }} ({{ c.site|site_code or '?' }}){% if not loop.last %} · {% endif %}{% endfor %}{% endset %}
+                  {% set tip %}{% for c in match %}{{ c.device }} ({{ c.site_code or '?' }}){% if not loop.last %} · {% endif %}{% endfor %}{% endset %}
                   <span class="badge bg-warning-subtle text-warning ms-1" title="{{ tip }}">+{{ match|length - 1 }}</span>
                 {% endif %}
               {% else %}

@@ -569,3 +569,41 @@ def test_build_ip_index_uses_dnac_interfaces_for_wan_ips():
     # Loopback too
     assert "10.99.99.42" in idx
     assert idx["10.99.99.42"][0]["source"] == "interface"
+
+
+def test_build_ip_index_includes_palo_firewall_ips():
+    """Palo firewall IPs (from pan_interfaces cache) must land in the index
+    so Palo↔Palo peer resolution works. Site_code is derived from the
+    firewall hostname since Palos aren't in DNAC."""
+    pan_ifaces = [{
+        "hostname": "k024fwl006",
+        "serial":   "001801000123",
+        "iface_map": {
+            "management":   {"ipv4": "10.25.72.34"},
+            "ethernet1/12": {"ipv4": "10.16.103.193"},
+        },
+    }]
+    idx = build_ip_index({}, {}, {}, pan_interfaces=pan_ifaces)
+
+    assert "10.25.72.34" in idx
+    m = idx["10.25.72.34"][0]
+    assert m["device"] == "k024fwl006"
+    assert m["site_code"] == "K024"          # derived from hostname
+    assert m["source"] == "palo-mgmt"
+
+    # Data-plane interface — also indexed.
+    assert "10.16.103.193" in idx
+    m = idx["10.16.103.193"][0]
+    assert m["device"] == "k024fwl006"
+    assert m["site_code"] == "K024"
+    assert m["source"] == "palo-iface"
+
+
+def test_build_ip_index_precomputes_site_code_for_dnac_entries():
+    """Every match should carry a `site_code` so the UI doesn't need to
+    re-derive it. Site path wins; hostname is the fallback."""
+    meta = {"dev-1": {"hostname": "core-rtr-01", "managementIpAddress": "10.0.0.1"}}
+    site_map = {"dev-1": "Global/California/DC15 K024/DC15 K024"}
+    idx = build_ip_index({}, meta, site_map)
+    m = idx["10.0.0.1"][0]
+    assert m["site_code"] == "K024"          # extracted from the site path

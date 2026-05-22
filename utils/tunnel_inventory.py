@@ -32,6 +32,7 @@ def build_inventory(
     palo:        dict[str, list] | None = None,
     device_site_map: dict[str, str] | None = None,
     dnac_interfaces: list[dict] | None = None,
+    pan_interfaces:  list[dict] | None = None,
 ) -> dict:
     tunnels: list[dict] = []
 
@@ -52,7 +53,8 @@ def build_inventory(
     # is stashed in the returned dict so the live-fetch path can resolve
     # session peer IPs without rebuilding it on every click.
     ip_index = build_ip_index(
-        parsed_ios, device_meta, device_site_map or {}, dnac_interfaces or [],
+        parsed_ios, device_meta, device_site_map or {},
+        dnac_interfaces or [], pan_interfaces or [],
     )
     _annotate_endpoints(tunnels, ip_index, device_site_map or {})
 
@@ -71,22 +73,31 @@ def build_ip_index(
     device_meta:     dict[str, dict],
     device_site_map: dict[str, str],
     dnac_interfaces: list[dict] | None = None,
+    pan_interfaces:  list[dict] | None = None,
 ) -> dict[str, list[dict]]:
     """Reverse index from IP (bare, no CIDR) to a list of resolution candidates.
 
     Candidates carry source so the UI can show *why* something matched:
-      - "mgmt"          — the device's DNAC management IP
+      - "mgmt"          — DNAC device management IP
       - "interface"     — any interface IPv4 from the DNAC interface inventory
                           (covers WAN-facing physicals — the underlay/NBMA
                           address DMVPN `show crypto session detail` reports)
       - "tunnel-overlay"— an IP on a Tunnel/VT/Virtual-Template interface
       - "crypto-map"    — an IP on a physical interface with a crypto map bound
+      - "palo-mgmt"     — Panorama-reported management IP of a managed firewall
+      - "palo-iface"    — IP on any Palo firewall interface (from pan_interfaces)
+
+    Each match also carries a pre-computed ``site_code`` — extracted from the
+    site path when available, otherwise from the device hostname (your fleet
+    naming convention embeds the code, e.g. ``k024fwl006`` → ``K024``).
 
     A single IP may map to multiple devices (RFC1918 reuse across sites). We
     surface every match rather than first-wins; the UI marks ambiguity. Same
-    device hitting via multiple sources (mgmt + interface) collapses into
-    one entry per (device_id, source, interface).
+    device hitting via multiple sources collapses into one entry per
+    (device_id, source, interface).
     """
+    from utils.site_code import site_code as _sc, site_code_from_hostname as _sch
+
     index: dict[str, list[dict]] = {}
 
     def add(ip: str, device_id: str, device: str, site: str, interface: str, source: str) -> None:
@@ -101,10 +112,16 @@ def build_ip_index(
                     and existing.get("source") == source
                     and existing.get("interface") == interface):
                 return
+        # Pre-compute the site code so the UI doesn't need to re-derive it
+        # per cell. Site path wins when available; otherwise fall back to
+        # the device hostname (which carries the code in the fleet's naming
+        # convention).
+        code = _sc(site) or _sch(device)
         bucket.append({
             "device_id": device_id,
             "device":    device,
             "site":      site,
+            "site_code": code,
             "interface": interface,
             "source":    source,
         })
@@ -153,6 +170,31 @@ def build_ip_index(
         for iface in parsed.get("physical_iface_crypto_maps", []):
             add(iface.get("ip_address", ""), dev_id, hostname, site,
                 iface.get("name", ""), "crypto-map")
+
+    # 4) Palo firewall interfaces (from pan_interfaces cache). Palos aren't
+    #    in DNAC, so without this Palo↔Palo peer IPs always resolved as
+    #    "(external)". Each firewall in the cache carries an `iface_map`
+    #    keyed by interface name → {ipv4, ipv6, zone}. We index every IPv4
+    #    we find. Site code is derived from the firewall hostname (the
+    #    fleet convention embeds it: ``k024fwl006`` → ``K024``).
+    if pan_interfaces:
+        for fw in pan_interfaces:
+            hostname = fw.get("hostname") or fw.get("serial") or ""
+            if not hostname:
+                continue
+            # Pseudo device_id namespace so Palo entries don't collide with
+            # DNAC device ids in dedupe checks.
+            dev_id = f"palo:{fw.get('serial') or hostname}"
+            # Use "" for site — site_code is derived from hostname inside add().
+            iface_map = fw.get("iface_map") or {}
+            for iface_name, info in iface_map.items():
+                ipv4 = (info or {}).get("ipv4") or ""
+                if not ipv4:
+                    continue
+                source = "palo-mgmt" if iface_name == "management" else "palo-iface"
+                # Strip CIDR/netmask from the Palo-reported IPv4 — these
+                # often come in as "10.16.103.193/26".
+                add(ipv4, dev_id, hostname, "", iface_name, source)
 
     return index
 
@@ -203,17 +245,26 @@ def _annotate_endpoints(
     ip_index:        dict[str, list[dict]],
     device_site_map: dict[str, str],
 ) -> None:
-    """Walk every endpoint and attach local_site (from device_site_map) and
+    """Walk every endpoint and attach local_site / local_site_code and
     peer_matches (resolved through ip_index). Mutates tunnels in-place."""
+    from utils.site_code import site_code as _sc, site_code_from_hostname as _sch
+
     for t in tunnels:
         for ep in t.get("endpoints", []):
-            # local_site — exact device_id we already know
+            # local_site — exact device_id we already know.
             dev_id = ep.get("device_id") or ""
             ep["local_site"] = device_site_map.get(dev_id, "") if dev_id else ""
 
+            # local_site_code — site path wins, hostname is the fallback.
+            # Palo endpoints have device_id="" so site path is empty; their
+            # site code comes from the firewall hostname (the fleet
+            # convention embeds it, e.g. k024fwl006 → K024).
+            ep["local_site_code"] = _sc(ep["local_site"]) or _sch(ep.get("device", ""))
+
             # peer_matches — each unique peer IP gets a list of candidates.
             # The shape is [{ip, matches: [...]}, ...] so the template can
-            # render multi-peer (NHS list) cases cleanly.
+            # render multi-peer (NHS list) cases cleanly. site_code on each
+            # match was pre-computed in build_ip_index().
             peer_ips = _split_peer_ips(ep.get("peer_ip", ""))
             ep["peer_matches"] = [
                 {"ip": ip, "matches": resolve_ip(ip, ip_index)}

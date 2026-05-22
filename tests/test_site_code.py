@@ -1,5 +1,5 @@
 """Tests for utils.site_code — the DNAC site-hierarchy → short-code extractor."""
-from utils.site_code import site_code
+from utils.site_code import site_code, site_code_from_hostname
 
 
 def test_letter_plus_digits_pattern():
@@ -47,3 +47,32 @@ def test_pure_letter_too_short():
 def test_first_match_wins_within_priority():
     """When two letter+digit codes appear, the first one is returned."""
     assert site_code("T123 / S456") == "T123"
+
+
+# ── Hostname-aware variant ─────────────────────────────────────────────
+
+def test_hostname_lowercase_extracts_code():
+    """Palo firewall hostnames are typically lowercase — the regex requires
+    uppercase, so the hostname variant must uppercase first."""
+    assert site_code_from_hostname("k024fwl006") == "K024"
+    assert site_code_from_hostname("sdczfwl0013") == "SDCZ"
+
+
+def test_hostname_uppercase_still_works():
+    assert site_code_from_hostname("K150FWL001") == "K150"
+    # Multi-token hostname: DC1EDGE doesn't match (DC then digit, only 2
+    # letters before the digit); next token "KSTDSABV005" → 4-letter
+    # prefix "KSTD" wins.
+    assert site_code_from_hostname("DC1EDGE_KSTDSABV005") == "KSTD"
+
+
+def test_hostname_stopwords_skipped():
+    """EDGE / CORE are common function abbreviations that match the
+    4-letter pattern but aren't site codes."""
+    assert site_code_from_hostname("edge-fwl-001") == ""
+    assert site_code_from_hostname("CORE-RTR-K024") == "K024"  # falls through to K024 token
+
+
+def test_hostname_none_and_empty():
+    assert site_code_from_hostname(None) == ""
+    assert site_code_from_hostname("") == ""

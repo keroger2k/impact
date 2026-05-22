@@ -43,16 +43,14 @@
     <div class="small opacity-75 tunnel-detail-peer-summary">
       {% if ep_total == 1 %}
         {% set ep = tunnel.endpoints[0] %}
-        {% set src_code = ep.local_site|site_code %}
-        <span class="fw-semibold">{{ ep.device }}</span>{% if src_code %} <span class="opacity-75" title="{{ ep.local_site }}">[{{ src_code }}]</span>{% endif %}
+        <span class="fw-semibold">{{ ep.device }}</span>{% if ep.local_site_code %} <span class="opacity-75" title="{{ ep.local_site or ep.device }}">[{{ ep.local_site_code }}]</span>{% endif %}
         <i class="ph ph-arrow-right mx-1"></i>
         {% if ep.peer_matches %}
           {% set first_pm = ep.peer_matches[0] %}
           <span class="mono">{{ first_pm.ip }}</span>
           {% if first_pm.matches %}
             {% set m = first_pm.matches[0] %}
-            {% set dst_code = m.site|site_code %}
-            <span class="opacity-75">→ {{ m.device }}{% if dst_code %} <span title="{{ m.site }}">[{{ dst_code }}]</span>{% endif %}</span>
+            <span class="opacity-75">→ {{ m.device }}{% if m.site_code %} <span title="{{ m.site or m.device }}">[{{ m.site_code }}]</span>{% endif %}</span>
             {% if first_pm.matches|length > 1 %}
               <span class="opacity-50" title="{% for c in first_pm.matches %}{{ c.device }}{% if not loop.last %} · {% endif %}{% endfor %}">+{{ first_pm.matches|length - 1 }}</span>
             {% endif %}
@@ -133,7 +131,11 @@
         <tbody>
           {% for ep in tunnel.endpoints %}
           {% set spin_id = "spin-" ~ tunnel.id ~ "-" ~ loop.index0 %}
-          {% set src_code = ep.local_site|site_code %}
+          {# local_site_code is pre-computed: site path first, then hostname.
+             local_site holds the DNAC path when available; falls back to
+             empty for non-DNAC devices (Palo). #}
+          {% set src_code = ep.local_site_code %}
+          {% set src_tooltip = ep.local_site or ep.device %}
           <tr>
             <td class="td-device">
               <div class="fw-bold text-navy text-truncate" title="{{ ep.device }}">{{ ep.device }}</div>
@@ -143,9 +145,7 @@
             </td>
             <td class="td-code">
               {% if src_code %}
-                <span class="site-code-badge mono" title="{{ ep.local_site }}">{{ src_code }}</span>
-              {% elif ep.local_site %}
-                <span class="text-muted small fst-italic" title="{{ ep.local_site }}">no code</span>
+                <span class="site-code-badge mono" title="{{ src_tooltip }}">{{ src_code }}</span>
               {% else %}
                 <span class="text-muted small">—</span>
               {% endif %}
@@ -193,16 +193,16 @@
             </td>
             <td class="td-code">
               {# Destination site code(s) — one per peer-row in the Peer/NHS
-                 cell so codes align with the IPs they belong to. #}
+                 cell so codes align with the IPs they belong to. site_code
+                 on each match is pre-computed in build_ip_index (site path
+                 first, hostname fallback). #}
               {% if ep.peer_matches %}
                 {% for pm in ep.peer_matches %}
                   <div class="{% if not loop.first %}mt-1{% endif %}">
                     {% if pm.matches %}
-                      {% set dst_code = pm.matches[0].site|site_code %}
-                      {% if dst_code %}
-                        <span class="site-code-badge mono" title="{{ pm.matches[0].site }}">{{ dst_code }}</span>
-                      {% elif pm.matches[0].site %}
-                        <span class="text-muted small fst-italic" title="{{ pm.matches[0].site }}">no code</span>
+                      {% set m = pm.matches[0] %}
+                      {% if m.site_code %}
+                        <span class="site-code-badge mono" title="{{ m.site or m.device }}">{{ m.site_code }}</span>
                       {% else %}
                         <span class="text-muted small">—</span>
                       {% endif %}
