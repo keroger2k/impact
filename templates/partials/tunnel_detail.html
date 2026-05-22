@@ -1,86 +1,113 @@
+{# ── Tunnel detail panel ─────────────────────────────────────────────────
+   Status-first hero design:
+     1. Hero header  — status, name, peer summary line, inline tag pills.
+     2. Endpoints    — the table operators actually came here to see.
+     3. Crypto       — collapsed by default behind a <details>; expand for
+                       troubleshooting compatibility issues.
+   Phase 1 / Phase 2 used to live at the top; they're now the LAST section
+   because they're the LEAST frequently consulted artifact on this page. #}
+
+{# Status from config — every non-shut endpoint counts. We can't reflect
+   runtime up/down here (that lives behind the per-endpoint "Fetch live"
+   button); this is configuration state only. #}
+{% set ep_total = tunnel.endpoints|length %}
+{% set ep_shut  = tunnel.endpoints|selectattr('shutdown')|list|length %}
+{% if ep_total == 0 %}
+  {% set status_label = "EMPTY" %}{% set status_class = "secondary" %}
+{% elif ep_shut == 0 %}
+  {% set status_label = "ACTIVE" %}{% set status_class = "success" %}
+{% elif ep_shut == ep_total %}
+  {% set status_label = "SHUTDOWN" %}{% set status_class = "secondary" %}
+{% else %}
+  {% set status_label = "PARTIAL" %}{% set status_class = "warning" %}
+{% endif %}
+
+{# Compute a one-line peer summary that fits in the hero. Branches on
+   "single endpoint" (point-to-point — show device → resolved peer) vs.
+   "multi-endpoint" (DMVPN/cloud — show hub/spoke/site counts). #}
+{% set distinct_sites = tunnel.endpoints|map(attribute='local_site')|reject('equalto', '')|reject('equalto', None)|unique|list %}
+
 <div class="card border-0 shadow-sm animate-fade-in tunnel-detail-card">
-  <div class="tunnel-detail-fixed card-header bg-navy text-white d-flex align-items-center justify-content-between">
-    <div>
-      <span class="badge bg-light text-navy me-2">{{ tunnel.type|upper }}</span>
-      <span class="fw-bold">{{ tunnel.name }}</span>
+
+  {# ── HERO ────────────────────────────────────────────────────────── #}
+  <div class="tunnel-detail-fixed tunnel-detail-hero card-header bg-navy text-white px-3 py-3">
+    <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
+      <span class="status-dot status-dot-{{ status_class }}" title="{{ status_label }} ({{ ep_total - ep_shut }} of {{ ep_total }} endpoints not shut)"></span>
+      <span class="fw-bold small text-uppercase" style="letter-spacing:.05em;">{{ status_label }}</span>
+      <span class="mx-1 opacity-50">·</span>
+      <span class="badge bg-light text-navy">{{ tunnel.type|upper }}</span>
+      <h5 class="mb-0 fw-bold tunnel-detail-name flex-grow-1">{{ tunnel.name }}</h5>
+      <span class="badge bg-light text-muted">{{ tunnel.platform }}</span>
     </div>
-    <span class="badge bg-light text-muted">{{ tunnel.platform }}</span>
+
+    <div class="small opacity-75 tunnel-detail-peer-summary">
+      {% if ep_total == 1 %}
+        {% set ep = tunnel.endpoints[0] %}
+        <span class="fw-semibold">{{ ep.device }}</span>{% if ep.local_site %} <span class="opacity-75">({{ ep.local_site }})</span>{% endif %}
+        <i class="ph ph-arrow-right mx-1"></i>
+        {% if ep.peer_matches %}
+          {% set first_pm = ep.peer_matches[0] %}
+          <span class="mono">{{ first_pm.ip }}</span>
+          {% if first_pm.matches %}
+            {% if first_pm.matches|length == 1 %}
+              <span class="opacity-75">→ {{ first_pm.matches[0].device }}{% if first_pm.matches[0].site %} · {{ first_pm.matches[0].site }}{% endif %}</span>
+            {% else %}
+              <span class="opacity-75">→ {{ first_pm.matches|length }} candidates</span>
+            {% endif %}
+          {% else %}
+            <span class="opacity-50 fst-italic">(external)</span>
+          {% endif %}
+          {% if ep.peer_matches|length > 1 %}
+            <span class="opacity-50">+ {{ ep.peer_matches|length - 1 }} more</span>
+          {% endif %}
+        {% elif ep.peer_ip %}
+          <span class="mono">{{ ep.peer_ip }}</span>
+        {% else %}
+          <span class="opacity-50">no peer configured</span>
+        {% endif %}
+      {% else %}
+        {% if tunnel.tags.hubs %}
+          <span><span class="fw-semibold">{{ tunnel.tags.hubs }}</span> hub{{ 's' if tunnel.tags.hubs != '1' }}</span>
+          <span class="mx-1 opacity-50">·</span>
+          <span><span class="fw-semibold">{{ tunnel.tags.spokes }}</span> spoke{{ 's' if tunnel.tags.spokes != '1' }}</span>
+        {% else %}
+          <span><span class="fw-semibold">{{ ep_total }}</span> endpoint{{ 's' if ep_total != 1 }}</span>
+        {% endif %}
+        {% if distinct_sites %}
+          <span class="mx-1 opacity-50">·</span>
+          <span><span class="fw-semibold">{{ distinct_sites|length }}</span> site{{ 's' if distinct_sites|length != 1 }}</span>
+        {% endif %}
+        {% if ep_shut %}
+          <span class="mx-1 opacity-50">·</span>
+          <span class="text-warning">{{ ep_shut }} shut</span>
+        {% endif %}
+      {% endif %}
+    </div>
+
+    {# Inline tag pills replace the old bottom Tags section. Filter empties. #}
+    {% set visible_tags = [] %}
+    {% if tunnel.tags %}
+      {% for k, v in tunnel.tags.items() %}
+        {% if v and k not in ('hubs', 'spokes') %}
+          {% set _ = visible_tags.append((k, v)) %}
+        {% endif %}
+      {% endfor %}
+    {% endif %}
+    {% if visible_tags %}
+    <div class="d-flex flex-wrap gap-1 mt-2 tunnel-detail-tags">
+      {% for k, v in visible_tags %}
+        <span class="badge bg-light text-muted fw-normal" title="{{ k }}: {{ v }}">
+          <span class="opacity-75">{{ k }}:</span> {{ v }}
+        </span>
+      {% endfor %}
+    </div>
+    {% endif %}
   </div>
 
-  <!-- ── Phase 1 / Phase 2 (pinned) ──────────────────────────── -->
-  <div class="tunnel-detail-fixed row g-0 border-bottom">
-    <div class="col-md-6 p-3 border-end">
-      <div class="text-muted small text-uppercase fw-bold mb-2">
-        <i class="ph ph-key"></i> Phase 1 (IKE)
-      </div>
-      <table class="table table-sm mb-0">
-        <tbody>
-          <tr><td class="text-muted small" style="width:120px">Protocol</td>
-              <td class="crypto-cell">{{ tunnel.phase1.protocol or '—' }}</td></tr>
-          <tr><td class="text-muted small">Profile</td>
-              <td class="crypto-cell">{{ tunnel.phase1.profile_name or '—' }}</td></tr>
-          <tr><td class="text-muted small">Encryption</td>
-              <td class="crypto-cell">{{ tunnel.phase1.encryption|join(', ') or '—' }}</td></tr>
-          <tr><td class="text-muted small">Integrity</td>
-              <td class="crypto-cell">{{ tunnel.phase1.integrity|join(', ') or '—' }}</td></tr>
-          <tr><td class="text-muted small">DH Group</td>
-              <td class="crypto-cell">{{ tunnel.phase1.dh_group|join(', ') or '—' }}</td></tr>
-          <tr><td class="text-muted small">Auth</td>
-              <td class="crypto-cell">{{ tunnel.phase1.auth or '—' }}</td></tr>
-          <tr><td class="text-muted small">Lifetime</td>
-              <td class="crypto-cell">{{ tunnel.phase1.lifetime or '—' }}</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <div class="col-md-6 p-3">
-      <div class="text-muted small text-uppercase fw-bold mb-2">
-        <i class="ph ph-lock-key"></i> Phase 2 (IPsec)
-      </div>
-      <table class="table table-sm mb-0">
-        <tbody>
-          {# Show the IPsec profile name + every referenced transform-set name on
-             separate rows. When the parser couldn't find the transform-set body
-             in any device's config, the encryption/integrity rows fall back to
-             flagging the unresolved transform-set so the user knows *why*. #}
-          <tr><td class="text-muted small" style="width:120px">Profile</td>
-              <td class="crypto-cell">{{ tunnel.phase2.name or '—' }}</td></tr>
-          <tr><td class="text-muted small">Transform-set</td>
-              <td class="crypto-cell">{{ tunnel.phase2.transform_sets|join(', ') or '—' }}</td></tr>
-          <tr><td class="text-muted small">Encryption</td>
-              <td class="crypto-cell">
-                {% if tunnel.phase2.encryption %}{{ tunnel.phase2.encryption|join(', ') }}
-                {% elif tunnel.phase2.transform_sets %}
-                  <span class="text-muted fst-italic" title="The crypto ipsec transform-set body was not in any cached config; encryption can't be derived without it.">unresolved</span>
-                {% else %}—{% endif %}
-              </td></tr>
-          <tr><td class="text-muted small">Integrity</td>
-              <td class="crypto-cell">
-                {% if tunnel.phase2.integrity %}{{ tunnel.phase2.integrity|join(', ') }}
-                {% elif tunnel.phase2.transform_sets %}
-                  <span class="text-muted fst-italic">unresolved</span>
-                {% else %}—{% endif %}
-              </td></tr>
-          <tr><td class="text-muted small">PFS</td>
-              <td class="crypto-cell">{{ tunnel.phase2.pfs_group or '—' }}</td></tr>
-          <tr><td class="text-muted small">SA lifetime</td>
-              <td class="crypto-cell">
-                {% if tunnel.phase2.sa_lifetime_sec %}{{ tunnel.phase2.sa_lifetime_sec }}s{% endif %}
-                {% if tunnel.phase2.sa_lifetime_kb %} / {{ tunnel.phase2.sa_lifetime_kb }} KB{% endif %}
-                {% if not tunnel.phase2.sa_lifetime_sec and not tunnel.phase2.sa_lifetime_kb %}
-                  {# IOS default when nothing is set explicitly. Annotate so the
-                     user knows it's a default, not parsed data. #}
-                  <span class="text-muted fst-italic" title="No 'set security-association lifetime' line in the profile; IOS default applies.">default (3600s)</span>
-                {% endif %}
-              </td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <!-- ── Endpoints (the only thing that scrolls) ─────────────── -->
+  {# ── ENDPOINTS ──────────────────────────────────────────────────── #}
   <div class="tunnel-detail-endpoints p-3">
     <div class="tunnel-detail-fixed text-muted small text-uppercase fw-bold mb-2">
-      <i class="ph ph-share-network"></i> Endpoints ({{ tunnel.endpoints|length }})
+      <i class="ph ph-share-network"></i> Endpoints ({{ ep_total }})
     </div>
     <div class="tunnel-detail-endpoints-scroll">
       <table class="table table-sm table-striped mb-0 data-table">
@@ -184,20 +211,83 @@
     </div>
   </div>
 
-  {% if tunnel.tags %}
-  <div class="tunnel-detail-fixed p-3 border-top">
-    <div class="text-muted small text-uppercase fw-bold mb-2">
-      <i class="ph ph-tag"></i> Tags
+  {# ── CRYPTO (collapsed by default) ──────────────────────────────── #}
+  <details class="tunnel-detail-fixed tunnel-detail-crypto border-top">
+    <summary class="px-3 py-2 d-flex align-items-center gap-2 flex-wrap">
+      <i class="ph ph-key text-muted"></i>
+      <span class="text-muted small text-uppercase fw-bold" style="letter-spacing:.05em;">Crypto</span>
+      {# One-line summary so the user can see the gist without expanding. #}
+      <span class="small text-muted ms-2">
+        {% if tunnel.phase1.protocol %}{{ tunnel.phase1.protocol }}{% endif %}
+        {% if tunnel.phase1.encryption %} · {{ tunnel.phase1.encryption|join(',') }}{% endif %}
+        {% if tunnel.phase1.integrity %} · {{ tunnel.phase1.integrity|join(',') }}{% endif %}
+        {% if tunnel.phase2.sa_lifetime_sec %} · {{ tunnel.phase2.sa_lifetime_sec }}s{% endif %}
+      </span>
+      <span class="ms-auto small text-muted">click to expand</span>
+    </summary>
+    <div class="row g-0 border-top">
+      <div class="col-md-6 p-3 border-end">
+        <div class="text-muted small text-uppercase fw-bold mb-2">
+          <i class="ph ph-key"></i> Phase 1 (IKE)
+        </div>
+        <table class="table table-sm mb-0">
+          <tbody>
+            <tr><td class="text-muted small" style="width:120px">Protocol</td>
+                <td class="crypto-cell">{{ tunnel.phase1.protocol or '—' }}</td></tr>
+            <tr><td class="text-muted small">Profile</td>
+                <td class="crypto-cell">{{ tunnel.phase1.profile_name or '—' }}</td></tr>
+            <tr><td class="text-muted small">Encryption</td>
+                <td class="crypto-cell">{{ tunnel.phase1.encryption|join(', ') or '—' }}</td></tr>
+            <tr><td class="text-muted small">Integrity</td>
+                <td class="crypto-cell">{{ tunnel.phase1.integrity|join(', ') or '—' }}</td></tr>
+            <tr><td class="text-muted small">DH Group</td>
+                <td class="crypto-cell">{{ tunnel.phase1.dh_group|join(', ') or '—' }}</td></tr>
+            <tr><td class="text-muted small">Auth</td>
+                <td class="crypto-cell">{{ tunnel.phase1.auth or '—' }}</td></tr>
+            <tr><td class="text-muted small">Lifetime</td>
+                <td class="crypto-cell">{{ tunnel.phase1.lifetime or '—' }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="col-md-6 p-3">
+        <div class="text-muted small text-uppercase fw-bold mb-2">
+          <i class="ph ph-lock-key"></i> Phase 2 (IPsec)
+        </div>
+        <table class="table table-sm mb-0">
+          <tbody>
+            <tr><td class="text-muted small" style="width:120px">Profile</td>
+                <td class="crypto-cell">{{ tunnel.phase2.name or '—' }}</td></tr>
+            <tr><td class="text-muted small">Transform-set</td>
+                <td class="crypto-cell">{{ tunnel.phase2.transform_sets|join(', ') or '—' }}</td></tr>
+            <tr><td class="text-muted small">Encryption</td>
+                <td class="crypto-cell">
+                  {% if tunnel.phase2.encryption %}{{ tunnel.phase2.encryption|join(', ') }}
+                  {% elif tunnel.phase2.transform_sets %}
+                    <span class="text-muted fst-italic" title="The crypto ipsec transform-set body was not in any cached config; encryption can't be derived without it.">unresolved</span>
+                  {% else %}—{% endif %}
+                </td></tr>
+            <tr><td class="text-muted small">Integrity</td>
+                <td class="crypto-cell">
+                  {% if tunnel.phase2.integrity %}{{ tunnel.phase2.integrity|join(', ') }}
+                  {% elif tunnel.phase2.transform_sets %}
+                    <span class="text-muted fst-italic">unresolved</span>
+                  {% else %}—{% endif %}
+                </td></tr>
+            <tr><td class="text-muted small">PFS</td>
+                <td class="crypto-cell">{{ tunnel.phase2.pfs_group or '—' }}</td></tr>
+            <tr><td class="text-muted small">SA lifetime</td>
+                <td class="crypto-cell">
+                  {% if tunnel.phase2.sa_lifetime_sec %}{{ tunnel.phase2.sa_lifetime_sec }}s{% endif %}
+                  {% if tunnel.phase2.sa_lifetime_kb %} / {{ tunnel.phase2.sa_lifetime_kb }} KB{% endif %}
+                  {% if not tunnel.phase2.sa_lifetime_sec and not tunnel.phase2.sa_lifetime_kb %}
+                    <span class="text-muted fst-italic" title="No 'set security-association lifetime' line in the profile; IOS default applies.">default (3600s)</span>
+                  {% endif %}
+                </td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
-    <div class="d-flex flex-wrap gap-2">
-      {% for k, v in tunnel.tags.items() %}
-        {% if v %}
-        <span class="badge bg-light text-muted">{{ k }}: <span class="text-dark">{{ v }}</span></span>
-        {% endif %}
-      {% endfor %}
-    </div>
-  </div>
-  {% endif %}
+  </details>
 
 </div>
 

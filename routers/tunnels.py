@@ -499,11 +499,15 @@ def _fetch_palo_live(session: SessionEntry, tunnel: dict, endpoint: dict) -> dic
     # works without knowing exact proxy-ID names, and tells us which firewall
     # has SAs matching our tunnel.
     #
-    # Phase 2 (on the matched firewall, in parallel): for each `active` SA, run
+    # Phase 2 (on the matched firewall, in parallel): for EVERY match, run
     # `show vpn flow name "FULL_NAME"` and `show vpn ipsec-sa tunnel
-    # "FULL_NAME"` to pull the rich per-SA detail. Inactive SAs have no
-    # counters to fetch, so we skip them to keep the fanout bounded
-    # (K150FWL001 has 42 proxy-IDs on CAL_TO_ITE, most inactive).
+    # "FULL_NAME"` to pull the rich per-SA detail (counters, SPIs, lifetimes,
+    # TS). We previously skipped "inactive" matches as an optimization, but
+    # PAN-OS reports `state=""` or `"inactive"` on the umbrella (bare-name)
+    # entry of multi-proxy-ID tunnels even when proxies are flowing traffic
+    # — skipping them was hiding counters on a whole class of tunnels.
+    # max_workers=8 caps the fanout, so the cost of "enrich everything" is
+    # bounded even on a 42-proxy-ID tunnel.
     flow_cmd = 'show vpn flow'
     ike_cmd  = 'show vpn ike-sa'
 
@@ -534,13 +538,10 @@ def _fetch_palo_live(session: SessionEntry, tunnel: dict, endpoint: dict) -> dic
             else:
                 probe_log.append(f"{host}: no IPSec flows at all")
             return None
-        # Phase 2: enrich each *active* match with rich per-SA detail.
-        # Inactive SAs have no counters/SPIs/TS in PAN-OS, so we skip them
-        # (and just keep their summary status in the result). This caps the
-        # second-phase fanout at the number of active proxies — usually a
-        # small fraction of the total.
-        active_matches = [m for m in flow["matches"] if m.get("status") == "up"]
-
+        # Phase 2: enrich EVERY match with rich per-SA detail. The summary's
+        # `state` field is unreliable on the umbrella (bare-name) entry of
+        # multi-proxy-ID tunnels — it's often blank/"inactive" even when
+        # proxies are flowing traffic — so we can't filter on it.
         def fetch_detail(m: dict) -> dict:
             full_name = m.get("name", "")
             f_xml = pc.op_via_sdk(f'show vpn flow name "{full_name}"', api_key, serial)
@@ -554,9 +555,9 @@ def _fetch_palo_live(session: SessionEntry, tunnel: dict, endpoint: dict) -> dic
             }
 
         raw_details: dict[str, str] = {}
-        if active_matches:
-            with ThreadPoolExecutor(max_workers=min(len(active_matches), 8)) as ex:
-                details = list(ex.map(fetch_detail, active_matches))
+        if flow["matches"]:
+            with ThreadPoolExecutor(max_workers=min(len(flow["matches"]), 8)) as ex:
+                details = list(ex.map(fetch_detail, flow["matches"]))
             # Build a {name -> detail-record} index for fast merge.
             by_name = {d["name"]: d for d in details}
             for m in flow["matches"]:
