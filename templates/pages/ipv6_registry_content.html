@@ -37,6 +37,11 @@
         <i class="ph ph-stack me-1"></i> Bulk Assemble
       </button>
     </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" data-bs-toggle="tab" data-bs-target="#ipv6-tab-audit" type="button" role="tab">
+        <i class="ph ph-shield-check me-1"></i> Audit
+      </button>
+    </li>
   </ul>
 
   <div class="tab-content">
@@ -125,6 +130,16 @@
           <div id="ipv6-bulk-result" class="text-muted small">
             <i class="ph ph-info me-1"></i> Results will appear here.
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Audit -->
+    <div class="tab-pane fade" id="ipv6-tab-audit" role="tabpanel">
+      <div id="ipv6-audit-pane"
+           hx-get="/api/ipv6/audit" hx-trigger="load once" hx-swap="innerHTML">
+        <div class="text-muted text-center py-5">
+          <i class="ph ph-circle-notch ph-spin me-1"></i> Running audit…
         </div>
       </div>
     </div>
@@ -435,5 +450,104 @@
     document.getElementById('ipv6-alloc-confirm-dup').value = 'true';
     htmx.trigger('#ipv6-allocation-form', 'submit');
   };
+
+  // ── Cross-page "Add to Registry" entry points ─────────────────────────
+  // Called from the IPAM dashboard and the Audit tab to push a live IPv6
+  // entry into the Registry. /48 → Add Site, /64 → Add Allocation under the
+  // containing /48 (server-resolved via /api/ipv6/decode).
+
+  function _parentFortyEight(cidr) {
+    // Return the leading 3 hextets of an IPv6 CIDR (the inferred /48 parent),
+    // or '' on parse failure. Tolerant of `::` shorthand because the first
+    // 3 hextets always sit before any `::` for /48 and /64 inputs.
+    if (!cidr || !cidr.includes(':')) return '';
+    const addr = cidr.split('/')[0];
+    const head = addr.split('::')[0];
+    const parts = head.split(':').filter(Boolean);
+    if (parts.length < 3) return '';
+    return parts.slice(0, 3).join(':');
+  }
+
+  window.ipv6OpenSitePrefilled = function(prefix, length) {
+    ipv6PrepareSiteModal();
+    document.getElementById('ipv6-site-prefix').value = prefix || '';
+    document.getElementById('ipv6-site-prefix-length').value = length || 48;
+    document.querySelector('[data-bs-target="#ipv6-tab-sites"]').click();
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('ipv6-site-modal')).show();
+  };
+
+  window.ipv6OpenSitePrefilledFromCidr = function(cidr) {
+    const len = parseInt((cidr || '').split('/')[1] || '48', 10);
+    const head = (cidr || '').split('/')[0].split('::')[0];
+    const hextets = head.split(':').filter(Boolean).slice(0, 3).join(':');
+    window.ipv6OpenSitePrefilled(hextets, len);
+  };
+
+  window.ipv6OpenAllocationFromIPv6 = async function(cidr) {
+    const addr = (cidr || '').split('/')[0];
+    const lenStr = (cidr || '').split('/')[1] || '64';
+    const csrfCookie = document.cookie.split('; ').find(r => r.startsWith('csrf_token='));
+    const csrfHeader = csrfCookie ? csrfCookie.split('=')[1] : '';
+    let body = {};
+    try {
+      const res = await fetch('/api/ipv6/decode', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'X-CSRF-Token': csrfHeader,
+        },
+        body: 'ipv6=' + encodeURIComponent(addr),
+      });
+      body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(body.detail || ('Decode failed: ' + res.status));
+        return;
+      }
+    } catch (e) {
+      alert('Decode failed: ' + e);
+      return;
+    }
+    if (!body.site_id) {
+      // No /48 site contains this address — offer to create it first.
+      const parent = _parentFortyEight(cidr);
+      const ok = confirm(
+        `No /48 Registry site contains ${addr}.\n\n` +
+        `Add the parent /48 site (${parent || '?'}) first?`
+      );
+      if (ok && parent) {
+        window.ipv6OpenSitePrefilled(parent, 48);
+      }
+      return;
+    }
+    ipv6PrepareAllocationModal(null, body.site_id);
+    document.getElementById('ipv6-alloc-vvvv').value = body.vvvv || '';
+    document.getElementById('ipv6-alloc-prefix').value = parseInt(lenStr, 10) || 64;
+    // ipv4 from decode is populated from the host tail; only useful as a
+    // hint, not as the allocation's ipv4_subnet (which represents a subnet,
+    // not a single address). Leave the field blank for the user to fill.
+    document.querySelector('[data-bs-target="#ipv6-tab-allocations"]').click();
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('ipv6-allocation-modal')).show();
+  };
+
+  // URL-driven prefill: when navigated to /ipv6-registry?prefill_kind=...
+  // from the IPAM dashboard, auto-open the right modal once the page
+  // settles. Deferred slightly so the script block finishes loading and
+  // modals are addressable.
+  (function() {
+    const params = new URLSearchParams(window.location.search);
+    const kind = params.get('prefill_kind');
+    if (!kind) return;
+    setTimeout(() => {
+      if (kind === 'site') {
+        window.ipv6OpenSitePrefilled(
+          params.get('prefix') || '',
+          parseInt(params.get('length') || '48', 10),
+        );
+      } else if (kind === 'allocation') {
+        const cidr = params.get('cidr');
+        if (cidr) window.ipv6OpenAllocationFromIPv6(cidr);
+      }
+    }, 50);
+  })();
 })();
 </script>

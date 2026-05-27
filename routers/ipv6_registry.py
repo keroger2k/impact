@@ -22,9 +22,14 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import Response
 
 from auth import SessionEntry, require_auth
+from cache import IPAM_TREE_CACHE_KEY, cache
 from clients import ipv6_registry as registry
 from templates_module import templates
 from utils import ipv6_assembler as ipv6
+from utils import ipv6_audit
+
+_AUDIT_CACHE_KEY = "ipv6_audit_v1"
+_AUDIT_TTL = 60  # short — both inputs (registry SQLite + IPAM tree) churn slowly
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -416,6 +421,33 @@ async def assemble_bulk(
             request, "partials/ipv6_bulk_assemble_result.html", {"result": payload},
         )
     return payload
+
+
+# ── Audit ────────────────────────────────────────────────────────────────────
+
+def _compute_audit() -> dict:
+    return ipv6_audit.run_audit(registry.list_sites(), cache.get(IPAM_TREE_CACHE_KEY))
+
+
+@router.get("/audit")
+async def audit(
+    request: Request,
+    refresh: bool = False,
+    session: SessionEntry = Depends(require_auth),
+):
+    """Cross-check the Registry against live IPv6 from the IPAM tree.
+
+    Returns three lists — coverage_gaps, off_book, site_mismatches —
+    plus counts. Cached briefly (60s) so the tab stays snappy across
+    clicks; `?refresh=1` forces a recompute."""
+    if refresh:
+        cache.invalidate(_AUDIT_CACHE_KEY)
+    report = cache.get_or_set(_AUDIT_CACHE_KEY, _compute_audit, _AUDIT_TTL)
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse(
+            request, "partials/ipv6_audit_results.html", {"report": report},
+        )
+    return report
 
 
 # ── Export ───────────────────────────────────────────────────────────────────

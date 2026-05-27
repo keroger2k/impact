@@ -499,6 +499,20 @@
         const typeColors = { tunnel: '#6366f1', svi: '#14b8a6', vip: '#f59e0b', management: '#a855f7', p2p: '#64748b', aggregate: '#10b981' };
         const dotColor = typeColors[n.interface_type] || '#cbd5e1';
 
+        // "Add to Registry" is offered only for IPv6 /48 (→ new site) and /64
+        // (→ new allocation under the parent /48 site). Aggregates and
+        // supernets are inferred container nodes and don't represent
+        // configured prefixes — skip them.
+        let registryKind = null;
+        if (n.cidr && n.cidr.includes(':') && n.role !== 'aggregate' && n.role !== 'supernet') {
+            const len = parseInt((n.cidr.split('/')[1] || ''), 10);
+            if (len === 48) registryKind = 'site';
+            else if (len === 64) registryKind = 'allocation';
+        }
+        const registryBtn = registryKind
+            ? `<button class="btn-action btn-registry" title="Add to IPv6 Registry"><i class="ph ph-database"></i></button>`
+            : '';
+
         row.innerHTML = `
             <div class="ipam-guides">${guides}</div>
             <div class="ipam-content-wrapper" style="--ipam-indent: ${item.depth * 14}px">
@@ -524,6 +538,7 @@
                         <button class="btn-action btn-lookup" title="IP Lookup">
                             <i class="ph ph-map-pin"></i>
                         </button>
+                        ${registryBtn}
                     </div>
                 </div>
             </div>
@@ -548,6 +563,24 @@
             e.stopPropagation();
             htmx.ajax('GET', '/ip-lookup?q='+encodeURIComponent(n.cidr), {target:'#content', pushUrl:true});
         });
+        const registryBtnEl = row.querySelector('.btn-registry');
+        if (registryBtnEl) {
+            registryBtnEl.addEventListener('click', (e) => {
+                e.stopPropagation();
+                let url;
+                if (registryKind === 'site') {
+                    const head = n.cidr.split('/')[0].split('::')[0];
+                    const hextets = head.split(':').filter(Boolean).slice(0, 3).join(':');
+                    url = '/ipv6-registry?prefill_kind=site'
+                        + '&prefix=' + encodeURIComponent(hextets)
+                        + '&length=48';
+                } else { // allocation
+                    url = '/ipv6-registry?prefill_kind=allocation'
+                        + '&cidr=' + encodeURIComponent(n.cidr);
+                }
+                htmx.ajax('GET', url, {target:'#content', pushUrl:true});
+            });
+        }
 
         return row;
     }

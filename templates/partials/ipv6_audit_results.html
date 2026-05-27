@@ -1,0 +1,174 @@
+{# IPv6 Registry audit results — see utils/ipv6_audit.py for shape #}
+
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <div class="text-muted small">
+    Compared <strong>{{ report.counts.total_registry_sites }}</strong> Registry site{{ '' if report.counts.total_registry_sites == 1 else 's' }}
+    against <strong>{{ report.counts.total_global_unicast }}</strong> live global-unicast IPv6 entries
+    ({{ report.counts.total_live_v6 }} total in IPAM tree).
+    <span class="ms-2">Last run: <code>{{ report.generated_at }}</code></span>
+  </div>
+  <button class="btn btn-sm btn-primary"
+          hx-get="/api/ipv6/audit?refresh=1"
+          hx-target="#ipv6-audit-pane"
+          hx-swap="innerHTML"
+          hx-indicator="#ipv6-audit-refresh-spin">
+    <i class="ph ph-arrows-clockwise me-1"></i> Run Audit
+    <i id="ipv6-audit-refresh-spin" class="ph ph-circle-notch ph-spin ms-1 htmx-indicator"></i>
+  </button>
+</div>
+
+<div class="kpi-row cols-3 mb-3">
+  <div class="kpi-card">
+    <div class="kpi-label">Coverage Gaps</div>
+    <div class="kpi-value {% if report.counts.coverage_gaps %}text-warning{% else %}text-success{% endif %}">
+      {{ report.counts.coverage_gaps }}
+    </div>
+    <div class="kpi-sub text-muted">Registry sites with no live IPv6 inside their prefix</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Off-Book Addresses</div>
+    <div class="kpi-value {% if report.counts.off_book %}text-danger{% else %}text-success{% endif %}">
+      {{ report.counts.off_book }}
+    </div>
+    <div class="kpi-sub text-muted">Live IPv6 outside every Registry prefix</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Site Mismatches</div>
+    <div class="kpi-value {% if report.counts.site_mismatches %}text-danger{% else %}text-success{% endif %}">
+      {{ report.counts.site_mismatches }}
+    </div>
+    <div class="kpi-sub text-muted">Live IPv6 in the wrong site's prefix</div>
+  </div>
+</div>
+
+{# ── Coverage Gaps ───────────────────────────────────────────────────────── #}
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-header bg-light d-flex justify-content-between align-items-center">
+    <strong><i class="ph ph-warning-circle me-1 text-warning"></i> Coverage Gaps</strong>
+    <span class="badge bg-secondary-subtle text-secondary">{{ report.counts.coverage_gaps }}</span>
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-hover table-striped mb-0 data-table">
+      <thead class="bg-light">
+        <tr>
+          <th>Site</th>
+          <th>Prefix</th>
+          <th>Role</th>
+          <th>Description</th>
+          <th data-no-sort data-no-filter>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for g in report.coverage_gaps %}
+        <tr>
+          <td class="fw-bold text-navy">{{ g.name }}</td>
+          <td class="font-monospace">{{ g.prefix }}</td>
+          <td>{% if g.role %}<span class="badge bg-info-subtle text-info">{{ g.role }}</span>{% endif %}</td>
+          <td class="text-muted small">{{ g.description or '' }}</td>
+          <td>
+            <button class="btn btn-xs btn-outline px-2 py-0"
+                    onclick="document.querySelector('[data-bs-target=\'#ipv6-tab-sites\']').click()">
+              View site
+            </button>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="text-center text-success py-4">
+          <i class="ph ph-check-circle me-1"></i> Every Registry site has at least one live IPv6 entry.
+        </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ── Off-Book Addresses ─────────────────────────────────────────────────── #}
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-header bg-light d-flex justify-content-between align-items-center">
+    <strong><i class="ph ph-x-circle me-1 text-danger"></i> Off-Book Addresses</strong>
+    <span class="badge bg-secondary-subtle text-secondary">{{ report.counts.off_book }}</span>
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-hover table-striped mb-0 data-table">
+      <thead class="bg-light">
+        <tr>
+          <th>CIDR</th>
+          <th>Device</th>
+          <th>DNAC Site</th>
+          <th>Interface</th>
+          <th>Source</th>
+          <th data-no-sort data-no-filter>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in report.off_book %}
+        {% set _len = (r.cidr.split('/')[1]|int) if '/' in r.cidr else 0 %}
+        <tr>
+          <td class="font-monospace">{{ r.cidr }}</td>
+          <td>{{ r.device }}</td>
+          <td class="text-muted small">{{ r.site_path }}</td>
+          <td class="font-monospace small">{{ r.interface_name or r.display_name }}</td>
+          <td><span class="badge bg-secondary-subtle text-secondary">{{ r.source }}</span></td>
+          <td>
+            {% if _len == 48 %}
+              <button class="btn btn-xs btn-outline px-2 py-0"
+                      onclick='ipv6OpenSitePrefilledFromCidr({{ r.cidr|tojson }})'
+                      title="Add as Registry site">
+                <i class="ph ph-database me-1"></i> Add site
+              </button>
+            {% elif _len == 64 %}
+              <button class="btn btn-xs btn-outline px-2 py-0"
+                      onclick='ipv6OpenAllocationFromIPv6({{ r.cidr|tojson }})'
+                      title="Add as Registry allocation">
+                <i class="ph ph-database me-1"></i> Add allocation
+              </button>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="text-center text-success py-4">
+          <i class="ph ph-check-circle me-1"></i> Every live IPv6 address is contained by a Registry prefix.
+        </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ── Site Mismatches ────────────────────────────────────────────────────── #}
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-header bg-light d-flex justify-content-between align-items-center">
+    <strong><i class="ph ph-swap me-1 text-danger"></i> Site Mismatches</strong>
+    <span class="badge bg-secondary-subtle text-secondary">{{ report.counts.site_mismatches }}</span>
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-hover table-striped mb-0 data-table">
+      <thead class="bg-light">
+        <tr>
+          <th>CIDR</th>
+          <th>Device</th>
+          <th>Device site code</th>
+          <th>Registry site</th>
+          <th>Registry code</th>
+          <th>Registry prefix</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in report.site_mismatches %}
+        <tr>
+          <td class="font-monospace">{{ m.cidr }}</td>
+          <td>{{ m.device }}</td>
+          <td><span class="badge bg-warning-subtle text-warning">{{ m.device_code }}</span></td>
+          <td>{{ m.registry_name }}</td>
+          <td><span class="badge bg-info-subtle text-info">{{ m.registry_code }}</span></td>
+          <td class="font-monospace small">{{ m.registry_prefix }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="text-center text-success py-4">
+          <i class="ph ph-check-circle me-1"></i> No site code mismatches detected.
+        </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
