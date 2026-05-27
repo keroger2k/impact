@@ -5,8 +5,8 @@ Pure functions, no DB or HTTP. The full address layout is:
     [ prefix_48 (48 bits) ] [ vvvv (16 bits) ] [ 0000:0000 (32 bits) ] [ ipv4 (32 bits) ]
        hextets 1..3            hextet 4              hextets 5..6              hextets 7..8
 
-Example: site DC1 with /48 = 2600:0400:3001, vvvv = 0134, host = 10.16.109.153
-         -> 2600:400:3001:134::a10:6d99
+Example: site DC1 with /48 = 1000:2000:3000, vvvv = 0100, host = 1.2.3.4
+         -> 1000:2000:3000:100::102:304
 
 All addresses are canonicalized via the stdlib ipaddress module.
 """
@@ -21,7 +21,7 @@ from typing import Iterable, Optional
 
 def normalize_prefix_48(prefix_48: str) -> str:
     """Canonical compressed form of a /48 prefix as the leading 3 hextets only.
-    Accepts loose input like '2600:0400:3001' or '2600:400:3001'."""
+    Accepts loose input like '1000:2000:3000' or '0100:0200:0300'."""
     net = ipaddress.IPv6Network(f"{prefix_48.strip()}::/48", strict=False)
     full = net.network_address.exploded.split(":")  # 8 groups, padded
     # Drop the trailing zero groups, keep the first 3, normalize each hextet
@@ -61,7 +61,7 @@ def vvvv_block_size(prefix_length: int) -> int:
 # ── Forward: IPv4 -> IPv6 ────────────────────────────────────────────────────
 
 def ipv4_to_suffix(ipv4: str) -> str:
-    """'10.16.109.153' -> 'a10:6d99' (canonical compressed lowercase)."""
+    """'1.2.3.4' -> '102:304' (canonical compressed lowercase)."""
     v4 = ipaddress.IPv4Address(ipv4.strip())
     high = (int(v4) >> 16) & 0xFFFF
     low = int(v4) & 0xFFFF

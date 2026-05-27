@@ -7,8 +7,8 @@ line is:
     <site_name>,<ipv4_subnet>,<ipv4_mask>,<vvvv>[,<prefix_length>]
 
 Example:
-    DC-Atlanta,10.16.109.0,255.255.255.0,0134
-    DC-Atlanta,10.16.0.0,255.255.0.0,0100,56
+    DC1,1.2.3.0,255.255.255.0,0100
+    DC1,1.2.0.0,255.255.0.0,0200,56
 
 Blank lines and lines starting with '#' are ignored. Sites must already exist
 in the registry (the file format doesn't carry the /48 prefix). Hits the

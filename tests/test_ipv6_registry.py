@@ -28,10 +28,10 @@ def test_init_schema_is_idempotent(tmp_path: Path):
 
 
 def test_site_crud_roundtrip(db_path: Path):
-    site = reg.create_site("DC1", "2600:0400:3001", role="datacenter",
+    site = reg.create_site("DC1", "1000:2000:3000", role="datacenter",
                            description="Primary DC", path=db_path)
     assert site["id"] > 0
-    assert site["prefix_48"] == "2600:0400:3001"
+    assert site["prefix_48"] == "1000:2000:3000"
 
     fetched = reg.get_site(site["id"], path=db_path)
     assert fetched["name"] == "DC1"
@@ -44,31 +44,31 @@ def test_site_crud_roundtrip(db_path: Path):
 
 
 def test_site_unique_name_and_prefix(db_path: Path):
-    reg.create_site("DC1", "2600:0400:3001", path=db_path)
+    reg.create_site("DC1", "1000:2000:3000", path=db_path)
     with pytest.raises(sqlite3.IntegrityError):
-        reg.create_site("DC1", "2600:0400:3002", path=db_path)
+        reg.create_site("DC1", "4000:5000:6000", path=db_path)
     with pytest.raises(sqlite3.IntegrityError):
-        reg.create_site("DC2", "2600:0400:3001", path=db_path)
+        reg.create_site("DC2", "1000:2000:3000", path=db_path)
 
 
 def test_allocation_unique_vvvv_within_site(db_path: Path):
-    site = reg.create_site("DC1", "2600:0400:3001", path=db_path)
-    reg.create_allocation(site["id"], "0134", 64,
-                          ipv4_subnet="10.16.109.0/24", path=db_path)
+    site = reg.create_site("DC1", "1000:2000:3000", path=db_path)
+    reg.create_allocation(site["id"], "0100", 64,
+                          ipv4_subnet="1.2.3.0/24", path=db_path)
     with pytest.raises(sqlite3.IntegrityError):
-        reg.create_allocation(site["id"], "0134", 56, path=db_path)
+        reg.create_allocation(site["id"], "0100", 56, path=db_path)
 
 
 def test_same_vvvv_allowed_across_sites(db_path: Path):
-    a = reg.create_site("DC1", "2600:0400:3001", path=db_path)
-    b = reg.create_site("DC2", "2600:0400:3002", path=db_path)
+    a = reg.create_site("DC1", "1000:2000:3000", path=db_path)
+    b = reg.create_site("DC2", "4000:5000:6000", path=db_path)
     reg.create_allocation(a["id"], "0100", 56, path=db_path)
     reg.create_allocation(b["id"], "0100", 56, path=db_path)  # not a conflict
     assert len(reg.list_allocations(path=db_path)) == 2
 
 
 def test_cascade_delete_removes_allocations(db_path: Path):
-    site = reg.create_site("DC1", "2600:0400:3001", path=db_path)
+    site = reg.create_site("DC1", "1000:2000:3000", path=db_path)
     reg.create_allocation(site["id"], "0100", 64, path=db_path)
     reg.create_allocation(site["id"], "0200", 64, path=db_path)
     assert len(reg.list_allocations(path=db_path)) == 2
@@ -78,8 +78,8 @@ def test_cascade_delete_removes_allocations(db_path: Path):
 
 
 def test_list_allocations_filters_by_site(db_path: Path):
-    a = reg.create_site("DC1", "2600:0400:3001", path=db_path)
-    b = reg.create_site("DC2", "2600:0400:3002", path=db_path)
+    a = reg.create_site("DC1", "1000:2000:3000", path=db_path)
+    b = reg.create_site("DC2", "4000:5000:6000", path=db_path)
     reg.create_allocation(a["id"], "0100", 64, path=db_path)
     reg.create_allocation(b["id"], "0100", 64, path=db_path)
     assert len(reg.list_allocations(site_id=a["id"], path=db_path)) == 1
@@ -87,36 +87,36 @@ def test_list_allocations_filters_by_site(db_path: Path):
 
 
 def test_list_allocations_includes_site_metadata(db_path: Path):
-    site = reg.create_site("DC1", "2600:0400:3001", path=db_path)
-    reg.create_allocation(site["id"], "0134", 64, path=db_path)
+    site = reg.create_site("DC1", "1000:2000:3000", path=db_path)
+    reg.create_allocation(site["id"], "0100", 64, path=db_path)
     rows = reg.list_allocations(path=db_path)
     assert rows[0]["site_name"] == "DC1"
-    assert rows[0]["site_prefix_48"] == "2600:0400:3001"
+    assert rows[0]["site_prefix_48"] == "1000:2000:3000"
 
 
 def test_find_ipv4_collision(db_path: Path):
-    site = reg.create_site("DC1", "2600:0400:3001", path=db_path)
-    a1 = reg.create_allocation(site["id"], "0134", 64,
-                               ipv4_subnet="10.16.109.0/24", path=db_path)
+    site = reg.create_site("DC1", "1000:2000:3000", path=db_path)
+    a1 = reg.create_allocation(site["id"], "0100", 64,
+                               ipv4_subnet="1.2.3.0/24", path=db_path)
 
-    hits = reg.find_ipv4_collision(site["id"], "10.16.109.0/24", path=db_path)
+    hits = reg.find_ipv4_collision(site["id"], "1.2.3.0/24", path=db_path)
     assert len(hits) == 1 and hits[0]["id"] == a1["id"]
 
     # Same v4 in a different site is not a collision (scoped per site)
-    other = reg.create_site("DC2", "2600:0400:3002", path=db_path)
-    assert reg.find_ipv4_collision(other["id"], "10.16.109.0/24", path=db_path) == []
+    other = reg.create_site("DC2", "4000:5000:6000", path=db_path)
+    assert reg.find_ipv4_collision(other["id"], "1.2.3.0/24", path=db_path) == []
 
     # Exclude-self lets update-in-place pass its own row
-    assert reg.find_ipv4_collision(site["id"], "10.16.109.0/24",
+    assert reg.find_ipv4_collision(site["id"], "1.2.3.0/24",
                                    exclude_alloc_id=a1["id"], path=db_path) == []
 
 
 def test_update_allocation_changes_only_supplied_fields(db_path: Path):
-    site = reg.create_site("DC1", "2600:0400:3001", path=db_path)
-    a = reg.create_allocation(site["id"], "0134", 64,
-                              ipv4_subnet="10.16.109.0/24",
+    site = reg.create_site("DC1", "1000:2000:3000", path=db_path)
+    a = reg.create_allocation(site["id"], "0100", 64,
+                              ipv4_subnet="1.2.3.0/24",
                               purpose="user-vlan", path=db_path)
     updated = reg.update_allocation(a["id"], status="reserved", path=db_path)
     assert updated["status"] == "reserved"
     assert updated["purpose"] == "user-vlan"  # untouched
-    assert updated["ipv4_subnet"] == "10.16.109.0/24"
+    assert updated["ipv4_subnet"] == "1.2.3.0/24"

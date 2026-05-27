@@ -71,7 +71,7 @@
             <div class="col-md-9">
               <label for="ipv6-decode-input" class="form-label small fw-bold">IPv6 address</label>
               <input id="ipv6-decode-input" name="ipv6" type="text" class="form-control font-monospace"
-                     placeholder="2600:400:3001:134::a10:6d99" required>
+                     placeholder="1000:2000:3000:100::102:304" required>
             </div>
             <div class="col-md-3">
               <button type="submit" class="btn btn-primary w-100">
@@ -115,7 +115,7 @@
             <div class="mb-3">
               <label for="ipv6-bulk-input" class="form-label small fw-bold">IPv4 addresses</label>
               <textarea id="ipv6-bulk-input" name="ipv4_list" class="form-control font-monospace"
-                        rows="10" placeholder="10.16.109.153&#10;10.16.110.20&#10;10.16.111.5" required></textarea>
+                        rows="10" placeholder="1.2.3.4&#10;1.2.3.5&#10;1.2.3.6" required></textarea>
             </div>
             <button type="submit" class="btn btn-primary">
               <i class="ph ph-arrow-right me-1"></i> Assemble All
@@ -148,7 +148,7 @@
             <div class="col-md-4">
               <label for="ipv6-assemble-ipv4" class="form-label small fw-bold">IPv4 host</label>
               <input id="ipv6-assemble-ipv4" name="ipv4" type="text" class="form-control font-monospace"
-                     placeholder="10.16.109.153" required>
+                     placeholder="1.2.3.4" required>
             </div>
             <div class="col-md-2">
               <label for="ipv6-assemble-vvvv" class="form-label small fw-bold">vvvv <span class="text-muted">(optional)</span></label>
@@ -192,7 +192,7 @@
           <div class="mb-3">
             <label class="form-label small fw-bold" for="ipv6-site-prefix">/48 Prefix</label>
             <input class="form-control font-monospace" id="ipv6-site-prefix" name="prefix_48"
-                   type="text" placeholder="2600:0400:3001" required>
+                   type="text" placeholder="1000:2000:3000" required>
             <div class="form-text">The leading 3 hextets only. Will be normalized to canonical form.</div>
           </div>
           <div class="mb-3">
@@ -243,7 +243,7 @@
               <label class="form-label small fw-bold" for="ipv6-alloc-vvvv">vvvv (hex)</label>
               <div class="input-group">
                 <input id="ipv6-alloc-vvvv" name="vvvv" type="text" class="form-control font-monospace"
-                       placeholder="0134" maxlength="4" required>
+                       placeholder="0100" maxlength="4" required>
                 <button type="button" class="btn btn-outline" onclick="ipv6SuggestVvvv()" title="Next free vvvv at this prefix length">
                   <i class="ph ph-magic-wand"></i>
                 </button>
@@ -268,7 +268,7 @@
             <div class="col-md-6">
               <label class="form-label small fw-bold" for="ipv6-alloc-v4">IPv4 Subnet <span class="text-muted">(optional)</span></label>
               <input class="form-control font-monospace" id="ipv6-alloc-v4" name="ipv4_subnet"
-                     type="text" placeholder="10.16.109.0/24">
+                     type="text" placeholder="1.2.3.0/24">
             </div>
             <div class="col-md-6">
               <label class="form-label small fw-bold" for="ipv6-alloc-purpose">Purpose / Environment</label>

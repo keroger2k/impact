@@ -21,8 +21,8 @@ from utils.ipv6_assembler import (
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def test_normalize_prefix_48_strips_leading_zeros():
-    assert normalize_prefix_48("2600:0400:3001") == "2600:400:3001"
-    assert normalize_prefix_48("2600:400:3001") == "2600:400:3001"
+    assert normalize_prefix_48("0100:0200:0300") == "100:200:300"
+    assert normalize_prefix_48("100:200:300") == "100:200:300"
 
 
 def test_normalize_vvvv_pads_to_four_chars():
@@ -62,82 +62,83 @@ def test_vvvv_block_size_matches_spec():
 # ── Conversion: IPv4 -> tail ─────────────────────────────────────────────────
 
 def test_ipv4_to_suffix_worked_example():
-    # 10.16.109.153 -> 0x0A10:0x6D99, canonical = a10:6d99
-    assert ipv4_to_suffix("10.16.109.153") == "a10:6d99"
+    # 1.2.3.4 -> 0x0102:0x0304, canonical = 102:304
+    assert ipv4_to_suffix("1.2.3.4") == "102:304"
 
 
 def test_ipv4_to_suffix_low_and_high_bytes():
     assert ipv4_to_suffix("0.0.0.1") == "0:1"
     assert ipv4_to_suffix("255.255.255.255") == "ffff:ffff"
-    assert ipv4_to_suffix("192.168.1.1") == "c0a8:101"
+    # 7.8.9.10 -> 0x0708:0x090a
+    assert ipv4_to_suffix("7.8.9.10") == "708:90a"
 
 
 # ── Conversion: assemble + decode (round-trip on the worked example) ────────
 
 def test_assemble_matches_worked_example():
-    addr = assemble("2600:0400:3001", "0134", "10.16.109.153")
-    # The user wrote the full form 2600:0400:3001:0134:0000:0000:0A10:6D99.
+    addr = assemble("1000:2000:3000", "0100", "1.2.3.4")
+    # The full expanded form is 1000:2000:3000:0100:0000:0000:0102:0304.
     # ipaddress canonicalizes to lower-case + compressed.
-    assert addr == ipaddress.IPv6Address("2600:400:3001:134::a10:6d99")
+    assert addr == ipaddress.IPv6Address("1000:2000:3000:100::102:304")
 
 
 def test_assemble_accepts_unpadded_prefix_and_vvvv():
-    a = assemble("2600:400:3001", "134", "10.16.109.153")
-    b = assemble("2600:0400:3001", "0134", "10.16.109.153")
+    a = assemble("1000:2000:3000", "100", "1.2.3.4")
+    b = assemble("1000:2000:3000", "0100", "1.2.3.4")
     assert a == b
 
 
 def test_decode_recovers_site_vvvv_and_ipv4():
     sites = [
-        {"id": 1, "name": "DC1", "prefix_48": "2600:0400:3001"},
-        {"id": 2, "name": "DC2", "prefix_48": "2600:0400:3002"},
+        {"id": 1, "name": "DC1", "prefix_48": "1000:2000:3000"},
+        {"id": 2, "name": "DC2", "prefix_48": "4000:5000:6000"},
     ]
-    r = decode("2600:400:3001:134::a10:6d99", sites)
+    r = decode("1000:2000:3000:100::102:304", sites)
     assert r.site_id == 1
     assert r.site_name == "DC1"
-    assert r.vvvv == "0134"
-    assert r.ipv4 == "10.16.109.153"
+    assert r.vvvv == "0100"
+    assert r.ipv4 == "1.2.3.4"
     assert r.warnings == []
 
 
 def test_decode_picks_correct_site_when_v4_is_ambiguous():
     sites = [
-        {"id": 1, "name": "DC1", "prefix_48": "2600:0400:3001"},
-        {"id": 2, "name": "DC2", "prefix_48": "2600:0400:3002"},
+        {"id": 1, "name": "DC1", "prefix_48": "1000:2000:3000"},
+        {"id": 2, "name": "DC2", "prefix_48": "4000:5000:6000"},
     ]
-    same_v4 = "10.16.109.153"
-    addr_dc1 = assemble("2600:0400:3001", "0134", same_v4).compressed
-    addr_dc2 = assemble("2600:0400:3002", "0134", same_v4).compressed
+    same_v4 = "1.2.3.4"
+    addr_dc1 = assemble("1000:2000:3000", "0100", same_v4).compressed
+    addr_dc2 = assemble("4000:5000:6000", "0100", same_v4).compressed
     assert decode(addr_dc1, sites).site_name == "DC1"
     assert decode(addr_dc2, sites).site_name == "DC2"
 
 
 def test_decode_warns_when_prefix_unregistered():
-    r = decode("2600:400:9999:134::a10:6d99", sites=[])
+    r = decode("9999:9999:9999:100::102:304", sites=[])
     assert r.site_id is None
     assert any("No registered site" in w for w in r.warnings)
     # IPv4 + vvvv recovery still works
-    assert r.vvvv == "0134"
-    assert r.ipv4 == "10.16.109.153"
+    assert r.vvvv == "0100"
+    assert r.ipv4 == "1.2.3.4"
 
 
 def test_decode_warns_when_middle_hextets_nonzero():
     # Bits in hextet 5 = "dead" should trip the warning
-    sites = [{"id": 1, "name": "DC1", "prefix_48": "2600:0400:3001"}]
-    r = decode("2600:400:3001:134:dead::a10:6d99", sites)
+    sites = [{"id": 1, "name": "DC1", "prefix_48": "1000:2000:3000"}]
+    r = decode("1000:2000:3000:100:dead::102:304", sites)
     assert any("Hextets 5-6" in w for w in r.warnings)
 
 
 def test_decode_assemble_round_trip_many_ipv4s():
-    sites = [{"id": 1, "name": "DC1", "prefix_48": "2600:0400:3001"}]
+    sites = [{"id": 1, "name": "DC1", "prefix_48": "1000:2000:3000"}]
     cases = [
         ("0001", "0.0.0.1"),
-        ("0100", "10.0.0.1"),
-        ("0200", "172.16.0.1"),
-        ("ffff", "192.168.255.254"),
+        ("0100", "1.0.0.1"),
+        ("0200", "2.0.0.1"),
+        ("ffff", "9.9.9.9"),
     ]
     for vvvv, v4 in cases:
-        addr = assemble("2600:0400:3001", vvvv, v4).compressed
+        addr = assemble("1000:2000:3000", vvvv, v4).compressed
         r = decode(addr, sites)
         assert r.vvvv == vvvv
         assert r.ipv4 == v4
