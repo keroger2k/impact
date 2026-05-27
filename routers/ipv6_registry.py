@@ -70,6 +70,14 @@ def _validate_site_length(length: int) -> None:
         raise HTTPException(400, str(e))
 
 
+def _validate_status(status: str) -> None:
+    if status not in registry.SITE_STATUSES:
+        raise HTTPException(
+            400,
+            f"status must be one of {list(registry.SITE_STATUSES)}, got {status!r}",
+        )
+
+
 @router.post("/sites", status_code=201)
 async def create_site_endpoint(
     name: str = Form(..., min_length=1, max_length=128),
@@ -77,17 +85,22 @@ async def create_site_endpoint(
     prefix_length: int = Form(48),
     role: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
+    status: str = Form("active"),
     session: SessionEntry = Depends(require_auth),
 ):
     _validate_site_length(prefix_length)
+    _validate_status(status)
     canonical = _normalize_site_prefix(prefix, prefix_length)
     try:
-        return registry.create_site(
+        site = registry.create_site(
             name=name, prefix=canonical, prefix_length=prefix_length,
             role=role or None, description=description or None,
+            status=status,
         )
     except sqlite3.IntegrityError as e:
         raise HTTPException(409, f"A site with that prefix already exists: {e}")
+    cache.invalidate(_AUDIT_CACHE_KEY)
+    return site
 
 
 @router.put("/sites/{site_id}")
@@ -98,6 +111,7 @@ async def update_site_endpoint(
     prefix_length: Optional[int] = Form(None),
     role: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
+    status: Optional[str] = Form(None),
     session: SessionEntry = Depends(require_auth),
 ):
     existing = registry.get_site(site_id)
@@ -106,22 +120,49 @@ async def update_site_endpoint(
     effective_length = prefix_length if prefix_length is not None else existing["prefix_length"]
     if prefix_length is not None:
         _validate_site_length(prefix_length)
+    if status is not None:
+        _validate_status(status)
     canonical_prefix: Optional[str] = None
     if prefix is not None:
         canonical_prefix = _normalize_site_prefix(prefix, effective_length)
     try:
-        return registry.update_site(
+        updated = registry.update_site(
             site_id, name=name, prefix=canonical_prefix,
             prefix_length=prefix_length, role=role, description=description,
+            status=status,
         )
     except sqlite3.IntegrityError as e:
         raise HTTPException(409, f"Update would violate uniqueness: {e}")
+    cache.invalidate(_AUDIT_CACHE_KEY)
+    return updated
+
+
+@router.post("/sites/{site_id}/status")
+async def set_site_status_endpoint(
+    site_id: int,
+    status: str = Form(...),
+    session: SessionEntry = Depends(require_auth),
+):
+    """Set a single site's lifecycle status. When transitioning to
+    `decommissioned`, also cascades the same status to every site whose
+    prefix is contained within this one (computed in the registry layer)."""
+    _validate_status(status)
+    result = registry.set_status_cascade(site_id, status)
+    if result["site"] is None:
+        raise HTTPException(404, f"Site {site_id} not found")
+    cache.invalidate(_AUDIT_CACHE_KEY)
+    return {
+        "site": result["site"],
+        "affected_children": result["affected_children"],
+        "affected_count": len(result["affected_children"]),
+    }
 
 
 @router.delete("/sites/{site_id}", status_code=204)
 async def delete_site_endpoint(site_id: int, session: SessionEntry = Depends(require_auth)):
     if registry.delete_site(site_id) == 0:
         raise HTTPException(404, f"Site {site_id} not found")
+    cache.invalidate(_AUDIT_CACHE_KEY)
     return None
 
 

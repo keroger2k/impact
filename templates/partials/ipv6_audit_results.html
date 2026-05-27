@@ -1,8 +1,19 @@
 {# IPv6 Registry audit results — see utils/ipv6_audit.py for shape #}
 
+{% macro status_select(g) -%}
+<select class="form-select form-select-sm d-inline-block w-auto"
+        data-current="{{ g.status }}"
+        onchange="ipv6ChangeSiteStatus({{ g.site_id }}, this.value, this)">
+  <option value="active" {% if g.status == 'active' %}selected{% endif %}>active</option>
+  <option value="planned" {% if g.status == 'planned' %}selected{% endif %}>planned</option>
+  <option value="decommissioned" {% if g.status == 'decommissioned' %}selected{% endif %}>decommissioned</option>
+</select>
+{%- endmacro %}
+
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
   <div class="text-muted small">
-    Compared <strong>{{ report.counts.total_registry_sites }}</strong> Registry site{{ '' if report.counts.total_registry_sites == 1 else 's' }}
+    Compared <strong>{{ report.counts.active_registry_sites }}</strong> active /
+    <strong>{{ report.counts.total_registry_sites }}</strong> total Registry sites
     against <strong>{{ report.counts.total_global_unicast }}</strong> live global-unicast IPv6 entries
     ({{ report.counts.total_live_v6 }} total in IPAM tree).
     <span class="ms-2">Last run: <code>{{ report.generated_at }}</code></span>
@@ -17,13 +28,13 @@
   </button>
 </div>
 
-<div class="kpi-row cols-3 mb-3">
+<div class="kpi-row cols-4 mb-3">
   <div class="kpi-card">
     <div class="kpi-label">Coverage Gaps</div>
     <div class="kpi-value {% if report.counts.coverage_gaps %}text-warning{% else %}text-success{% endif %}">
       {{ report.counts.coverage_gaps }}
     </div>
-    <div class="kpi-sub text-muted">Registry sites with no live IPv6 inside their prefix</div>
+    <div class="kpi-sub text-muted">Active sites with no live IPv6 inside their prefix</div>
   </div>
   <div class="kpi-card">
     <div class="kpi-label">Off-Book Addresses</div>
@@ -39,12 +50,19 @@
     </div>
     <div class="kpi-sub text-muted">Live IPv6 in the wrong site's prefix</div>
   </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Resurrected</div>
+    <div class="kpi-value {% if report.counts.resurrected %}text-danger{% else %}text-success{% endif %}">
+      {{ report.counts.resurrected }}
+    </div>
+    <div class="kpi-sub text-muted">Live IPv6 inside a decommissioned site's prefix</div>
+  </div>
 </div>
 
 {# ── Coverage Gaps ───────────────────────────────────────────────────────── #}
 <div class="card shadow-sm border-0 mb-3">
   <div class="card-header bg-light d-flex justify-content-between align-items-center">
-    <strong><i class="ph ph-warning-circle me-1 text-warning"></i> Coverage Gaps</strong>
+    <strong><i class="ph ph-warning-circle me-1 text-warning"></i> Coverage Gaps (Active Sites)</strong>
     <span class="badge bg-secondary-subtle text-secondary">{{ report.counts.coverage_gaps }}</span>
   </div>
   <div class="card-body p-0">
@@ -55,7 +73,7 @@
           <th>Prefix</th>
           <th>Role</th>
           <th>Description</th>
-          <th data-no-sort data-no-filter>Actions</th>
+          <th data-no-sort data-no-filter>Status</th>
         </tr>
       </thead>
       <tbody>
@@ -65,16 +83,11 @@
           <td class="font-monospace">{{ g.prefix }}</td>
           <td>{% if g.role %}<span class="badge bg-info-subtle text-info">{{ g.role }}</span>{% endif %}</td>
           <td class="text-muted small">{{ g.description or '' }}</td>
-          <td>
-            <button class="btn btn-xs btn-outline px-2 py-0"
-                    onclick="document.querySelector('[data-bs-target=\'#ipv6-tab-sites\']').click()">
-              View site
-            </button>
-          </td>
+          <td>{{ status_select(g) }}</td>
         </tr>
         {% else %}
         <tr><td colspan="5" class="text-center text-success py-4">
-          <i class="ph ph-check-circle me-1"></i> Every Registry site has at least one live IPv6 entry.
+          <i class="ph ph-check-circle me-1"></i> Every active Registry site has at least one live IPv6 entry.
         </td></tr>
         {% endfor %}
       </tbody>
@@ -172,3 +185,84 @@
     </table>
   </div>
 </div>
+
+{# ── Resurrected ────────────────────────────────────────────────────────── #}
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-header bg-light d-flex justify-content-between align-items-center">
+    <strong><i class="ph ph-ghost me-1 text-danger"></i> Resurrected — Live IPv6 in Decommissioned Prefix</strong>
+    <span class="badge bg-secondary-subtle text-secondary">{{ report.counts.resurrected }}</span>
+  </div>
+  <div class="card-body p-0">
+    <table class="table table-hover table-striped mb-0 data-table">
+      <thead class="bg-light">
+        <tr>
+          <th>CIDR</th>
+          <th>Device</th>
+          <th>DNAC Site</th>
+          <th>Interface</th>
+          <th>Decommissioned site</th>
+          <th>Registry prefix</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in report.resurrected %}
+        <tr>
+          <td class="font-monospace">{{ r.cidr }}</td>
+          <td>{{ r.device }}</td>
+          <td class="text-muted small">{{ r.site_path }}</td>
+          <td class="font-monospace small">{{ r.interface_name or r.display_name }}</td>
+          <td>{{ r.registry_name }}</td>
+          <td class="font-monospace small">{{ r.registry_prefix }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="text-center text-success py-4">
+          <i class="ph ph-check-circle me-1"></i> No live IPv6 found inside any decommissioned site.
+        </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ── Decommissioned + Planned (reference, collapsed by default) ─────────── #}
+{% macro lifecycle_card(title, icon, rows, badge_class, body_id) %}
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-header bg-light d-flex justify-content-between align-items-center"
+       data-bs-toggle="collapse" data-bs-target="#{{ body_id }}" role="button"
+       aria-expanded="false" style="cursor:pointer">
+    <strong><i class="ph {{ icon }} me-1 {{ badge_class }}"></i> {{ title }}</strong>
+    <span class="badge bg-secondary-subtle text-secondary">{{ rows|length }}</span>
+  </div>
+  <div class="collapse" id="{{ body_id }}">
+    <div class="card-body p-0">
+      <table class="table table-hover table-striped mb-0 data-table">
+        <thead class="bg-light">
+          <tr>
+            <th>Site</th>
+            <th>Prefix</th>
+            <th>Role</th>
+            <th>Description</th>
+            <th data-no-sort data-no-filter>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for g in rows %}
+          <tr>
+            <td class="fw-bold text-navy">{{ g.name }}</td>
+            <td class="font-monospace">{{ g.prefix }}</td>
+            <td>{% if g.role %}<span class="badge bg-info-subtle text-info">{{ g.role }}</span>{% endif %}</td>
+            <td class="text-muted small">{{ g.description or '' }}</td>
+            <td>{{ status_select(g) }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="text-center text-muted py-4">None.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endmacro %}
+
+{{ lifecycle_card('Decommissioned Sites', 'ph-archive', report.decommissioned_sites, 'text-secondary', 'ipv6-audit-decom-body') }}
+{{ lifecycle_card('Planned Sites', 'ph-clock', report.planned_sites, 'text-warning', 'ipv6-audit-planned-body') }}

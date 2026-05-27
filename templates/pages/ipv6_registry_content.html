@@ -222,9 +222,19 @@
               <div class="form-text">/48 carries vvvv allocations; others are leaf prefixes.</div>
             </div>
           </div>
-          <div class="mb-3">
-            <label class="form-label small fw-bold" for="ipv6-site-role">Role / Region <span class="text-muted">(optional)</span></label>
-            <input class="form-control" id="ipv6-site-role" name="role" type="text" placeholder="datacenter, branch, lab">
+          <div class="row g-2 mb-3">
+            <div class="col-md-8">
+              <label class="form-label small fw-bold" for="ipv6-site-role">Role / Region <span class="text-muted">(optional)</span></label>
+              <input class="form-control" id="ipv6-site-role" name="role" type="text" placeholder="datacenter, branch, lab">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small fw-bold" for="ipv6-site-status">Status</label>
+              <select id="ipv6-site-status" name="status" class="form-select">
+                <option value="active" selected>active</option>
+                <option value="planned">planned</option>
+                <option value="decommissioned">decommissioned</option>
+              </select>
+            </div>
           </div>
           <div class="mb-3">
             <label class="form-label small fw-bold" for="ipv6-site-desc">Description <span class="text-muted">(optional)</span></label>
@@ -339,11 +349,13 @@
       document.getElementById('ipv6-site-prefix').value = site.prefix || '';
       document.getElementById('ipv6-site-prefix-length').value = site.prefix_length || 48;
       document.getElementById('ipv6-site-role').value = site.role || '';
+      document.getElementById('ipv6-site-status').value = site.status || 'active';
       document.getElementById('ipv6-site-desc').value = site.description || '';
     } else {
       document.getElementById('ipv6-site-modal-title').textContent = 'Add Site';
       form.setAttribute('hx-post', '/api/ipv6/sites');
       form.removeAttribute('hx-put');
+      document.getElementById('ipv6-site-status').value = 'active';
     }
     htmx.process(form);
   };
@@ -481,6 +493,47 @@
     const head = (cidr || '').split('/')[0].split('::')[0];
     const hextets = head.split(':').filter(Boolean).slice(0, 3).join(':');
     window.ipv6OpenSitePrefilled(hextets, len);
+  };
+
+  // Inline lifecycle change from the Audit tab. Cascade-warns on the
+  // decommissioned transition and re-renders the audit pane on success.
+  window.ipv6ChangeSiteStatus = async function(siteId, status, selectEl) {
+    if (status === 'decommissioned') {
+      const ok = confirm(
+        'Decommission this site?\n\n' +
+        'Any other Registry site whose prefix is contained within this one ' +
+        'will also be marked decommissioned.'
+      );
+      if (!ok) {
+        if (selectEl) selectEl.value = selectEl.dataset.current || 'active';
+        return;
+      }
+    }
+    const csrf = (document.cookie.split('; ').find(r => r.startsWith('csrf_token=')) || '').split('=')[1] || '';
+    try {
+      const res = await fetch('/api/ipv6/sites/' + siteId + '/status', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'X-CSRF-Token': csrf,
+        },
+        body: 'status=' + encodeURIComponent(status),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(body.detail || ('Status change failed: ' + res.status));
+        if (selectEl) selectEl.value = selectEl.dataset.current || 'active';
+        return;
+      }
+      if (body.affected_count > 0) {
+        const names = (body.affected_children || []).map(c => c.name).join(', ');
+        alert('Cascaded to ' + body.affected_count + ' child site(s): ' + names);
+      }
+      htmx.ajax('GET', '/api/ipv6/audit', {target: '#ipv6-audit-pane', swap: 'innerHTML'});
+    } catch (e) {
+      alert('Status change failed: ' + e);
+      if (selectEl) selectEl.value = selectEl.dataset.current || 'active';
+    }
   };
 
   window.ipv6OpenAllocationFromIPv6 = async function(cidr) {

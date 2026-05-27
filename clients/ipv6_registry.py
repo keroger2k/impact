@@ -26,6 +26,8 @@ _init_lock = threading.Lock()
 _initialized = False
 
 
+SITE_STATUSES = ("active", "decommissioned", "planned")
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sites (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -34,6 +36,7 @@ CREATE TABLE IF NOT EXISTS sites (
     prefix_length INTEGER NOT NULL DEFAULT 48,
     role          TEXT,
     description   TEXT,
+    status        TEXT    NOT NULL DEFAULT 'active',
     created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
     updated_at    TEXT    NOT NULL DEFAULT (datetime('now'))
 );
@@ -69,14 +72,16 @@ def _connect_raw(path: Path) -> sqlite3.Connection:
 
 def _migrate_sites_columns(conn: sqlite3.Connection) -> None:
     """Bring an older sites table (prefix_48 only) up to the current shape
-    (prefix + prefix_length). No-op on fresh databases — the CREATE IF NOT
-    EXISTS above already produces the new shape."""
+    (prefix + prefix_length + status). No-op on fresh databases — the
+    CREATE IF NOT EXISTS above already produces the new shape."""
     cols = {row["name"] for row in conn.execute("PRAGMA table_info(sites)").fetchall()}
     if "prefix" not in cols and "prefix_48" in cols:
         conn.execute("ALTER TABLE sites RENAME COLUMN prefix_48 TO prefix")
         cols.discard("prefix_48"); cols.add("prefix")
     if "prefix_length" not in cols:
         conn.execute("ALTER TABLE sites ADD COLUMN prefix_length INTEGER NOT NULL DEFAULT 48")
+    if "status" not in cols:
+        conn.execute("ALTER TABLE sites ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
 
 
 def _sites_name_is_unique(conn: sqlite3.Connection) -> bool:
@@ -118,14 +123,15 @@ def _migrate_drop_name_unique(path: Path) -> None:
                     prefix_length INTEGER NOT NULL DEFAULT 48,
                     role          TEXT,
                     description   TEXT,
+                    status        TEXT    NOT NULL DEFAULT 'active',
                     created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
                     updated_at    TEXT    NOT NULL DEFAULT (datetime('now'))
                 )
                 """
             )
             conn.execute(
-                "INSERT INTO sites_new (id, name, prefix, prefix_length, role, description, created_at, updated_at) "
-                "SELECT id, name, prefix, prefix_length, role, description, created_at, updated_at FROM sites"
+                "INSERT INTO sites_new (id, name, prefix, prefix_length, role, description, status, created_at, updated_at) "
+                "SELECT id, name, prefix, prefix_length, role, description, status, created_at, updated_at FROM sites"
             )
             conn.execute("DROP TABLE sites")
             conn.execute("ALTER TABLE sites_new RENAME TO sites")
@@ -196,12 +202,13 @@ def get_site_by_prefix(prefix: str, path: Optional[Path] = None) -> Optional[dic
 
 def create_site(name: str, prefix: str, prefix_length: int = 48,
                 role: Optional[str] = None, description: Optional[str] = None,
+                status: str = "active",
                 path: Optional[Path] = None) -> dict:
     with connect(path) as conn:
         cur = conn.execute(
-            "INSERT INTO sites (name, prefix, prefix_length, role, description) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (name, prefix, prefix_length, role, description),
+            "INSERT INTO sites (name, prefix, prefix_length, role, description, status) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (name, prefix, prefix_length, role, description, status),
         )
         site_id = cur.lastrowid
         row = conn.execute("SELECT * FROM sites WHERE id = ?", (site_id,)).fetchone()
@@ -211,11 +218,13 @@ def create_site(name: str, prefix: str, prefix_length: int = 48,
 def update_site(site_id: int, *, name: Optional[str] = None, prefix: Optional[str] = None,
                 prefix_length: Optional[int] = None,
                 role: Optional[str] = None, description: Optional[str] = None,
+                status: Optional[str] = None,
                 path: Optional[Path] = None) -> Optional[dict]:
     fields, values = [], []
     for col, val in (("name", name), ("prefix", prefix),
                      ("prefix_length", prefix_length),
-                     ("role", role), ("description", description)):
+                     ("role", role), ("description", description),
+                     ("status", status)):
         if val is not None:
             fields.append(f"{col} = ?")
             values.append(val)
@@ -234,6 +243,82 @@ def delete_site(site_id: int, path: Optional[Path] = None) -> int:
     with connect(path) as conn:
         cur = conn.execute("DELETE FROM sites WHERE id = ?", (site_id,))
         return cur.rowcount
+
+
+def _site_to_network(site: dict) -> "ipaddress.IPv6Network":
+    """Parse a site row into its IPv6Network. Raises ValueError on a bad
+    prefix — caller's responsibility to handle."""
+    import ipaddress
+    raw = site["prefix"]
+    length = int(site.get("prefix_length") or 48)
+    candidate = raw if "/" in raw else f"{raw}::/{length}"
+    return ipaddress.IPv6Network(candidate, strict=False)
+
+
+def find_child_sites(parent_id: int, path: Optional[Path] = None) -> list[dict]:
+    """Return every OTHER site whose prefix is a strict subnet of `parent_id`'s
+    prefix. Sites are siblings here — there is no FK relationship; containment
+    is computed from the IPv6Network. Returns [] if the parent doesn't exist
+    or has an unparseable prefix."""
+    import ipaddress
+    sites = list_sites(path)
+    parent = next((s for s in sites if s["id"] == parent_id), None)
+    if not parent:
+        return []
+    try:
+        parent_net = _site_to_network(parent)
+    except ValueError:
+        return []
+    children: list[dict] = []
+    for s in sites:
+        if s["id"] == parent_id:
+            continue
+        try:
+            net = _site_to_network(s)
+        except ValueError:
+            continue
+        if net != parent_net and net.subnet_of(parent_net):
+            children.append(s)
+    return children
+
+
+def set_status_cascade(site_id: int, status: str,
+                       path: Optional[Path] = None) -> dict:
+    """Set `site_id`'s status, then cascade the same status to every site
+    whose prefix is contained within it — but ONLY when moving to
+    'decommissioned'. Reactivation and 'planned' transitions affect only
+    the targeted site, since child intent isn't inferable from a parent
+    change in those directions.
+
+    Returns: {"site": <updated parent row>,
+              "affected_children": [<updated child rows>]}"""
+    if status not in SITE_STATUSES:
+        raise ValueError(f"status must be one of {SITE_STATUSES}, got {status!r}")
+    parent = get_site(site_id, path)
+    if not parent:
+        return {"site": None, "affected_children": []}
+
+    cascade = status == "decommissioned"
+    children = find_child_sites(site_id, path) if cascade else []
+
+    with connect(path) as conn:
+        conn.execute(
+            "UPDATE sites SET status = ?, updated_at = datetime('now') WHERE id = ?",
+            (status, site_id),
+        )
+        if cascade:
+            for c in children:
+                conn.execute(
+                    "UPDATE sites SET status = ?, updated_at = datetime('now') WHERE id = ?",
+                    (status, c["id"]),
+                )
+
+    updated_parent = get_site(site_id, path)
+    updated_children = [get_site(c["id"], path) for c in children]
+    return {
+        "site": updated_parent,
+        "affected_children": [c for c in updated_children if c],
+    }
 
 
 # ── Allocations ──────────────────────────────────────────────────────────────

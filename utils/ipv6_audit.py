@@ -55,6 +55,7 @@ class GapRow(TypedDict):
     prefix_length: int
     role: Optional[str]
     description: Optional[str]
+    status: str
 
 
 class OffBookRow(TypedDict):
@@ -64,6 +65,18 @@ class OffBookRow(TypedDict):
     source: str
     interface_name: str
     display_name: str
+
+
+class ResurrectedRow(TypedDict):
+    cidr: str
+    device: str
+    site_path: str
+    source: str
+    interface_name: str
+    display_name: str
+    registry_site_id: int
+    registry_name: str
+    registry_prefix: str
 
 
 class MismatchRow(TypedDict):
@@ -81,15 +94,22 @@ class AuditCounts(TypedDict):
     coverage_gaps: int
     off_book: int
     site_mismatches: int
+    resurrected: int
+    decommissioned_sites: int
+    planned_sites: int
     total_live_v6: int
     total_global_unicast: int
     total_registry_sites: int
+    active_registry_sites: int
 
 
 class AuditReport(TypedDict):
     coverage_gaps: list[GapRow]
     off_book: list[OffBookRow]
     site_mismatches: list[MismatchRow]
+    resurrected: list[ResurrectedRow]
+    decommissioned_sites: list[GapRow]
+    planned_sites: list[GapRow]
     counts: AuditCounts
     generated_at: str
 
@@ -171,18 +191,35 @@ def containing_site(
     return None
 
 
-def run_audit(sites: list[dict], tree: Optional[dict]) -> AuditReport:
-    """Execute all three checks and return a fully-formed AuditReport.
+def _gap_row(site: dict) -> GapRow:
+    return GapRow(
+        site_id=site["id"],
+        name=site["name"] or "",
+        prefix=f"{site['prefix']}::/{site['prefix_length']}",
+        prefix_length=site["prefix_length"],
+        role=site.get("role"),
+        description=site.get("description"),
+        status=site.get("status") or "active",
+    )
 
-    `sites` is the output of `clients.ipv6_registry.list_sites()`.
-    `tree`  is the output of `cache.get(IPAM_TREE_CACHE_KEY)` (may be None
-    if the IPAM tree has never been built — in that case the live-side
-    checks return empty lists, and every Registry site shows up as a gap).
+
+def run_audit(sites: list[dict], tree: Optional[dict]) -> AuditReport:
+    """Execute all audit checks and return a fully-formed AuditReport.
+
+    Bucketing logic:
+      * Coverage gaps  — only active sites with no live IPv6 inside their prefix.
+      * Decommissioned / Planned — sites in those statuses, listed separately
+        so the user can see them at a glance without polluting the gaps list.
+      * Resurrected    — live global-unicast IPv6 inside a decommissioned
+        site's prefix (live where it isn't supposed to be).
+      * Off-book / Mismatches — unchanged: outside every Registry prefix /
+        in the wrong site's prefix.
     """
     index = build_registry_index(sites)
     matched_site_ids: set[int] = set()
     off_book: list[OffBookRow] = []
     site_mismatches: list[MismatchRow] = []
+    resurrected: list[ResurrectedRow] = []
 
     total_live = 0
     total_global = 0
@@ -209,6 +246,25 @@ def run_audit(sites: list[dict], tree: Optional[dict]) -> AuditReport:
         matched_site_ids.add(site["id"])
         if is_inferred:
             continue
+
+        site_status = site.get("status") or "active"
+        if site_status == "decommissioned":
+            # The address is contained by a site that's supposed to be retired.
+            # That's actionable — surface it as a "resurrected" entry rather
+            # than counting it as healthy coverage or as off-book.
+            resurrected.append(ResurrectedRow(
+                cidr=rec["cidr"],
+                device=rec["device"],
+                site_path=rec["site_path"],
+                source=rec["source"],
+                interface_name=rec["interface_name"],
+                display_name=rec["display_name"],
+                registry_site_id=site["id"],
+                registry_name=site["name"] or "",
+                registry_prefix=f"{site['prefix']}::/{site['prefix_length']}",
+            ))
+            continue
+
         device_code = site_code(rec["site_path"])
         registry_code = site_code(site["name"] or "")
         # Only flag when both sides extracted a non-empty code AND they differ
@@ -226,33 +282,42 @@ def run_audit(sites: list[dict], tree: Optional[dict]) -> AuditReport:
                 registry_code=registry_code,
             ))
 
-    coverage_gaps: list[GapRow] = [
-        GapRow(
-            site_id=site["id"],
-            name=site["name"] or "",
-            prefix=f"{site['prefix']}::/{site['prefix_length']}",
-            prefix_length=site["prefix_length"],
-            role=site.get("role"),
-            description=site.get("description"),
-        )
-        for site in sites
-        if site["id"] not in matched_site_ids
-    ]
+    # Partition sites by status before building the gap list. Coverage gaps
+    # only flag active sites — decommissioned and planned sites have their
+    # own buckets so they don't drown the actionable list.
+    active_sites = [s for s in sites if (s.get("status") or "active") == "active"]
+    decommissioned_sites = [s for s in sites if s.get("status") == "decommissioned"]
+    planned_sites = [s for s in sites if s.get("status") == "planned"]
+
+    coverage_gaps = [_gap_row(s) for s in active_sites if s["id"] not in matched_site_ids]
+    decommissioned_rows = [_gap_row(s) for s in decommissioned_sites]
+    planned_rows = [_gap_row(s) for s in planned_sites]
+
     coverage_gaps.sort(key=lambda r: (r["name"] or "").lower())
+    decommissioned_rows.sort(key=lambda r: (r["name"] or "").lower())
+    planned_rows.sort(key=lambda r: (r["name"] or "").lower())
     off_book.sort(key=lambda r: r["cidr"])
     site_mismatches.sort(key=lambda r: (r["device"], r["cidr"]))
+    resurrected.sort(key=lambda r: (r["registry_name"], r["cidr"]))
 
     return AuditReport(
         coverage_gaps=coverage_gaps,
         off_book=off_book,
         site_mismatches=site_mismatches,
+        resurrected=resurrected,
+        decommissioned_sites=decommissioned_rows,
+        planned_sites=planned_rows,
         counts=AuditCounts(
             coverage_gaps=len(coverage_gaps),
             off_book=len(off_book),
             site_mismatches=len(site_mismatches),
+            resurrected=len(resurrected),
+            decommissioned_sites=len(decommissioned_rows),
+            planned_sites=len(planned_rows),
             total_live_v6=total_live,
             total_global_unicast=total_global,
             total_registry_sites=len(sites),
+            active_registry_sites=len(active_sites),
         ),
         generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
     )

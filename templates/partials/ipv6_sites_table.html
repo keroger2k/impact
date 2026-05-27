@@ -6,12 +6,25 @@
     <i class="ph ph-plus me-1"></i> Add Site
   </button>
 </div>
+{% macro status_badge(status) %}
+  {% set s = status or 'active' %}
+  {% if s == 'active' %}
+    <span class="badge bg-success-subtle text-success">active</span>
+  {% elif s == 'decommissioned' %}
+    <span class="badge bg-danger-subtle text-danger">decommissioned</span>
+  {% elif s == 'planned' %}
+    <span class="badge bg-warning-subtle text-warning">planned</span>
+  {% else %}
+    <span class="badge bg-secondary-subtle text-secondary">{{ s }}</span>
+  {% endif %}
+{% endmacro %}
 <table class="table table-hover table-striped mb-0 data-table">
   <thead class="bg-light">
     <tr>
       <th>Name</th>
       <th>Prefix</th>
       <th>Length</th>
+      <th>Status</th>
       <th>Role</th>
       <th>Description</th>
       <th data-no-sort data-no-filter>Actions</th>
@@ -29,6 +42,7 @@
           <span class="badge bg-secondary-subtle text-secondary" title="leaf prefix (no sub-allocations)">/{{ s.prefix_length }}</span>
         {% endif %}
       </td>
+      <td>{{ status_badge(s.status) }}</td>
       <td>{% if s.role %}<span class="badge bg-info-subtle text-info">{{ s.role }}</span>{% endif %}</td>
       <td class="text-muted small">{{ s.description or '' }}</td>
       <td>
@@ -57,7 +71,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="6" class="text-center text-muted py-4">No sites registered yet.</td></tr>
+    <tr><td colspan="7" class="text-center text-muted py-4">No sites registered yet.</td></tr>
     {% endfor %}
   </tbody>
 </table>
