@@ -32,6 +32,11 @@
         <i class="ph ph-arrow-square-in me-1"></i> Assemble IPv6
       </button>
     </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" data-bs-toggle="tab" data-bs-target="#ipv6-tab-bulk" type="button" role="tab">
+        <i class="ph ph-stack me-1"></i> Bulk Assemble
+      </button>
+    </li>
   </ul>
 
   <div class="tab-content">
@@ -76,6 +81,48 @@
           </form>
           <div id="ipv6-decode-result" class="text-muted small">
             <i class="ph ph-info me-1"></i> Paste an assembled IPv6 address to recover its site, vvvv segment, and the original IPv4.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bulk Assemble -->
+    <div class="tab-pane fade" id="ipv6-tab-bulk" role="tabpanel">
+      <div class="card shadow-sm border-0">
+        <div class="card-body">
+          <form id="ipv6-bulk-form" class="mb-3"
+                hx-post="/api/ipv6/assemble/bulk"
+                hx-target="#ipv6-bulk-result"
+                hx-swap="innerHTML">
+            <div class="row g-3 mb-3">
+              <div class="col-md-4">
+                <label for="ipv6-bulk-site" class="form-label small fw-bold">Site</label>
+                <select id="ipv6-bulk-site" name="site_id" class="form-select" required>
+                  <option value="">— select a site —</option>
+                  {% for s in sites %}
+                    <option value="{{ s.id }}">{{ s.name }} ({{ s.prefix_48 }}::/48)</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-md-8 d-flex align-items-end">
+                <div class="text-muted small">
+                  <i class="ph ph-info me-1"></i>
+                  Paste IPv4 addresses below (one per line; commas, semicolons, and tabs also accepted).
+                  Each IPv4 is matched against this site's registered allocations using longest-prefix wins.
+                </div>
+              </div>
+            </div>
+            <div class="mb-3">
+              <label for="ipv6-bulk-input" class="form-label small fw-bold">IPv4 addresses</label>
+              <textarea id="ipv6-bulk-input" name="ipv4_list" class="form-control font-monospace"
+                        rows="10" placeholder="10.16.109.153&#10;10.16.110.20&#10;10.16.111.5" required></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary">
+              <i class="ph ph-arrow-right me-1"></i> Assemble All
+            </button>
+          </form>
+          <div id="ipv6-bulk-result" class="text-muted small">
+            <i class="ph ph-info me-1"></i> Results will appear here.
           </div>
         </div>
       </div>

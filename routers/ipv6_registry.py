@@ -281,6 +281,101 @@ async def delete_allocation_endpoint(alloc_id: int, session: SessionEntry = Depe
     return None
 
 
+_IPV4_SPLIT_CHARS = (",", ";", "\t")
+
+
+def _split_ipv4_list(raw: str) -> list[str]:
+    """Tolerant parser: accepts newlines, commas, semicolons, tabs, whitespace.
+    Strips '# comments', drops blanks, dedupes preserving first-seen order."""
+    tokens: list[str] = []
+    for line in raw.splitlines():
+        clean = line.split("#", 1)[0]
+        for ch in _IPV4_SPLIT_CHARS:
+            clean = clean.replace(ch, " ")
+        for tok in clean.split():
+            tokens.append(tok.strip())
+    seen: set[str] = set()
+    out: list[str] = []
+    for t in tokens:
+        if t and t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out
+
+
+@router.post("/assemble/bulk")
+async def assemble_bulk(
+    request: Request,
+    site_id: int = Form(...),
+    ipv4_list: str = Form(..., min_length=1),
+    session: SessionEntry = Depends(require_auth),
+):
+    site = registry.get_site(site_id)
+    if not site:
+        raise HTTPException(404, f"Site {site_id} not found")
+
+    hosts = _split_ipv4_list(ipv4_list)
+    allocations = registry.list_allocations(site_id=site_id)
+
+    rows: list[dict] = []
+    counts = {"ok": 0, "no_match": 0, "invalid": 0}
+
+    for raw in hosts:
+        row: dict = {
+            "site_name": site["name"], "ipv4": raw,
+            "ipv6": "", "vvvv": "", "status": "", "detail": "",
+        }
+        try:
+            ipaddress.IPv4Address(raw)
+        except (ipaddress.AddressValueError, ValueError) as e:
+            row["status"] = "invalid"
+            row["detail"] = str(e)
+            counts["invalid"] += 1
+            rows.append(row)
+            continue
+
+        match = _find_vvvv_for_ipv4(site_id, raw, allocations=allocations)
+        if match is None:
+            row["status"] = "no_match"
+            row["detail"] = "no allocation covers this IPv4 in this site"
+            counts["no_match"] += 1
+            rows.append(row)
+            continue
+
+        try:
+            addr = ipv6.assemble(site["prefix_48"], match["vvvv"], raw)
+        except (ipaddress.AddressValueError, ValueError) as e:
+            row["status"] = "invalid"
+            row["detail"] = str(e)
+            counts["invalid"] += 1
+            rows.append(row)
+            continue
+
+        row["status"] = "ok"
+        row["vvvv"] = match["vvvv"]
+        row["ipv6"] = addr.compressed
+        row["allocation_id"] = match["id"]
+        row["matched_subnet"] = match["ipv4_subnet"]
+        counts["ok"] += 1
+        rows.append(row)
+
+    payload = {
+        "site": {"id": site["id"], "name": site["name"], "prefix_48": site["prefix_48"]},
+        "rows": rows,
+        "counts": counts,
+        "total": len(rows),
+    }
+    if request.headers.get("HX-Request"):
+        # TSV body for the copy-paste textarea: site, ipv4, ipv6 (skip failures)
+        tsv_lines = [f"{r['site_name']}\t{r['ipv4']}\t{r['ipv6']}"
+                     for r in rows if r["status"] == "ok"]
+        payload["tsv"] = "\n".join(tsv_lines)
+        return templates.TemplateResponse(
+            request, "partials/ipv6_bulk_assemble_result.html", {"result": payload},
+        )
+    return payload
+
+
 # ── Export ───────────────────────────────────────────────────────────────────
 
 @router.get("/export.csv")
@@ -340,16 +435,20 @@ async def decode(
     return payload
 
 
-def _find_vvvv_for_ipv4(site_id: int, ipv4: str) -> Optional[dict]:
+def _find_vvvv_for_ipv4(site_id: int, ipv4: str,
+                        allocations: Optional[list[dict]] = None) -> Optional[dict]:
     """Walk this site's allocations and return the row whose ipv4_subnet
     contains the host. Longest-prefix match wins (a /27 inside a /24 takes
-    precedence over the /24)."""
+    precedence over the /24). Pass `allocations` to skip the DB roundtrip
+    when looping over many hosts in the same site."""
     try:
         host = ipaddress.IPv4Address(ipv4.strip())
     except (ipaddress.AddressValueError, ValueError):
         return None
+    if allocations is None:
+        allocations = registry.list_allocations(site_id=site_id)
     best: tuple[int, dict] | None = None
-    for a in registry.list_allocations(site_id=site_id):
+    for a in allocations:
         subnet = a.get("ipv4_subnet")
         if not subnet:
             continue
