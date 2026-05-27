@@ -100,16 +100,15 @@ def main() -> int:
         return 2
 
     registry.init_schema()
-    by_name = {s["name"]: s for s in registry.list_sites()}
-    by_prefix = {s["prefix"]: s for s in by_name.values()}
+    by_prefix = {s["prefix"]: s for s in registry.list_sites()}
 
     stats = {"created": 0, "skipped_exists": 0,
-             "skipped_name_conflict": 0, "skipped_prefix_conflict": 0,
+             "skipped_prefix_conflict": 0,
              "parse_errors": 0}
 
     mode = "APPLY" if args.apply else "DRY-RUN"
     print(f"[{mode}] reading {path}")
-    print(f"        {len(by_name)} sites already registered")
+    print(f"        {len(by_prefix)} sites already registered")
     print()
 
     with path.open(newline="") as f:
@@ -125,29 +124,20 @@ def main() -> int:
                 continue
             name, prefix, prefix_length, role, description = parsed
 
-            # Exact same site (name + prefix + length) already present?
-            existing = by_name.get(name)
-            if existing and existing["prefix"] == prefix and existing["prefix_length"] == prefix_length:
-                print(f"  line {lineno:>4}  SKIP-EXISTS            "
-                      f"{name} {prefix}::/{prefix_length} already present (id={existing['id']})")
-                stats["skipped_exists"] += 1
-                continue
-
-            # Name collision against a different prefix
+            # The prefix is the identity. Same prefix already in the DB?
+            existing = by_prefix.get(prefix)
             if existing:
-                print(f"  line {lineno:>4}  SKIP-NAME-CONFLICT     "
-                      f"'{name}' already mapped to {existing['prefix']}::/{existing['prefix_length']} "
-                      f"(would clash with {prefix}::/{prefix_length})")
-                stats["skipped_name_conflict"] += 1
-                continue
-
-            # Prefix collision under a different name
-            other = by_prefix.get(prefix)
-            if other:
-                print(f"  line {lineno:>4}  SKIP-PREFIX-CONFLICT   "
-                      f"prefix {prefix} already owned by '{other['name']}' "
-                      f"(would clash with new site '{name}')")
-                stats["skipped_prefix_conflict"] += 1
+                if (existing["name"] == name
+                        and existing["prefix_length"] == prefix_length):
+                    print(f"  line {lineno:>4}  SKIP-EXISTS            "
+                          f"{name} {prefix}::/{prefix_length} already present (id={existing['id']})")
+                    stats["skipped_exists"] += 1
+                else:
+                    print(f"  line {lineno:>4}  SKIP-PREFIX-CONFLICT   "
+                          f"prefix {prefix} already owned by "
+                          f"'{existing['name']}' (/{existing['prefix_length']}) — "
+                          f"would clash with '{name}' (/{prefix_length})")
+                    stats["skipped_prefix_conflict"] += 1
                 continue
 
             action = "CREATE" if args.apply else "WOULD-CREATE"
@@ -165,15 +155,12 @@ def main() -> int:
                     name=name, prefix=prefix, prefix_length=prefix_length,
                     role=role, description=description,
                 )
-                by_name[name] = row
                 by_prefix[prefix] = row
             else:
-                # Reserve the name/prefix in our in-memory maps so a later
-                # duplicate in the same file still trips the conflict checks
-                pending = {"id": None, "name": name, "prefix": prefix,
-                           "prefix_length": prefix_length}
-                by_name[name] = pending
-                by_prefix[prefix] = pending
+                # Reserve the prefix in the in-memory map so a later duplicate
+                # in the same file still trips SKIP-PREFIX-CONFLICT.
+                by_prefix[prefix] = {"id": None, "name": name, "prefix": prefix,
+                                     "prefix_length": prefix_length}
             stats["created"] += 1  # counts would-creates in dry-run too
 
     label = "created" if args.apply else "would create"

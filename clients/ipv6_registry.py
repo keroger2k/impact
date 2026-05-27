@@ -29,7 +29,7 @@ _initialized = False
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sites (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    name          TEXT    NOT NULL UNIQUE,
+    name          TEXT    NOT NULL,
     prefix        TEXT    NOT NULL UNIQUE,
     prefix_length INTEGER NOT NULL DEFAULT 48,
     role          TEXT,
@@ -79,6 +79,69 @@ def _migrate_sites_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE sites ADD COLUMN prefix_length INTEGER NOT NULL DEFAULT 48")
 
 
+def _sites_name_is_unique(conn: sqlite3.Connection) -> bool:
+    """True if sites.name has a UNIQUE constraint (auto-created unique index
+    covering exactly the name column). Legacy schemas had this; current
+    schema does not."""
+    for idx in conn.execute("PRAGMA index_list(sites)").fetchall():
+        if not idx["unique"]:
+            continue
+        cols = [r["name"] for r in conn.execute(f"PRAGMA index_info({idx['name']})").fetchall()]
+        if cols == ["name"]:
+            return True
+    return False
+
+
+def _migrate_drop_name_unique(path: Path) -> None:
+    """Drop the legacy UNIQUE constraint on sites.name. SQLite has no DDL
+    for dropping a column constraint, so we recreate the table.
+
+    FK enforcement is toggled at the connection level rather than inside a
+    transaction (SQLite ignores PRAGMA foreign_keys mid-transaction). Done
+    on its own connection so the outer init_schema connection isn't left
+    with FKs disabled."""
+    conn = _connect_raw(path)
+    try:
+        if not _sites_name_is_unique(conn):
+            return
+        conn.execute("PRAGMA foreign_keys = OFF")
+        try:
+            # Individual execute() calls so the transaction stays open —
+            # executescript() implicitly commits any pending transaction.
+            conn.execute("BEGIN")
+            conn.execute(
+                """
+                CREATE TABLE sites_new (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name          TEXT    NOT NULL,
+                    prefix        TEXT    NOT NULL UNIQUE,
+                    prefix_length INTEGER NOT NULL DEFAULT 48,
+                    role          TEXT,
+                    description   TEXT,
+                    created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+                    updated_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+                )
+                """
+            )
+            conn.execute(
+                "INSERT INTO sites_new (id, name, prefix, prefix_length, role, description, created_at, updated_at) "
+                "SELECT id, name, prefix, prefix_length, role, description, created_at, updated_at FROM sites"
+            )
+            conn.execute("DROP TABLE sites")
+            conn.execute("ALTER TABLE sites_new RENAME TO sites")
+            conn.execute("COMMIT")
+            violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+            if violations:
+                raise RuntimeError(
+                    f"FK integrity check failed after sites migration: {violations}"
+                )
+            logger.info("Migrated sites table: dropped UNIQUE on name")
+        finally:
+            conn.execute("PRAGMA foreign_keys = ON")
+    finally:
+        conn.close()
+
+
 def init_schema(path: Optional[Path] = None) -> None:
     """Create tables and indexes if missing. Safe to call repeatedly."""
     global _initialized
@@ -88,6 +151,7 @@ def init_schema(path: Optional[Path] = None) -> None:
         with _connect_raw(target) as conn:
             conn.executescript(SCHEMA)
             _migrate_sites_columns(conn)
+        _migrate_drop_name_unique(target)
         if target == DB_PATH:
             _initialized = True
         logger.info(f"IPv6 registry schema ready at {target}")

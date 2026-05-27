@@ -82,7 +82,7 @@ async def create_site_endpoint(
             role=role or None, description=description or None,
         )
     except sqlite3.IntegrityError as e:
-        raise HTTPException(409, f"Site with that name or prefix already exists: {e}")
+        raise HTTPException(409, f"A site with that prefix already exists: {e}")
 
 
 @router.put("/sites/{site_id}")

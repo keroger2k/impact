@@ -51,10 +51,14 @@ def test_create_site_with_non_default_prefix_length(db_path: Path):
     assert airport["prefix_length"] == 56
 
 
-def test_site_unique_name_and_prefix(db_path: Path):
+def test_site_prefix_is_unique_but_name_is_not(db_path: Path):
+    """A site is identified by its prefix; names can repeat so one logical
+    site can hold multiple disjoint IPv6 prefixes."""
     reg.create_site("DC1", "1000:2000:3000", path=db_path)
-    with pytest.raises(sqlite3.IntegrityError):
-        reg.create_site("DC1", "4000:5000:6000", path=db_path)
+    # Duplicate name with a different prefix is allowed
+    reg.create_site("DC1", "4000:5000:6000", path=db_path)
+    assert len(reg.list_sites(path=db_path)) == 2
+    # Duplicate prefix is still rejected
     with pytest.raises(sqlite3.IntegrityError):
         reg.create_site("DC2", "1000:2000:3000", path=db_path)
 
@@ -157,3 +161,63 @@ def test_migration_from_legacy_prefix_48_schema(tmp_path: Path):
     assert len(sites) == 1
     assert sites[0]["prefix"] == "1000:2000:3000"
     assert sites[0]["prefix_length"] == 48
+
+
+def test_migration_drops_unique_on_name(tmp_path: Path):
+    """A DB that still carries UNIQUE on sites.name gets migrated to allow
+    duplicate names. The prefix UNIQUE survives, and existing allocations
+    keep their FK pointing at the recreated parent row."""
+    path = tmp_path / "legacy_name_unique.db"
+    legacy = """
+        CREATE TABLE sites (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            name          TEXT    NOT NULL UNIQUE,
+            prefix        TEXT    NOT NULL UNIQUE,
+            prefix_length INTEGER NOT NULL DEFAULT 48,
+            role          TEXT,
+            description   TEXT,
+            created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            updated_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE allocations (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            site_id        INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+            vvvv           TEXT    NOT NULL,
+            prefix_length  INTEGER NOT NULL,
+            ipv4_subnet    TEXT,
+            purpose        TEXT,
+            status         TEXT    NOT NULL DEFAULT 'allocated',
+            owner          TEXT,
+            description    TEXT,
+            created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+            updated_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE (site_id, vvvv)
+        );
+    """
+    with reg._connect_raw(path) as conn:
+        conn.executescript(legacy)
+        cur = conn.execute(
+            "INSERT INTO sites (name, prefix) VALUES (?, ?)",
+            ("DC1", "1000:2000:3000"),
+        )
+        site_id = cur.lastrowid
+        conn.execute(
+            "INSERT INTO allocations (site_id, vvvv, prefix_length) VALUES (?, ?, ?)",
+            (site_id, "0100", 64),
+        )
+
+    reg.init_schema(path)
+
+    # UNIQUE on name is gone — duplicate names now allowed
+    reg.create_site("DC1", "4000:5000:6000", path=path)
+    assert len(reg.list_sites(path=path)) == 2
+
+    # Prefix UNIQUE is preserved
+    with pytest.raises(sqlite3.IntegrityError):
+        reg.create_site("DC1-dup", "1000:2000:3000", path=path)
+
+    # FK from the pre-existing allocation still resolves to the original site
+    allocs = reg.list_allocations(path=path)
+    assert len(allocs) == 1
+    assert allocs[0]["site_id"] == site_id
+    assert allocs[0]["site_name"] == "DC1"
