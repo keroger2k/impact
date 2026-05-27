@@ -279,6 +279,23 @@ async def ipam_page(request: Request, user: SessionEntry = Depends(get_current_u
         return templates.TemplateResponse(request, "pages/ipam_content.html", context)
     return templates.TemplateResponse(request, "ipam.html", context)
 
+@router.get("/ipv6-registry", response_class=HTMLResponse)
+async def ipv6_registry_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
+    if not user: return RedirectResponse(url="/login")
+    from clients import ipv6_registry as registry
+    sites = registry.list_sites()
+    context = {
+        "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
+        "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
+        "active_page": "ipv6-registry",
+        "username": user.username,
+        "sites": sites,
+    }
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse(request, "pages/ipv6_registry_content.html", context)
+    return templates.TemplateResponse(request, "ipv6_registry.html", context)
+
+
 @router.get("/tunnels", response_class=HTMLResponse)
 async def tunnels_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
     if not user: return RedirectResponse(url="/login")

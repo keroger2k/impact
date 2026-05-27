@@ -1,0 +1,221 @@
+"""Tests for utils.ipv6_assembler — pure conversion math."""
+from __future__ import annotations
+
+import ipaddress
+
+import pytest
+
+from utils.ipv6_assembler import (
+    assemble,
+    decode,
+    find_overlap,
+    ipv4_to_suffix,
+    next_block,
+    normalize_prefix_48,
+    normalize_vvvv,
+    validate_prefix_length,
+    vvvv_block_size,
+)
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+def test_normalize_prefix_48_strips_leading_zeros():
+    assert normalize_prefix_48("2600:0400:3001") == "2600:400:3001"
+    assert normalize_prefix_48("2600:400:3001") == "2600:400:3001"
+
+
+def test_normalize_vvvv_pads_to_four_chars():
+    assert normalize_vvvv("134") == "0134"
+    assert normalize_vvvv("0134") == "0134"
+    assert normalize_vvvv("FFFF") == "ffff"
+    assert normalize_vvvv("0") == "0000"
+
+
+def test_normalize_vvvv_rejects_out_of_range():
+    with pytest.raises(ValueError):
+        normalize_vvvv("10000")
+    with pytest.raises(ValueError):
+        normalize_vvvv("-1")
+    with pytest.raises(ValueError):
+        normalize_vvvv("")
+
+
+def test_validate_prefix_length_bounds():
+    for p in (49, 56, 64):
+        validate_prefix_length(p)
+    for p in (47, 48, 65, 128):
+        with pytest.raises(ValueError):
+            validate_prefix_length(p)
+
+
+def test_vvvv_block_size_matches_spec():
+    # Sizes from the spec: /50->0x4000, /51->0x2000, /56->0x0100, /59->0x0020
+    assert vvvv_block_size(50) == 0x4000
+    assert vvvv_block_size(51) == 0x2000
+    assert vvvv_block_size(56) == 0x0100
+    assert vvvv_block_size(59) == 0x0020
+    assert vvvv_block_size(60) == 0x0010
+    assert vvvv_block_size(64) == 0x0001
+
+
+# ── Conversion: IPv4 -> tail ─────────────────────────────────────────────────
+
+def test_ipv4_to_suffix_worked_example():
+    # 10.16.109.153 -> 0x0A10:0x6D99, canonical = a10:6d99
+    assert ipv4_to_suffix("10.16.109.153") == "a10:6d99"
+
+
+def test_ipv4_to_suffix_low_and_high_bytes():
+    assert ipv4_to_suffix("0.0.0.1") == "0:1"
+    assert ipv4_to_suffix("255.255.255.255") == "ffff:ffff"
+    assert ipv4_to_suffix("192.168.1.1") == "c0a8:101"
+
+
+# ── Conversion: assemble + decode (round-trip on the worked example) ────────
+
+def test_assemble_matches_worked_example():
+    addr = assemble("2600:0400:3001", "0134", "10.16.109.153")
+    # The user wrote the full form 2600:0400:3001:0134:0000:0000:0A10:6D99.
+    # ipaddress canonicalizes to lower-case + compressed.
+    assert addr == ipaddress.IPv6Address("2600:400:3001:134::a10:6d99")
+
+
+def test_assemble_accepts_unpadded_prefix_and_vvvv():
+    a = assemble("2600:400:3001", "134", "10.16.109.153")
+    b = assemble("2600:0400:3001", "0134", "10.16.109.153")
+    assert a == b
+
+
+def test_decode_recovers_site_vvvv_and_ipv4():
+    sites = [
+        {"id": 1, "name": "DC1", "prefix_48": "2600:0400:3001"},
+        {"id": 2, "name": "DC2", "prefix_48": "2600:0400:3002"},
+    ]
+    r = decode("2600:400:3001:134::a10:6d99", sites)
+    assert r.site_id == 1
+    assert r.site_name == "DC1"
+    assert r.vvvv == "0134"
+    assert r.ipv4 == "10.16.109.153"
+    assert r.warnings == []
+
+
+def test_decode_picks_correct_site_when_v4_is_ambiguous():
+    sites = [
+        {"id": 1, "name": "DC1", "prefix_48": "2600:0400:3001"},
+        {"id": 2, "name": "DC2", "prefix_48": "2600:0400:3002"},
+    ]
+    same_v4 = "10.16.109.153"
+    addr_dc1 = assemble("2600:0400:3001", "0134", same_v4).compressed
+    addr_dc2 = assemble("2600:0400:3002", "0134", same_v4).compressed
+    assert decode(addr_dc1, sites).site_name == "DC1"
+    assert decode(addr_dc2, sites).site_name == "DC2"
+
+
+def test_decode_warns_when_prefix_unregistered():
+    r = decode("2600:400:9999:134::a10:6d99", sites=[])
+    assert r.site_id is None
+    assert any("No registered site" in w for w in r.warnings)
+    # IPv4 + vvvv recovery still works
+    assert r.vvvv == "0134"
+    assert r.ipv4 == "10.16.109.153"
+
+
+def test_decode_warns_when_middle_hextets_nonzero():
+    # Bits in hextet 5 = "dead" should trip the warning
+    sites = [{"id": 1, "name": "DC1", "prefix_48": "2600:0400:3001"}]
+    r = decode("2600:400:3001:134:dead::a10:6d99", sites)
+    assert any("Hextets 5-6" in w for w in r.warnings)
+
+
+def test_decode_assemble_round_trip_many_ipv4s():
+    sites = [{"id": 1, "name": "DC1", "prefix_48": "2600:0400:3001"}]
+    cases = [
+        ("0001", "0.0.0.1"),
+        ("0100", "10.0.0.1"),
+        ("0200", "172.16.0.1"),
+        ("ffff", "192.168.255.254"),
+    ]
+    for vvvv, v4 in cases:
+        addr = assemble("2600:0400:3001", vvvv, v4).compressed
+        r = decode(addr, sites)
+        assert r.vvvv == vvvv
+        assert r.ipv4 == v4
+        assert r.site_id == 1
+
+
+# ── Allocator ────────────────────────────────────────────────────────────────
+
+def test_next_block_empty_returns_zero():
+    assert next_block(56, []) == "0000"
+    assert next_block(64, []) == "0000"
+
+
+def test_next_block_honors_interval_for_each_mask():
+    # First /50 is 0x0000; next is 0x4000
+    occupied = [{"vvvv": "0000", "prefix_length": 50}]
+    assert next_block(50, occupied) == "4000"
+    # First /56 is 0x0000; next is 0x0100
+    assert next_block(56, [{"vvvv": "0000", "prefix_length": 56}]) == "0100"
+    # First /59 is 0x0000; next is 0x0020
+    assert next_block(59, [{"vvvv": "0000", "prefix_length": 59}]) == "0020"
+
+
+def test_next_block_finds_gap_between_allocations():
+    # /56 blocks at 0x0000 and 0x0200 leave 0x0100 free
+    occupied = [
+        {"vvvv": "0000", "prefix_length": 56},
+        {"vvvv": "0200", "prefix_length": 56},
+    ]
+    assert next_block(56, occupied) == "0100"
+
+
+def test_next_block_returns_none_when_full():
+    # A single /49 at 0x0000 covers half the space; one more at 0x8000 fills it
+    occupied = [
+        {"vvvv": "0000", "prefix_length": 49},
+        {"vvvv": "8000", "prefix_length": 49},
+    ]
+    assert next_block(49, occupied) is None
+
+
+def test_find_overlap_detects_exact_match():
+    occupied = [{"id": 1, "vvvv": "0100", "prefix_length": 64}]
+    hits = find_overlap("0100", 64, occupied)
+    assert len(hits) == 1 and hits[0]["id"] == 1
+
+
+def test_find_overlap_detects_containment_either_direction():
+    # Existing /64 sits inside a proposed /56
+    occupied = [{"id": 1, "vvvv": "0142", "prefix_length": 64}]
+    assert find_overlap("0100", 56, occupied) == occupied
+
+    # Existing /56 contains a proposed /64
+    occupied = [{"id": 2, "vvvv": "0100", "prefix_length": 56}]
+    assert find_overlap("0142", 64, occupied) == occupied
+
+
+def test_find_overlap_returns_empty_when_disjoint():
+    occupied = [{"id": 1, "vvvv": "0100", "prefix_length": 56}]
+    assert find_overlap("0200", 56, occupied) == []
+    assert find_overlap("0300", 64, occupied) == []
+
+
+def test_find_overlap_excludes_self_for_update():
+    occupied = [{"id": 1, "vvvv": "0100", "prefix_length": 56}]
+    # Updating row id=1 to the same vvvv/prefix should not flag itself
+    assert find_overlap("0100", 56, occupied, exclude_alloc_id=1) == []
+
+
+def test_next_block_skips_over_smaller_existing_block():
+    # A /64 occupies just one vvvv (0x0500); the next free /56 must skip that range
+    occupied = [{"vvvv": "0500", "prefix_length": 64}]
+    # /56 ranges: [0,100), [100,200), [200,300), [300,400), [400,500), [500,600)
+    # The /64 at 0x0500 sits inside [500,600), so 0x0500 is taken; first free is 0x0000
+    assert next_block(56, occupied) == "0000"
+    # If we also block the first /56, next free must skip 0x0500's containing /56
+    occupied = [
+        {"vvvv": "0000", "prefix_length": 56},
+        {"vvvv": "0500", "prefix_length": 64},
+    ]
+    assert next_block(56, occupied) == "0100"

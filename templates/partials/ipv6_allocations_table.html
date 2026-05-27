@@ -1,0 +1,78 @@
+<div class="d-flex justify-content-between align-items-center px-3 py-2 border-bottom flex-wrap gap-2">
+  <div class="d-flex align-items-center gap-2">
+    <span class="text-muted small">{{ items|length }} allocation{{ '' if items|length == 1 else 's' }}</span>
+    <form class="d-inline-flex align-items-center gap-2" method="get">
+      <label for="ipv6-alloc-site-filter" class="text-muted small mb-0">Site:</label>
+      <select id="ipv6-alloc-site-filter" class="form-select form-select-sm"
+              hx-get="/api/ipv6/allocations"
+              hx-target="#ipv6-tab-allocations .card-body"
+              hx-swap="innerHTML"
+              hx-trigger="change"
+              hx-include="this"
+              name="site_id"
+              onchange="window._ipv6AllocSiteFilter = this.value || null">
+        <option value="">All sites</option>
+        {% for s in sites %}
+          <option value="{{ s.id }}" {% if selected_site_id == s.id %}selected{% endif %}>{{ s.name }}</option>
+        {% endfor %}
+      </select>
+    </form>
+  </div>
+  <button class="btn btn-sm btn-primary"
+          data-bs-toggle="modal" data-bs-target="#ipv6-allocation-modal"
+          onclick="ipv6PrepareAllocationModal(null, {{ selected_site_id|tojson if selected_site_id else 'null' }})">
+    <i class="ph ph-plus me-1"></i> Add Allocation
+  </button>
+</div>
+<table class="table table-hover table-striped mb-0 data-table">
+  <thead class="bg-light">
+    <tr>
+      <th>Site</th>
+      <th>vvvv</th>
+      <th>Prefix</th>
+      <th>IPv4 Subnet</th>
+      <th>Purpose</th>
+      <th>Status</th>
+      <th>Owner</th>
+      <th>Assembled /prefix</th>
+      <th data-no-sort data-no-filter>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for a in items %}
+    <tr>
+      <td class="fw-bold text-navy">{{ a.site_name }}</td>
+      <td class="font-monospace">{{ a.vvvv }}</td>
+      <td><span class="badge bg-secondary-subtle text-secondary">/{{ a.prefix_length }}</span></td>
+      <td class="font-monospace">{{ a.ipv4_subnet or '—' }}</td>
+      <td class="text-muted small">{{ a.purpose or '' }}</td>
+      <td>
+        {% if a.status == 'allocated' %}
+          <span class="badge bg-success-subtle text-success">allocated</span>
+        {% elif a.status == 'reserved' %}
+          <span class="badge bg-warning-subtle text-warning">reserved</span>
+        {% else %}
+          <span class="badge bg-light text-muted">{{ a.status }}</span>
+        {% endif %}
+      </td>
+      <td class="text-muted small">{{ a.owner or '' }}</td>
+      <td class="font-monospace small">{{ a.site_prefix_48 }}:{{ a.vvvv }}::/{{ a.prefix_length }}</td>
+      <td>
+        <button class="btn btn-xs btn-outline-warning px-2 py-0"
+                data-bs-toggle="modal" data-bs-target="#ipv6-allocation-modal"
+                onclick='ipv6PrepareAllocationModal({{ a|tojson }})'>
+          Edit
+        </button>
+        <button class="btn btn-xs btn-outline-danger px-2 py-0"
+                hx-delete="/api/ipv6/allocations/{{ a.id }}"
+                hx-confirm="Delete allocation {{ a.vvvv }}/{{ a.prefix_length }} in {{ a.site_name }}?"
+                hx-on::after-request="if (event.detail.successful) { htmx.ajax('GET', '/api/ipv6/allocations' + (window._ipv6AllocSiteFilter ? '?site_id=' + window._ipv6AllocSiteFilter : ''), {target: '#ipv6-tab-allocations .card-body', swap: 'innerHTML'}); }">
+          Delete
+        </button>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="9" class="text-center text-muted py-4">No allocations to show.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
