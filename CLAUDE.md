@@ -176,7 +176,12 @@ The `collectors/` directory contains Netmiko-based SSH collectors (`nxos.py`, `p
 
 The `scripts/` directory holds standalone admin/maintenance utilities — invoke as modules from the repo root so project imports resolve:
 
-- `scripts/import_ipv6_allocations.py` — bulk-load IPv6 allocations from a flat file (`<site>,<ipv4_subnet>,<ipv4_mask>,<vvvv>[,<prefix_length>]`). Defaults to `/64`, dry-run by default; `--apply` to commit; `--skip-ipv4-dup` to skip the soft-warn rows. Talks to SQLite directly via `clients.ipv6_registry` (no HTTP/CSRF). Sites must already exist (the file format doesn't carry the /48 prefix).
+- `scripts/import_ipv6_sites.py` — bulk-load IPv6 registry sites from a CSV (`<name>,<prefix>[,<prefix_length>[,<role>[,<description>]]]`). `prefix_length` defaults to 48; quoted fields supported for descriptions with commas. Dry-run by default; `--apply` to commit. Skips name/prefix conflicts (both vs. the DB and within the same file).
+  ```bash
+  .venv/bin/python -m scripts.import_ipv6_sites                   # dry-run, default file
+  .venv/bin/python -m scripts.import_ipv6_sites --apply           # commit
+  ```
+- `scripts/import_ipv6_allocations.py` — bulk-load IPv6 allocations from a flat file (`<site>,<ipv4_subnet>,<ipv4_mask>,<vvvv>[,<prefix_length>]`). Defaults to `/64`, dry-run by default; `--apply` to commit; `--skip-ipv4-dup` to skip the soft-warn rows. Talks to SQLite directly via `clients.ipv6_registry` (no HTTP/CSRF). Sites must already exist as /48s (only /48 sites carry vvvv allocations; leaf-prefix sites are skipped).
   ```bash
   .venv/bin/python -m scripts.import_ipv6_allocations              # dry-run, default file
   .venv/bin/python -m scripts.import_ipv6_allocations --apply      # commit
