@@ -4,6 +4,10 @@ Read paths return JSON, or an HTMX partial when HX-Request is present
 (matches the dual-mode pattern in routers/firewall.py). Mutations land in
 phase 4; this module currently exposes GETs for sites/allocations plus the
 decode/assemble compute endpoints.
+
+Sites can be /32../64. Only /48 sites support vvvv-style allocations;
+sites at other prefix lengths are leaf prefixes (used as-is), and the
+allocation endpoints reject inserts targeting them.
 """
 from __future__ import annotations
 
@@ -46,26 +50,37 @@ async def get_site(site_id: int, session: SessionEntry = Depends(require_auth)):
     return site
 
 
-def _validate_prefix_48(value: str) -> str:
-    """Reject anything that's not a parseable /48."""
+def _normalize_site_prefix(value: str, length: int) -> str:
+    """Reject anything that isn't parseable as a network of `length` bits."""
     try:
-        return ipv6.normalize_prefix_48(value)
+        return ipv6.normalize_prefix(value, length)
     except (ipaddress.AddressValueError, ValueError) as e:
-        raise HTTPException(400, f"Invalid /48 prefix '{value}': {e}")
+        raise HTTPException(400, f"Invalid /{length} prefix '{value}': {e}")
+
+
+def _validate_site_length(length: int) -> None:
+    try:
+        ipv6.validate_site_prefix_length(length)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @router.post("/sites", status_code=201)
 async def create_site_endpoint(
     name: str = Form(..., min_length=1, max_length=128),
-    prefix_48: str = Form(..., min_length=2, max_length=64),
+    prefix: str = Form(..., min_length=2, max_length=64),
+    prefix_length: int = Form(48),
     role: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
     session: SessionEntry = Depends(require_auth),
 ):
-    _validate_prefix_48(prefix_48)
+    _validate_site_length(prefix_length)
+    canonical = _normalize_site_prefix(prefix, prefix_length)
     try:
-        return registry.create_site(name=name, prefix_48=prefix_48,
-                                    role=role or None, description=description or None)
+        return registry.create_site(
+            name=name, prefix=canonical, prefix_length=prefix_length,
+            role=role or None, description=description or None,
+        )
     except sqlite3.IntegrityError as e:
         raise HTTPException(409, f"Site with that name or prefix already exists: {e}")
 
@@ -74,18 +89,26 @@ async def create_site_endpoint(
 async def update_site_endpoint(
     site_id: int,
     name: Optional[str] = Form(None),
-    prefix_48: Optional[str] = Form(None),
+    prefix: Optional[str] = Form(None),
+    prefix_length: Optional[int] = Form(None),
     role: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
     session: SessionEntry = Depends(require_auth),
 ):
-    if not registry.get_site(site_id):
+    existing = registry.get_site(site_id)
+    if not existing:
         raise HTTPException(404, f"Site {site_id} not found")
-    if prefix_48 is not None:
-        _validate_prefix_48(prefix_48)
+    effective_length = prefix_length if prefix_length is not None else existing["prefix_length"]
+    if prefix_length is not None:
+        _validate_site_length(prefix_length)
+    canonical_prefix: Optional[str] = None
+    if prefix is not None:
+        canonical_prefix = _normalize_site_prefix(prefix, effective_length)
     try:
-        return registry.update_site(site_id, name=name, prefix_48=prefix_48,
-                                    role=role, description=description)
+        return registry.update_site(
+            site_id, name=name, prefix=canonical_prefix,
+            prefix_length=prefix_length, role=role, description=description,
+        )
     except sqlite3.IntegrityError as e:
         raise HTTPException(409, f"Update would violate uniqueness: {e}")
 
@@ -98,6 +121,17 @@ async def delete_site_endpoint(site_id: int, session: SessionEntry = Depends(req
 
 
 # ── Allocations ──────────────────────────────────────────────────────────────
+
+def _require_carvable_site(site: dict) -> None:
+    """vvvv-style allocations only live under /48 sites — everything else is
+    a leaf prefix and rejects allocations entirely."""
+    if int(site.get("prefix_length", 48)) != ipv6.SITE_PREFIX_FOR_VVVV:
+        raise HTTPException(
+            400,
+            f"Site '{site['name']}' is /{site['prefix_length']} (leaf) — "
+            "only /48 sites carry vvvv-style allocations.",
+        )
+
 
 @router.get("/allocations")
 async def list_allocations(
@@ -124,8 +158,10 @@ async def next_allocation(
     """Suggestion-only: return the next free vvvv at the requested mask.
     Does not insert anything — caller submits a separate POST /allocations
     to commit, which avoids leaked reservations from abandoned forms."""
-    if not registry.get_site(site_id):
+    site = registry.get_site(site_id)
+    if not site:
         raise HTTPException(404, f"Site {site_id} not found")
+    _require_carvable_site(site)
     try:
         ipv6.validate_prefix_length(prefix_length)
     except ValueError as e:
@@ -190,8 +226,10 @@ async def create_allocation_endpoint(
     confirm_ipv4_dup: bool = Form(False),
     session: SessionEntry = Depends(require_auth),
 ):
-    if not registry.get_site(site_id):
+    site = registry.get_site(site_id)
+    if not site:
         raise HTTPException(404, f"Site {site_id} not found")
+    _require_carvable_site(site)
     try:
         norm_vvvv = ipv6.normalize_vvvv(vvvv)
         ipv6.validate_prefix_length(prefix_length)
@@ -313,6 +351,7 @@ async def assemble_bulk(
     site = registry.get_site(site_id)
     if not site:
         raise HTTPException(404, f"Site {site_id} not found")
+    _require_carvable_site(site)
 
     hosts = _split_ipv4_list(ipv4_list)
     allocations = registry.list_allocations(site_id=site_id)
@@ -343,7 +382,7 @@ async def assemble_bulk(
             continue
 
         try:
-            addr = ipv6.assemble(site["prefix_48"], match["vvvv"], raw)
+            addr = ipv6.assemble(site["prefix"], match["vvvv"], raw)
         except (ipaddress.AddressValueError, ValueError) as e:
             row["status"] = "invalid"
             row["detail"] = str(e)
@@ -360,7 +399,10 @@ async def assemble_bulk(
         rows.append(row)
 
     payload = {
-        "site": {"id": site["id"], "name": site["name"], "prefix_48": site["prefix_48"]},
+        "site": {
+            "id": site["id"], "name": site["name"],
+            "prefix": site["prefix"], "prefix_length": site["prefix_length"],
+        },
         "rows": rows,
         "counts": counts,
         "total": len(rows),
@@ -386,14 +428,15 @@ async def export_csv(session: SessionEntry = Depends(require_auth)):
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow([
-        "site_name", "site_prefix_48", "vvvv", "prefix_length",
+        "site_name", "site_prefix", "site_prefix_length", "vvvv", "prefix_length",
         "assembled_prefix", "ipv4_subnet", "purpose", "status",
         "owner", "description", "created_at", "updated_at",
     ])
     for r in rows:
-        assembled = f"{r['site_prefix_48']}:{r['vvvv']}::/{r['prefix_length']}"
+        assembled = f"{r['site_prefix']}:{r['vvvv']}::/{r['prefix_length']}"
         writer.writerow([
-            r["site_name"], r["site_prefix_48"], r["vvvv"], r["prefix_length"],
+            r["site_name"], r["site_prefix"], r["site_prefix_length"],
+            r["vvvv"], r["prefix_length"],
             assembled, r["ipv4_subnet"] or "", r["purpose"] or "",
             r["status"], r["owner"] or "", r["description"] or "",
             r["created_at"], r["updated_at"],
@@ -422,7 +465,8 @@ async def decode(
     payload = {
         "site_id": result.site_id,
         "site_name": result.site_name,
-        "site_prefix_48": result.site_prefix_48,
+        "site_prefix": result.site_prefix,
+        "site_prefix_length": result.site_prefix_length,
         "vvvv": result.vvvv,
         "ipv4": result.ipv4,
         "canonical": result.canonical,
@@ -472,6 +516,7 @@ async def assemble(
     site = registry.get_site(site_id)
     if not site:
         raise HTTPException(404, f"Site {site_id} not found")
+    _require_carvable_site(site)
 
     matched_allocation: Optional[dict] = None
     vvvv_value = (vvvv or "").strip() or None
@@ -487,14 +532,17 @@ async def assemble(
         vvvv_value = matched_allocation["vvvv"]
 
     try:
-        addr = ipv6.assemble(site["prefix_48"], vvvv_value, ipv4)
+        addr = ipv6.assemble(site["prefix"], vvvv_value, ipv4)
     except (ipaddress.AddressValueError, ValueError) as e:
         raise HTTPException(400, f"Cannot assemble: {e}")
 
     payload = {
         "ipv6": addr.compressed,
         "ipv6_exploded": addr.exploded,
-        "site": {"id": site["id"], "name": site["name"], "prefix_48": site["prefix_48"]},
+        "site": {
+            "id": site["id"], "name": site["name"],
+            "prefix": site["prefix"], "prefix_length": site["prefix_length"],
+        },
         "vvvv": vvvv_value,
         "ipv4": ipv4,
         "matched_allocation": matched_allocation,

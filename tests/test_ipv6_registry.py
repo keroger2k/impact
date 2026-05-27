@@ -31,7 +31,8 @@ def test_site_crud_roundtrip(db_path: Path):
     site = reg.create_site("DC1", "1000:2000:3000", role="datacenter",
                            description="Primary DC", path=db_path)
     assert site["id"] > 0
-    assert site["prefix_48"] == "1000:2000:3000"
+    assert site["prefix"] == "1000:2000:3000"
+    assert site["prefix_length"] == 48
 
     fetched = reg.get_site(site["id"], path=db_path)
     assert fetched["name"] == "DC1"
@@ -41,6 +42,13 @@ def test_site_crud_roundtrip(db_path: Path):
 
     assert reg.delete_site(site["id"], path=db_path) == 1
     assert reg.get_site(site["id"], path=db_path) is None
+
+
+def test_create_site_with_non_default_prefix_length(db_path: Path):
+    airport = reg.create_site("LAX-airport", "2600:0400:3031:0100",
+                              prefix_length=56, role="airport", path=db_path)
+    assert airport["prefix"] == "2600:0400:3031:0100"
+    assert airport["prefix_length"] == 56
 
 
 def test_site_unique_name_and_prefix(db_path: Path):
@@ -91,7 +99,8 @@ def test_list_allocations_includes_site_metadata(db_path: Path):
     reg.create_allocation(site["id"], "0100", 64, path=db_path)
     rows = reg.list_allocations(path=db_path)
     assert rows[0]["site_name"] == "DC1"
-    assert rows[0]["site_prefix_48"] == "1000:2000:3000"
+    assert rows[0]["site_prefix"] == "1000:2000:3000"
+    assert rows[0]["site_prefix_length"] == 48
 
 
 def test_find_ipv4_collision(db_path: Path):
@@ -120,3 +129,31 @@ def test_update_allocation_changes_only_supplied_fields(db_path: Path):
     assert updated["status"] == "reserved"
     assert updated["purpose"] == "user-vlan"  # untouched
     assert updated["ipv4_subnet"] == "1.2.3.0/24"
+
+
+def test_migration_from_legacy_prefix_48_schema(tmp_path: Path):
+    """An older DB with the prefix_48 column gets migrated in place to the
+    current shape (prefix + prefix_length) without losing rows."""
+    path = tmp_path / "legacy.db"
+    legacy = """
+        CREATE TABLE sites (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        TEXT    NOT NULL UNIQUE,
+            prefix_48   TEXT    NOT NULL UNIQUE,
+            role        TEXT,
+            description TEXT,
+            created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+            updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+    """
+    with reg._connect_raw(path) as conn:
+        conn.executescript(legacy)
+        conn.execute("INSERT INTO sites (name, prefix_48) VALUES (?, ?)",
+                     ("DC1", "1000:2000:3000"))
+
+    reg.init_schema(path)
+
+    sites = reg.list_sites(path=path)
+    assert len(sites) == 1
+    assert sites[0]["prefix"] == "1000:2000:3000"
+    assert sites[0]["prefix_length"] == 48

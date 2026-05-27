@@ -1,8 +1,9 @@
 """clients/ipv6_registry.py — SQLite-backed IPv6 allocation registry.
 
-Stores the per-site /48 prefixes and the vvvv segment allocations used to map
-legacy IPv4 networks into the hierarchical IPv6 scheme. The conversion math
-lives in utils/ipv6_assembler.py; this module is the persistence layer only.
+Stores per-site IPv6 prefixes (variable length, /32..../64) and the vvvv
+segment allocations used to map legacy IPv4 networks into the hierarchical
+IPv6 scheme. Conversion math lives in utils/ipv6_assembler.py; this module
+is the persistence layer only.
 
 Two tables, one DB file at data/ipv6_registry.db. Standard-library sqlite3
 because the rest of the project has no ORM and the schema is two tables.
@@ -27,13 +28,14 @@ _initialized = False
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sites (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    name        TEXT    NOT NULL UNIQUE,
-    prefix_48   TEXT    NOT NULL UNIQUE,
-    role        TEXT,
-    description TEXT,
-    created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
-    updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT    NOT NULL UNIQUE,
+    prefix        TEXT    NOT NULL UNIQUE,
+    prefix_length INTEGER NOT NULL DEFAULT 48,
+    role          TEXT,
+    description   TEXT,
+    created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+    updated_at    TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS allocations (
@@ -65,6 +67,18 @@ def _connect_raw(path: Path) -> sqlite3.Connection:
     return conn
 
 
+def _migrate_sites_columns(conn: sqlite3.Connection) -> None:
+    """Bring an older sites table (prefix_48 only) up to the current shape
+    (prefix + prefix_length). No-op on fresh databases — the CREATE IF NOT
+    EXISTS above already produces the new shape."""
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(sites)").fetchall()}
+    if "prefix" not in cols and "prefix_48" in cols:
+        conn.execute("ALTER TABLE sites RENAME COLUMN prefix_48 TO prefix")
+        cols.discard("prefix_48"); cols.add("prefix")
+    if "prefix_length" not in cols:
+        conn.execute("ALTER TABLE sites ADD COLUMN prefix_length INTEGER NOT NULL DEFAULT 48")
+
+
 def init_schema(path: Optional[Path] = None) -> None:
     """Create tables and indexes if missing. Safe to call repeatedly."""
     global _initialized
@@ -73,6 +87,7 @@ def init_schema(path: Optional[Path] = None) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         with _connect_raw(target) as conn:
             conn.executescript(SCHEMA)
+            _migrate_sites_columns(conn)
         if target == DB_PATH:
             _initialized = True
         logger.info(f"IPv6 registry schema ready at {target}")
@@ -109,29 +124,33 @@ def get_site(site_id: int, path: Optional[Path] = None) -> Optional[dict]:
     return dict(row) if row else None
 
 
-def get_site_by_prefix(prefix_48: str, path: Optional[Path] = None) -> Optional[dict]:
+def get_site_by_prefix(prefix: str, path: Optional[Path] = None) -> Optional[dict]:
     with connect(path) as conn:
-        row = conn.execute("SELECT * FROM sites WHERE prefix_48 = ?", (prefix_48,)).fetchone()
+        row = conn.execute("SELECT * FROM sites WHERE prefix = ?", (prefix,)).fetchone()
     return dict(row) if row else None
 
 
-def create_site(name: str, prefix_48: str, role: Optional[str] = None,
-                description: Optional[str] = None, path: Optional[Path] = None) -> dict:
+def create_site(name: str, prefix: str, prefix_length: int = 48,
+                role: Optional[str] = None, description: Optional[str] = None,
+                path: Optional[Path] = None) -> dict:
     with connect(path) as conn:
         cur = conn.execute(
-            "INSERT INTO sites (name, prefix_48, role, description) VALUES (?, ?, ?, ?)",
-            (name, prefix_48, role, description),
+            "INSERT INTO sites (name, prefix, prefix_length, role, description) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (name, prefix, prefix_length, role, description),
         )
         site_id = cur.lastrowid
         row = conn.execute("SELECT * FROM sites WHERE id = ?", (site_id,)).fetchone()
     return dict(row)
 
 
-def update_site(site_id: int, *, name: Optional[str] = None, prefix_48: Optional[str] = None,
+def update_site(site_id: int, *, name: Optional[str] = None, prefix: Optional[str] = None,
+                prefix_length: Optional[int] = None,
                 role: Optional[str] = None, description: Optional[str] = None,
                 path: Optional[Path] = None) -> Optional[dict]:
     fields, values = [], []
-    for col, val in (("name", name), ("prefix_48", prefix_48),
+    for col, val in (("name", name), ("prefix", prefix),
+                     ("prefix_length", prefix_length),
                      ("role", role), ("description", description)):
         if val is not None:
             fields.append(f"{col} = ?")
@@ -155,11 +174,15 @@ def delete_site(site_id: int, path: Optional[Path] = None) -> int:
 
 # ── Allocations ──────────────────────────────────────────────────────────────
 
+_ALLOC_SELECT = (
+    "SELECT a.*, s.name AS site_name, s.prefix AS site_prefix, "
+    "       s.prefix_length AS site_prefix_length "
+    "FROM allocations a JOIN sites s ON s.id = a.site_id"
+)
+
+
 def list_allocations(site_id: Optional[int] = None, path: Optional[Path] = None) -> list[dict]:
-    sql = """
-        SELECT a.*, s.name AS site_name, s.prefix_48 AS site_prefix_48
-        FROM allocations a JOIN sites s ON s.id = a.site_id
-    """
+    sql = _ALLOC_SELECT
     args: tuple = ()
     if site_id is not None:
         sql += " WHERE a.site_id = ?"
@@ -172,12 +195,7 @@ def list_allocations(site_id: Optional[int] = None, path: Optional[Path] = None)
 
 def get_allocation(alloc_id: int, path: Optional[Path] = None) -> Optional[dict]:
     with connect(path) as conn:
-        row = conn.execute(
-            """SELECT a.*, s.name AS site_name, s.prefix_48 AS site_prefix_48
-               FROM allocations a JOIN sites s ON s.id = a.site_id
-               WHERE a.id = ?""",
-            (alloc_id,),
-        ).fetchone()
+        row = conn.execute(_ALLOC_SELECT + " WHERE a.id = ?", (alloc_id,)).fetchone()
     return dict(row) if row else None
 
 
@@ -193,12 +211,7 @@ def create_allocation(site_id: int, vvvv: str, prefix_length: int, *,
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (site_id, vvvv, prefix_length, ipv4_subnet, purpose, status, owner, description),
         )
-        row = conn.execute(
-            """SELECT a.*, s.name AS site_name, s.prefix_48 AS site_prefix_48
-               FROM allocations a JOIN sites s ON s.id = a.site_id
-               WHERE a.id = ?""",
-            (cur.lastrowid,),
-        ).fetchone()
+        row = conn.execute(_ALLOC_SELECT + " WHERE a.id = ?", (cur.lastrowid,)).fetchone()
     return dict(row)
 
 

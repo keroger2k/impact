@@ -1,12 +1,16 @@
 """utils/ipv6_assembler.py — Hierarchical IPv6 conversion math.
 
-Pure functions, no DB or HTTP. The full address layout is:
+Pure functions, no DB or HTTP. Sites can be /32../64; the default carving
+shape (used for vvvv-style allocations) is built around a /48 site:
 
-    [ prefix_48 (48 bits) ] [ vvvv (16 bits) ] [ 0000:0000 (32 bits) ] [ ipv4 (32 bits) ]
-       hextets 1..3            hextet 4              hextets 5..6              hextets 7..8
+    [ site prefix (48 bits) ] [ vvvv (16 bits) ] [ 0000:0000 (32 bits) ] [ ipv4 (32 bits) ]
+       hextets 1..3                hextet 4              hextets 5..6              hextets 7..8
 
 Example: site DC1 with /48 = 1000:2000:3000, vvvv = 0100, host = 1.2.3.4
          -> 1000:2000:3000:100::102:304
+
+Sites with prefix lengths other than /48 are leaf prefixes — they don't
+carve vvvv sub-allocations (the assembler does not run for them).
 
 All addresses are canonicalized via the stdlib ipaddress module.
 """
@@ -16,16 +20,47 @@ import ipaddress
 from dataclasses import dataclass
 from typing import Iterable, Optional
 
+# Bounds on site prefix lengths the registry will accept.
+SITE_PREFIX_MIN = 32
+SITE_PREFIX_MAX = 64
+
+# Sites that carve vvvv sub-allocations must be exactly /48 — the vvvv hextet
+# sits in bits 49..64 by construction.
+SITE_PREFIX_FOR_VVVV = 48
+
 
 # ── Validation helpers ───────────────────────────────────────────────────────
 
-def normalize_prefix_48(prefix_48: str) -> str:
-    """Canonical compressed form of a /48 prefix as the leading 3 hextets only.
-    Accepts loose input like '1000:2000:3000' or '0100:0200:0300'."""
-    net = ipaddress.IPv6Network(f"{prefix_48.strip()}::/48", strict=False)
+def validate_site_prefix_length(prefix_length: int) -> None:
+    if not SITE_PREFIX_MIN <= prefix_length <= SITE_PREFIX_MAX:
+        raise ValueError(
+            f"site prefix_length {prefix_length} out of range; "
+            f"must be {SITE_PREFIX_MIN}..{SITE_PREFIX_MAX}"
+        )
+
+
+def normalize_prefix(prefix: str, prefix_length: int = 48) -> str:
+    """Canonical leading-hextets representation of a site prefix at the given
+    length. Strips trailing zero hextets that lie beyond the prefix boundary
+    and drops leading zeros in each kept hextet.
+
+    Examples:
+        normalize_prefix("0100:0200:0300", 48)        -> "100:200:300"
+        normalize_prefix("2600:0400:3031:0100", 56)   -> "2600:400:3031:100"
+        normalize_prefix("2600:400::", 32)            -> "2600:400"
+    """
+    validate_site_prefix_length(prefix_length)
+    cleaned = prefix.strip().rstrip(":")
+    # strict=False zeroes host bits, giving us a canonical network address
+    net = ipaddress.IPv6Network(f"{cleaned}::/{prefix_length}", strict=False)
     full = net.network_address.exploded.split(":")  # 8 groups, padded
-    # Drop the trailing zero groups, keep the first 3, normalize each hextet
-    return ":".join(hextet.lstrip("0") or "0" for hextet in full[:3])
+    needed = (prefix_length + 15) // 16  # ceil(prefix_length / 16)
+    return ":".join(h.lstrip("0") or "0" for h in full[:needed])
+
+
+def normalize_prefix_48(prefix_48: str) -> str:
+    """Back-compat shim: /48-only callers."""
+    return normalize_prefix(prefix_48, 48)
 
 
 def normalize_vvvv(vvvv: str) -> str:
@@ -40,8 +75,9 @@ def normalize_vvvv(vvvv: str) -> str:
 
 
 def validate_prefix_length(prefix_length: int) -> None:
-    """vvvv-aligned allocations only live in /49..../64. Anything longer
-    doesn't carve the vvvv hextet; anything shorter is the site itself."""
+    """Allocation prefix length. vvvv-aligned allocations only live in
+    /49..../64 — anything longer doesn't carve the vvvv hextet; anything
+    shorter is the site itself."""
     if not 49 <= prefix_length <= 64:
         raise ValueError(
             f"prefix_length {prefix_length} unsupported; must be 49..64 "
@@ -69,9 +105,12 @@ def ipv4_to_suffix(ipv4: str) -> str:
 
 
 def assemble(prefix_48: str, vvvv: str, ipv4: str) -> ipaddress.IPv6Address:
-    """Combine site /48 prefix, vvvv segment, zero hextets, and the IPv4
-    host-tail into a fully-formed IPv6Address."""
-    prefix_int = int(ipaddress.IPv6Address(f"{normalize_prefix_48(prefix_48)}::"))
+    """Combine a /48 site prefix, vvvv segment, zero hextets, and the IPv4
+    host-tail into a fully-formed IPv6Address.
+
+    Sites that aren't /48 are leaves and don't go through this path.
+    """
+    prefix_int = int(ipaddress.IPv6Address(f"{normalize_prefix(prefix_48, 48)}::"))
     vvvv_int = int(normalize_vvvv(vvvv), 16)
     v4_int = int(ipaddress.IPv4Address(ipv4.strip()))
 
@@ -89,50 +128,78 @@ def assemble(prefix_48: str, vvvv: str, ipv4: str) -> ipaddress.IPv6Address:
 class DecodeResult:
     site_id: Optional[int]
     site_name: Optional[str]
-    site_prefix_48: Optional[str]
+    site_prefix: Optional[str]
+    site_prefix_length: Optional[int]
     vvvv: str
     ipv4: str
     warnings: list[str]
     canonical: str  # canonical compressed form of the input address
 
 
-def decode(ipv6: str, sites: Iterable[dict]) -> DecodeResult:
-    """Reverse direction. Always reports the site because IPv4 alone is
-    ambiguous across sites.
+def _site_matches(site: dict, addr_int: int) -> bool:
+    try:
+        length = int(site.get("prefix_length", 48))
+        prefix = normalize_prefix(site["prefix"], length)
+    except (KeyError, ValueError):
+        return False
+    site_net_int = int(ipaddress.IPv6Address(f"{prefix}::"))
+    mask = ((1 << 128) - 1) ^ ((1 << (128 - length)) - 1)
+    return (addr_int & mask) == (site_net_int & mask)
 
-    `sites` is an iterable of dicts with at least `id`, `name`, `prefix_48`
-    (typically rows from clients.ipv6_registry.list_sites())."""
+
+def decode(ipv6: str, sites: Iterable[dict]) -> DecodeResult:
+    """Reverse direction. Reports the site because IPv4 alone is ambiguous
+    across sites; matches longest prefix first so a /56 airport leaf wins
+    over its containing /48 state when both are registered.
+
+    For /48 matches we also extract vvvv (hextet 4) and the IPv4 host-tail
+    (hextets 7-8). For leaf sites (any other prefix length) those fields are
+    populated from the raw bits but flagged as informational only — the
+    address may not actually follow the assembler scheme below the site mask.
+
+    `sites` is an iterable of dicts with at least `id`, `name`, `prefix`,
+    `prefix_length` (rows from clients.ipv6_registry.list_sites()).
+    """
     addr = ipaddress.IPv6Address(ipv6.strip())
     addr_int = int(addr)
 
-    # Hextets 4 and 5 (bits 47..16) must be zero for a well-formed entry
     warnings: list[str] = []
-    mid = (addr_int >> 32) & 0xFFFFFFFF
-    if mid != 0:
+
+    site_list = list(sites)
+    # Longest prefix wins (a /56 leaf beats a containing /48)
+    matches = [s for s in site_list if _site_matches(s, addr_int)]
+    matches.sort(key=lambda s: int(s.get("prefix_length", 48)), reverse=True)
+    site = matches[0] if matches else None
+
+    site_id = site_name = site_prefix = None
+    site_prefix_length: Optional[int] = None
+    if site is not None:
+        site_id = site.get("id")
+        site_name = site.get("name")
+        site_prefix = site.get("prefix")
+        site_prefix_length = int(site.get("prefix_length", 48))
+    else:
+        candidate = ipaddress.IPv6Address((addr_int >> 80) << 80).exploded.split(":")[:3]
+        candidate_norm = ":".join(h.lstrip("0") or "0" for h in candidate)
         warnings.append(
-            f"Hextets 5-6 are non-zero (0x{mid:08x}); address does not follow "
-            "the standard scheme — host-tail recovery may be unreliable"
+            f"No registered site matches /48 prefix {candidate_norm} — "
+            "site context cannot be resolved"
         )
 
-    prefix_int = (addr_int >> 80) << 80
-    candidate_prefix = ipaddress.IPv6Address(prefix_int).exploded.split(":")[:3]
-    candidate_prefix_norm = ":".join(h.lstrip("0") or "0" for h in candidate_prefix)
-
-    site_id = site_name = site_prefix_48 = None
-    for s in sites:
-        try:
-            if normalize_prefix_48(s["prefix_48"]) == candidate_prefix_norm:
-                site_id = s.get("id")
-                site_name = s.get("name")
-                site_prefix_48 = s.get("prefix_48")
-                break
-        except (ValueError, KeyError):
-            continue
-
-    if site_id is None:
+    # vvvv + ipv4 recovery assumes the /48 layout. For leaf (non-/48) sites
+    # we still report the raw values but mark them as informational.
+    is_vvvv_layout = (site_prefix_length is None or site_prefix_length == SITE_PREFIX_FOR_VVVV)
+    if is_vvvv_layout:
+        mid = (addr_int >> 32) & 0xFFFFFFFF
+        if mid != 0:
+            warnings.append(
+                f"Hextets 5-6 are non-zero (0x{mid:08x}); address does not follow "
+                "the standard scheme — host-tail recovery may be unreliable"
+            )
+    elif site_prefix_length is not None:
         warnings.append(
-            f"No registered site matches /48 prefix {candidate_prefix_norm} — "
-            "site context cannot be resolved"
+            f"Matched site is /{site_prefix_length} (leaf) — vvvv and IPv4 fields "
+            "are raw bit extracts, not assembler-scheme values"
         )
 
     vvvv = f"{(addr_int >> 64) & 0xFFFF:04x}"
@@ -141,7 +208,8 @@ def decode(ipv6: str, sites: Iterable[dict]) -> DecodeResult:
     return DecodeResult(
         site_id=site_id,
         site_name=site_name,
-        site_prefix_48=site_prefix_48,
+        site_prefix=site_prefix,
+        site_prefix_length=site_prefix_length,
         vvvv=vvvv,
         ipv4=str(v4),
         warnings=warnings,

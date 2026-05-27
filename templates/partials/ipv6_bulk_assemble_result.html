@@ -7,7 +7,7 @@
     {% if result.counts.invalid %}
       <span class="badge bg-danger-subtle text-danger fs-6">{{ result.counts.invalid }} invalid</span>
     {% endif %}
-    <span class="text-muted small ms-auto">Site: <strong>{{ result.site.name }}</strong> ({{ result.site.prefix_48 }}::/48)</span>
+    <span class="text-muted small ms-auto">Site: <strong>{{ result.site.name }}</strong> ({{ result.site.prefix }}::/{{ result.site.prefix_length }})</span>
   </div>
 
   <ul class="nav nav-tabs nav-tabs-sm mb-3" role="tablist">

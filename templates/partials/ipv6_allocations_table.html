@@ -12,7 +12,7 @@
               name="site_id"
               onchange="window._ipv6AllocSiteFilter = this.value || null">
         <option value="">All sites</option>
-        {% for s in sites %}
+        {% for s in sites if s.prefix_length == 48 %}
           <option value="{{ s.id }}" {% if selected_site_id == s.id %}selected{% endif %}>{{ s.name }}</option>
         {% endfor %}
       </select>
@@ -56,7 +56,7 @@
         {% endif %}
       </td>
       <td class="text-muted small">{{ a.owner or '' }}</td>
-      <td class="font-monospace small">{{ a.site_prefix_48 }}:{{ a.vvvv }}::/{{ a.prefix_length }}</td>
+      <td class="font-monospace small">{{ a.site_prefix }}:{{ a.vvvv }}::/{{ a.prefix_length }}</td>
       <td>
         <button class="btn btn-xs btn-outline-warning px-2 py-0"
                 data-bs-toggle="modal" data-bs-target="#ipv6-allocation-modal"

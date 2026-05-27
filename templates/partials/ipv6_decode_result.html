@@ -7,7 +7,7 @@
         {% else %}<span class="text-danger">unknown</span>{% endif %}
       </div>
       <div class="font-monospace small text-muted">
-        {% if result.site_prefix_48 %}{{ result.site_prefix_48 }}::/48{% endif %}
+        {% if result.site_prefix %}{{ result.site_prefix }}::/{{ result.site_prefix_length }}{% endif %}
       </div>
     </div>
     <div class="col-md-2">

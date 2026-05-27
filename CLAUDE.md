@@ -11,8 +11,10 @@ IMPACT II is a **TSA Network Operations Platform** — a unified web dashboard f
 - **Cisco ACI** — multi-fabric SDN (leaf/spine); nodes, interfaces, tenants/VRFs/BDs/EPGs/contracts, L3Outs, BGP/OSPF maps and peers, route tables, access policies, health, faults
 - **Cisco Nexus** — SSH-based collection (Netmiko) of inventory, interfaces, VLANs, port-channels, vPCs
 - **IPAM** — DNAC-sourced address pools rendered as an aggregated tree with stats and export
+- **VPN Tunnels** — enterprise IPsec tunnel inventory; normalizes IOS (DMVPN, sVTI, dVTI, policy-based) + Palo IPsec from cached DNAC running-configs and Panorama IKE/IPsec objects, plus live counters
+- **IPv6 Registry** — hierarchical IPv4-to-IPv6 allocation registry (per-site /48 prefixes + vvvv segment allocations); CRUD UI, two-way decode/assemble, bulk-assemble, CSV export. Local SQLite — not derived from any upstream system
 
-The dashboard is read-only for the most part; the **Command Runner** (gated by `COMMANDS_ENABLED`) and **Device Import** workflow are the only mutating actions.
+The dashboard is mostly read-only. Mutating actions: the **Command Runner** (gated by `COMMANDS_ENABLED`), the **Device Import** workflow, and the **IPv6 Registry** (its writes are local-only to the SQLite registry, not pushed to any platform).
 
 ## Commands
 
@@ -67,6 +69,7 @@ Default TTLs are defined as constants in `cache.py:21-30` and each is overridabl
 | `TTL_CONFIG_SEARCH_RESULT` | 5m | `IMPACT_TTL_CONFIG_SEARCH_RESULT` | DNAC `dnac_config_search_result:*` — cached search results so the CSV download endpoint doesn't re-run the search |
 | `TTL_DNAC_ROUTER_CONFIGS` | 24h | `IMPACT_TTL_DNAC_ROUTER_CONFIGS` | DNAC running-config snapshots used by routing diagnostics |
 | `TTL_DNAC_IP_POOLS` | 24h | `IMPACT_TTL_DNAC_IP_POOLS` | DNAC global IP pools + reserve subpools (IPAM source data) |
+| `TTL_TUNNEL_INVENTORY` | 24h | `IMPACT_TTL_TUNNEL_INVENTORY` | normalized tunnel inventory (`tunnel_inventory_v1` — bump the key version on a structural change) |
 
 The IPAM tree is cached under a fixed, versioned key (`IPAM_TREE_CACHE_KEY = "ipam_tree_v4"` in `cache.py`) — bump the suffix to invalidate the tree shape on a structural change rather than relying on TTL.
 
@@ -76,12 +79,15 @@ Naming conventions for cache keys:
 - `pan_*` — Panorama (rules, device_groups, address_objects, services, interfaces, firewalls)
 - `ise_*` — ISE (stable lists, plus `ise_auth_rules_{policy_set_id}` per policy set)
 - `aci_{fabric_id}_{suffix}` — ACI, namespaced per fabric (`_fkey(fabric_id, suffix)` in `routers/aci.py`). Per-L3Out route-table entries are stored under `aci_{fabric_id}_l3out_route_table:{quoted_dn}`.
+- `tunnel_inventory_v1` — normalized IPsec tunnel inventory (versioned key; bump suffix on schema change). Live counters are fetched on-demand, not cached.
 - `status_*` — system connectivity probes
 
 Other notes:
 - **Stale-while-revalidate**: physical disk retention is 30 days regardless of logical TTL — if a loader fails on a logically-expired key, `get_or_set` returns the stale value rather than `None`.
 - **Helpers**: `cache.keys_for_prefix(prefix)` and `cache.invalidate_prefix(prefix)` scan all keys.
 - **DEV_MODE**: `dev.seed_cache(cache)` runs on every startup when `DEV_MODE=true`, *unconditionally overwriting* every mock key with a 1-year TTL. Real cached data is replaced by mock fixtures on every dev restart — this is intentional for deterministic dev sessions.
+
+**Registry layer** (separate from the cache): `clients/ipv6_registry.py` is a thin `sqlite3` wrapper over `data/ipv6_registry.db` for the IPv6 hierarchical allocation registry. Two tables (`sites`, `allocations`) with FK cascade and `UNIQUE(site_id, vvvv)`. No ORM. Schema bootstrap runs from `main.py`'s `lifespan` via `ipv6_registry.init_schema()`. Use this pattern — *not* diskcache — for any future feature that needs durable user-edited rows with relational integrity. diskcache stays for ephemeral, TTL'd platform reads.
 
 **Router layer** (`routers/`) contains FastAPI request handlers. All API routers are wired in `main.py` behind `require_auth`; `pages.py` is the only public router (it serves the login page itself).
 
@@ -92,11 +98,13 @@ Other notes:
 - `routers/nexus.py` — `/api/nexus/`: SSH-driven inventory refresh (SSE), inventory, devices (HTML), per-device detail (HTML), interfaces, port-channels, vPCs, VLANs, cache info/refresh
 - `routers/routing.py` — `/api/routing/`: BGP summary, EIGRP topology, OSPF neighbors — all driven by parsing cached DNAC running-configs
 - `routers/ipam.py` — `/api/ipam/`: refresh (SSE), stats, tree, debug, export
+- `routers/tunnels.py` — `/api/tunnels/`: list/detail of normalized IPsec tunnels (DMVPN, sVTI, dVTI, policy-based, Palo IPsec), live counters via SSE refresh. Parsers in `utils/ipsec_parser.py` + `utils/tunnel_inventory.py`; site-code resolution via `utils/site_code.py`.
+- `routers/ipv6_registry.py` — `/api/ipv6/`: sites CRUD, allocations CRUD, `/allocations/next` suggestion, `/decode`, `/assemble`, `/assemble/bulk`, `/export.csv`. Hard 409 on vvvv overlap, soft warn on IPv4-subnet dup (caller can resubmit with `confirm_ipv4_dup=true`). Reads/writes the SQLite registry — *not* the cache.
 - `routers/commands.py` — `/api/commands/run`: SSH command execution streamed via SSE; gated by `COMMANDS_ENABLED`
 - `routers/import_.py` — `/api/import/run`: device discovery workflow streamed via SSE
 - `routers/cache_mgmt.py` — `/api/cache/`: cross-cutting cache status, sidebar widget, per-category refresh (`POST /api/cache/refresh/{category}`), and global clear (`clear_all`)
 - `routers/auth.py` — `/api/auth/`: login, logout, session refresh
-- `routers/pages.py` — top-level HTML pages: `/login`, `/dashboard`, `/devices`, `/ise`, `/firewall`, `/aci`, `/nexus`, `/nexus/{hostname}`, `/path-trace`, `/routing/bgp`, `/config-search`, `/ip-lookup`, `/ipam`, `/command-runner`, `/import`, `/cache-mgmt`
+- `routers/pages.py` — top-level HTML pages: `/login`, `/dashboard`, `/devices`, `/ise`, `/firewall`, `/aci`, `/nexus`, `/nexus/{hostname}`, `/path-trace`, `/routing/bgp`, `/config-search`, `/ip-lookup`, `/ipam`, `/tunnels`, `/ipv6-registry`, `/command-runner`, `/import`, `/cache-mgmt`
 
 App-level (in `main.py`, not under a router prefix):
 - `POST /api/warm` — SSE stream that warms DNAC/ISE/Panorama/ACI/Nexus on demand
@@ -120,7 +128,7 @@ CSS uses **Bootstrap v5** (vendored, no CDN dependency) with a custom override l
 
 - **Blocking SDK calls** run in a `ThreadPoolExecutor` via `asyncio.get_event_loop().run_in_executor(...)` to avoid blocking async handlers. `logger_config.run_with_context(fn)` is the wrapper that propagates the request correlation ID into the worker thread.
 - **Correlation IDs**: every request gets an `X-Correlation-ID` (echoed in the response header and stamped on every log line via `logger_config.set_correlation_id`). Use this to trace a single request across DNAC/ISE/ACI calls in `logs/`.
-- **SSE streaming** is used for long-running operations (`/api/warm`, `/api/commands/run`, `/api/import/run`, `/api/ipam/refresh`, `/api/nexus/refresh`). Routers yield `data: ...\n\n` chunks; the frontend uses `EventSource`. A middleware in `main.py` caps these to **2 concurrent streams per (session, path)** to prevent runaway tabs.
+- **SSE streaming** is used for long-running operations (`/api/warm`, `/api/commands/run`, `/api/commands/config-run`, `/api/import/run`, `/api/ipam/refresh`, `/api/nexus/refresh`, `/api/tunnels/refresh-stream`). Routers yield `data: ...\n\n` chunks; the frontend uses `EventSource`. A middleware in `main.py` caps these to **2 concurrent streams per (session, path)** to prevent runaway tabs.
 - **CSRF**: `utils.csrf.CSRFMiddleware` issues a `csrf_token` cookie at login and enforces `X-CSRF-Token` on mutating requests. htmx is wired to forward the cookie via the `htmx:configRequest` listener in `base.html`.
 - **Auth & sessions**: cookie-based sessions (`impact_token`) backed by `auth.py`. When `SESSION_PERSIST=true`, sessions are persisted across restarts via `auth_persist.py` using Fernet (key from `SESSION_ENC_KEY`); `auth_module.restore_sessions()` runs on startup and `auth_module.session_gc_task()` reaps expired sessions in the background.
 - **SSL verification is disabled** across all clients — the infrastructure uses self-signed certificates. Override with `IMPACT_VERIFY_SSL=true`.
@@ -130,6 +138,12 @@ CSS uses **Bootstrap v5** (vendored, no CDN dependency) with a custom override l
 - **Panorama rule structure**: `pan_rules` cache key holds `{"dg_order": [...], "by_dg": {dg_name: [rules]}}` for all device groups. `_flatten_rules(rules_cache, target_dgs)` reconstructs policy evaluation order (shared pre → DG pre → DG post → shared post) and filters to requested DGs at query time.
 - **ACI fabric scoping**: `_fkey(fabric_id, suffix)` in `routers/aci.py` namespaces every cache key. `?fabric=all` triggers per-fabric calls in parallel and merges results; individual fabric IDs route to a single APIC client from `aci_registry`.
 - **Cache UI**: the persistent sidebar widget polls `GET /api/cache/widget` every 30s; the Cache Management page (`/cache-mgmt`) lists every category with per-category refresh buttons (`POST /api/cache/refresh/{category}`).
+- **Never put real IP addresses in source code.** Tests, docstrings, comments, template placeholders, sample data, fixtures, and example values must use fake addresses only — never real customer/site addressing. Conventions:
+  - **IPv4 hosts**: `1.2.3.4`, `5.6.7.8`, or `1.1.1.1` / `2.2.2.2` for distinct examples.
+  - **IPv4 subnets**: `1.2.3.0/24`, `1.2.0.0/16`, `5.5.5.0/24`.
+  - **IPv6 /48 prefixes**: `1000:2000:3000` (site A), `4000:5000:6000` (site B). Avoid anything resembling a real allocation block (no `2600:…`, `2001:…`, etc.).
+  - **Generic edge-case octets** (`0.0.0.1`, `255.255.255.255`, `0.0.0.0`) are fine — they're not site-identifying. Same for vvvv values like `0100`, `0200`, `ffff`.
+  - Applies retroactively: if you edit a file that still has stale real-looking IPs in test data or examples, swap them while you're there.
 
 ## Environment Variables
 
@@ -157,6 +171,16 @@ Other optional vars:
 ## CLI Mode
 
 The `collectors/` directory contains Netmiko-based SSH collectors (`nxos.py`, `paloalto.py`) for a secondary CLI workflow that reads `devices.txt` and outputs interface inventory to terminal and CSV. This is separate from the web API and uses `utils/loader.py` and `utils/output.py`. `collectors/nxos.py` is *also* used by `routers/nexus.py` for the in-app Nexus Insights page.
+
+## Utility scripts
+
+The `scripts/` directory holds standalone admin/maintenance utilities — invoke as modules from the repo root so project imports resolve:
+
+- `scripts/import_ipv6_allocations.py` — bulk-load IPv6 allocations from a flat file (`<site>,<ipv4_subnet>,<ipv4_mask>,<vvvv>[,<prefix_length>]`). Defaults to `/64`, dry-run by default; `--apply` to commit; `--skip-ipv4-dup` to skip the soft-warn rows. Talks to SQLite directly via `clients.ipv6_registry` (no HTTP/CSRF). Sites must already exist (the file format doesn't carry the /48 prefix).
+  ```bash
+  .venv/bin/python -m scripts.import_ipv6_allocations              # dry-run, default file
+  .venv/bin/python -m scripts.import_ipv6_allocations --apply      # commit
+  ```
 
 ## Roadmap & gaps
 

@@ -99,10 +99,11 @@
                 <label for="ipv6-bulk-site" class="form-label small fw-bold">Site</label>
                 <select id="ipv6-bulk-site" name="site_id" class="form-select" required>
                   <option value="">— select a site —</option>
-                  {% for s in sites %}
-                    <option value="{{ s.id }}">{{ s.name }} ({{ s.prefix_48 }}::/48)</option>
+                  {% for s in sites if s.prefix_length == 48 %}
+                    <option value="{{ s.id }}">{{ s.name }} ({{ s.prefix }}::/{{ s.prefix_length }})</option>
                   {% endfor %}
                 </select>
+                <div class="form-text">Only /48 sites carve vvvv allocations.</div>
               </div>
               <div class="col-md-8 d-flex align-items-end">
                 <div class="text-muted small">
@@ -140,8 +141,8 @@
               <label for="ipv6-assemble-site" class="form-label small fw-bold">Site</label>
               <select id="ipv6-assemble-site" name="site_id" class="form-select" required>
                 <option value="">— select a site —</option>
-                {% for s in sites %}
-                  <option value="{{ s.id }}">{{ s.name }} ({{ s.prefix_48 }}::/48)</option>
+                {% for s in sites if s.prefix_length == 48 %}
+                  <option value="{{ s.id }}">{{ s.name }} ({{ s.prefix }}::/{{ s.prefix_length }})</option>
                 {% endfor %}
               </select>
             </div>
@@ -189,11 +190,22 @@
             <label class="form-label small fw-bold" for="ipv6-site-name">Name</label>
             <input class="form-control" id="ipv6-site-name" name="name" type="text" required>
           </div>
-          <div class="mb-3">
-            <label class="form-label small fw-bold" for="ipv6-site-prefix">/48 Prefix</label>
-            <input class="form-control font-monospace" id="ipv6-site-prefix" name="prefix_48"
-                   type="text" placeholder="1000:2000:3000" required>
-            <div class="form-text">The leading 3 hextets only. Will be normalized to canonical form.</div>
+          <div class="row g-2 mb-3">
+            <div class="col-md-8">
+              <label class="form-label small fw-bold" for="ipv6-site-prefix">Prefix</label>
+              <input class="form-control font-monospace" id="ipv6-site-prefix" name="prefix"
+                     type="text" placeholder="1000:2000:3000" required>
+              <div class="form-text">Leading hextets only (e.g. <code>1000:2000:3000</code> for /48, <code>2600:0400:3031:0100</code> for /56). Will be normalized.</div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small fw-bold" for="ipv6-site-prefix-length">Prefix length</label>
+              <select id="ipv6-site-prefix-length" name="prefix_length" class="form-select">
+                {% for p in range(32, 65) %}
+                  <option value="{{ p }}" {% if p == 48 %}selected{% endif %}>/{{ p }}{% if p == 48 %} (carvable){% endif %}</option>
+                {% endfor %}
+              </select>
+              <div class="form-text">/48 carries vvvv allocations; others are leaf prefixes.</div>
+            </div>
           </div>
           <div class="mb-3">
             <label class="form-label small fw-bold" for="ipv6-site-role">Role / Region <span class="text-muted">(optional)</span></label>
@@ -234,8 +246,8 @@
               <label class="form-label small fw-bold" for="ipv6-alloc-site">Site</label>
               <select id="ipv6-alloc-site" name="site_id" class="form-select" required>
                 <option value="">— select —</option>
-                {% for s in sites %}
-                  <option value="{{ s.id }}">{{ s.name }} ({{ s.prefix_48 }}::/48)</option>
+                {% for s in sites if s.prefix_length == 48 %}
+                  <option value="{{ s.id }}">{{ s.name }} ({{ s.prefix }}::/{{ s.prefix_length }})</option>
                 {% endfor %}
               </select>
             </div>
@@ -309,7 +321,8 @@
       form.setAttribute('hx-put', '/api/ipv6/sites/' + site.id);
       form.removeAttribute('hx-post');
       document.getElementById('ipv6-site-name').value = site.name || '';
-      document.getElementById('ipv6-site-prefix').value = site.prefix_48 || '';
+      document.getElementById('ipv6-site-prefix').value = site.prefix || '';
+      document.getElementById('ipv6-site-prefix-length').value = site.prefix_length || 48;
       document.getElementById('ipv6-site-role').value = site.role || '';
       document.getElementById('ipv6-site-desc').value = site.description || '';
     } else {

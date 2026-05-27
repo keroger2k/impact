@@ -11,9 +11,11 @@ from utils.ipv6_assembler import (
     find_overlap,
     ipv4_to_suffix,
     next_block,
+    normalize_prefix,
     normalize_prefix_48,
     normalize_vvvv,
     validate_prefix_length,
+    validate_site_prefix_length,
     vvvv_block_size,
 )
 
@@ -23,6 +25,30 @@ from utils.ipv6_assembler import (
 def test_normalize_prefix_48_strips_leading_zeros():
     assert normalize_prefix_48("0100:0200:0300") == "100:200:300"
     assert normalize_prefix_48("100:200:300") == "100:200:300"
+
+
+def test_normalize_prefix_handles_variable_length():
+    # /48 trims trailing zero hextets
+    assert normalize_prefix("1000:2000:3000::", 48) == "1000:2000:3000"
+    # /56 keeps 4 hextets (last one partial)
+    assert normalize_prefix("2600:0400:3031:0100", 56) == "2600:400:3031:100"
+    # /32 keeps only 2
+    assert normalize_prefix("2600:0400::", 32) == "2600:400"
+    # /64 keeps all 4
+    assert normalize_prefix("2600:0400:3031:0100", 64) == "2600:400:3031:100"
+
+
+def test_normalize_prefix_zeroes_host_bits():
+    # /56 with mismatched host bits in the trailing hextet is zeroed
+    assert normalize_prefix("2600:0400:3031:01ff", 56) == "2600:400:3031:100"
+
+
+def test_validate_site_prefix_length_bounds():
+    for p in (32, 48, 56, 64):
+        validate_site_prefix_length(p)
+    for p in (31, 65, 128):
+        with pytest.raises(ValueError):
+            validate_site_prefix_length(p)
 
 
 def test_normalize_vvvv_pads_to_four_chars():
@@ -90,12 +116,13 @@ def test_assemble_accepts_unpadded_prefix_and_vvvv():
 
 def test_decode_recovers_site_vvvv_and_ipv4():
     sites = [
-        {"id": 1, "name": "DC1", "prefix_48": "1000:2000:3000"},
-        {"id": 2, "name": "DC2", "prefix_48": "4000:5000:6000"},
+        {"id": 1, "name": "DC1", "prefix": "1000:2000:3000", "prefix_length": 48},
+        {"id": 2, "name": "DC2", "prefix": "4000:5000:6000", "prefix_length": 48},
     ]
     r = decode("1000:2000:3000:100::102:304", sites)
     assert r.site_id == 1
     assert r.site_name == "DC1"
+    assert r.site_prefix_length == 48
     assert r.vvvv == "0100"
     assert r.ipv4 == "1.2.3.4"
     assert r.warnings == []
@@ -103,8 +130,8 @@ def test_decode_recovers_site_vvvv_and_ipv4():
 
 def test_decode_picks_correct_site_when_v4_is_ambiguous():
     sites = [
-        {"id": 1, "name": "DC1", "prefix_48": "1000:2000:3000"},
-        {"id": 2, "name": "DC2", "prefix_48": "4000:5000:6000"},
+        {"id": 1, "name": "DC1", "prefix": "1000:2000:3000", "prefix_length": 48},
+        {"id": 2, "name": "DC2", "prefix": "4000:5000:6000", "prefix_length": 48},
     ]
     same_v4 = "1.2.3.4"
     addr_dc1 = assemble("1000:2000:3000", "0100", same_v4).compressed
@@ -124,13 +151,13 @@ def test_decode_warns_when_prefix_unregistered():
 
 def test_decode_warns_when_middle_hextets_nonzero():
     # Bits in hextet 5 = "dead" should trip the warning
-    sites = [{"id": 1, "name": "DC1", "prefix_48": "1000:2000:3000"}]
+    sites = [{"id": 1, "name": "DC1", "prefix": "1000:2000:3000", "prefix_length": 48}]
     r = decode("1000:2000:3000:100:dead::102:304", sites)
     assert any("Hextets 5-6" in w for w in r.warnings)
 
 
 def test_decode_assemble_round_trip_many_ipv4s():
-    sites = [{"id": 1, "name": "DC1", "prefix_48": "1000:2000:3000"}]
+    sites = [{"id": 1, "name": "DC1", "prefix": "1000:2000:3000", "prefix_length": 48}]
     cases = [
         ("0001", "0.0.0.1"),
         ("0100", "1.0.0.1"),
@@ -143,6 +170,33 @@ def test_decode_assemble_round_trip_many_ipv4s():
         assert r.vvvv == vvvv
         assert r.ipv4 == v4
         assert r.site_id == 1
+
+
+def test_decode_prefers_longest_matching_site():
+    """A /56 leaf airport wins over its containing /48 state when both
+    are registered."""
+    sites = [
+        {"id": 1, "name": "California-State", "prefix": "2600:0400:3031",
+         "prefix_length": 48},
+        {"id": 2, "name": "LAX-airport", "prefix": "2600:0400:3031:0100",
+         "prefix_length": 56},
+    ]
+    r = decode("2600:0400:3031:0100::1", sites)
+    assert r.site_id == 2
+    assert r.site_name == "LAX-airport"
+    assert r.site_prefix_length == 56
+    # Leaf-match warning is informational
+    assert any("leaf" in w.lower() for w in r.warnings)
+
+
+def test_decode_falls_back_to_containing_48_when_leaf_unregistered():
+    sites = [
+        {"id": 1, "name": "California-State", "prefix": "2600:0400:3031",
+         "prefix_length": 48},
+    ]
+    r = decode("2600:0400:3031:0200::1", sites)
+    assert r.site_id == 1
+    assert r.site_prefix_length == 48
 
 
 # ── Allocator ────────────────────────────────────────────────────────────────

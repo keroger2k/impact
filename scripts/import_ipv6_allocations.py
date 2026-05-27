@@ -11,8 +11,9 @@ Example:
     DC1,1.2.0.0,255.255.0.0,0200,56
 
 Blank lines and lines starting with '#' are ignored. Sites must already exist
-in the registry (the file format doesn't carry the /48 prefix). Hits the
-SQLite registry directly — no HTTP/CSRF needed.
+in the registry as /48s (the file format doesn't carry the prefix, and only
+/48 sites carve vvvv allocations — leaf sites like /56 airports are skipped).
+Hits the SQLite registry directly — no HTTP/CSRF needed.
 
 Run from the repo root:
     .venv/bin/python -m scripts.import_ipv6_allocations            # dry run
@@ -75,8 +76,8 @@ def main() -> int:
     sites_by_name = {s["name"]: s for s in registry.list_sites()}
 
     stats = {"created": 0, "skipped_exists": 0, "skipped_overlap": 0,
-             "skipped_unknown_site": 0, "skipped_ipv4_dup": 0,
-             "warned_ipv4_dup": 0, "parse_errors": 0}
+             "skipped_unknown_site": 0, "skipped_leaf_site": 0,
+             "skipped_ipv4_dup": 0, "warned_ipv4_dup": 0, "parse_errors": 0}
 
     mode = "APPLY" if args.apply else "DRY-RUN"
     print(f"[{mode}] reading {path}")
@@ -100,6 +101,12 @@ def main() -> int:
                 print(f"  line {lineno:>4}  SKIP-UNKNOWN-SITE  '{site_name}' "
                       f"(register it first; this row maps {ipv4_cidr} -> vvvv {vvvv})")
                 stats["skipped_unknown_site"] += 1
+                continue
+
+            if int(site.get("prefix_length", 48)) != ipv6.SITE_PREFIX_FOR_VVVV:
+                print(f"  line {lineno:>4}  SKIP-LEAF-SITE     '{site_name}' "
+                      f"is /{site['prefix_length']} (leaf); vvvv allocations require /48")
+                stats["skipped_leaf_site"] += 1
                 continue
 
             existing = registry.list_allocations(site_id=site["id"])
