@@ -250,6 +250,80 @@
   </div>
 </div>
 
+<!-- ── Create-Parent modal (off-book /64 → register a covering parent) ────── -->
+<div class="modal fade" id="ipv6-create-parent-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form id="ipv6-create-parent-form" onsubmit="ipv6SubmitCreateParent(event)">
+        <div class="modal-header">
+          <h5 class="modal-title">Create Parent Site for Off-Book Address</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <div class="alert alert-info small mb-3">
+            <i class="ph ph-info me-1"></i>
+            No Registry site contains the off-book address
+            <code id="ipv6-cp-cidr-display"></code>. Create a covering parent so it's tracked.
+          </div>
+          <div id="ipv6-cp-form-error" class="alert alert-danger d-none mb-3 small"></div>
+          <div class="mb-3">
+            <label class="form-label small fw-bold" for="ipv6-cp-name">Name</label>
+            <input class="form-control" id="ipv6-cp-name" name="name" type="text" required autocomplete="off">
+          </div>
+          <div class="row g-2 mb-3">
+            <div class="col-md-4">
+              <label class="form-label small fw-bold" for="ipv6-cp-length">Parent prefix length</label>
+              <select id="ipv6-cp-length" name="prefix_length" class="form-select"
+                      onchange="ipv6RecomputeParentPrefix()">
+                {% for p in range(32, 65) %}
+                  <option value="{{ p }}" {% if p == 56 %}selected{% endif %}>/{{ p }}{% if p == 48 %} (carvable){% elif p == 56 %} (default){% endif %}</option>
+                {% endfor %}
+              </select>
+              <div class="form-text">/48 enables vvvv allocations. /56 is the common default.</div>
+            </div>
+            <div class="col-md-8">
+              <label class="form-label small fw-bold" for="ipv6-cp-prefix">Prefix</label>
+              <input class="form-control font-monospace" id="ipv6-cp-prefix" name="prefix"
+                     type="text" required
+                     oninput="this.dataset.userEdited='1'">
+              <div class="form-text">Pre-filled from the off-book CIDR for the chosen length; edit if needed.</div>
+            </div>
+          </div>
+          <div class="row g-2 mb-3">
+            <div class="col-md-8">
+              <label class="form-label small fw-bold" for="ipv6-cp-role">Role / Region <span class="text-muted">(optional)</span></label>
+              <input class="form-control" id="ipv6-cp-role" name="role" type="text"
+                     placeholder="datacenter, branch, lab">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small fw-bold" for="ipv6-cp-status">Status</label>
+              <select id="ipv6-cp-status" name="status" class="form-select">
+                <option value="active" selected>active</option>
+                <option value="planned">planned</option>
+                <option value="decommissioned">decommissioned</option>
+              </select>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small fw-bold" for="ipv6-cp-desc">Description</label>
+            <textarea class="form-control" id="ipv6-cp-desc" name="description" rows="2"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer flex-wrap">
+          <button type="button" class="btn btn-outline" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-outline" data-action="save">
+            <i class="ph ph-floppy-disk me-1"></i> Save Parent
+          </button>
+          <button type="submit" class="btn btn-primary" id="ipv6-cp-submit-and-alloc" data-action="save-and-alloc"
+                  title="Creates the parent, then opens Add Allocation pre-filled with the /64's vvvv (requires /48 parent)">
+            <i class="ph ph-plus-circle me-1"></i> Save &amp; Add Allocation
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 <!-- ── Allocation modal (create + edit) ───────────────────────────────────── -->
 <div class="modal fade" id="ipv6-allocation-modal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-lg">
@@ -480,6 +554,175 @@
     return parts.slice(0, 3).join(':');
   }
 
+  // Expand an IPv6 address (with optional `::`) into 8 zero-padded hextets.
+  // Returns null on parse failure.
+  function _expandIPv6(addr) {
+    if (!addr || !addr.includes(':')) return null;
+    let parts;
+    if (addr.includes('::')) {
+      const [head, tail] = addr.split('::');
+      const headParts = head ? head.split(':') : [];
+      const tailParts = tail ? tail.split(':') : [];
+      const zerosNeeded = 8 - headParts.length - tailParts.length;
+      if (zerosNeeded < 0) return null;
+      parts = [...headParts, ...Array(zerosNeeded).fill('0'), ...tailParts];
+    } else {
+      parts = addr.split(':');
+      if (parts.length !== 8) return null;
+    }
+    return parts.map(p => p.padStart(4, '0').toLowerCase());
+  }
+
+  // Derive a Registry-style hextet prefix (e.g. "2600:400:3031:100") from a
+  // CIDR + chosen parent prefix length. Server normalizes again, but we want
+  // a clean, masked default so the user sees what will be created.
+  function _computeParentPrefix(cidr, prefixLength) {
+    if (!cidr || !prefixLength) return '';
+    const expanded = _expandIPv6((cidr.split('/')[0] || ''));
+    if (!expanded) return '';
+    const fullHextets = Math.floor(prefixLength / 16);
+    const remainder = prefixLength % 16;
+    const parts = expanded.slice(0, fullHextets);
+    if (remainder > 0 && fullHextets < 8) {
+      const mask = (0xFFFF << (16 - remainder)) & 0xFFFF;
+      const masked = parseInt(expanded[fullHextets], 16) & mask;
+      parts.push(masked.toString(16).padStart(4, '0'));
+    }
+    return parts.map(h => h.replace(/^0+/, '') || '0').join(':');
+  }
+
+  // ── Create-parent modal (off-book /64 entry point) ────────────────────
+  // Holds the off-book context so the form handler can refer back to it
+  // (CIDR for the recompute helper, decoded vvvv for the follow-up
+  // allocation, device/site_path used as prefill hints).
+  let _ipv6CpContext = null;
+
+  window.ipv6RecomputeParentPrefix = function() {
+    if (!_ipv6CpContext) return;
+    const lenSel = document.getElementById('ipv6-cp-length');
+    const prefInput = document.getElementById('ipv6-cp-prefix');
+    const allocBtn = document.getElementById('ipv6-cp-submit-and-alloc');
+    const len = parseInt(lenSel.value, 10);
+    // Recompute prefix only if the user hasn't manually edited it.
+    if (!prefInput.dataset.userEdited) {
+      prefInput.value = _computeParentPrefix(_ipv6CpContext.cidr, len);
+    }
+    // Add-Allocation only makes sense when the parent is /48 (vvvv-carving).
+    if (allocBtn) {
+      const can = (len === 48);
+      allocBtn.disabled = !can;
+      allocBtn.title = can
+        ? 'Creates the parent, then opens Add Allocation pre-filled with the /64\'s vvvv'
+        : 'Add Allocation requires a /48 parent (vvvv allocations only live below /48)';
+    }
+  };
+
+  window.ipv6OpenCreateParentModal = function(ctx) {
+    _ipv6CpContext = ctx || {};
+    const cidr = _ipv6CpContext.cidr || '';
+    const lenSel = document.getElementById('ipv6-cp-length');
+    const prefInput = document.getElementById('ipv6-cp-prefix');
+    const nameInput = document.getElementById('ipv6-cp-name');
+    const roleInput = document.getElementById('ipv6-cp-role');
+    const statusSel = document.getElementById('ipv6-cp-status');
+    const descInput = document.getElementById('ipv6-cp-desc');
+    const errBox = document.getElementById('ipv6-cp-form-error');
+    errBox.classList.add('d-none');
+    errBox.textContent = '';
+    document.getElementById('ipv6-cp-cidr-display').textContent = cidr;
+
+    // Reset state. /56 is the project's default parent size; user can change.
+    lenSel.value = '56';
+    prefInput.value = '';
+    delete prefInput.dataset.userEdited;
+    nameInput.value = '';
+    roleInput.value = '';
+    statusSel.value = 'active';
+    descInput.value = cidr
+      ? `Parent created from off-book audit entry ${cidr}`
+      : '';
+
+    // Hint name from the device's DNAC site path leaf (e.g. "Global/.../SITE001"
+    // → "SITE001") so the user can accept it with a single click. Falls back
+    // to the device hostname if site_path is missing.
+    if (_ipv6CpContext.site_path) {
+      const leaf = String(_ipv6CpContext.site_path).split('/').filter(Boolean).pop() || '';
+      if (leaf) nameInput.value = leaf;
+    } else if (_ipv6CpContext.device) {
+      nameInput.value = String(_ipv6CpContext.device);
+    }
+
+    ipv6RecomputeParentPrefix();
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('ipv6-create-parent-modal')).show();
+    setTimeout(() => nameInput.focus(), 200);
+  };
+
+  window.ipv6SubmitCreateParent = async function(evt) {
+    evt.preventDefault();
+    const submitter = evt.submitter || document.activeElement;
+    const action = (submitter && submitter.dataset && submitter.dataset.action) || 'save';
+    const errBox = document.getElementById('ipv6-cp-form-error');
+    errBox.classList.add('d-none');
+    errBox.textContent = '';
+
+    const payload = new URLSearchParams();
+    payload.set('name', document.getElementById('ipv6-cp-name').value.trim());
+    payload.set('prefix', document.getElementById('ipv6-cp-prefix').value.trim());
+    payload.set('prefix_length', document.getElementById('ipv6-cp-length').value);
+    payload.set('status', document.getElementById('ipv6-cp-status').value);
+    const role = document.getElementById('ipv6-cp-role').value.trim();
+    const desc = document.getElementById('ipv6-cp-desc').value.trim();
+    if (role) payload.set('role', role);
+    if (desc) payload.set('description', desc);
+
+    const csrfCookie = document.cookie.split('; ').find(r => r.startsWith('csrf_token='));
+    const csrfHeader = csrfCookie ? csrfCookie.split('=')[1] : '';
+
+    let res, body;
+    try {
+      res = await fetch('/api/ipv6/sites', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'X-CSRF-Token': csrfHeader,
+        },
+        body: payload.toString(),
+      });
+      body = await res.json().catch(() => ({}));
+    } catch (e) {
+      errBox.textContent = 'Request failed: ' + e;
+      errBox.classList.remove('d-none');
+      return;
+    }
+    if (!res.ok) {
+      errBox.textContent = (body && body.detail) || ('Request failed (HTTP ' + res.status + ')');
+      errBox.classList.remove('d-none');
+      return;
+    }
+
+    bootstrap.Modal.getInstance(document.getElementById('ipv6-create-parent-modal'))?.hide();
+    // Refresh sites table and audit pane so the new parent shows up and the
+    // off-book row clears.
+    htmx.ajax('GET', '/api/ipv6/sites', {target: '#ipv6-tab-sites .card-body', swap: 'innerHTML'});
+    htmx.ajax('GET', '/api/ipv6/audit', {target: '#ipv6-audit-pane', swap: 'innerHTML'});
+
+    // Chain into the allocation modal only when the user picked the /48
+    // carvable size and explicitly asked for it.
+    const newLen = parseInt(body.prefix_length || 0, 10);
+    if (action === 'save-and-alloc' && newLen === 48 && body.id && _ipv6CpContext && _ipv6CpContext.cidr) {
+      const cidr = _ipv6CpContext.cidr;
+      const lenStr = cidr.split('/')[1] || '64';
+      const expanded = _expandIPv6((cidr.split('/')[0] || ''));
+      const vvvv = expanded ? expanded[3] : '';
+      ipv6PrepareAllocationModal(null, body.id);
+      document.getElementById('ipv6-alloc-vvvv').value = vvvv;
+      document.getElementById('ipv6-alloc-prefix').value = parseInt(lenStr, 10) || 64;
+      document.querySelector('[data-bs-target="#ipv6-tab-allocations"]').click();
+      bootstrap.Modal.getOrCreateInstance(document.getElementById('ipv6-allocation-modal')).show();
+    }
+    _ipv6CpContext = null;
+  };
+
   window.ipv6OpenSitePrefilled = function(prefix, length) {
     ipv6PrepareSiteModal();
     document.getElementById('ipv6-site-prefix').value = prefix || '';
@@ -536,9 +779,13 @@
     }
   };
 
-  window.ipv6OpenAllocationFromIPv6 = async function(cidr) {
-    const addr = (cidr || '').split('/')[0];
-    const lenStr = (cidr || '').split('/')[1] || '64';
+  window.ipv6OpenAllocationFromIPv6 = async function(cidrOrCtx) {
+    // Accept either a bare CIDR string (legacy callers) or a context object
+    // {cidr, device, site_path} so the create-parent modal can prefill hints.
+    const ctx = (typeof cidrOrCtx === 'string') ? {cidr: cidrOrCtx} : (cidrOrCtx || {});
+    const cidr = ctx.cidr || '';
+    const addr = cidr.split('/')[0];
+    const lenStr = cidr.split('/')[1] || '64';
     const csrfCookie = document.cookie.split('; ').find(r => r.startsWith('csrf_token='));
     const csrfHeader = csrfCookie ? csrfCookie.split('=')[1] : '';
     let body = {};
@@ -561,15 +808,21 @@
       return;
     }
     if (!body.site_id) {
-      // No /48 site contains this address — offer to create it first.
-      const parent = _parentFortyEight(cidr);
-      const ok = confirm(
-        `No /48 Registry site contains ${addr}.\n\n` +
-        `Add the parent /48 site (${parent || '?'}) first?`
+      // No Registry site contains this address — open the dedicated
+      // create-parent modal so the user can pick the parent's prefix length
+      // (default /56) and any other site fields without a browser popup.
+      window.ipv6OpenCreateParentModal(ctx);
+      return;
+    }
+    // Site exists but only /48 sites carry vvvv allocations. If the matching
+    // site is a leaf (e.g. /56), there's nothing to add at the allocation
+    // layer — let the user know the address is already covered.
+    if (body.site_prefix_length && parseInt(body.site_prefix_length, 10) !== 48) {
+      alert(
+        'Address ' + addr + ' is already covered by Registry site "' +
+        (body.site_name || '#' + body.site_id) + '" (/' + body.site_prefix_length +
+        ' leaf). No vvvv allocation needed.'
       );
-      if (ok && parent) {
-        window.ipv6OpenSitePrefilled(parent, 48);
-      }
       return;
     }
     ipv6PrepareAllocationModal(null, body.site_id);

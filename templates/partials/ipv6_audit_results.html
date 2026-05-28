@@ -131,7 +131,7 @@
               </button>
             {% elif _len == 64 %}
               <button class="btn btn-xs btn-outline px-2 py-0"
-                      onclick='ipv6OpenAllocationFromIPv6({{ r.cidr|tojson }})'
+                      onclick='ipv6OpenAllocationFromIPv6({cidr: {{ r.cidr|tojson }}, device: {{ (r.device or "")|tojson }}, site_path: {{ (r.site_path or "")|tojson }}})'
                       title="Add as Registry allocation">
                 <i class="ph ph-database me-1"></i> Add allocation
               </button>
