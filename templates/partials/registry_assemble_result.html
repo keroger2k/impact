@@ -1,0 +1,20 @@
+{% set r = result %}
+<div class="border rounded p-3 bg-light">
+  <div class="text-muted text-uppercase" style="font-size:.7rem">Assembled IPv6</div>
+  <div class="font-monospace fw-bold fs-6 text-navy">{{ r.ipv6 }}</div>
+  <div class="row g-2 mt-1">
+    <div class="col-md-5">
+      <div class="text-muted text-uppercase" style="font-size:.7rem">Site prefix</div>
+      <div class="font-monospace small">{{ r.prefix.cidr }}{% if r.prefix.site_code %} <span class="text-muted">({{ r.prefix.site_code }})</span>{% endif %}</div>
+    </div>
+    <div class="col-md-3">
+      <div class="text-muted text-uppercase" style="font-size:.7rem">vvvv</div>
+      <div class="font-monospace small">{{ r.vvvv }}</div>
+    </div>
+    <div class="col-md-4">
+      <div class="text-muted text-uppercase" style="font-size:.7rem">IPv4 host</div>
+      <div class="font-monospace small">{{ r.ipv4 }}</div>
+    </div>
+  </div>
+  <div class="text-muted small mt-2 font-monospace">{{ r.ipv6_exploded }}</div>
+</div>

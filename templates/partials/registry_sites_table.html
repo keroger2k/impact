@@ -1,0 +1,63 @@
+<div class="d-flex justify-content-between align-items-center px-3 py-2 border-bottom">
+  <span class="text-muted small">{{ items|length }} site{{ '' if items|length == 1 else 's' }}</span>
+  <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#reg-site-modal"
+          onclick="regPrepareSiteModal()">
+    <i class="ph ph-plus me-1"></i> Add Site
+  </button>
+</div>
+{% macro status_badge(status) %}
+  {% set s = status or 'active' %}
+  {% if s == 'active' %}<span class="badge bg-success-subtle text-success">active</span>
+  {% elif s == 'decommissioned' %}<span class="badge bg-danger-subtle text-danger">decommissioned</span>
+  {% elif s == 'planned' %}<span class="badge bg-warning-subtle text-warning">planned</span>
+  {% else %}<span class="badge bg-secondary-subtle text-secondary">{{ s }}</span>{% endif %}
+{% endmacro %}
+<table class="table table-hover table-striped mb-0 data-table">
+  <thead class="bg-light">
+    <tr>
+      <th>Site Code</th>
+      <th>Name</th>
+      <th>Region</th>
+      <th>Role</th>
+      <th>Status</th>
+      <th class="text-center">IPv4</th>
+      <th class="text-center">IPv6</th>
+      <th data-no-sort data-no-filter>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for s in items %}
+    <tr>
+      <td class="fw-bold text-navy font-monospace">
+        <a href="#" onclick="regViewSite({{ s.id }}); return false;">{{ s.site_code }}</a>
+      </td>
+      <td>{{ s.name or '—' }}</td>
+      <td class="small">{{ s.region or '—' }}</td>
+      <td>{% if s.role %}<span class="badge bg-info-subtle text-info">{{ s.role }}</span>{% endif %}</td>
+      <td>{{ status_badge(s.status) }}</td>
+      <td class="text-center">
+        {% if s.v4_count %}<span class="badge bg-primary-subtle text-primary">{{ s.v4_count }}</span>
+        {% else %}<span class="text-muted">0</span>{% endif %}
+      </td>
+      <td class="text-center">
+        {% if s.v6_count %}<span class="badge bg-secondary-subtle text-secondary">{{ s.v6_count }}</span>
+        {% else %}<span class="text-muted">0</span>{% endif %}
+      </td>
+      <td>
+        <button class="btn btn-xs btn-outline px-2 py-0" onclick="regViewSite({{ s.id }})">View</button>
+        <button class="btn btn-xs btn-outline-warning px-2 py-0"
+                data-bs-toggle="modal" data-bs-target="#reg-site-modal"
+                onclick='regPrepareSiteModal({{ s|tojson }})'>Edit</button>
+        <button class="btn btn-xs btn-outline-danger px-2 py-0"
+                hx-delete="/api/registry/sites/{{ s.id }}" hx-swap="none"
+                hx-confirm="Delete site '{{ s.site_code }}'? All prefixes under it are also deleted."
+                hx-on::after-request="if (event.detail.successful) regReloadSites();">Delete</button>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="8" class="text-center text-muted py-4">
+      No sites yet. Add one, or seed from CSV with <code>scripts.import_registry</code>.
+    </td></tr>
+    {% endfor %}
+  </tbody>
+</table>

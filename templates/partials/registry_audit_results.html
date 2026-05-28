@@ -1,0 +1,154 @@
+{% set sm = report.summary %}
+<div class="row g-2 mb-3">
+  {% macro kpi(label, value, cls, icon) %}
+  <div class="col">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-body py-2 px-3">
+        <div class="d-flex align-items-center justify-content-between">
+          <div>
+            <div class="text-muted text-uppercase" style="font-size:.7rem">{{ label }}</div>
+            <div class="fs-5 fw-bold {{ cls }}">{{ value }}</div>
+          </div>
+          <i class="ph {{ icon }} {{ cls }}" style="font-size:1.4rem;opacity:.5"></i>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endmacro %}
+  {{ kpi('In sync', sm.in_sync, 'text-success', 'ph-check-circle') }}
+  {{ kpi('Registry-only', sm.registry_only, 'text-warning', 'ph-file-dashed') }}
+  {{ kpi('Network-only', sm.network_only, 'text-info', 'ph-magnifying-glass') }}
+  {{ kpi('Mismatch', sm.mismatch, 'text-danger', 'ph-warning') }}
+  {{ kpi('New sites', sm.new_site_candidates, 'text-primary', 'ph-buildings') }}
+  {{ kpi('Unattributed', sm.unattributed, 'text-secondary', 'ph-question') }}
+</div>
+
+<div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+  <span class="text-muted small">
+    <i class="ph ph-clock me-1"></i> {{ report.generated }} · sources: {{ report.sources|join(', ') }}
+    · {{ sm.observed_total }} observed networks
+  </span>
+  <div class="ms-auto d-flex align-items-center gap-2">
+    <div class="form-check mb-0">
+      <input class="form-check-input" type="checkbox" id="reg-accept-all" onchange="regToggleAllAccept(this)">
+      <label class="form-check-label small" for="reg-accept-all">Select all</label>
+    </div>
+    <button class="btn btn-sm btn-success" id="reg-accept-btn" onclick="regAcceptSelected()" disabled>
+      <i class="ph ph-check-circle me-1"></i> Accept selected (0)
+    </button>
+  </div>
+</div>
+
+{% macro accept_cb(cidr, role, site_id, site_code) %}
+  <input class="form-check-input reg-accept-cb" type="checkbox" onchange="regUpdateAcceptCount()"
+         data-cidr="{{ cidr }}" data-role="{{ role }}"
+         {% if site_id is not none %}data-site-id="{{ site_id }}"{% endif %}
+         {% if site_code %}data-site-code="{{ site_code }}"{% endif %}>
+{% endmacro %}
+
+{% if not report.sites and not report.new_site_candidates and not report.unattributed %}
+  <div class="alert alert-success small"><i class="ph ph-check-circle me-1"></i>
+    Nothing to reconcile — every site's registry and observed networks line up (or no live data is warmed yet).</div>
+{% endif %}
+
+{% for sr in report.sites %}
+{% set site = sr.site %}
+<div class="card border-0 shadow-sm mb-2">
+  <div class="card-header bg-white d-flex align-items-center gap-2 py-2">
+    <span class="font-monospace fw-bold text-navy">{{ site.site_code }}</span>
+    <span class="text-muted small">{{ site.name or '' }}</span>
+    <span class="ms-auto small">
+      <span class="badge bg-success-subtle text-success">{{ sr.counts.in_sync }} in-sync</span>
+      {% if sr.counts.registry_only %}<span class="badge bg-warning-subtle text-warning">{{ sr.counts.registry_only }} registry-only</span>{% endif %}
+      {% if sr.counts.network_only %}<span class="badge bg-info-subtle text-info">{{ sr.counts.network_only }} network-only</span>{% endif %}
+      {% if sr.counts.mismatch %}<span class="badge bg-danger-subtle text-danger">{{ sr.counts.mismatch }} mismatch</span>{% endif %}
+    </span>
+  </div>
+  <div class="card-body py-2">
+    {% set reg_only = sr.findings|selectattr('state','equalto','registry-only')|list %}
+    {% if reg_only %}
+    <div class="small text-muted mb-2">
+      <span class="fw-semibold text-warning">Registry-only</span> (documented, not seen live):
+      {% for f in reg_only %}<code class="ms-1">{{ f.prefix.cidr }}</code>{% if f.prefix.family == 6 %}<span class="text-muted">⁶</span>{% endif %}{% endfor %}
+    </div>
+    {% endif %}
+
+    {% if sr.drift %}
+    <table class="table table-sm table-hover mb-0">
+      <thead class="bg-light"><tr>
+        <th style="width:2.5rem"></th><th>Discovered CIDR</th><th>Type</th><th>Seen by</th><th>Suggested role</th><th>Note</th>
+      </tr></thead>
+      <tbody>
+        {% for d in sr.drift %}
+        <tr>
+          <td>{{ accept_cb(d.cidr, d.suggested_role, d.site_id, none) }}</td>
+          <td class="font-monospace fw-semibold">{{ d.cidr }}</td>
+          <td>
+            {% if d.kind == 'network-only' %}<span class="badge bg-info-subtle text-info">network-only</span>
+            {% else %}<span class="badge bg-danger-subtle text-danger">mismatch</span>{% endif %}
+          </td>
+          <td class="small">{{ d.sources|join(', ') }}</td>
+          <td class="small">{{ d.suggested_role }}</td>
+          <td class="small text-muted">
+            {% if d.related %}overlaps {{ d.related|join(', ') }}{% endif %}
+            {{ d.label }}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</div>
+{% endfor %}
+
+{% if report.new_site_candidates %}
+<div class="card border-0 shadow-sm mb-2">
+  <div class="card-header bg-white py-2">
+    <i class="ph ph-buildings me-1 text-primary"></i>
+    <span class="fw-bold">New-site candidates</span>
+    <span class="text-muted small ms-1">— site codes seen live with no registry entry. Accepting creates the site.</span>
+  </div>
+  <div class="card-body py-2">
+    <table class="table table-sm table-hover mb-0">
+      <thead class="bg-light"><tr>
+        <th style="width:2.5rem"></th><th>Site Code</th><th>Discovered CIDR</th><th>Seen by</th><th>Suggested role</th>
+      </tr></thead>
+      <tbody>
+        {% for cand in report.new_site_candidates %}
+          {% for rec in cand.prefixes %}
+          <tr>
+            <td>{{ accept_cb(rec.cidr, rec.suggested_role, none, cand.site_code) }}</td>
+            <td class="font-monospace fw-bold">{{ cand.site_code }}</td>
+            <td class="font-monospace">{{ rec.cidr }}</td>
+            <td class="small">{{ rec.sources|join(', ') }}</td>
+            <td class="small">{{ rec.suggested_role }}</td>
+          </tr>
+          {% endfor %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% if report.unattributed %}
+<div class="card border-0 shadow-sm mb-2">
+  <div class="card-header bg-white py-2">
+    <i class="ph ph-question me-1 text-secondary"></i>
+    <span class="fw-bold">Unattributed</span>
+    <span class="text-muted small ms-1">— observed live but no site code and not inside any registry block. Review manually.</span>
+  </div>
+  <div class="card-body py-2">
+    <div class="d-flex flex-wrap gap-2">
+      {% for u in report.unattributed %}
+        <span class="badge bg-light text-dark border font-monospace" title="{{ u.sources|join(', ') }} · {{ u.label }}">
+          {{ u.cidr }}
+        </span>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<script>if (window.regUpdateAcceptCount) regUpdateAcceptCount();</script>

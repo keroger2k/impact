@@ -19,7 +19,7 @@ from utils.csrf import CSRFMiddleware
 import auth as auth_module
 from auth import require_auth, SessionEntry
 from clients import verify_ssl
-from routers import dnac, ise, firewall, aci, commands, import_, auth as auth_router, pages, routing, nexus, cache_mgmt, ipam, tunnels, ipv6_registry, site
+from routers import dnac, ise, firewall, aci, commands, import_, auth as auth_router, pages, routing, nexus, cache_mgmt, ipam, tunnels, ipv6_registry, ip_registry, site
 from logger_config import setup_logging, set_correlation_id, run_with_context
 
 setup_logging()
@@ -39,9 +39,10 @@ async def lifespan(app: FastAPI):
     # Purge legacy ACI cache keys
     cache.cleanup_old_aci_keys()
 
-    # IPv6 registry: ensure SQLite schema exists before any request hits the API
-    from clients import ipv6_registry
+    # IP registry: ensure SQLite schema exists before any request hits the API
+    from clients import ipv6_registry, ip_registry
     ipv6_registry.init_schema()
+    ip_registry.init_schema()
 
     if DEV_MODE:
         seed_cache(cache)
@@ -115,6 +116,7 @@ app.include_router(cache_mgmt.router, prefix="/api/cache", tags=["Cache"], **_au
 app.include_router(ipam.router, prefix="/api/ipam", tags=["IPAM"], **_auth_dep)
 app.include_router(tunnels.router, prefix="/api/tunnels", tags=["Tunnels"], **_auth_dep)
 app.include_router(ipv6_registry.router, prefix="/api/ipv6", tags=["IPv6Registry"], **_auth_dep)
+app.include_router(ip_registry.router, prefix="/api/registry", tags=["Registry"], **_auth_dep)
 app.include_router(site.router, prefix="/api/site", tags=["Site"], **_auth_dep)
 app.include_router(pages.router)
 

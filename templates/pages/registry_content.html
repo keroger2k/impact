@@ -1,0 +1,424 @@
+<div class="animate-fade-in">
+  <div class="flex-between mb-4">
+    <div>
+      <h4 class="mb-1 font-weight-bold" style="color: var(--sidebar-bg)">IP Address Registry</h4>
+      <p class="text-muted small mb-0">Dual-stack site inventory (IPv4 + IPv6), reconciled against the live network</p>
+    </div>
+    <div class="d-flex gap-2">
+      <a href="/api/registry/export.csv" class="btn btn-primary">
+        <i class="ph ph-file-csv me-1"></i> Export CSV
+      </a>
+    </div>
+  </div>
+
+  <ul class="nav nav-tabs mb-3" role="tablist">
+    <li class="nav-item" role="presentation">
+      <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#reg-tab-sites" type="button" role="tab">
+        <i class="ph ph-buildings me-1"></i> Sites
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" data-bs-toggle="tab" data-bs-target="#reg-tab-audit" type="button" role="tab"
+              onclick="regLoadAuditOnce()">
+        <i class="ph ph-shield-check me-1"></i> Audit &amp; Sync
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" data-bs-toggle="tab" data-bs-target="#reg-tab-tools" type="button" role="tab">
+        <i class="ph ph-wrench me-1"></i> IPv6 Tools
+      </button>
+    </li>
+  </ul>
+
+  <div class="tab-content">
+    <!-- ── Sites ────────────────────────────────────────────────────────── -->
+    <div class="tab-pane fade show active" id="reg-tab-sites" role="tabpanel">
+      <div class="card shadow-sm border-0">
+        <div class="card-body p-0" id="reg-sites-pane"
+             hx-get="/api/registry/sites" hx-trigger="load" hx-swap="innerHTML">
+          <div class="text-muted text-center py-5"><i class="ph ph-circle-notch ph-spin me-1"></i> Loading sites…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Audit & Sync ─────────────────────────────────────────────────── -->
+    <div class="tab-pane fade" id="reg-tab-audit" role="tabpanel">
+      <div class="card shadow-sm border-0 mb-3">
+        <div class="card-body d-flex flex-wrap align-items-center gap-3">
+          <span class="small fw-bold me-1">Sources:</span>
+          {% for src in ['dnac', 'nexus', 'panorama', 'aci'] %}
+          <div class="form-check form-check-inline mb-0">
+            <input class="form-check-input reg-source-cb" type="checkbox" value="{{ src }}"
+                   id="reg-src-{{ src }}" checked>
+            <label class="form-check-label small text-uppercase" for="reg-src-{{ src }}">{{ src }}</label>
+          </div>
+          {% endfor %}
+          <button class="btn btn-sm btn-primary ms-auto" onclick="regRunAudit(true)">
+            <i class="ph ph-arrows-clockwise me-1"></i> Run / Refresh Audit
+          </button>
+        </div>
+      </div>
+      <div id="reg-audit-pane">
+        <div class="text-muted text-center py-5 small">
+          <i class="ph ph-info me-1"></i> Pick sources and run the audit. It reconciles the registry against
+          the warmed platform caches — warm DNAC / Nexus / Panorama / ACI first for full coverage.
+        </div>
+      </div>
+    </div>
+
+    <!-- ── IPv6 Tools ───────────────────────────────────────────────────── -->
+    <div class="tab-pane fade" id="reg-tab-tools" role="tabpanel">
+      <div class="row g-3">
+        <div class="col-lg-6">
+          <div class="card shadow-sm border-0 h-100">
+            <div class="card-body">
+              <h6 class="fw-bold"><i class="ph ph-arrow-square-out me-1"></i> Decode IPv6</h6>
+              <p class="text-muted small">Recover the site, vvvv segment, and original IPv4 from an assembled address.</p>
+              <form hx-post="/api/registry/decode" hx-target="#reg-decode-result" hx-swap="innerHTML"
+                    class="row g-2 align-items-end">
+                <div class="col-9">
+                  <input name="ipv6" type="text" class="form-control font-monospace"
+                         placeholder="1000:2000:3000:1900::102:304" required>
+                </div>
+                <div class="col-3">
+                  <button type="submit" class="btn btn-primary w-100"><i class="ph ph-magnifying-glass"></i></button>
+                </div>
+              </form>
+              <div id="reg-decode-result" class="mt-3 text-muted small">
+                <i class="ph ph-info me-1"></i> Paste an IPv6 address to decode.
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-6">
+          <div class="card shadow-sm border-0 h-100">
+            <div class="card-body">
+              <h6 class="fw-bold"><i class="ph ph-arrow-square-in me-1"></i> Assemble IPv6</h6>
+              <p class="text-muted small">Map a legacy IPv4 host into a site's IPv6 prefix.</p>
+              <form hx-post="/api/registry/assemble" hx-target="#reg-assemble-result" hx-swap="innerHTML"
+                    class="row g-2 align-items-end">
+                <div class="col-12">
+                  <label class="form-label small fw-bold mb-1">IPv6 site prefix</label>
+                  <select name="prefix_id" class="form-select" required>
+                    <option value="">— select an IPv6 prefix —</option>
+                    {% for p in v6_site_prefixes if p.prefix_length < 64 %}
+                      <option value="{{ p.id }}">{{ p.site_code or p.label or '' }} — {{ p.cidr }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="col-7">
+                  <label class="form-label small fw-bold mb-1">IPv4 host</label>
+                  <input name="ipv4" type="text" class="form-control font-monospace" placeholder="1.2.3.4" required>
+                </div>
+                <div class="col-3">
+                  <label class="form-label small fw-bold mb-1">vvvv <span class="text-muted">(opt)</span></label>
+                  <input name="vvvv" type="text" class="form-control font-monospace" placeholder="auto" maxlength="4">
+                </div>
+                <div class="col-2">
+                  <button type="submit" class="btn btn-primary w-100"><i class="ph ph-arrow-right"></i></button>
+                </div>
+              </form>
+              <div id="reg-assemble-result" class="mt-3 text-muted small">
+                <i class="ph ph-info me-1"></i> Choose a prefix and IPv4 host.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Site modal (create + edit) ─────────────────────────────────────────── -->
+<div class="modal fade" id="reg-site-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form id="reg-site-form" hx-post="/api/registry/sites" hx-swap="none"
+            hx-on::after-request="regHandleSiteResponse(event)">
+        <div class="modal-header">
+          <h5 class="modal-title" id="reg-site-modal-title">Add Site</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div id="reg-site-form-error" class="alert alert-danger d-none mb-3 small"></div>
+          <div class="row g-2 mb-3">
+            <div class="col-md-5">
+              <label class="form-label small fw-bold" for="reg-site-code">Site Code</label>
+              <input class="form-control font-monospace text-uppercase" id="reg-site-code" name="site_code"
+                     type="text" placeholder="K015" required autocomplete="off">
+            </div>
+            <div class="col-md-7">
+              <label class="form-label small fw-bold" for="reg-site-name">Name <span class="text-muted">(opt)</span></label>
+              <input class="form-control" id="reg-site-name" name="name" type="text">
+            </div>
+          </div>
+          <div class="row g-2 mb-3">
+            <div class="col-md-5">
+              <label class="form-label small fw-bold" for="reg-site-region">Region <span class="text-muted">(opt)</span></label>
+              <input class="form-control" id="reg-site-region" name="region" type="text">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small fw-bold" for="reg-site-role">Role <span class="text-muted">(opt)</span></label>
+              <input class="form-control" id="reg-site-role" name="role" type="text" placeholder="airport, dc">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small fw-bold" for="reg-site-status">Status</label>
+              <select id="reg-site-status" name="status" class="form-select">
+                <option value="active" selected>active</option>
+                <option value="planned">planned</option>
+                <option value="decommissioned">decommissioned</option>
+              </select>
+            </div>
+          </div>
+          <div class="mb-2">
+            <label class="form-label small fw-bold" for="reg-site-desc">Description <span class="text-muted">(opt)</span></label>
+            <textarea class="form-control" id="reg-site-desc" name="description" rows="2"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- ── Prefix modal (create + edit) ───────────────────────────────────────── -->
+<div class="modal fade" id="reg-prefix-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <form id="reg-prefix-form" hx-post="/api/registry/prefixes" hx-swap="none"
+            hx-on::after-request="regHandlePrefixResponse(event)">
+        <div class="modal-header">
+          <h5 class="modal-title" id="reg-prefix-modal-title">Add Prefix</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div id="reg-prefix-form-error" class="alert alert-danger d-none mb-3 small"></div>
+          <div id="reg-prefix-form-warning" class="alert alert-warning d-none mb-3 small"></div>
+          <div class="row g-3">
+            <div class="col-md-5">
+              <label class="form-label small fw-bold" for="reg-prefix-site">Site</label>
+              <select id="reg-prefix-site" name="site_id" class="form-select" required>
+                <option value="">— select a site —</option>
+                {% for s in sites %}
+                  <option value="{{ s.id }}">{{ s.site_code }}{% if s.name %} — {{ s.name }}{% endif %}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-7">
+              <label class="form-label small fw-bold" for="reg-prefix-cidr">CIDR (IPv4 or IPv6)</label>
+              <input class="form-control font-monospace" id="reg-prefix-cidr" name="cidr" type="text"
+                     placeholder="10.25.24.0/22  or  2600:400:3003:700::/56" required autocomplete="off">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small fw-bold" for="reg-prefix-role">Role</label>
+              <input class="form-control" id="reg-prefix-role" name="role" type="text"
+                     list="reg-role-options" placeholder="site-aggregate">
+              <datalist id="reg-role-options">
+                <option value="site-aggregate"><option value="site"><option value="stip">
+                <option value="vlan"><option value="mgmt"><option value="transit"><option value="subnet">
+              </datalist>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small fw-bold" for="reg-prefix-vlan">VLAN <span class="text-muted">(opt)</span></label>
+              <input class="form-control font-monospace" id="reg-prefix-vlan" name="vlan_id" type="number"
+                     min="1" max="4094" placeholder="100">
+            </div>
+            <div class="col-md-5">
+              <label class="form-label small fw-bold" for="reg-prefix-status">Status</label>
+              <select id="reg-prefix-status" name="status" class="form-select">
+                <option value="allocated" selected>allocated</option>
+                <option value="deployed">deployed</option>
+                <option value="planned">planned</option>
+                <option value="reserved">reserved</option>
+                <option value="decommissioned">decommissioned</option>
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small fw-bold" for="reg-prefix-label">Label <span class="text-muted">(opt)</span></label>
+              <input class="form-control" id="reg-prefix-label" name="label" type="text">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small fw-bold" for="reg-prefix-owner">Owner <span class="text-muted">(opt)</span></label>
+              <input class="form-control" id="reg-prefix-owner" name="owner" type="text">
+            </div>
+            <div class="col-12">
+              <label class="form-label small fw-bold" for="reg-prefix-desc">Description <span class="text-muted">(opt)</span></label>
+              <input class="form-control" id="reg-prefix-desc" name="description" type="text">
+            </div>
+          </div>
+          <input type="hidden" id="reg-prefix-confirm-overlap" name="confirm_overlap" value="false">
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  function csrf() {
+    return (document.cookie.split('; ').find(r => r.startsWith('csrf_token=')) || '').split('=')[1] || '';
+  }
+  function showErr(id, msg) {
+    const el = document.getElementById(id);
+    el.textContent = msg; el.classList.remove('d-none');
+  }
+
+  // ── Sites pane ──────────────────────────────────────────────────────────
+  window.regReloadSites = function() {
+    htmx.ajax('GET', '/api/registry/sites', {target: '#reg-sites-pane', swap: 'innerHTML'});
+  };
+  window.regViewSite = function(siteId) {
+    htmx.ajax('GET', '/api/registry/sites/' + siteId, {target: '#reg-sites-pane', swap: 'innerHTML'});
+  };
+
+  // ── Site modal ────────────────────────────────────────────────────────────
+  window.regPrepareSiteModal = function(site) {
+    const form = document.getElementById('reg-site-form');
+    document.getElementById('reg-site-form-error').classList.add('d-none');
+    form.reset();
+    if (site && site.id) {
+      document.getElementById('reg-site-modal-title').textContent = 'Edit Site';
+      form.setAttribute('hx-put', '/api/registry/sites/' + site.id);
+      form.removeAttribute('hx-post');
+      document.getElementById('reg-site-code').value = site.site_code || '';
+      document.getElementById('reg-site-name').value = site.name || '';
+      document.getElementById('reg-site-region').value = site.region || '';
+      document.getElementById('reg-site-role').value = site.role || '';
+      document.getElementById('reg-site-status').value = site.status || 'active';
+      document.getElementById('reg-site-desc').value = site.description || '';
+    } else {
+      document.getElementById('reg-site-modal-title').textContent = 'Add Site';
+      form.setAttribute('hx-post', '/api/registry/sites');
+      form.removeAttribute('hx-put');
+    }
+    htmx.process(form);
+  };
+  window.regHandleSiteResponse = function(evt) {
+    if (evt.detail.successful) {
+      bootstrap.Modal.getInstance(document.getElementById('reg-site-modal'))?.hide();
+      regReloadSites();
+    } else {
+      let msg = 'Request failed (HTTP ' + evt.detail.xhr.status + ')';
+      try { msg = JSON.parse(evt.detail.xhr.responseText).detail || msg; } catch (e) {}
+      showErr('reg-site-form-error', msg);
+    }
+  };
+
+  // ── Prefix modal ──────────────────────────────────────────────────────────
+  window.regPreparePrefixModal = function(prefix, defaultSiteId) {
+    const form = document.getElementById('reg-prefix-form');
+    ['reg-prefix-form-error', 'reg-prefix-form-warning'].forEach(id => document.getElementById(id).classList.add('d-none'));
+    form.reset();
+    document.getElementById('reg-prefix-confirm-overlap').value = 'false';
+    if (prefix && prefix.id) {
+      document.getElementById('reg-prefix-modal-title').textContent = 'Edit Prefix';
+      form.setAttribute('hx-put', '/api/registry/prefixes/' + prefix.id);
+      form.removeAttribute('hx-post');
+      document.getElementById('reg-prefix-site').value = prefix.site_id || '';
+      document.getElementById('reg-prefix-site').disabled = true;
+      document.getElementById('reg-prefix-cidr').value = prefix.cidr || '';
+      document.getElementById('reg-prefix-role').value = prefix.role || '';
+      document.getElementById('reg-prefix-vlan').value = (prefix.vlan_id == null ? '' : prefix.vlan_id);
+      document.getElementById('reg-prefix-status').value = prefix.status || 'allocated';
+      document.getElementById('reg-prefix-label').value = prefix.label || '';
+      document.getElementById('reg-prefix-owner').value = prefix.owner || '';
+      document.getElementById('reg-prefix-desc').value = prefix.description || '';
+    } else {
+      document.getElementById('reg-prefix-modal-title').textContent = 'Add Prefix';
+      form.setAttribute('hx-post', '/api/registry/prefixes');
+      form.removeAttribute('hx-put');
+      const sel = document.getElementById('reg-prefix-site');
+      sel.disabled = false;
+      if (defaultSiteId) sel.value = defaultSiteId;
+    }
+    htmx.process(form);
+    // re-enable on close so a disabled select still submits next time
+    document.getElementById('reg-prefix-site').disabled = false;
+    if (prefix && prefix.id) document.getElementById('reg-prefix-site').disabled = true;
+    window._regPrefixReturnSite = (prefix && prefix.site_id) || defaultSiteId || null;
+  };
+  window.regHandlePrefixResponse = function(evt) {
+    const xhr = evt.detail.xhr;
+    if (evt.detail.successful) {
+      bootstrap.Modal.getInstance(document.getElementById('reg-prefix-modal'))?.hide();
+      if (window._regPrefixReturnSite) regViewSite(window._regPrefixReturnSite);
+      else regReloadSites();
+      return;
+    }
+    let body = {};
+    try { body = JSON.parse(xhr.responseText); } catch (e) {}
+    const detail = body.detail;
+    if (xhr.status === 409 && typeof detail === 'object' && detail.overlaps) {
+      const warn = document.getElementById('reg-prefix-form-warning');
+      warn.innerHTML = '<i class="ph ph-warning-circle me-1"></i> ' + (detail.detail || 'Overlap detected.') +
+        ' <button type="button" class="btn btn-xs btn-warning ms-2" onclick="regConfirmOverlap()">Save anyway</button>';
+      warn.classList.remove('d-none');
+      return;
+    }
+    showErr('reg-prefix-form-error', (typeof detail === 'string') ? detail : ('Request failed (HTTP ' + xhr.status + ')'));
+  };
+  window.regConfirmOverlap = function() {
+    document.getElementById('reg-prefix-confirm-overlap').value = 'true';
+    htmx.trigger('#reg-prefix-form', 'submit');
+  };
+
+  // ── Audit ───────────────────────────────────────────────────────────────
+  let _regAuditLoaded = false;
+  window.regLoadAuditOnce = function() {
+    if (!_regAuditLoaded) { _regAuditLoaded = true; regRunAudit(false); }
+  };
+  window.regRunAudit = function(refresh) {
+    const sources = Array.from(document.querySelectorAll('.reg-source-cb:checked')).map(cb => cb.value);
+    const pane = document.getElementById('reg-audit-pane');
+    pane.innerHTML = '<div class="text-muted text-center py-5"><i class="ph ph-circle-notch ph-spin me-1"></i> Running audit…</div>';
+    const qs = 'sources=' + encodeURIComponent(sources.join(',')) + (refresh ? '&refresh=1' : '');
+    htmx.ajax('GET', '/api/registry/audit?' + qs, {target: '#reg-audit-pane', swap: 'innerHTML'});
+  };
+
+  window.regToggleAllAccept = function(master) {
+    document.querySelectorAll('.reg-accept-cb').forEach(cb => { cb.checked = master.checked; });
+    regUpdateAcceptCount();
+  };
+  window.regUpdateAcceptCount = function() {
+    const n = document.querySelectorAll('.reg-accept-cb:checked').length;
+    const btn = document.getElementById('reg-accept-btn');
+    if (btn) { btn.textContent = ''; btn.insertAdjacentHTML('beforeend',
+      '<i class="ph ph-check-circle me-1"></i> Accept selected (' + n + ')'); btn.disabled = n === 0; }
+  };
+  window.regAcceptSelected = async function() {
+    const items = Array.from(document.querySelectorAll('.reg-accept-cb:checked')).map(cb => {
+      const it = {cidr: cb.dataset.cidr, role: cb.dataset.role || undefined};
+      if (cb.dataset.siteId) it.site_id = parseInt(cb.dataset.siteId, 10);
+      else if (cb.dataset.siteCode) it.site_code = cb.dataset.siteCode;
+      return it;
+    });
+    if (!items.length) return;
+    const btn = document.getElementById('reg-accept-btn');
+    btn.disabled = true;
+    const payload = new URLSearchParams({items: JSON.stringify(items)});
+    let res, body;
+    try {
+      res = await fetch('/api/registry/audit/accept', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': csrf()},
+        body: payload.toString(),
+      });
+      body = await res.json().catch(() => ({}));
+    } catch (e) { alert('Accept failed: ' + e); btn.disabled = false; return; }
+    if (!res.ok) { alert((body && body.detail) || ('Accept failed: ' + res.status)); btn.disabled = false; return; }
+    let msg = 'Added ' + body.created + ' prefix(es) to the registry';
+    if (body.skipped) msg += ' (' + body.skipped + ' already present)';
+    if (body.sites_created && body.sites_created.length) msg += '; created sites: ' + body.sites_created.join(', ');
+    if (body.errors && body.errors.length) msg += '; ' + body.errors.length + ' error(s)';
+    alert(msg);
+    regRunAudit(true);   // recompute so accepted rows clear
+  };
+})();
+</script>

@@ -1,0 +1,29 @@
+{% set r = result %}
+<div class="border rounded p-3 bg-light">
+  <div class="row g-2">
+    <div class="col-md-6">
+      <div class="text-muted text-uppercase" style="font-size:.7rem">Canonical</div>
+      <div class="font-monospace fw-semibold">{{ r.canonical }}</div>
+    </div>
+    <div class="col-md-6">
+      <div class="text-muted text-uppercase" style="font-size:.7rem">Site</div>
+      <div class="fw-semibold">
+        {% if r.site_name %}{{ r.site_name }} <span class="text-muted font-monospace small">({{ r.site_prefix }}::/{{ r.site_prefix_length }})</span>
+        {% else %}<span class="text-danger">no matching site</span>{% endif %}
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="text-muted text-uppercase" style="font-size:.7rem">vvvv</div>
+      <div class="font-monospace fw-semibold">{{ r.vvvv }}</div>
+    </div>
+    <div class="col-md-9">
+      <div class="text-muted text-uppercase" style="font-size:.7rem">Recovered IPv4</div>
+      <div class="font-monospace fw-semibold">{{ r.ipv4 }}</div>
+    </div>
+  </div>
+  {% if r.warnings %}
+  <div class="alert alert-warning mt-2 mb-0 small py-2">
+    {% for w in r.warnings %}<div><i class="ph ph-warning me-1"></i>{{ w }}</div>{% endfor %}
+  </div>
+  {% endif %}
+</div>

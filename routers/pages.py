@@ -296,6 +296,35 @@ async def ipv6_registry_page(request: Request, user: SessionEntry = Depends(get_
     return templates.TemplateResponse(request, "ipv6_registry.html", context)
 
 
+@router.get("/registry", response_class=HTMLResponse)
+async def registry_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
+    if not user: return RedirectResponse(url="/login")
+    from clients import ip_registry as registry
+    sites = registry.list_sites()
+    prefixes = registry.list_prefixes()
+    by_site: dict = {}
+    for p in prefixes:
+        if p["site_id"] is not None:
+            by_site.setdefault(p["site_id"], []).append(p)
+    items = [{
+        **s,
+        "v4_count": sum(1 for p in by_site.get(s["id"], []) if p["family"] == 4),
+        "v6_count": sum(1 for p in by_site.get(s["id"], []) if p["family"] == 6),
+        "prefix_count": len(by_site.get(s["id"], [])),
+    } for s in sites]
+    context = {
+        "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
+        "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
+        "active_page": "registry",
+        "username": user.username,
+        "sites": items,
+        "v6_site_prefixes": [p for p in prefixes if p["family"] == 6 and not (p["site_id"] is None and p.get("role") == "container")],
+    }
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse(request, "pages/registry_content.html", context)
+    return templates.TemplateResponse(request, "registry.html", context)
+
+
 @router.get("/tunnels", response_class=HTMLResponse)
 async def tunnels_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
     if not user: return RedirectResponse(url="/login")

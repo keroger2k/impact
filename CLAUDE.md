@@ -12,9 +12,9 @@ IMPACT II is a **TSA Network Operations Platform** — a unified web dashboard f
 - **Cisco Nexus** — SSH-based collection (Netmiko) of inventory, interfaces, VLANs, port-channels, vPCs
 - **IPAM** — DNAC-sourced address pools rendered as an aggregated tree with stats and export
 - **VPN Tunnels** — enterprise IPsec tunnel inventory; normalizes IOS (DMVPN, sVTI, dVTI, policy-based) + Palo IPsec from cached DNAC running-configs and Panorama IKE/IPsec objects, plus live counters
-- **IPv6 Registry** — hierarchical IPv4-to-IPv6 allocation registry; per-site prefixes (/32–/64) carry vvvv-style sub-allocations whose high bits conform to the parent site's mask (full 16-bit vvvv space at /48; narrower windows at /56, /60, …). CRUD UI with searchable site picker, two-way decode/assemble, bulk-assemble, CSV export, one-click "Provision Standard Site" for the /56 + 6-VLAN fleet build pattern. Local SQLite — not derived from any upstream system
+- **IP Registry** (`/registry`) — site-centric **dual-stack** IPAM. A *site* (keyed by `site_code`) owns any number of IPv4 *and* IPv6 `prefixes`; shared aggregates (e.g. the STIP /48) are containers, per-site /64s hang off them. Stores *intent* (what each site should own) and reconciles it against the live network via the **audit** (DNAC/IPAM tree, Nexus, Panorama, ACI) → in-sync / registry-only / network-only / mismatch, with **bulk-accept** of discovered drift into the registry. Keeps the TSA vvvv decode/IPv4→IPv6 assemble tools. Local SQLite (`data/ip_registry.db`). **This supersedes the older IPv6-only "IPv6 Registry"** (`/ipv6-registry`, `clients/ipv6_registry.py`), which is still wired but deprecated — it remains only because `utils/site_aggregator.py` (the `/site` page) and the IPAM dashboard's "Add to Registry" cross-links still point at it. Follow-up: repoint those to the new stack, then delete the old one.
 
-The dashboard is mostly read-only. Mutating actions: the **Command Runner** (gated by `COMMANDS_ENABLED`), the **Device Import** workflow, and the **IPv6 Registry** (its writes are local-only to the SQLite registry, not pushed to any platform).
+The dashboard is mostly read-only. Mutating actions: the **Command Runner** (gated by `COMMANDS_ENABLED`), the **Device Import** workflow, and the **IP Registry** (its writes — including audit bulk-accept — are local-only to the SQLite registry, not pushed to any platform).
 
 ## Commands
 
@@ -87,7 +87,9 @@ Other notes:
 - **Helpers**: `cache.keys_for_prefix(prefix)` and `cache.invalidate_prefix(prefix)` scan all keys.
 - **DEV_MODE**: `dev.seed_cache(cache)` runs on every startup when `DEV_MODE=true`, *unconditionally overwriting* every mock key with a 1-year TTL. Real cached data is replaced by mock fixtures on every dev restart — this is intentional for deterministic dev sessions.
 
-**Registry layer** (separate from the cache): `clients/ipv6_registry.py` is a thin `sqlite3` wrapper over `data/ipv6_registry.db` for the IPv6 hierarchical allocation registry. Two tables (`sites`, `allocations`) with FK cascade and `UNIQUE(site_id, vvvv)`. No ORM. Schema bootstrap runs from `main.py`'s `lifespan` via `ipv6_registry.init_schema()`. Use this pattern — *not* diskcache — for any future feature that needs durable user-edited rows with relational integrity. diskcache stays for ephemeral, TTL'd platform reads.
+**Registry layer** (separate from the cache): thin `sqlite3` wrappers (no ORM) for durable, user-edited rows with relational integrity. Use this pattern — *not* diskcache — for any future feature needing the same; diskcache stays for ephemeral, TTL'd platform reads. Schema bootstrap runs from `main.py`'s `lifespan`.
+- `clients/ip_registry.py` over `data/ip_registry.db` — the current **dual-stack** registry. Tables: `sites` (`site_code` UNIQUE join key) and `prefixes` (one row per IPv4/IPv6 network: `family`, `cidr`, `role`, `parent_id` self-FK for the tree, `vvvv` derived-only, `status`/`source`, plus audit columns `audit_state`/`last_seen_at`/`last_seen_source`). Shared aggregates are `prefixes` rows with `site_id IS NULL`, role `container`. `UNIQUE(site_id, cidr)`; overlap is a soft audit signal, not a hard constraint. Family-agnostic CIDR math lives in `utils/ipam_net.py`; the vvvv assemble/decode math stays in `utils/ipv6_assembler.py`; the reconciliation engine is `utils/ip_audit.py` (cache-only, pluggable per-source extractors + a pure `reconcile` classifier).
+- `clients/ipv6_registry.py` over `data/ipv6_registry.db` — **deprecated** IPv6-only predecessor (`sites`/`allocations`, `UNIQUE(site_id, vvvv)`). Still bootstrapped because `utils/site_aggregator.py` reads it; do not build new features on it.
 
 **Router layer** (`routers/`) contains FastAPI request handlers. All API routers are wired in `main.py` behind `require_auth`; `pages.py` is the only public router (it serves the login page itself).
 
@@ -99,12 +101,13 @@ Other notes:
 - `routers/routing.py` — `/api/routing/`: BGP summary, EIGRP topology, OSPF neighbors — all driven by parsing cached DNAC running-configs
 - `routers/ipam.py` — `/api/ipam/`: refresh (SSE), stats, tree, debug, export
 - `routers/tunnels.py` — `/api/tunnels/`: list/detail of normalized IPsec tunnels (DMVPN, sVTI, dVTI, policy-based, Palo IPsec), live counters via SSE refresh. Parsers in `utils/ipsec_parser.py` + `utils/tunnel_inventory.py`; site-code resolution via `utils/site_code.py`.
-- `routers/ipv6_registry.py` — `/api/ipv6/`: sites CRUD, allocations CRUD, `/allocations/next` suggestion, `/decode`, `/assemble`, `/assemble/bulk`, `/export.csv`, `/sites/provision-standard` (atomic /56 site + standard VLAN /64s — `STANDARD_VLAN_PRESET` near the top of the file is the source of truth for offsets and labels). Hard 409 on vvvv overlap, soft warn on IPv4-subnet dup (caller can resubmit with `confirm_ipv4_dup=true`). For non-/48 sites the allocator enforces vvvv conformance (high bits must match the site's mask). Reads/writes the SQLite registry — *not* the cache.
+- `routers/ip_registry.py` — `/api/registry/` (current): sites CRUD, prefixes CRUD (both families; soft-409 on overlap unless `confirm_overlap=true`), `/audit` (reconcile vs. live caches; `?sources=dnac,nexus,panorama,aci`, cached per source-set under `ip_audit:*`), `/audit/accept` (bulk-commit selected drift items as JSON — auto-creates sites by `site_code`), `/export.csv`, plus `/decode` + `/assemble` over the registry's IPv6 prefixes. Reads/writes the SQLite registry — *not* the cache.
+- `routers/ipv6_registry.py` — `/api/ipv6/` (**deprecated**, superseded by `/api/registry`): sites/allocations CRUD, `/decode`, `/assemble`, `/assemble/bulk`, `/export.csv`, `/sites/provision-standard` (`STANDARD_VLAN_PRESET`). Hard 409 on vvvv overlap, soft warn on IPv4-subnet dup.
 - `routers/commands.py` — `/api/commands/run`: SSH command execution streamed via SSE; gated by `COMMANDS_ENABLED`
 - `routers/import_.py` — `/api/import/run`: device discovery workflow streamed via SSE
 - `routers/cache_mgmt.py` — `/api/cache/`: cross-cutting cache status, sidebar widget, per-category refresh (`POST /api/cache/refresh/{category}`), and global clear (`clear_all`)
 - `routers/auth.py` — `/api/auth/`: login, logout, session refresh
-- `routers/pages.py` — top-level HTML pages: `/login`, `/dashboard`, `/devices`, `/ise`, `/firewall`, `/aci`, `/nexus`, `/nexus/{hostname}`, `/path-trace`, `/routing/bgp`, `/config-search`, `/ip-lookup`, `/ipam`, `/tunnels`, `/ipv6-registry`, `/command-runner`, `/import`, `/cache-mgmt`
+- `routers/pages.py` — top-level HTML pages: `/login`, `/dashboard`, `/devices`, `/ise`, `/firewall`, `/aci`, `/nexus`, `/nexus/{hostname}`, `/path-trace`, `/routing/bgp`, `/config-search`, `/ip-lookup`, `/ipam`, `/tunnels`, `/registry` (IP Registry; sidebar links here), `/ipv6-registry` (deprecated), `/command-runner`, `/import`, `/cache-mgmt`
 
 App-level (in `main.py`, not under a router prefix):
 - `POST /api/warm` — SSE stream that warms DNAC/ISE/Panorama/ACI/Nexus on demand
@@ -175,6 +178,14 @@ The `collectors/` directory contains Netmiko-based SSH collectors (`nxos.py`, `p
 ## Utility scripts
 
 The `scripts/` directory holds standalone admin/maintenance utilities — invoke as modules from the repo root so project imports resolve:
+
+- `scripts/import_registry.py` — seed the **dual-stack** registry (`data/ip_registry.db`) from the three TSA exports joined on Site Code: IPv4 blocks (`Site Code, Site IP Block(s), Subnet Mask`), IPv6 site /56 (`Site Code, IPv6 Address Space, Slash`), and STIP /64 (`Site Code, STIP Prefix, STIP VLAN[, MASK]` → a shared /48 container + per-site /64 children with the VLAN as `vvvv`). Sites auto-create by code. Headers are matched case-insensitively and column order doesn't matter; IPv6 prefixes are read **high-aligned** (`…:19` at /56 → `…:1900::/56`). Default seed dir `data/seed/`; dry-run by default (prints every resulting canonical CIDR), `--apply` to commit.
+  ```bash
+  .venv/bin/python -m scripts.import_registry                 # dry-run, data/seed/*.csv
+  .venv/bin/python -m scripts.import_registry --apply         # commit
+  ```
+
+The IPv6-only import scripts below (`import_ipv6_sites`, `import_ipv6_allocations`, `import_ipv6_stip_allocations`, `discover_site_ipv4`, `fix_ipv6_site_roles`) target the **deprecated** `data/ipv6_registry.db` and are superseded by `import_registry.py`:
 
 - `scripts/import_ipv6_sites.py` — bulk-load IPv6 registry sites from a CSV (`<name>,<prefix>[,<prefix_length>[,<role>[,<description>]]]`). `prefix_length` defaults to 48; quoted fields supported for descriptions with commas. Dry-run by default; `--apply` to commit. Skips name/prefix conflicts (both vs. the DB and within the same file).
   ```bash
