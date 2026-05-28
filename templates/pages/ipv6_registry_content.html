@@ -342,16 +342,48 @@
           <div id="ipv6-alloc-form-warning" class="alert alert-warning d-none mb-3 small"></div>
           <div class="row g-3">
             <div class="col-md-4">
-              <label class="form-label small fw-bold" for="ipv6-alloc-site">Site</label>
-              <select id="ipv6-alloc-site" name="site_id" class="form-select" required>
-                <option value="">— select —</option>
-                {# All sites are listed so they're discoverable. vvvv allocations
-                   only fit /48 (carvable) sites; selecting a leaf prefix will
-                   surface the backend's clear rejection at save time. #}
-                {% for s in (sites|sort(attribute='prefix_length'))|sort(attribute='name') %}
-                  <option value="{{ s.id }}">{{ s.name }} ({{ s.prefix }}::/{{ s.prefix_length }}{% if s.prefix_length != 48 %} — leaf{% endif %})</option>
-                {% endfor %}
-              </select>
+              <label class="form-label small fw-bold" for="ipv6-alloc-site-button">Site</label>
+              {# Custom searchable dropdown — Bootstrap dropdown + filter input.
+                 The hidden #ipv6-alloc-site keeps the same id the rest of the
+                 modal JS already targets (vvvv-suggest, prefix prefill, etc.).
+                 All sites are listed so they're discoverable; selecting a leaf
+                 prefix surfaces the backend's rejection at save time. #}
+              <div class="dropdown" id="ipv6-alloc-site-wrapper">
+                <button class="form-select text-start d-flex justify-content-between align-items-center"
+                        type="button" id="ipv6-alloc-site-button"
+                        data-bs-toggle="dropdown" data-bs-auto-close="outside"
+                        aria-expanded="false"
+                        onclick="setTimeout(() => document.getElementById('ipv6-alloc-site-search').focus(), 50)">
+                  <span id="ipv6-alloc-site-display" class="text-muted text-truncate">— select —</span>
+                </button>
+                <div class="dropdown-menu w-100 p-0 shadow-sm" style="max-width: 100%;">
+                  <div class="p-2 border-bottom bg-light">
+                    <input type="text" class="form-control form-control-sm"
+                           id="ipv6-alloc-site-search" placeholder="Search by name or prefix…"
+                           autocomplete="off"
+                           oninput="ipv6FilterSiteOptions(this.value)"
+                           onkeydown="ipv6SiteSearchKeydown(event)">
+                  </div>
+                  <div id="ipv6-alloc-site-options" style="max-height: 260px; overflow-y: auto;">
+                    {% for s in (sites|sort(attribute='prefix_length'))|sort(attribute='name') %}
+                      <button type="button" class="dropdown-item text-truncate"
+                              data-site-id="{{ s.id }}"
+                              data-site-label="{{ s.name }} ({{ s.prefix }}::/{{ s.prefix_length }}{% if s.prefix_length != 48 %} — leaf{% endif %})"
+                              data-search-text="{{ (s.name ~ ' ' ~ s.prefix ~ ' ' ~ (s.role or ''))|lower }}"
+                              onclick="ipv6SelectSite(this)">
+                        <span class="fw-semibold">{{ s.name }}</span>
+                        <span class="text-muted small ms-1">{{ s.prefix }}::/{{ s.prefix_length }}{% if s.prefix_length != 48 %} — leaf{% endif %}</span>
+                      </button>
+                    {% else %}
+                      <div class="text-muted small p-3 text-center">No sites in the Registry yet.</div>
+                    {% endfor %}
+                    <div id="ipv6-alloc-site-empty" class="text-muted small p-3 text-center d-none">
+                      No sites match.
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <input type="hidden" name="site_id" id="ipv6-alloc-site">
             </div>
             <div class="col-md-3">
               <label class="form-label small fw-bold" for="ipv6-alloc-vvvv">vvvv (hex)</label>
@@ -453,6 +485,79 @@
     }
   };
 
+  // ── Searchable site dropdown (custom Bootstrap dropdown) ───────────────
+  // Bridges the visible button + filterable list with the hidden site_id
+  // input the rest of the modal already targets. Keeping the hidden input's
+  // id as `ipv6-alloc-site` means vvvv-suggest etc. don't need to change.
+
+  window.ipv6FilterSiteOptions = function(query) {
+    const q = (query || '').toLowerCase().trim();
+    const opts = document.querySelectorAll('#ipv6-alloc-site-options .dropdown-item');
+    let visible = 0;
+    opts.forEach(btn => {
+      const hay = btn.dataset.searchText || btn.textContent.toLowerCase();
+      const show = !q || hay.includes(q);
+      btn.classList.toggle('d-none', !show);
+      if (show) visible++;
+    });
+    document.getElementById('ipv6-alloc-site-empty').classList.toggle('d-none', visible > 0);
+  };
+
+  window.ipv6SelectSite = function(btn) {
+    const id = btn.dataset.siteId;
+    const label = btn.dataset.siteLabel;
+    document.getElementById('ipv6-alloc-site').value = id;
+    const disp = document.getElementById('ipv6-alloc-site-display');
+    disp.textContent = label;
+    disp.classList.remove('text-muted');
+    const trigger = document.getElementById('ipv6-alloc-site-button');
+    trigger.classList.remove('is-invalid');
+    bootstrap.Dropdown.getOrCreateInstance(trigger).hide();
+    // Clear search so the next open shows everything.
+    const search = document.getElementById('ipv6-alloc-site-search');
+    search.value = '';
+    ipv6FilterSiteOptions('');
+  };
+
+  window.ipv6SiteSearchKeydown = function(evt) {
+    // Enter selects the first currently-visible option.
+    if (evt.key === 'Enter') {
+      evt.preventDefault();
+      const firstVisible = document.querySelector(
+        '#ipv6-alloc-site-options .dropdown-item:not(.d-none)'
+      );
+      if (firstVisible) ipv6SelectSite(firstVisible);
+    }
+  };
+
+  function _ipv6SiteSelectClear() {
+    document.getElementById('ipv6-alloc-site').value = '';
+    const disp = document.getElementById('ipv6-alloc-site-display');
+    disp.textContent = '— select —';
+    disp.classList.add('text-muted');
+    const search = document.getElementById('ipv6-alloc-site-search');
+    if (search) search.value = '';
+    ipv6FilterSiteOptions('');
+    document.getElementById('ipv6-alloc-site-button').classList.remove('is-invalid');
+  }
+
+  function _ipv6SiteSelectById(siteId) {
+    if (!siteId) return false;
+    const btn = document.querySelector(
+      `#ipv6-alloc-site-options .dropdown-item[data-site-id="${siteId}"]`
+    );
+    if (!btn) return false;
+    document.getElementById('ipv6-alloc-site').value = siteId;
+    const disp = document.getElementById('ipv6-alloc-site-display');
+    disp.textContent = btn.dataset.siteLabel;
+    disp.classList.remove('text-muted');
+    return true;
+  }
+
+  function _ipv6SiteSelectSetDisabled(disabled) {
+    document.getElementById('ipv6-alloc-site-button').disabled = disabled;
+  }
+
   // ── Allocation modal helpers ───────────────────────────────────────────
   window.ipv6PrepareAllocationModal = function(alloc, defaultSiteId) {
     const form = document.getElementById('ipv6-allocation-form');
@@ -463,12 +568,13 @@
     });
     form.reset();
     document.getElementById('ipv6-alloc-confirm-dup').value = 'false';
+    _ipv6SiteSelectClear();
     if (alloc && alloc.id) {
       document.getElementById('ipv6-allocation-modal-title').textContent = 'Edit Allocation';
       form.setAttribute('hx-put', '/api/ipv6/allocations/' + alloc.id);
       form.removeAttribute('hx-post');
-      document.getElementById('ipv6-alloc-site').value = alloc.site_id;
-      document.getElementById('ipv6-alloc-site').disabled = true;  // site is immutable
+      _ipv6SiteSelectById(alloc.site_id);
+      _ipv6SiteSelectSetDisabled(true);  // site is immutable on edit
       document.getElementById('ipv6-alloc-vvvv').value = alloc.vvvv;
       document.getElementById('ipv6-alloc-prefix').value = alloc.prefix_length;
       document.getElementById('ipv6-alloc-v4').value = alloc.ipv4_subnet || '';
@@ -480,8 +586,8 @@
       document.getElementById('ipv6-allocation-modal-title').textContent = 'Add Allocation';
       form.setAttribute('hx-post', '/api/ipv6/allocations');
       form.removeAttribute('hx-put');
-      document.getElementById('ipv6-alloc-site').disabled = false;
-      if (defaultSiteId) document.getElementById('ipv6-alloc-site').value = defaultSiteId;
+      _ipv6SiteSelectSetDisabled(false);
+      if (defaultSiteId) _ipv6SiteSelectById(defaultSiteId);
     }
     htmx.process(form);
   };
@@ -511,7 +617,7 @@
     if (evt.detail.successful) {
       // Surface any soft IPv4 warnings in a toast or alert here if desired
       bootstrap.Modal.getInstance(document.getElementById('ipv6-allocation-modal'))?.hide();
-      document.getElementById('ipv6-alloc-site').disabled = false;
+      _ipv6SiteSelectSetDisabled(false);
       const filterSiteId = window._ipv6AllocSiteFilter || '';
       const url = '/api/ipv6/allocations' + (filterSiteId ? '?site_id=' + filterSiteId : '');
       htmx.ajax('GET', url, {target: '#ipv6-tab-allocations .card-body', swap: 'innerHTML'});
@@ -839,6 +945,20 @@
     document.querySelector('[data-bs-target="#ipv6-tab-allocations"]').click();
     bootstrap.Modal.getOrCreateInstance(document.getElementById('ipv6-allocation-modal')).show();
   };
+
+  // Guard the allocation form: hidden inputs aren't covered by HTML5
+  // `required`, so block submission and surface an inline error when the
+  // custom site dropdown hasn't resolved to a real site id.
+  document.getElementById('ipv6-allocation-form').addEventListener('htmx:beforeRequest', (evt) => {
+    const siteId = document.getElementById('ipv6-alloc-site').value;
+    if (!siteId) {
+      evt.preventDefault();
+      const errBox = document.getElementById('ipv6-alloc-form-error');
+      errBox.textContent = 'Please pick a site from the dropdown.';
+      errBox.classList.remove('d-none');
+      document.getElementById('ipv6-alloc-site-button').classList.add('is-invalid');
+    }
+  });
 
   // URL-driven prefill: when navigated to /ipv6-registry?prefill_kind=...
   // from the IPAM dashboard, auto-open the right modal once the page
