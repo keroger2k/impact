@@ -5,16 +5,19 @@
     <div class="card-body py-3">
       <div class="d-flex align-items-center gap-3 flex-wrap">
         <div class="d-flex align-items-center gap-2">
-          <i class="ph ph-buildings fs-4 text-primary"></i>
+          <i class="ph ph-map-pin-area fs-4 text-primary"></i>
           <strong class="fs-5">Site Lookup</strong>
         </div>
         <form class="d-flex align-items-center gap-2 flex-grow-1"
+              style="max-width:480px"
               onsubmit="event.preventDefault(); const c = this.querySelector('[name=code]').value.trim().toUpperCase(); if (c) { htmx.ajax('GET', '/api/site/overview/' + encodeURIComponent(c), { target: '#site-overview', swap: 'innerHTML' }); history.replaceState(null, '', '/site/' + encodeURIComponent(c)); }">
-          <div class="position-relative flex-grow-1" style="max-width:360px">
-            <i class="ph ph-magnifying-glass position-absolute text-muted"
-               style="left:10px; top:50%; transform:translateY(-50%); pointer-events:none;"></i>
-            <input name="code" type="search" autocomplete="off" autofocus
-                   class="form-control form-control-sm ps-4 text-uppercase"
+          <div class="input-group input-group-sm flex-grow-1">
+            <span class="input-group-text bg-white border-end-0 text-muted">
+              <i class="ph ph-magnifying-glass"></i>
+            </span>
+            <input name="code" type="search" autocomplete="off" autofocus spellcheck="false"
+                   class="form-control border-start-0 text-uppercase"
+                   style="letter-spacing:.05em"
                    placeholder="Site code (e.g. K023, SDCZ)"
                    value="{{ initial_code or '' }}">
           </div>
@@ -32,8 +35,8 @@
     {% if not initial_code %}
       <div class="card shadow-sm border-0 animate-fade-in">
         <div class="card-body text-center text-muted py-5">
-          <i class="ph ph-buildings ph-3x text-muted mb-3 d-block"></i>
-          <h6 class="text-muted">Enter a site code above to see devices, IPAM, IPv6, tunnels, and routing.</h6>
+          <i class="ph ph-map-pin-area ph-3x text-muted mb-3 d-block"></i>
+          <h6 class="text-muted">Enter a site code above to see devices, IPv6, tunnels, and routing.</h6>
         </div>
       </div>
     {% else %}

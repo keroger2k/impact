@@ -200,52 +200,6 @@ def routing_devices(devices: list[dict]) -> list[dict]:
     return out
 
 
-# ── IPAM (DNAC reserve subpools) ─────────────────────────────────────────────
-
-def ipam_pools_for_site(code: str) -> list[dict]:
-    """Return every DNAC reserve subpool whose siteName resolves to this code.
-
-    Output: flat list of ``{cidr, name, group_name, is_ipv6, gateway,
-    dhcp_servers, site_name}`` rows. One reserve-pool row in the DNAC
-    cache typically carries one or two inner pools (v4 + v6 dual-stack);
-    each becomes its own row here.
-    """
-    code_u = (code or "").strip().upper()
-    if not code_u:
-        return []
-    subpools = cache.get("dnac_reserve_subpools") or []
-    out: list[dict] = []
-    for sp in subpools:
-        site_name = sp.get("siteName") or sp.get("groupName") or ""
-        if _sc(site_name).upper() != code_u:
-            continue
-        group_name = sp.get("groupName") or ""
-        inner_pools = sp.get("ipPools") or []
-        if not isinstance(inner_pools, list):
-            inner_pools = [inner_pools]
-        for ip in inner_pools:
-            cidr = ip.get("ipPoolCidr") or ip.get("cidr")
-            if not cidr:
-                continue
-            gateways = ip.get("gateways") or []
-            if isinstance(gateways, str):
-                gateways = [gateways]
-            dhcp = ip.get("dhcpServerIps") or []
-            if isinstance(dhcp, str):
-                dhcp = [dhcp]
-            out.append({
-                "cidr": cidr,
-                "name": ip.get("ipPoolName") or group_name or "Reserved Pool",
-                "group_name": group_name,
-                "is_ipv6": bool(ip.get("ipv6")) or ":" in cidr,
-                "gateway": gateways[0] if gateways else None,
-                "dhcp_servers": dhcp,
-                "site_name": site_name,
-            })
-    out.sort(key=lambda r: (r["is_ipv6"], r["cidr"]))
-    return out
-
-
 # ── IPv6 registry ────────────────────────────────────────────────────────────
 
 def ipv6_for_site(code: str) -> Optional[dict]:
@@ -280,18 +234,50 @@ def ipv6_for_site(code: str) -> Optional[dict]:
 
 # ── Tunnels ──────────────────────────────────────────────────────────────────
 
-def tunnels_for_site(code: str) -> list[dict]:
-    """Return every tunnel whose any endpoint has ``local_site_code`` equal
-    to this site code. The normalized inventory already populates
-    local_site_code from either the site path or the hostname."""
+def tunnels_for_site(code: str, site_devices: Optional[list[dict]] = None) -> list[dict]:
+    """Return every tunnel with at least one endpoint at this site.
+
+    An endpoint is considered "at this site" if any of:
+      * ``local_site_code`` matches (populated by the inventory builder)
+      * ``device_id`` matches a known site device
+      * ``device`` hostname matches a known site device
+
+    The two device-identity checks catch the case where the inventory
+    builder failed to populate ``local_site_code`` (e.g. the DNAC site
+    path didn't carry a parseable code AND the hostname didn't either,
+    but we can still join through ``device_id``).
+
+    Each returned tunnel carries a ``matched_endpoints`` list — the
+    subset of its endpoints actually at this site — so the renderer
+    doesn't need to re-do the filter.
+    """
     code_u = (code or "").strip().upper()
     if not code_u:
         return []
+    if site_devices is None:
+        site_devices = list_devices_for_site(code)
+
+    dev_ids = {d["id"] for d in site_devices if d.get("id")}
+    dev_hostnames = {
+        (d["hostname"] or "").lower()
+        for d in site_devices if d.get("hostname")
+    }
+
     inv = cache.get(TUNNEL_INVENTORY_CACHE_KEY) or {}
     out: list[dict] = []
     for t in inv.get("tunnels") or []:
+        matched: list[dict] = []
         for ep in t.get("endpoints") or []:
             if (ep.get("local_site_code") or "").upper() == code_u:
-                out.append(t)
-                break
+                matched.append(ep)
+                continue
+            if ep.get("device_id") and ep["device_id"] in dev_ids:
+                matched.append(ep)
+                continue
+            if (ep.get("device") or "").lower() in dev_hostnames:
+                matched.append(ep)
+        if matched:
+            t2 = dict(t)
+            t2["matched_endpoints"] = matched
+            out.append(t2)
     return out

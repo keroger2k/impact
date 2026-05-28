@@ -16,7 +16,7 @@
   <div class="card-body py-3">
     <div class="d-flex flex-wrap align-items-center gap-3">
       <div class="d-flex align-items-center gap-2">
-        <i class="ph ph-buildings fs-3 text-primary"></i>
+        <i class="ph ph-map-pin-area fs-3 text-primary"></i>
         <div>
           <div class="fs-4 fw-bold">{{ code }}</div>
           {% for h in hierarchies %}
@@ -27,7 +27,6 @@
       <div class="ms-auto d-flex gap-3 small text-muted flex-wrap">
         <span><i class="ph ph-desktop"></i> <strong>{{ stats.device_count }}</strong> devices</span>
         <span><i class="ph ph-globe-hemisphere-west"></i> <strong>{{ stats.routing_device_count }}</strong> routing</span>
-        <span><i class="ph ph-network"></i> <strong>{{ stats.ipam_pool_count }}</strong> IPAM pools</span>
         <span><i class="ph ph-binary"></i> IPv6 {% if stats.ipv6_present %}<strong class="text-success">present</strong>{% else %}<span class="text-muted">none</span>{% endif %}</span>
         <span><i class="ph ph-lock-key"></i> <strong>{{ stats.tunnel_count }}</strong> tunnels</span>
       </div>
@@ -89,7 +88,89 @@
   </div>
 </div>
 
-<!-- ── Routing (lazy htmx panels) ──────────────────────────────────────── -->
+<div class="row g-3 mb-3">
+  <!-- ── IPv6 registry ─────────────────────────────────────────────────── -->
+  <div class="col-lg-6">
+    <div class="card shadow-sm border-0 animate-fade-in h-100">
+      <div class="card-header bg-light d-flex align-items-center">
+        <i class="ph ph-binary me-2 text-primary"></i>
+        <strong>IPv6 Registry</strong>
+        {% if ipv6 %}
+          <span class="ms-2 font-monospace small text-muted">{{ ipv6.site.prefix }}/{{ ipv6.site.prefix_length }}</span>
+          <span class="badge bg-secondary ms-2">{{ ipv6.allocations|length }} allocations</span>
+        {% endif %}
+      </div>
+      <div class="card-body p-0">
+        {% if ipv6 %}
+        <div class="table-responsive">
+          <table class="table table-sm mb-0">
+            <thead class="table-light">
+              <tr><th>vvvv</th><th>IPv4 Subnet</th><th>Purpose</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+            {% for a in ipv6.allocations %}
+              <tr>
+                <td class="font-monospace small">{{ a.vvvv }}</td>
+                <td class="font-monospace small">{{ a.ipv4_subnet or "—" }}</td>
+                <td class="small">{{ a.purpose or "—" }}</td>
+                <td>
+                  {% if a.status == "allocated" %}
+                    <span class="badge bg-success-subtle text-success">{{ a.status }}</span>
+                  {% else %}
+                    <span class="badge bg-light text-muted">{{ a.status }}</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+          <div class="text-center text-muted py-4 small">No IPv6 registry site matches this code.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Tunnels ────────────────────────────────────────────────────────── -->
+  <div class="col-lg-6">
+    <div class="card shadow-sm border-0 animate-fade-in h-100">
+      <div class="card-header bg-light d-flex align-items-center">
+        <i class="ph ph-lock-key me-2 text-primary"></i>
+        <strong>IPsec Tunnels</strong>
+        <span class="badge bg-secondary ms-2">{{ tunnels|length }}</span>
+      </div>
+      <div class="card-body p-0">
+        {% if tunnels %}
+        <div class="table-responsive">
+          <table class="table table-sm mb-0">
+            <thead class="table-light">
+              <tr><th>Name</th><th>Type</th><th>Local Device</th><th>Peer IP</th><th>Interface</th></tr>
+            </thead>
+            <tbody>
+            {% for t in tunnels %}
+              {% for ep in t.matched_endpoints %}
+              <tr>
+                <td class="small">{{ t.name }}</td>
+                <td><span class="badge bg-light text-muted">{{ t.type }}</span></td>
+                <td class="font-monospace small">{{ ep.device or "—" }}</td>
+                <td class="font-monospace small">{{ ep.peer_ip or "—" }}</td>
+                <td class="font-monospace small">{{ ep.interface or "—" }}</td>
+              </tr>
+              {% endfor %}
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+          <div class="text-center text-muted py-4 small">No tunnels for this site (or inventory not yet built).</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Routing (lazy htmx panels — at the bottom; live SSH is slowest) ──── -->
 {% if routing_devices %}
 <div class="card shadow-sm border-0 animate-fade-in mb-3">
   <div class="card-header bg-light d-flex align-items-center">
@@ -134,131 +215,16 @@
         {% endif %}
 
         {% if d.protocols.eigrp %}
-          <div hx-post="/api/routing/eigrp/topology"
+          <div hx-post="/api/routing/eigrp/neighbors"
                hx-vals='{"ip":"{{ d.managementIpAddress }}"}'
                hx-trigger="load"
                hx-swap="innerHTML"
                class="mb-2">
-            <div class="small text-muted"><i class="ph ph-circle-notch ph-spin"></i> Loading EIGRP from {{ d.hostname }}…</div>
+            <div class="small text-muted"><i class="ph ph-circle-notch ph-spin"></i> Loading EIGRP neighbors (v4 + v6) from {{ d.hostname }}…</div>
           </div>
         {% endif %}
       </div>
     {% endfor %}
-  </div>
-</div>
-{% endif %}
-
-<div class="row g-3 mb-3">
-  <!-- ── IPAM ──────────────────────────────────────────────────────────── -->
-  <div class="col-lg-6">
-    <div class="card shadow-sm border-0 animate-fade-in h-100">
-      <div class="card-header bg-light d-flex align-items-center">
-        <i class="ph ph-network me-2 text-primary"></i>
-        <strong>IPAM Pools</strong>
-        <span class="badge bg-secondary ms-2">{{ ipam_pools|length }}</span>
-      </div>
-      <div class="card-body p-0">
-        {% if ipam_pools %}
-        <div class="table-responsive">
-          <table class="table table-sm mb-0">
-            <thead class="table-light">
-              <tr><th>Pool</th><th>CIDR</th><th>Family</th><th>Gateway</th></tr>
-            </thead>
-            <tbody>
-            {% for p in ipam_pools %}
-              <tr>
-                <td class="small">{{ p.name }}</td>
-                <td class="font-monospace small">{{ p.cidr }}</td>
-                <td><span class="badge bg-light text-muted">{{ p.is_ipv6 and 'IPv6' or 'IPv4' }}</span></td>
-                <td class="font-monospace small">{{ p.gateway or "—" }}</td>
-              </tr>
-            {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        {% else %}
-          <div class="text-center text-muted py-4 small">No DNAC reserve subpools attributed to this site.</div>
-        {% endif %}
-      </div>
-    </div>
-  </div>
-
-  <!-- ── IPv6 registry ─────────────────────────────────────────────────── -->
-  <div class="col-lg-6">
-    <div class="card shadow-sm border-0 animate-fade-in h-100">
-      <div class="card-header bg-light d-flex align-items-center">
-        <i class="ph ph-binary me-2 text-primary"></i>
-        <strong>IPv6 Registry</strong>
-        {% if ipv6 %}
-          <span class="ms-2 font-monospace small text-muted">{{ ipv6.site.prefix }}/{{ ipv6.site.prefix_length }}</span>
-          <span class="badge bg-secondary ms-2">{{ ipv6.allocations|length }} allocations</span>
-        {% endif %}
-      </div>
-      <div class="card-body p-0">
-        {% if ipv6 %}
-        <div class="table-responsive">
-          <table class="table table-sm mb-0">
-            <thead class="table-light">
-              <tr><th>vvvv</th><th>IPv4 Subnet</th><th>Purpose</th><th>Status</th></tr>
-            </thead>
-            <tbody>
-            {% for a in ipv6.allocations %}
-              <tr>
-                <td class="font-monospace small">{{ a.vvvv }}</td>
-                <td class="font-monospace small">{{ a.ipv4_subnet or "—" }}</td>
-                <td class="small">{{ a.purpose or "—" }}</td>
-                <td>
-                  {% if a.status == "allocated" %}
-                    <span class="badge bg-success-subtle text-success">{{ a.status }}</span>
-                  {% else %}
-                    <span class="badge bg-light text-muted">{{ a.status }}</span>
-                  {% endif %}
-                </td>
-              </tr>
-            {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        {% else %}
-          <div class="text-center text-muted py-4 small">No IPv6 registry site matches this code.</div>
-        {% endif %}
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- ── Tunnels ────────────────────────────────────────────────────────── -->
-{% if tunnels %}
-<div class="card shadow-sm border-0 animate-fade-in mb-3">
-  <div class="card-header bg-light d-flex align-items-center">
-    <i class="ph ph-lock-key me-2 text-primary"></i>
-    <strong>IPsec Tunnels</strong>
-    <span class="badge bg-secondary ms-2">{{ tunnels|length }}</span>
-  </div>
-  <div class="card-body p-0">
-    <div class="table-responsive">
-      <table class="table table-sm mb-0">
-        <thead class="table-light">
-          <tr><th>Name</th><th>Type</th><th>Platform</th><th>Local Device</th><th>Peer IP</th><th>Interface</th></tr>
-        </thead>
-        <tbody>
-        {% for t in tunnels %}
-          {% for ep in t.endpoints %}
-            {% if (ep.local_site_code or '')|upper == code %}
-            <tr>
-              <td class="small">{{ t.name }}</td>
-              <td><span class="badge bg-light text-muted">{{ t.type }}</span></td>
-              <td><span class="badge bg-light text-muted">{{ t.platform }}</span></td>
-              <td class="font-monospace small">{{ ep.device or "—" }}</td>
-              <td class="font-monospace small">{{ ep.peer_ip or "—" }}</td>
-              <td class="font-monospace small">{{ ep.interface or "—" }}</td>
-            </tr>
-            {% endif %}
-          {% endfor %}
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
   </div>
 </div>
 {% endif %}

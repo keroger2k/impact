@@ -123,6 +123,55 @@ P 10.30.0.0/16, 1 successors, FD is 3328
         "correlations": corr_map
     })
 
+@router.post("/eigrp/neighbors", response_class=HTMLResponse)
+async def eigrp_neighbors(
+    request: Request,
+    ip: str = Form(...),
+    session: SessionEntry = Depends(require_auth)
+):
+    """Fetch IPv4 + IPv6 EIGRP neighbors in parallel and render them
+    side-by-side. Two SSH sessions per device (the cost is dominated by
+    the handshake, so running them concurrently keeps the wait under
+    ~5s vs. ~10s sequential)."""
+    from templates_module import templates
+    from dev import DEV_MODE
+    if DEV_MODE:
+        mock_v4 = """EIGRP-IPv4 Neighbors for AS(100)
+H   Address                 Interface              Hold Uptime   SRTT   RTO  Q  Seq
+                                                   (sec)         (ms)       Cnt Num
+0   1.2.3.5                 Gi0/1                    11 01:22:33   12   100  0  42
+1   1.2.3.6                 Gi0/2                    13 03:14:15   15   100  0  19
+"""
+        mock_v6 = """EIGRP-IPv6 Neighbors for AS(100)
+H   Address                 Interface              Hold Uptime   SRTT   RTO  Q  Seq
+                                                   (sec)         (ms)       Cnt Num
+0   FE80::1                 Gi0/1                    12 01:22:33   18   100  0  42
+"""
+        return templates.TemplateResponse(request, "partials/eigrp_neighbors.html", {
+            "v4_output": mock_v4, "v6_output": mock_v6, "ip": ip,
+        })
+
+    loop = asyncio.get_event_loop()
+    devices = cache.get("devices") or []
+    device = next((d for d in devices if d.get("managementIpAddress") == ip), {})
+    dtype = guess_device_type(device.get("platformId", ""))
+
+    cmd_v4 = "show ip eigrp neighbors"
+    cmd_v6 = "show ipv6 eigrp neighbors"
+
+    v4_task = loop.run_in_executor(None, _run_on_device, ip, cmd_v4, session.username, session.password, dtype, 30)
+    v6_task = loop.run_in_executor(None, _run_on_device, ip, cmd_v6, session.username, session.password, dtype, 30)
+    v4_res, v6_res = await asyncio.gather(v4_task, v6_task)
+
+    return templates.TemplateResponse(request, "partials/eigrp_neighbors.html", {
+        "v4_output": v4_res["output"] if v4_res["status"] == "success" else None,
+        "v4_error":  v4_res.get("error") if v4_res["status"] != "success" else None,
+        "v6_output": v6_res["output"] if v6_res["status"] == "success" else None,
+        "v6_error":  v6_res.get("error") if v6_res["status"] != "success" else None,
+        "ip": ip,
+    })
+
+
 @router.post("/ospf/neighbors", response_class=HTMLResponse)
 async def ospf_neighbors(
     request: Request,
