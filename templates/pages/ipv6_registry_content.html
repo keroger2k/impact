@@ -642,10 +642,12 @@
       ? `Parent created from off-book audit entry ${cidr}`
       : '';
 
-    // Hint name from the device's DNAC site path leaf (e.g. "Global/.../SITE001"
-    // → "SITE001") so the user can accept it with a single click. Falls back
-    // to the device hostname if site_path is missing.
-    if (_ipv6CpContext.site_path) {
+    // Name defaults to the extracted site code (K024 / SDCZ / etc.) the audit
+    // template derived from the device hostname or DNAC site path. Falls back
+    // to the site-path leaf, then the device hostname, only if no code matched.
+    if (_ipv6CpContext.site_code) {
+      nameInput.value = String(_ipv6CpContext.site_code);
+    } else if (_ipv6CpContext.site_path) {
       const leaf = String(_ipv6CpContext.site_path).split('/').filter(Boolean).pop() || '';
       if (leaf) nameInput.value = leaf;
     } else if (_ipv6CpContext.device) {

@@ -130,8 +130,12 @@
                 <i class="ph ph-database me-1"></i> Add site
               </button>
             {% elif _len == 64 %}
+              {# Prefer the device hostname's embedded code (k024fwl006 → K024); fall back
+                 to the DNAC site-path code (Global/.../K024 → K024) so the create-parent
+                 modal can default Name to a real site code like K024 / SDCZ. #}
+              {% set _code = (r.device|site_code_from_hostname) or (r.site_path|site_code) %}
               <button class="btn btn-xs btn-outline px-2 py-0"
-                      onclick='ipv6OpenAllocationFromIPv6({cidr: {{ r.cidr|tojson }}, device: {{ (r.device or "")|tojson }}, site_path: {{ (r.site_path or "")|tojson }}})'
+                      onclick='ipv6OpenAllocationFromIPv6({cidr: {{ r.cidr|tojson }}, device: {{ (r.device or "")|tojson }}, site_path: {{ (r.site_path or "")|tojson }}, site_code: {{ (_code or "")|tojson }}})'
                       title="Add as Registry allocation">
                 <i class="ph ph-database me-1"></i> Add allocation
               </button>
