@@ -51,6 +51,71 @@ def site_code(text: str | None) -> str:
 _HOSTNAME_P1 = re.compile(r'^([A-Z]\d{3,4})')
 _HOSTNAME_P2 = re.compile(r'^([A-Z]{4})')
 
+# Strict TSA-fleet code shapes:
+#   * letter + 3 digits  (K024, S456, T123) — unambiguous; matched first
+#   * 4 caps letters     (SDCZ, IXXX, KSTD) — needs stopword filter
+# Leading letter must be in {K, S, T, I}.
+_STRICT_LD = re.compile(r"\b([KSTI]\d{3})\b")
+_STRICT_LL = re.compile(r"\b([KSTI][A-Z]{3})\b")
+_STRICT_LD_PREFIX = re.compile(r"^([KSTI]\d{3})")
+_STRICT_LL_PREFIX = re.compile(r"^([KSTI][A-Z]{3})")
+# Hostname-shape tail: function letters then digits (e.g. SDCZ + RTR0001).
+# Used to validate the 4-letter prefix match inside a longer token, so
+# generic English words (STENNIS, SITES, …) don't masquerade as codes.
+_STRICT_HN_TAIL = re.compile(r"^[A-Z]{2,}\d+")
+
+# 4-letter [KSTI]-prefixed tokens that are common English words or
+# abbreviations — would otherwise be returned as false-positive site codes.
+_STRICT_STOPWORDS = {
+    "SITE", "SIDE", "SOME", "SOIL", "STOP", "STEM", "STEP", "STAR", "STAT",
+    "TEAM", "TEXT", "TIME", "TYPE", "TASK", "TRUE", "TIPS", "TEST",
+    "TEXA", "TENN",
+    "INFO", "ITEM", "IRON", "IDEA",
+    "KIND", "KEEP", "KIDS",
+}
+
+
+def site_code_strict(text: str | None) -> str:
+    """Return the first 4-char fleet site code (KXXX / SXXX / TXXX / IXXX)
+    found in ``text``.
+
+    Recognized shapes:
+      * letter + 3 digits     (K024, T123, S456) — unambiguous.
+      * 4 capital letters     (SDCZ, IXXX, KSTD) — filtered against a
+        stopword list of common false-positive English words.
+
+    Works for both DNAC site paths (``Global/USA/K024`` → ``K024``,
+    ``Global/MS/SDCZ - DC1`` → ``SDCZ``) and hostnames where the code is
+    embedded without separators (``k024fwl006`` → ``K024``,
+    ``sdczrtr0001`` → ``SDCZ``). For hostname embedding the 4-letter
+    variant requires a function-letters-then-digits tail to avoid matching
+    real English words like ``STENNIS`` (STEN + NIS).
+    """
+    if not text:
+        return ""
+    s = text.upper()
+    # Pass 1: letter+digits with word boundaries — the high-confidence shape.
+    m = _STRICT_LD.search(s)
+    if m:
+        return m.group(1)
+    # Pass 2: 4-caps-letters with word boundaries, stopword filtered.
+    for m in _STRICT_LL.finditer(s):
+        code = m.group(1)
+        if code not in _STRICT_STOPWORDS:
+            return code
+    # Pass 3: hostname-embedded codes (no separators around the match).
+    for token in re.split(r"[^A-Z0-9]+", s):
+        if not token:
+            continue
+        m = _STRICT_LD_PREFIX.match(token)
+        if m:
+            return m.group(1)
+        m = _STRICT_LL_PREFIX.match(token)
+        if (m and m.group(1) not in _STRICT_STOPWORDS
+                and len(token) > 4 and _STRICT_HN_TAIL.match(token[4:])):
+            return m.group(1)
+    return ""
+
 
 def site_code_from_hostname(hostname: str | None) -> str:
     """Extract a site code from a device hostname.
