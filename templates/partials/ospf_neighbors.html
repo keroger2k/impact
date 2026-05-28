@@ -1,8 +1,11 @@
 <div class="card shadow-sm border-0 animate-fade-in mt-4">
   <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center">
-    <div class="d-flex align-items-center gap-2">
+    <div class="d-flex align-items-center gap-2 flex-wrap">
       <i class=" ph ph-eye"></i>
-      <span class="fw-bold">OSPF Neighborhood Analysis</span>
+      <span class="fw-bold">OSPF Neighborhood Analysis{% if ip %}<span class="opacity-75 small ms-2">{{ ip }}</span>{% endif %}</span>
+      <span class="badge bg-light text-dark ms-2"><strong>{{ v4_count|default(0) }}</strong> IPv4</span>
+      <span class="badge bg-light text-dark"><strong>{{ v6_count|default(0) }}</strong> IPv6</span>
+      <span class="small opacity-75 ms-1">neighbors</span>
     </div>
     <button class="btn btn-sm btn-outline-light" onclick="this.closest('.card').remove()">Close</button>
   </div>
@@ -45,9 +48,15 @@
       {% endif %}
     </div>
     <div class="bg-dark p-0">
-       <div class="px-3 py-2 border-bottom border-secondary small text-info opacity-50 fw-bold uppercase">Raw SSH Output</div>
-       <pre class="p-3 mb-0 text-info" style="max-height: 400px; overflow: auto; font-family: 'SF Mono', monospace; font-size: 12px; line-height: 1.5;">{{ output }}</pre>
+       <div class="px-3 py-2 border-bottom border-secondary small text-info opacity-50 fw-bold uppercase">OSPFv2 (IPv4) — {{ v4_count|default(0) }} neighbor{{ v4_count|default(0) != 1 and 's' or '' }}</div>
+       <pre class="p-3 mb-0 text-info" style="max-height: 320px; overflow: auto; font-family: 'SF Mono', monospace; font-size: 12px; line-height: 1.5;">{{ output }}</pre>
     </div>
+    {% if v6_output %}
+    <div class="bg-dark p-0 border-top border-secondary">
+       <div class="px-3 py-2 border-bottom border-secondary small text-info opacity-50 fw-bold uppercase">OSPFv3 (IPv6) — {{ v6_count|default(0) }} neighbor{{ v6_count|default(0) != 1 and 's' or '' }}</div>
+       <pre class="p-3 mb-0 text-info" style="max-height: 320px; overflow: auto; font-family: 'SF Mono', monospace; font-size: 12px; line-height: 1.5;">{{ v6_output }}</pre>
+    </div>
+    {% endif %}
     {% endif %}
   </div>
 </div>

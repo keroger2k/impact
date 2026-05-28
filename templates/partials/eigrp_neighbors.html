@@ -1,8 +1,11 @@
 <div class="card shadow-sm border-0 animate-fade-in mt-4">
   <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center">
-    <div class="d-flex align-items-center gap-2">
+    <div class="d-flex align-items-center gap-2 flex-wrap">
       <i class="ph ph-tree-structure"></i>
-      <span class="fw-bold">EIGRP Neighbors {% if ip %}<span class="opacity-75 small ms-2">{{ ip }}</span>{% endif %}</span>
+      <span class="fw-bold">EIGRP Neighbors{% if ip %}<span class="opacity-75 small ms-2">{{ ip }}</span>{% endif %}</span>
+      <span class="badge bg-light text-dark ms-2"><strong>{{ v4_count|default(0) }}</strong> IPv4</span>
+      <span class="badge bg-light text-dark"><strong>{{ v6_count|default(0) }}</strong> IPv6</span>
+      <span class="small opacity-75 ms-1">neighbors</span>
     </div>
     <button class="btn btn-sm btn-outline-light" onclick="this.closest('.card').remove()">
       <i class="ph ph-x me-1"></i>Close
@@ -11,8 +14,9 @@
   <div class="card-body p-0">
     <div class="row g-0">
       <div class="col-md-6 border-end">
-        <div class="px-3 py-2 bg-light border-bottom small fw-bold text-uppercase letter-spacing-1 text-navy">
+        <div class="px-3 py-2 bg-light border-bottom small fw-bold text-uppercase letter-spacing-1 text-navy d-flex align-items-center">
           <i class="ph ph-globe me-1"></i>EIGRPv4
+          <span class="badge bg-secondary ms-2">{{ v4_count|default(0) }}</span>
         </div>
         {% if v4_error %}
           <div class="alert alert-warning small mb-0 m-2"><i class="ph ph-warning"></i> {{ v4_error }}</div>
@@ -23,8 +27,9 @@
         {% endif %}
       </div>
       <div class="col-md-6">
-        <div class="px-3 py-2 bg-light border-bottom small fw-bold text-uppercase letter-spacing-1 text-navy">
+        <div class="px-3 py-2 bg-light border-bottom small fw-bold text-uppercase letter-spacing-1 text-navy d-flex align-items-center">
           <i class="ph ph-globe me-1"></i>EIGRPv6
+          <span class="badge bg-secondary ms-2">{{ v6_count|default(0) }}</span>
         </div>
         {% if v6_error %}
           <div class="alert alert-warning small mb-0 m-2"><i class="ph ph-warning"></i> {{ v6_error }}</div>
