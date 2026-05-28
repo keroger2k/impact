@@ -38,14 +38,10 @@
          hx-get="/site" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
         <span class="nav-icon"><i class="ph ph-map-pin-area"></i></span> <span class="nav-text">Site Lookup</span>
       </a>
-      <a class="nav-item {% if active_page == 'path-trace' %}active{% endif %}"
-         hx-get="/path-trace" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
-        <span class="nav-icon"><i class="ph ph-git-branch"></i></span> <span class="nav-text">Path Trace</span>
-      </a>
-      <a class="nav-item {% if active_page == 'routing' %}active{% endif %}"
-         hx-get="/routing/bgp" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
-        <span class="nav-icon"><i class="ph ph-globe-hemisphere-west"></i></span> <span class="nav-text">Routing Ops</span>
-      </a>
+      {# Path Trace and Routing Ops hidden — superseded by the Site Lookup
+         page, which surfaces the same routing data per-site. The routes
+         and /api/routing/* endpoints remain wired so the Site page can
+         still call them. #}
       <a class="nav-item {% if active_page == 'aci' %}active{% endif %}"
          hx-get="/aci" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
         <span class="nav-icon"><i class="ph ph-buildings"></i></span> <span class="nav-text">ACI Operations</span>
