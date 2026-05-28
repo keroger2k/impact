@@ -1,0 +1,266 @@
+{% if not hierarchies and not devices %}
+<div class="card shadow-sm border-0 animate-fade-in">
+  <div class="card-body text-center py-5">
+    <i class="ph ph-warning-circle ph-3x text-warning mb-3 d-block"></i>
+    <h6 class="text-muted">No data found for site code <code>{{ code }}</code>.</h6>
+    <p class="small text-muted mb-0">
+      No DNAC site hierarchy match and no devices with a matching hostname prefix.
+      Try a different code, or warm the DNAC inventory cache.
+    </p>
+  </div>
+</div>
+{% else %}
+
+<!-- ── Header card ───────────────────────────────────────────────────────── -->
+<div class="card shadow-sm border-0 animate-fade-in mb-3">
+  <div class="card-body py-3">
+    <div class="d-flex flex-wrap align-items-center gap-3">
+      <div class="d-flex align-items-center gap-2">
+        <i class="ph ph-buildings fs-3 text-primary"></i>
+        <div>
+          <div class="fs-4 fw-bold">{{ code }}</div>
+          {% for h in hierarchies %}
+            <div class="small text-muted">{{ h }}</div>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="ms-auto d-flex gap-3 small text-muted flex-wrap">
+        <span><i class="ph ph-desktop"></i> <strong>{{ stats.device_count }}</strong> devices</span>
+        <span><i class="ph ph-globe-hemisphere-west"></i> <strong>{{ stats.routing_device_count }}</strong> routing</span>
+        <span><i class="ph ph-network"></i> <strong>{{ stats.ipam_pool_count }}</strong> IPAM pools</span>
+        <span><i class="ph ph-binary"></i> IPv6 {% if stats.ipv6_present %}<strong class="text-success">present</strong>{% else %}<span class="text-muted">none</span>{% endif %}</span>
+        <span><i class="ph ph-lock-key"></i> <strong>{{ stats.tunnel_count }}</strong> tunnels</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Devices ──────────────────────────────────────────────────────────── -->
+<div class="card shadow-sm border-0 animate-fade-in mb-3">
+  <div class="card-header bg-light d-flex align-items-center">
+    <i class="ph ph-desktop me-2 text-primary"></i>
+    <strong>Devices</strong>
+    <span class="badge bg-secondary ms-2">{{ devices|length }}</span>
+    {% if stats.by_source %}
+      <span class="ms-3 small text-muted">
+        {% for src, count in stats.by_source.items() %}{% if count %}{{ src }}: {{ count }}{% if not loop.last %} · {% endif %}{% endif %}{% endfor %}
+      </span>
+    {% endif %}
+  </div>
+  <div class="card-body p-0">
+    {% if devices %}
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>Hostname</th>
+            <th>Mgmt IP</th>
+            <th>Platform</th>
+            <th>Role</th>
+            <th>Software</th>
+            <th>Reach</th>
+            <th>Source</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for d in devices %}
+          <tr>
+            <td class="font-monospace small">{{ d.hostname or "—" }}</td>
+            <td class="font-monospace small">{{ d.managementIpAddress or "—" }}</td>
+            <td class="small">{{ d.platformId or "—" }}</td>
+            <td class="small text-uppercase">{{ d.role or "—" }}</td>
+            <td class="small">{{ d.softwareVersion or "—" }}</td>
+            <td>
+              {% if d.reachabilityStatus == "Reachable" %}
+                <span class="badge bg-success-subtle text-success">Reachable</span>
+              {% else %}
+                <span class="badge bg-secondary-subtle text-muted">{{ d.reachabilityStatus or "—" }}</span>
+              {% endif %}
+            </td>
+            <td><span class="badge bg-light text-muted">{{ d.source }}</span></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+      <div class="text-center text-muted py-4 small">No devices found for this site.</div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- ── Routing (lazy htmx panels) ──────────────────────────────────────── -->
+{% if routing_devices %}
+<div class="card shadow-sm border-0 animate-fade-in mb-3">
+  <div class="card-header bg-light d-flex align-items-center">
+    <i class="ph ph-globe-hemisphere-west me-2 text-primary"></i>
+    <strong>Routing</strong>
+    <span class="badge bg-secondary ms-2">{{ routing_devices|length }} routing device{{ routing_devices|length != 1 and 's' or '' }}</span>
+    <span class="ms-3 small text-muted">Live SSH via existing routing endpoints — panels load independently.</span>
+  </div>
+  <div class="card-body">
+    {% for d in routing_devices %}
+      <div class="border rounded mb-3 p-3">
+        <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+          <i class="ph ph-router text-primary"></i>
+          <strong class="font-monospace">{{ d.hostname }}</strong>
+          <span class="badge bg-light text-muted">{{ d.role }}</span>
+          <span class="font-monospace small text-muted">{{ d.managementIpAddress }}</span>
+          <div class="ms-auto d-flex gap-2 small">
+            {% if d.protocols.bgp %}<span class="badge bg-primary-subtle text-primary">BGP AS {{ d.protocols.bgp.asn }}</span>{% endif %}
+            {% if d.protocols.ospf %}<span class="badge bg-info-subtle text-info">OSPF {{ d.protocols.ospf.process_id }}</span>{% endif %}
+            {% if d.protocols.eigrp %}<span class="badge bg-warning-subtle text-warning">EIGRP {{ d.protocols.eigrp.asn if not d.protocols.eigrp.named else d.protocols.eigrp.instance }}</span>{% endif %}
+          </div>
+        </div>
+
+        {% if d.protocols.bgp %}
+          <div hx-post="/api/routing/bgp/summary"
+               hx-vals='{"ip":"{{ d.managementIpAddress }}"}'
+               hx-trigger="load"
+               hx-swap="innerHTML"
+               class="mb-2">
+            <div class="small text-muted"><i class="ph ph-circle-notch ph-spin"></i> Loading BGP from {{ d.hostname }}…</div>
+          </div>
+        {% endif %}
+
+        {% if d.protocols.ospf %}
+          <div hx-post="/api/routing/ospf/neighbors"
+               hx-vals='{"ip":"{{ d.managementIpAddress }}"}'
+               hx-trigger="load"
+               hx-swap="innerHTML"
+               class="mb-2">
+            <div class="small text-muted"><i class="ph ph-circle-notch ph-spin"></i> Loading OSPF from {{ d.hostname }}…</div>
+          </div>
+        {% endif %}
+
+        {% if d.protocols.eigrp %}
+          <div hx-post="/api/routing/eigrp/topology"
+               hx-vals='{"ip":"{{ d.managementIpAddress }}"}'
+               hx-trigger="load"
+               hx-swap="innerHTML"
+               class="mb-2">
+            <div class="small text-muted"><i class="ph ph-circle-notch ph-spin"></i> Loading EIGRP from {{ d.hostname }}…</div>
+          </div>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<div class="row g-3 mb-3">
+  <!-- ── IPAM ──────────────────────────────────────────────────────────── -->
+  <div class="col-lg-6">
+    <div class="card shadow-sm border-0 animate-fade-in h-100">
+      <div class="card-header bg-light d-flex align-items-center">
+        <i class="ph ph-network me-2 text-primary"></i>
+        <strong>IPAM Pools</strong>
+        <span class="badge bg-secondary ms-2">{{ ipam_pools|length }}</span>
+      </div>
+      <div class="card-body p-0">
+        {% if ipam_pools %}
+        <div class="table-responsive">
+          <table class="table table-sm mb-0">
+            <thead class="table-light">
+              <tr><th>Pool</th><th>CIDR</th><th>Family</th><th>Gateway</th></tr>
+            </thead>
+            <tbody>
+            {% for p in ipam_pools %}
+              <tr>
+                <td class="small">{{ p.name }}</td>
+                <td class="font-monospace small">{{ p.cidr }}</td>
+                <td><span class="badge bg-light text-muted">{{ p.is_ipv6 and 'IPv6' or 'IPv4' }}</span></td>
+                <td class="font-monospace small">{{ p.gateway or "—" }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+          <div class="text-center text-muted py-4 small">No DNAC reserve subpools attributed to this site.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- ── IPv6 registry ─────────────────────────────────────────────────── -->
+  <div class="col-lg-6">
+    <div class="card shadow-sm border-0 animate-fade-in h-100">
+      <div class="card-header bg-light d-flex align-items-center">
+        <i class="ph ph-binary me-2 text-primary"></i>
+        <strong>IPv6 Registry</strong>
+        {% if ipv6 %}
+          <span class="ms-2 font-monospace small text-muted">{{ ipv6.site.prefix }}/{{ ipv6.site.prefix_length }}</span>
+          <span class="badge bg-secondary ms-2">{{ ipv6.allocations|length }} allocations</span>
+        {% endif %}
+      </div>
+      <div class="card-body p-0">
+        {% if ipv6 %}
+        <div class="table-responsive">
+          <table class="table table-sm mb-0">
+            <thead class="table-light">
+              <tr><th>vvvv</th><th>IPv4 Subnet</th><th>Purpose</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+            {% for a in ipv6.allocations %}
+              <tr>
+                <td class="font-monospace small">{{ a.vvvv }}</td>
+                <td class="font-monospace small">{{ a.ipv4_subnet or "—" }}</td>
+                <td class="small">{{ a.purpose or "—" }}</td>
+                <td>
+                  {% if a.status == "allocated" %}
+                    <span class="badge bg-success-subtle text-success">{{ a.status }}</span>
+                  {% else %}
+                    <span class="badge bg-light text-muted">{{ a.status }}</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+          <div class="text-center text-muted py-4 small">No IPv6 registry site matches this code.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Tunnels ────────────────────────────────────────────────────────── -->
+{% if tunnels %}
+<div class="card shadow-sm border-0 animate-fade-in mb-3">
+  <div class="card-header bg-light d-flex align-items-center">
+    <i class="ph ph-lock-key me-2 text-primary"></i>
+    <strong>IPsec Tunnels</strong>
+    <span class="badge bg-secondary ms-2">{{ tunnels|length }}</span>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm mb-0">
+        <thead class="table-light">
+          <tr><th>Name</th><th>Type</th><th>Platform</th><th>Local Device</th><th>Peer IP</th><th>Interface</th></tr>
+        </thead>
+        <tbody>
+        {% for t in tunnels %}
+          {% for ep in t.endpoints %}
+            {% if (ep.local_site_code or '')|upper == code %}
+            <tr>
+              <td class="small">{{ t.name }}</td>
+              <td><span class="badge bg-light text-muted">{{ t.type }}</span></td>
+              <td><span class="badge bg-light text-muted">{{ t.platform }}</span></td>
+              <td class="font-monospace small">{{ ep.device or "—" }}</td>
+              <td class="font-monospace small">{{ ep.peer_ip or "—" }}</td>
+              <td class="font-monospace small">{{ ep.interface or "—" }}</td>
+            </tr>
+            {% endif %}
+          {% endfor %}
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% endif %}
