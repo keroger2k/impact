@@ -79,6 +79,24 @@ def _validate_status(status: str) -> None:
         )
 
 
+def _parse_ipv4_supernet(value: Optional[str]) -> Optional[str]:
+    """Accept one or more comma-separated IPv4 CIDRs; return them normalized
+    and joined by ', '. None / empty input → None. Each CIDR is validated
+    individually so the user sees a precise error for the bad token."""
+    if value is None or value.strip() == "":
+        return None
+    parts: list[str] = []
+    for raw in value.split(","):
+        token = raw.strip()
+        if not token:
+            continue
+        try:
+            parts.append(str(ipaddress.IPv4Network(token, strict=False)))
+        except (ipaddress.AddressValueError, ValueError) as e:
+            raise HTTPException(400, f"Invalid IPv4 supernet '{token}': {e}")
+    return ", ".join(parts) if parts else None
+
+
 @router.post("/sites", status_code=201)
 async def create_site_endpoint(
     name: str = Form(..., min_length=1, max_length=128),
@@ -87,16 +105,18 @@ async def create_site_endpoint(
     role: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
     status: str = Form("active"),
+    ipv4_supernet: Optional[str] = Form(None),
     session: SessionEntry = Depends(require_auth),
 ):
     _validate_site_length(prefix_length)
     _validate_status(status)
     canonical = _normalize_site_prefix(prefix, prefix_length)
+    canonical_v4 = _parse_ipv4_supernet(ipv4_supernet)
     try:
         site = registry.create_site(
             name=name, prefix=canonical, prefix_length=prefix_length,
             role=role or None, description=description or None,
-            status=status,
+            status=status, ipv4_supernet=canonical_v4,
         )
     except sqlite3.IntegrityError as e:
         raise HTTPException(409, f"A site with that prefix already exists: {e}")
@@ -113,6 +133,7 @@ async def update_site_endpoint(
     role: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
     status: Optional[str] = Form(None),
+    ipv4_supernet: Optional[str] = Form(None),
     session: SessionEntry = Depends(require_auth),
 ):
     existing = registry.get_site(site_id)
@@ -126,11 +147,12 @@ async def update_site_endpoint(
     canonical_prefix: Optional[str] = None
     if prefix is not None:
         canonical_prefix = _normalize_site_prefix(prefix, effective_length)
+    canonical_v4 = _parse_ipv4_supernet(ipv4_supernet) if ipv4_supernet is not None else None
     try:
         updated = registry.update_site(
             site_id, name=name, prefix=canonical_prefix,
             prefix_length=prefix_length, role=role, description=description,
-            status=status,
+            status=status, ipv4_supernet=canonical_v4,
         )
     except sqlite3.IntegrityError as e:
         raise HTTPException(409, f"Update would violate uniqueness: {e}")
@@ -374,12 +396,29 @@ def _parse_ipv4_subnet(value: Optional[str]) -> Optional[str]:
         raise HTTPException(400, f"Invalid IPv4 subnet '{value}': {e}")
 
 
+def _parse_vlan_id(value: Optional[str]) -> Optional[int]:
+    """Accept 1..4094 (the usable IEEE 802.1Q range). Blank → None."""
+    if value is None:
+        return None
+    s = str(value).strip()
+    if s == "":
+        return None
+    try:
+        n = int(s)
+    except ValueError:
+        raise HTTPException(400, f"Invalid VLAN ID '{value}': not an integer")
+    if not (1 <= n <= 4094):
+        raise HTTPException(400, f"VLAN ID {n} out of range (1..4094)")
+    return n
+
+
 @router.post("/allocations", status_code=201)
 async def create_allocation_endpoint(
     site_id: int = Form(...),
     vvvv: str = Form(..., min_length=1, max_length=4),
     prefix_length: int = Form(...),
     ipv4_subnet: Optional[str] = Form(None),
+    vlan_id: Optional[str] = Form(None),
     purpose: Optional[str] = Form(None),
     status: str = Form("allocated"),
     owner: Optional[str] = Form(None),
@@ -398,6 +437,7 @@ async def create_allocation_endpoint(
     _require_alloc_length_for_site(prefix_length, site)
     _require_vvvv_conforms(norm_vvvv, site)
     norm_subnet = _parse_ipv4_subnet(ipv4_subnet)
+    norm_vlan = _parse_vlan_id(vlan_id)
 
     v4_warnings = _check_conflicts(site_id, norm_vvvv, prefix_length, norm_subnet)
     if v4_warnings and not confirm_ipv4_dup:
@@ -415,7 +455,7 @@ async def create_allocation_endpoint(
     try:
         row = registry.create_allocation(
             site_id=site_id, vvvv=norm_vvvv, prefix_length=prefix_length,
-            ipv4_subnet=norm_subnet, purpose=purpose or None,
+            ipv4_subnet=norm_subnet, vlan_id=norm_vlan, purpose=purpose or None,
             status=status, owner=owner or None, description=description or None,
         )
     except sqlite3.IntegrityError as e:
@@ -432,6 +472,7 @@ async def update_allocation_endpoint(
     vvvv: Optional[str] = Form(None),
     prefix_length: Optional[int] = Form(None),
     ipv4_subnet: Optional[str] = Form(None),
+    vlan_id: Optional[str] = Form(None),
     purpose: Optional[str] = Form(None),
     status: Optional[str] = Form(None),
     owner: Optional[str] = Form(None),
@@ -452,6 +493,8 @@ async def update_allocation_endpoint(
     _require_vvvv_conforms(new_vvvv, parent_site)
     new_subnet = (_parse_ipv4_subnet(ipv4_subnet)
                   if ipv4_subnet is not None else existing["ipv4_subnet"])
+    new_vlan = (_parse_vlan_id(vlan_id)
+                if vlan_id is not None else existing.get("vlan_id"))
 
     v4_warnings = _check_conflicts(existing["site_id"], new_vvvv, new_len,
                                    new_subnet, exclude_alloc_id=alloc_id)
@@ -468,6 +511,7 @@ async def update_allocation_endpoint(
         row = registry.update_allocation(
             alloc_id, vvvv=new_vvvv if vvvv else None,
             prefix_length=prefix_length, ipv4_subnet=new_subnet,
+            vlan_id=new_vlan,
             purpose=purpose, status=status, owner=owner, description=description,
         )
     except sqlite3.IntegrityError as e:
@@ -618,17 +662,22 @@ async def export_csv(session: SessionEntry = Depends(require_auth)):
     rows = registry.list_allocations()
     buf = io.StringIO()
     writer = csv.writer(buf)
+    sites_by_id = {s["id"]: s for s in registry.list_sites()}
     writer.writerow([
-        "site_name", "site_prefix", "site_prefix_length", "vvvv", "prefix_length",
-        "assembled_prefix", "ipv4_subnet", "purpose", "status",
+        "site_name", "site_prefix", "site_prefix_length", "site_ipv4_supernet",
+        "vvvv", "prefix_length",
+        "assembled_prefix", "ipv4_subnet", "vlan_id", "purpose", "status",
         "owner", "description", "created_at", "updated_at",
     ])
     for r in rows:
         assembled = f"{r['site_prefix']}:{r['vvvv']}::/{r['prefix_length']}"
+        site = sites_by_id.get(r["site_id"]) or {}
         writer.writerow([
             r["site_name"], r["site_prefix"], r["site_prefix_length"],
+            site.get("ipv4_supernet") or "",
             r["vvvv"], r["prefix_length"],
-            assembled, r["ipv4_subnet"] or "", r["purpose"] or "",
+            assembled, r["ipv4_subnet"] or "", r["vlan_id"] or "",
+            r["purpose"] or "",
             r["status"], r["owner"] or "", r["description"] or "",
             r["created_at"], r["updated_at"],
         ])

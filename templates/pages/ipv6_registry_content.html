@@ -237,6 +237,12 @@
             </div>
           </div>
           <div class="mb-3">
+            <label class="form-label small fw-bold" for="ipv6-site-ipv4">IPv4 Supernet <span class="text-muted">(optional)</span></label>
+            <input class="form-control font-monospace" id="ipv6-site-ipv4" name="ipv4_supernet"
+                   type="text" placeholder="1.2.0.0/16  (comma-separate for multiple)">
+            <div class="form-text">The site's overall IPv4 aggregate(s). Use the discovery script to suggest values from DNAC/IPAM.</div>
+          </div>
+          <div class="mb-3">
             <label class="form-label small fw-bold" for="ipv6-site-desc">Description <span class="text-muted">(optional)</span></label>
             <textarea class="form-control" id="ipv6-site-desc" name="description" rows="2"></textarea>
           </div>
@@ -525,10 +531,15 @@
                 <option value="free">free</option>
               </select>
             </div>
-            <div class="col-md-6">
+            <div class="col-md-4">
               <label class="form-label small fw-bold" for="ipv6-alloc-v4">IPv4 Subnet <span class="text-muted">(optional)</span></label>
               <input class="form-control font-monospace" id="ipv6-alloc-v4" name="ipv4_subnet"
                      type="text" placeholder="1.2.3.0/24">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small fw-bold" for="ipv6-alloc-vlan">VLAN ID <span class="text-muted">(opt)</span></label>
+              <input class="form-control font-monospace" id="ipv6-alloc-vlan" name="vlan_id"
+                     type="number" min="1" max="4094" placeholder="100">
             </div>
             <div class="col-md-6">
               <label class="form-label small fw-bold" for="ipv6-alloc-purpose">Purpose / Environment</label>
@@ -573,6 +584,7 @@
       document.getElementById('ipv6-site-prefix-length').value = site.prefix_length || 48;
       document.getElementById('ipv6-site-role').value = site.role || '';
       document.getElementById('ipv6-site-status').value = site.status || 'active';
+      document.getElementById('ipv6-site-ipv4').value = site.ipv4_supernet || '';
       document.getElementById('ipv6-site-desc').value = site.description || '';
     } else {
       document.getElementById('ipv6-site-modal-title').textContent = 'Add Site';
@@ -846,6 +858,7 @@
       document.getElementById('ipv6-alloc-vvvv').value = alloc.vvvv;
       document.getElementById('ipv6-alloc-prefix').value = alloc.prefix_length;
       document.getElementById('ipv6-alloc-v4').value = alloc.ipv4_subnet || '';
+      document.getElementById('ipv6-alloc-vlan').value = (alloc.vlan_id == null ? '' : alloc.vlan_id);
       document.getElementById('ipv6-alloc-purpose').value = alloc.purpose || '';
       document.getElementById('ipv6-alloc-status').value = alloc.status || 'allocated';
       document.getElementById('ipv6-alloc-owner').value = alloc.owner || '';

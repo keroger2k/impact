@@ -191,6 +191,12 @@ The `scripts/` directory holds standalone admin/maintenance utilities — invoke
   .venv/bin/python -m scripts.import_ipv6_stip_allocations stip.csv              # dry-run
   .venv/bin/python -m scripts.import_ipv6_stip_allocations stip.csv --apply      # commit
   ```
+- `scripts/discover_site_ipv4.py` — for each IPv6 registry site, scans the warmed DNAC caches enterprise-wide (`dnac_interfaces`, `dnac_reserve_subpools`) and suggests an IPv4 supernet covering everything discovered for that site. Matches registry-site → DNAC by site code (via `utils.site_code.site_code_strict`) with a name-substring fallback. Dry-run by default; `--apply` writes the suggestion to `sites.ipv4_supernet` (only when empty unless `--force`).
+  ```bash
+  .venv/bin/python -m scripts.discover_site_ipv4                  # dry-run all sites
+  .venv/bin/python -m scripts.discover_site_ipv4 --site K024      # one site only
+  .venv/bin/python -m scripts.discover_site_ipv4 --apply          # write suggestions
+  ```
 
 ## Roadmap & gaps
 

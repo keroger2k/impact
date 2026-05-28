@@ -34,6 +34,7 @@
       <th>Length</th>
       <th>Status</th>
       <th>Role</th>
+      <th>IPv4 Supernet</th>
       <th>Description</th>
       <th data-no-sort data-no-filter>Actions</th>
     </tr>
@@ -52,6 +53,7 @@
       </td>
       <td>{{ status_badge(s.status) }}</td>
       <td>{% if s.role %}<span class="badge bg-info-subtle text-info">{{ s.role }}</span>{% endif %}</td>
+      <td class="font-monospace small">{{ s.ipv4_supernet or '—' }}</td>
       <td class="text-muted small">{{ s.description or '' }}</td>
       <td>
         {% if s.prefix_length == 48 %}
@@ -79,7 +81,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="7" class="text-center text-muted py-4">No sites registered yet.</td></tr>
+    <tr><td colspan="8" class="text-center text-muted py-4">No sites registered yet.</td></tr>
     {% endfor %}
   </tbody>
 </table>

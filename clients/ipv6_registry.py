@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS sites (
     role          TEXT,
     description   TEXT,
     status        TEXT    NOT NULL DEFAULT 'active',
+    ipv4_supernet TEXT,
     created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
     updated_at    TEXT    NOT NULL DEFAULT (datetime('now'))
 );
@@ -47,6 +48,7 @@ CREATE TABLE IF NOT EXISTS allocations (
     vvvv           TEXT    NOT NULL,
     prefix_length  INTEGER NOT NULL,
     ipv4_subnet    TEXT,
+    vlan_id        INTEGER,
     purpose        TEXT,
     status         TEXT    NOT NULL DEFAULT 'allocated',
     owner          TEXT,
@@ -72,8 +74,8 @@ def _connect_raw(path: Path) -> sqlite3.Connection:
 
 def _migrate_sites_columns(conn: sqlite3.Connection) -> None:
     """Bring an older sites table (prefix_48 only) up to the current shape
-    (prefix + prefix_length + status). No-op on fresh databases — the
-    CREATE IF NOT EXISTS above already produces the new shape."""
+    (prefix + prefix_length + status + ipv4_supernet). No-op on fresh
+    databases — the CREATE IF NOT EXISTS above already produces the new shape."""
     cols = {row["name"] for row in conn.execute("PRAGMA table_info(sites)").fetchall()}
     if "prefix" not in cols and "prefix_48" in cols:
         conn.execute("ALTER TABLE sites RENAME COLUMN prefix_48 TO prefix")
@@ -82,6 +84,15 @@ def _migrate_sites_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE sites ADD COLUMN prefix_length INTEGER NOT NULL DEFAULT 48")
     if "status" not in cols:
         conn.execute("ALTER TABLE sites ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
+    if "ipv4_supernet" not in cols:
+        conn.execute("ALTER TABLE sites ADD COLUMN ipv4_supernet TEXT")
+
+
+def _migrate_allocations_columns(conn: sqlite3.Connection) -> None:
+    """Add vlan_id column to allocations on older databases."""
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(allocations)").fetchall()}
+    if "vlan_id" not in cols:
+        conn.execute("ALTER TABLE allocations ADD COLUMN vlan_id INTEGER")
 
 
 def _sites_name_is_unique(conn: sqlite3.Connection) -> bool:
@@ -124,14 +135,15 @@ def _migrate_drop_name_unique(path: Path) -> None:
                     role          TEXT,
                     description   TEXT,
                     status        TEXT    NOT NULL DEFAULT 'active',
+                    ipv4_supernet TEXT,
                     created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
                     updated_at    TEXT    NOT NULL DEFAULT (datetime('now'))
                 )
                 """
             )
             conn.execute(
-                "INSERT INTO sites_new (id, name, prefix, prefix_length, role, description, status, created_at, updated_at) "
-                "SELECT id, name, prefix, prefix_length, role, description, status, created_at, updated_at FROM sites"
+                "INSERT INTO sites_new (id, name, prefix, prefix_length, role, description, status, ipv4_supernet, created_at, updated_at) "
+                "SELECT id, name, prefix, prefix_length, role, description, status, ipv4_supernet, created_at, updated_at FROM sites"
             )
             conn.execute("DROP TABLE sites")
             conn.execute("ALTER TABLE sites_new RENAME TO sites")
@@ -157,6 +169,7 @@ def init_schema(path: Optional[Path] = None) -> None:
         with _connect_raw(target) as conn:
             conn.executescript(SCHEMA)
             _migrate_sites_columns(conn)
+            _migrate_allocations_columns(conn)
         _migrate_drop_name_unique(target)
         if target == DB_PATH:
             _initialized = True
@@ -203,12 +216,13 @@ def get_site_by_prefix(prefix: str, path: Optional[Path] = None) -> Optional[dic
 def create_site(name: str, prefix: str, prefix_length: int = 48,
                 role: Optional[str] = None, description: Optional[str] = None,
                 status: str = "active",
+                ipv4_supernet: Optional[str] = None,
                 path: Optional[Path] = None) -> dict:
     with connect(path) as conn:
         cur = conn.execute(
-            "INSERT INTO sites (name, prefix, prefix_length, role, description, status) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (name, prefix, prefix_length, role, description, status),
+            "INSERT INTO sites (name, prefix, prefix_length, role, description, status, ipv4_supernet) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (name, prefix, prefix_length, role, description, status, ipv4_supernet),
         )
         site_id = cur.lastrowid
         row = conn.execute("SELECT * FROM sites WHERE id = ?", (site_id,)).fetchone()
@@ -219,12 +233,13 @@ def update_site(site_id: int, *, name: Optional[str] = None, prefix: Optional[st
                 prefix_length: Optional[int] = None,
                 role: Optional[str] = None, description: Optional[str] = None,
                 status: Optional[str] = None,
+                ipv4_supernet: Optional[str] = None,
                 path: Optional[Path] = None) -> Optional[dict]:
     fields, values = [], []
     for col, val in (("name", name), ("prefix", prefix),
                      ("prefix_length", prefix_length),
                      ("role", role), ("description", description),
-                     ("status", status)):
+                     ("status", status), ("ipv4_supernet", ipv4_supernet)):
         if val is not None:
             fields.append(f"{col} = ?")
             values.append(val)
@@ -349,16 +364,18 @@ def get_allocation(alloc_id: int, path: Optional[Path] = None) -> Optional[dict]
 
 
 def create_allocation(site_id: int, vvvv: str, prefix_length: int, *,
-                      ipv4_subnet: Optional[str] = None, purpose: Optional[str] = None,
+                      ipv4_subnet: Optional[str] = None,
+                      vlan_id: Optional[int] = None,
+                      purpose: Optional[str] = None,
                       status: str = "allocated", owner: Optional[str] = None,
                       description: Optional[str] = None,
                       path: Optional[Path] = None) -> dict:
     with connect(path) as conn:
         cur = conn.execute(
             """INSERT INTO allocations
-               (site_id, vvvv, prefix_length, ipv4_subnet, purpose, status, owner, description)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (site_id, vvvv, prefix_length, ipv4_subnet, purpose, status, owner, description),
+               (site_id, vvvv, prefix_length, ipv4_subnet, vlan_id, purpose, status, owner, description)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (site_id, vvvv, prefix_length, ipv4_subnet, vlan_id, purpose, status, owner, description),
         )
         row = conn.execute(_ALLOC_SELECT + " WHERE a.id = ?", (cur.lastrowid,)).fetchone()
     return dict(row)
@@ -366,13 +383,16 @@ def create_allocation(site_id: int, vvvv: str, prefix_length: int, *,
 
 def update_allocation(alloc_id: int, *, vvvv: Optional[str] = None,
                       prefix_length: Optional[int] = None,
-                      ipv4_subnet: Optional[str] = None, purpose: Optional[str] = None,
+                      ipv4_subnet: Optional[str] = None,
+                      vlan_id: Optional[int] = None,
+                      purpose: Optional[str] = None,
                       status: Optional[str] = None, owner: Optional[str] = None,
                       description: Optional[str] = None,
                       path: Optional[Path] = None) -> Optional[dict]:
     fields, values = [], []
     for col, val in (("vvvv", vvvv), ("prefix_length", prefix_length),
-                     ("ipv4_subnet", ipv4_subnet), ("purpose", purpose),
+                     ("ipv4_subnet", ipv4_subnet), ("vlan_id", vlan_id),
+                     ("purpose", purpose),
                      ("status", status), ("owner", owner), ("description", description)):
         if val is not None:
             fields.append(f"{col} = ?")

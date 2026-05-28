@@ -30,6 +30,7 @@
       <th>Site</th>
       <th>vvvv</th>
       <th>Prefix</th>
+      <th>VLAN</th>
       <th>IPv4 Subnet</th>
       <th>Purpose</th>
       <th>Status</th>
@@ -47,6 +48,7 @@
       </td>
       <td class="font-monospace">{{ a.vvvv }}</td>
       <td><span class="badge bg-secondary-subtle text-secondary">/{{ a.prefix_length }}</span></td>
+      <td class="font-monospace">{{ a.vlan_id or '—' }}</td>
       <td class="font-monospace">{{ a.ipv4_subnet or '—' }}</td>
       <td class="text-muted small">{{ a.purpose or '' }}</td>
       <td>
@@ -75,7 +77,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="9" class="text-center text-muted py-4">No allocations to show.</td></tr>
+    <tr><td colspan="10" class="text-center text-muted py-4">No allocations to show.</td></tr>
     {% endfor %}
   </tbody>
 </table>
