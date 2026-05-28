@@ -310,6 +310,36 @@ async def tunnels_page(request: Request, user: SessionEntry = Depends(get_curren
     return templates.TemplateResponse(request, "tunnels.html", context)
 
 
+@router.get("/site", response_class=HTMLResponse)
+async def site_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
+    if not user: return RedirectResponse(url="/login")
+    context = {
+        "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
+        "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
+        "active_page": "site",
+        "username": user.username,
+        "initial_code": None,
+    }
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse(request, "pages/site_content.html", context)
+    return templates.TemplateResponse(request, "site.html", context)
+
+
+@router.get("/site/{code}", response_class=HTMLResponse)
+async def site_page_with_code(request: Request, code: str, user: SessionEntry = Depends(get_current_user_from_cookie)):
+    if not user: return RedirectResponse(url="/login")
+    context = {
+        "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
+        "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
+        "active_page": "site",
+        "username": user.username,
+        "initial_code": code.upper(),
+    }
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse(request, "pages/site_content.html", context)
+    return templates.TemplateResponse(request, "site.html", context)
+
+
 @router.get("/cache-mgmt", response_class=HTMLResponse)
 async def cache_mgmt_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
     if not user: return RedirectResponse(url="/login")

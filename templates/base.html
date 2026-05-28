@@ -34,6 +34,10 @@
          hx-get="/dashboard" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
         <span class="nav-icon"><i class="ph ph-chart-pie-slice"></i></span> <span class="nav-text">Dashboard</span>
       </a>
+      <a class="nav-item {% if active_page == 'site' %}active{% endif %}"
+         hx-get="/site" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+        <span class="nav-icon"><i class="ph ph-map-pin-area"></i></span> <span class="nav-text">Site Lookup</span>
+      </a>
       <a class="nav-item {% if active_page == 'path-trace' %}active{% endif %}"
          hx-get="/path-trace" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
         <span class="nav-icon"><i class="ph ph-git-branch"></i></span> <span class="nav-text">Path Trace</span>
