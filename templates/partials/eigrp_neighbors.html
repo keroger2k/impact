@@ -1,0 +1,39 @@
+<div class="card shadow-sm border-0 animate-fade-in mt-4">
+  <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center">
+    <div class="d-flex align-items-center gap-2">
+      <i class="ph ph-tree-structure"></i>
+      <span class="fw-bold">EIGRP Neighbors {% if ip %}<span class="opacity-75 small ms-2">{{ ip }}</span>{% endif %}</span>
+    </div>
+    <button class="btn btn-sm btn-outline-light" onclick="this.closest('.card').remove()">
+      <i class="ph ph-x me-1"></i>Close
+    </button>
+  </div>
+  <div class="card-body p-0">
+    <div class="row g-0">
+      <div class="col-md-6 border-end">
+        <div class="px-3 py-2 bg-light border-bottom small fw-bold text-uppercase letter-spacing-1 text-navy">
+          <i class="ph ph-globe me-1"></i>EIGRPv4
+        </div>
+        {% if v4_error %}
+          <div class="alert alert-warning small mb-0 m-2"><i class="ph ph-warning"></i> {{ v4_error }}</div>
+        {% elif v4_output %}
+          <pre class="p-3 mb-0 bg-dark text-warning" style="max-height: 320px; overflow:auto; font-family:'SF Mono',monospace; font-size:12px; line-height:1.5;">{{ v4_output }}</pre>
+        {% else %}
+          <div class="text-center text-muted small py-4">No IPv4 EIGRP neighbors.</div>
+        {% endif %}
+      </div>
+      <div class="col-md-6">
+        <div class="px-3 py-2 bg-light border-bottom small fw-bold text-uppercase letter-spacing-1 text-navy">
+          <i class="ph ph-globe me-1"></i>EIGRPv6
+        </div>
+        {% if v6_error %}
+          <div class="alert alert-warning small mb-0 m-2"><i class="ph ph-warning"></i> {{ v6_error }}</div>
+        {% elif v6_output %}
+          <pre class="p-3 mb-0 bg-dark text-warning" style="max-height: 320px; overflow:auto; font-family:'SF Mono',monospace; font-size:12px; line-height:1.5;">{{ v6_output }}</pre>
+        {% else %}
+          <div class="text-center text-muted small py-4">No IPv6 EIGRP neighbors.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
