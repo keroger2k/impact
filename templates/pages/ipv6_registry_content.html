@@ -345,8 +345,11 @@
               <label class="form-label small fw-bold" for="ipv6-alloc-site">Site</label>
               <select id="ipv6-alloc-site" name="site_id" class="form-select" required>
                 <option value="">— select —</option>
-                {% for s in sites if s.prefix_length == 48 %}
-                  <option value="{{ s.id }}">{{ s.name }} ({{ s.prefix }}::/{{ s.prefix_length }})</option>
+                {# All sites are listed so they're discoverable. vvvv allocations
+                   only fit /48 (carvable) sites; selecting a leaf prefix will
+                   surface the backend's clear rejection at save time. #}
+                {% for s in (sites|sort(attribute='prefix_length'))|sort(attribute='name') %}
+                  <option value="{{ s.id }}">{{ s.name }} ({{ s.prefix }}::/{{ s.prefix_length }}{% if s.prefix_length != 48 %} — leaf{% endif %})</option>
                 {% endfor %}
               </select>
             </div>
