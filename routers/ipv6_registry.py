@@ -5,9 +5,10 @@ Read paths return JSON, or an HTMX partial when HX-Request is present
 phase 4; this module currently exposes GETs for sites/allocations plus the
 decode/assemble compute endpoints.
 
-Sites can be /32../64. Only /48 sites support vvvv-style allocations;
-sites at other prefix lengths are leaf prefixes (used as-is), and the
-allocation endpoints reject inserts targeting them.
+Sites can be /32../64 and may all carry vvvv-style /49..../64 allocations.
+For non-/48 sites the vvvv is constrained: its high bits must match the
+bits the site prefix already commits (e.g. a /56 site at
+2600:0400:3028:2d00 allows vvvvs in the 0x2d00..0x2dff range).
 """
 from __future__ import annotations
 
@@ -137,6 +138,96 @@ async def update_site_endpoint(
     return updated
 
 
+# Standard VLAN preset for the /56 (or other carvable) site provisioner.
+# Mirrors the TSA fleet's standard build sheet — see screenshot for T573:
+# vvvv offset 4 is intentionally skipped (VLAN500 / STIP lives in a separate
+# /48 aggregate, not under the site's /56).
+STANDARD_VLAN_PRESET: list[dict] = [
+    {"key": "l3",   "offset": 0, "purpose": "L3 Interconnect", "description": "Routed Interface"},
+    {"key": "mgmt", "offset": 1, "purpose": "MGMT",            "description": "VLAN3 — Management"},
+    {"key": "data", "offset": 2, "purpose": "Data",            "description": "VLAN100 — Data"},
+    {"key": "voip", "offset": 3, "purpose": "VoIP",            "description": "VLAN600 — VoIP"},
+    {"key": "etas", "offset": 5, "purpose": "ETAS",            "description": "VLAN800 — ETAS"},
+    {"key": "hsdn", "offset": 6, "purpose": "HSDN",            "description": "VLAN700 — HSDN"},
+]
+
+
+@router.post("/sites/provision-standard", status_code=201)
+async def provision_standard_site(
+    name: str = Form(..., min_length=1, max_length=128),
+    prefix: str = Form(..., min_length=2, max_length=64),
+    prefix_length: int = Form(56),
+    role: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
+    status: str = Form("active"),
+    vlans: str = Form("l3,mgmt,data,voip,etas,hsdn"),
+    session: SessionEntry = Depends(require_auth),
+):
+    """Create a carvable site (default /56) plus the standard set of VLAN
+    /64 allocations under it. The site is rolled back if any allocation
+    creation fails, so partial state never leaks."""
+    _validate_site_length(prefix_length)
+    _validate_status(status)
+    if prefix_length >= 64:
+        raise HTTPException(
+            400, f"Provisioned site must be /< 64 (got /{prefix_length}) so it can carry /64 allocations.",
+        )
+    canonical = _normalize_site_prefix(prefix, prefix_length)
+
+    requested_keys = {k.strip().lower() for k in vlans.split(",") if k.strip()}
+    preset_by_key = {p["key"]: p for p in STANDARD_VLAN_PRESET}
+    unknown = requested_keys - set(preset_by_key)
+    if unknown:
+        raise HTTPException(
+            400, f"Unknown VLAN keys: {sorted(unknown)}. Known: {sorted(preset_by_key)}",
+        )
+    if not requested_keys:
+        raise HTTPException(400, "At least one VLAN must be selected.")
+    # Preserve preset order so the resulting allocations are stable and
+    # easy to read in the table.
+    selected = [p for p in STANDARD_VLAN_PRESET if p["key"] in requested_keys]
+
+    site_fixed = ipv6.site_vvvv_fixed_value(canonical, prefix_length)
+    site_mask = ipv6.site_vvvv_mask(prefix_length)
+    free_span = (~site_mask) & 0xFFFF
+    over_budget = [p for p in selected if p["offset"] > free_span]
+    if over_budget:
+        bad = ", ".join(f"{p['key']}(offset={p['offset']})" for p in over_budget)
+        raise HTTPException(
+            400,
+            f"VLAN offsets exceed the site's free vvvv space ({free_span + 1} slots): {bad}",
+        )
+
+    try:
+        site_row = registry.create_site(
+            name=name, prefix=canonical, prefix_length=prefix_length,
+            role=role or None, description=description or None, status=status,
+        )
+    except sqlite3.IntegrityError as e:
+        raise HTTPException(409, f"A site with that prefix already exists: {e}")
+
+    created_allocations: list[dict] = []
+    try:
+        for p in selected:
+            vvvv = f"{site_fixed + p['offset']:04x}"
+            alloc = registry.create_allocation(
+                site_id=site_row["id"], vvvv=vvvv, prefix_length=64,
+                purpose=p["purpose"], description=p["description"], status="allocated",
+            )
+            created_allocations.append(alloc)
+    except Exception as e:
+        # Roll back the site so the user can retry without leftover state.
+        registry.delete_site(site_row["id"])
+        raise HTTPException(500, f"Allocation creation failed; site rolled back: {e}")
+
+    cache.invalidate(_AUDIT_CACHE_KEY)
+    return {
+        "site": site_row,
+        "allocations": created_allocations,
+        "preset": [p["key"] for p in selected],
+    }
+
+
 @router.post("/sites/{site_id}/status")
 async def set_site_status_endpoint(
     site_id: int,
@@ -169,14 +260,41 @@ async def delete_site_endpoint(site_id: int, session: SessionEntry = Depends(req
 # ── Allocations ──────────────────────────────────────────────────────────────
 
 def _require_carvable_site(site: dict) -> None:
-    """vvvv-style allocations only live under /48 sites — everything else is
-    a leaf prefix and rejects allocations entirely."""
-    if int(site.get("prefix_length", 48)) != ipv6.SITE_PREFIX_FOR_VVVV:
+    """Allocation parents must be /32../63 — /64 sites are atomic and can't
+    carve a more-specific subnet."""
+    site_len = int(site.get("prefix_length", 48))
+    if site_len >= 64:
         raise HTTPException(
             400,
-            f"Site '{site['name']}' is /{site['prefix_length']} (leaf) — "
-            "only /48 sites carry vvvv-style allocations.",
+            f"Site '{site['name']}' is /{site_len} — only sites with "
+            "prefix_length < 64 can carry sub-allocations.",
         )
+
+
+def _require_vvvv_conforms(vvvv: str, site: dict) -> None:
+    """vvvv's high bits must match the bits the site prefix already commits
+    (no-op for /48 sites, where the whole 4th hextet is free)."""
+    site_len = int(site.get("prefix_length", 48))
+    if site_len <= 48:
+        return
+    if not ipv6.vvvv_conforms_to_site(vvvv, site["prefix"], site_len):
+        fixed = ipv6.site_vvvv_fixed_value(site["prefix"], site_len)
+        mask = ipv6.site_vvvv_mask(site_len)
+        raise HTTPException(
+            400,
+            f"vvvv {vvvv} does not match site '{site['name']}' (/{site_len}); "
+            f"its high bits must equal 0x{fixed:04x} under mask 0x{mask:04x}.",
+        )
+
+
+def _require_alloc_length_for_site(prefix_length: int, site: dict) -> None:
+    """Allocation prefix_length must be strictly more specific than the
+    site's, and at most /64."""
+    site_len = int(site.get("prefix_length", 48))
+    try:
+        ipv6.validate_prefix_length(prefix_length, site_prefix_length=site_len)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @router.get("/allocations")
@@ -208,13 +326,10 @@ async def next_allocation(
     if not site:
         raise HTTPException(404, f"Site {site_id} not found")
     _require_carvable_site(site)
-    try:
-        ipv6.validate_prefix_length(prefix_length)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+    _require_alloc_length_for_site(prefix_length, site)
 
     existing = registry.list_allocations(site_id=site_id)
-    suggested = ipv6.next_block(prefix_length, existing)
+    suggested = ipv6.next_block(prefix_length, existing, site=site)
     if suggested is None:
         raise HTTPException(409, f"No free /{prefix_length} block available in this site")
     return {"site_id": site_id, "prefix_length": prefix_length, "vvvv": suggested}
@@ -278,9 +393,10 @@ async def create_allocation_endpoint(
     _require_carvable_site(site)
     try:
         norm_vvvv = ipv6.normalize_vvvv(vvvv)
-        ipv6.validate_prefix_length(prefix_length)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    _require_alloc_length_for_site(prefix_length, site)
+    _require_vvvv_conforms(norm_vvvv, site)
     norm_subnet = _parse_ipv4_subnet(ipv4_subnet)
 
     v4_warnings = _check_conflicts(site_id, norm_vvvv, prefix_length, norm_subnet)
@@ -329,10 +445,11 @@ async def update_allocation_endpoint(
 
     new_vvvv = ipv6.normalize_vvvv(vvvv) if vvvv else existing["vvvv"]
     new_len = prefix_length if prefix_length is not None else existing["prefix_length"]
-    try:
-        ipv6.validate_prefix_length(new_len)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+    parent_site = registry.get_site(existing["site_id"])
+    if parent_site is None:
+        raise HTTPException(500, "Parent site for allocation has vanished")
+    _require_alloc_length_for_site(new_len, parent_site)
+    _require_vvvv_conforms(new_vvvv, parent_site)
     new_subnet = (_parse_ipv4_subnet(ipv4_subnet)
                   if ipv4_subnet is not None else existing["ipv4_subnet"])
 
@@ -428,7 +545,8 @@ async def assemble_bulk(
             continue
 
         try:
-            addr = ipv6.assemble(site["prefix"], match["vvvv"], raw)
+            addr = ipv6.assemble(site["prefix"], match["vvvv"], raw,
+                                 site_prefix_length=int(site["prefix_length"]))
         except (ipaddress.AddressValueError, ValueError) as e:
             row["status"] = "invalid"
             row["detail"] = str(e)
@@ -605,7 +723,8 @@ async def assemble(
         vvvv_value = matched_allocation["vvvv"]
 
     try:
-        addr = ipv6.assemble(site["prefix"], vvvv_value, ipv4)
+        addr = ipv6.assemble(site["prefix"], vvvv_value, ipv4,
+                             site_prefix_length=int(site["prefix_length"]))
     except (ipaddress.AddressValueError, ValueError) as e:
         raise HTTPException(400, f"Cannot assemble: {e}")
 

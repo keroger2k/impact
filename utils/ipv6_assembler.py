@@ -9,8 +9,17 @@ shape (used for vvvv-style allocations) is built around a /48 site:
 Example: site DC1 with /48 = 1000:2000:3000, vvvv = 0100, host = 1.2.3.4
          -> 1000:2000:3000:100::102:304
 
-Sites with prefix lengths other than /48 are leaf prefixes — they don't
-carve vvvv sub-allocations (the assembler does not run for them).
+Sites at other prefix lengths (e.g. /56, /60) also carve vvvv-style /64
+allocations — the only constraint is that the vvvv's high bits must match
+whatever the site already commits in the 4th hextet:
+
+    /56 site 2600:0400:3028:2d00  →  vvvvs must be 2d00..2dff (high byte fixed)
+    /60 site 2600:0400:3028:2d80  →  vvvvs must be 2d80..2d8f (high 12 bits fixed)
+
+vvvv is always stored as a 4-hex-char string representing the full 4th
+hextet (storage is uniform), but `next_block` / validation respect the
+site's fixed bits so the allocator never returns a vvvv outside the
+allowed range.
 
 All addresses are canonicalized via the stdlib ipaddress module.
 """
@@ -74,14 +83,18 @@ def normalize_vvvv(vvvv: str) -> str:
     return f"{value:04x}"
 
 
-def validate_prefix_length(prefix_length: int) -> None:
-    """Allocation prefix length. vvvv-aligned allocations only live in
-    /49..../64 — anything longer doesn't carve the vvvv hextet; anything
-    shorter is the site itself."""
-    if not 49 <= prefix_length <= 64:
+def validate_prefix_length(prefix_length: int, site_prefix_length: int = 48) -> None:
+    """Allocation prefix length. Must be more specific than the site itself
+    and live within the vvvv hextet (≤ /64): site_len < prefix_length ≤ 64.
+
+    Backward-compatible: callers that don't pass site_prefix_length get the
+    classic /48 semantics (prefix_length in 49..64).
+    """
+    if not (site_prefix_length < prefix_length <= 64):
         raise ValueError(
-            f"prefix_length {prefix_length} unsupported; must be 49..64 "
-            "(48 is the site itself; >64 lives below the vvvv segment)"
+            f"prefix_length {prefix_length} unsupported; must be "
+            f"{site_prefix_length + 1}..64 (site is /{site_prefix_length}; "
+            "allocations must be more specific and within /64)"
         )
 
 
@@ -90,8 +103,56 @@ def vvvv_block_size(prefix_length: int) -> int:
 
     /49 -> 0x8000, /50 -> 0x4000, ..., /56 -> 0x0100, ..., /64 -> 0x0001.
     """
+    # Validate at /48-default range — the function operates purely on the
+    # 16-bit vvvv space and doesn't need to know the site's prefix_length.
     validate_prefix_length(prefix_length)
     return 1 << (64 - prefix_length)
+
+
+# ── Site-derived vvvv constraints ───────────────────────────────────────────
+# Sites at /49..../63 fix some of the high bits of the 4th hextet. Allocations
+# under them must share those fixed bits. Three helpers below extract that
+# constraint so the validator + allocator can enforce it.
+
+def site_vvvv_mask(site_prefix_length: int) -> int:
+    """Bitmask (against the 16-bit vvvv) of the bits the site already fixes.
+
+    /48 -> 0x0000 (vvvv fully free)
+    /56 -> 0xff00 (high byte fixed by site)
+    /60 -> 0xfff0 (high 12 bits fixed)
+    /64 -> 0xffff (no room — only the prefix itself)
+    """
+    if site_prefix_length <= 48:
+        return 0
+    fixed_bits = min(site_prefix_length, 64) - 48
+    return (0xFFFF << (16 - fixed_bits)) & 0xFFFF
+
+
+def site_vvvv_fixed_value(site_prefix: str, site_prefix_length: int) -> int:
+    """The site's fixed bits, right-aligned in the 16-bit vvvv space.
+
+    /56 site at "2600:400:3028:2d00" -> 0x2d00
+    /60 site at "2600:400:3028:2d80" -> 0x2d80
+    /48 site -> 0x0000 (nothing fixed)
+    """
+    if site_prefix_length <= 48:
+        return 0
+    canonical = normalize_prefix(site_prefix, site_prefix_length)
+    parts = canonical.split(":")
+    if len(parts) < 4:
+        # Should not happen for /49+ since normalize_prefix keeps ≥4 hextets.
+        return 0
+    return int(parts[3], 16) & site_vvvv_mask(site_prefix_length)
+
+
+def vvvv_conforms_to_site(vvvv: str, site_prefix: str, site_prefix_length: int) -> bool:
+    """True iff `vvvv`'s high bits match the site's fixed prefix bits.
+    /48 sites have no fixed bits, so any vvvv conforms."""
+    if site_prefix_length <= 48:
+        return True
+    mask = site_vvvv_mask(site_prefix_length)
+    fixed = site_vvvv_fixed_value(site_prefix, site_prefix_length)
+    return (int(vvvv, 16) & mask) == fixed
 
 
 # ── Forward: IPv4 -> IPv6 ────────────────────────────────────────────────────
@@ -104,19 +165,25 @@ def ipv4_to_suffix(ipv4: str) -> str:
     return f"{high:x}:{low:x}"
 
 
-def assemble(prefix_48: str, vvvv: str, ipv4: str) -> ipaddress.IPv6Address:
-    """Combine a /48 site prefix, vvvv segment, zero hextets, and the IPv4
+def assemble(prefix: str, vvvv: str, ipv4: str,
+             site_prefix_length: int = 48) -> ipaddress.IPv6Address:
+    """Combine a site prefix, vvvv segment, zero hextets, and the IPv4
     host-tail into a fully-formed IPv6Address.
 
-    Sites that aren't /48 are leaves and don't go through this path.
+    `vvvv` always represents the full 4th hextet (16 bits). For non-/48
+    sites the site's prefix already commits some of those bits — the caller
+    is expected to pass a `vvvv` that respects that constraint (use
+    `vvvv_conforms_to_site` to check).
     """
-    prefix_int = int(ipaddress.IPv6Address(f"{normalize_prefix(prefix_48, 48)}::"))
+    prefix_int = int(ipaddress.IPv6Address(
+        f"{normalize_prefix(prefix, site_prefix_length)}::"
+    ))
     vvvv_int = int(normalize_vvvv(vvvv), 16)
     v4_int = int(ipaddress.IPv4Address(ipv4.strip()))
 
     addr_int = (
         (prefix_int & ((1 << 128) - (1 << 80)))   # top 48 bits from prefix
-        | (vvvv_int << 64)                         # vvvv into bits 79..64
+        | (vvvv_int << 64)                         # vvvv into bits 49..64
         | v4_int                                   # IPv4 into bottom 32
     )
     return ipaddress.IPv6Address(addr_int)
@@ -246,16 +313,32 @@ def find_overlap(vvvv: str, prefix_length: int,
     return hits
 
 
-def next_block(prefix_length: int, allocations: Iterable[dict]) -> Optional[str]:
-    """Walk vvvv from 0x0000 to 0xFFFF on the natural interval for the given
-    mask; return the first vvvv whose [start, start+size) range overlaps
-    nothing in `allocations`. Returns None when fully exhausted.
+def next_block(prefix_length: int, allocations: Iterable[dict],
+               site: Optional[dict] = None) -> Optional[str]:
+    """Walk vvvv on the natural interval for the requested mask; return the
+    first vvvv whose [start, start+size) range overlaps nothing in
+    `allocations`. Returns None when fully exhausted.
+
+    If `site` is given, iteration is constrained to vvvvs whose high bits
+    match the site's fixed prefix (e.g. a /56 site at 2600:400:3028:2d00
+    only iterates 0x2d00..0x2dff). Without a site, iterates the full 16-bit
+    space — backward-compatible /48 behavior.
 
     `allocations` is an iterable of dicts with `vvvv` (hex string) and
     `prefix_length` (int) — typically rows from
     clients.ipv6_registry.list_allocations(site_id=...).
     """
     size = vvvv_block_size(prefix_length)
+
+    if site is None:
+        start_range, end_range = 0, 0x10000
+    else:
+        site_len = int(site.get("prefix_length", 48))
+        mask = site_vvvv_mask(site_len)
+        fixed = site_vvvv_fixed_value(site["prefix"], site_len)
+        free_span = (~mask) & 0xFFFF
+        start_range = fixed
+        end_range = fixed + free_span + 1  # inclusive of fixed | free_span
 
     # Build occupied ranges as (start, end_exclusive)
     occupied: list[tuple[int, int]] = []
@@ -269,7 +352,7 @@ def next_block(prefix_length: int, allocations: Iterable[dict]) -> Optional[str]
         aligned = v & ~(block - 1)
         occupied.append((aligned, aligned + block))
 
-    for start in range(0, 0x10000, size):
+    for start in range(start_range, end_range, size):
         end = start + size
         if not any(start < o_end and o_start < end for o_start, o_end in occupied):
             return f"{start:04x}"

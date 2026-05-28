@@ -221,3 +221,134 @@ def test_migration_drops_unique_on_name(tmp_path: Path):
     assert len(allocs) == 1
     assert allocs[0]["site_id"] == site_id
     assert allocs[0]["site_name"] == "DC1"
+
+
+# ── Provision-standard router endpoint ───────────────────────────────────────
+
+import asyncio
+import functools
+
+
+@pytest.fixture
+def patched_registry(db_path, monkeypatch):
+    """Re-bind every registry function to the temp DB so the router calls
+    that don't accept a `path` arg still hit the test database."""
+    import clients.ipv6_registry as reg_mod
+    for fn_name in ("list_sites", "get_site", "create_site", "update_site",
+                    "delete_site", "set_status_cascade", "list_allocations",
+                    "get_allocation", "create_allocation", "update_allocation",
+                    "delete_allocation", "find_ipv4_collision", "find_child_sites",
+                    "get_site_by_prefix"):
+        orig = getattr(reg_mod, fn_name)
+        # Bind path via partial only when the function accepts it.
+        if "path" in orig.__code__.co_varnames:
+            monkeypatch.setattr(reg_mod, fn_name,
+                                functools.partial(orig, path=db_path))
+    return db_path
+
+
+def test_provision_standard_site_creates_six_vlan_allocations(patched_registry):
+    """One-click provisioner: site + 6 standard VLAN /64 allocations.
+    Mirrors the T573 example in the build sheet."""
+    from routers.ipv6_registry import provision_standard_site
+
+    class FakeSession:
+        username = "test"
+
+    result = asyncio.run(provision_standard_site(
+        name="T573", prefix="2600:0400:3028:2d00", prefix_length=56,
+        role="branch", description="Test site", status="active",
+        vlans="l3,mgmt,data,voip,etas,hsdn", session=FakeSession(),
+    ))
+    assert result["site"]["name"] == "T573"
+    assert result["site"]["prefix_length"] == 56
+    vvvvs = [a["vvvv"] for a in result["allocations"]]
+    # Spreadsheet order: 2d00, 2d01, 2d02, 2d03, 2d05, 2d06 (4 skipped for STIP)
+    assert vvvvs == ["2d00", "2d01", "2d02", "2d03", "2d05", "2d06"]
+    purposes = [a["purpose"] for a in result["allocations"]]
+    assert purposes == ["L3 Interconnect", "MGMT", "Data", "VoIP", "ETAS", "HSDN"]
+
+
+def test_provision_standard_site_partial_vlans(patched_registry):
+    from routers.ipv6_registry import provision_standard_site
+
+    class FakeSession: username = "test"
+
+    result = asyncio.run(provision_standard_site(
+        name="K023", prefix="2600:0400:3028:1f00", prefix_length=56,
+        role=None, description=None, status="active",
+        vlans="l3,mgmt", session=FakeSession(),
+    ))
+    assert [a["vvvv"] for a in result["allocations"]] == ["1f00", "1f01"]
+
+
+def test_provision_standard_site_rejects_64(patched_registry):
+    """A /64 site has no room to carve /64 allocations — provisioner refuses."""
+    from fastapi import HTTPException
+    from routers.ipv6_registry import provision_standard_site
+
+    class FakeSession: username = "test"
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(provision_standard_site(
+            name="X", prefix="2600:0400:3028:1f00", prefix_length=64,
+            role=None, description=None, status="active",
+            vlans="l3", session=FakeSession(),
+        ))
+    assert exc.value.status_code == 400
+
+
+def test_provision_standard_site_rejects_unknown_vlan(patched_registry):
+    from fastapi import HTTPException
+    from routers.ipv6_registry import provision_standard_site
+
+    class FakeSession: username = "test"
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(provision_standard_site(
+            name="X", prefix="2600:0400:3028:1f00", prefix_length=56,
+            role=None, description=None, status="active",
+            vlans="l3,bogus,mgmt", session=FakeSession(),
+        ))
+    assert exc.value.status_code == 400
+    assert "bogus" in str(exc.value.detail).lower() or "unknown" in str(exc.value.detail).lower()
+
+
+def test_provision_standard_site_rolls_back_on_allocation_failure(patched_registry, monkeypatch):
+    """If allocation creation fails, the site is deleted so no partial state leaks."""
+    from fastapi import HTTPException
+    from routers.ipv6_registry import provision_standard_site
+    import clients.ipv6_registry as reg_mod
+
+    class FakeSession: username = "test"
+
+    call_count = {"n": 0}
+    real_create_allocation = reg_mod.create_allocation
+    def flaky_create(*args, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 3:
+            raise RuntimeError("simulated DB error on third allocation")
+        return real_create_allocation(*args, **kwargs)
+    monkeypatch.setattr(reg_mod, "create_allocation", flaky_create)
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(provision_standard_site(
+            name="ROLLBACK_TEST", prefix="2600:0400:3028:1f00", prefix_length=56,
+            role=None, description=None, status="active",
+            vlans="l3,mgmt,data,voip,etas,hsdn", session=FakeSession(),
+        ))
+    assert exc.value.status_code == 500
+    # Site should have been deleted as part of the rollback.
+    assert reg_mod.get_site_by_prefix("2600:400:3028:1f00") is None
+
+
+# ── Generalized /56 allocation flow ─────────────────────────────────────────
+
+def test_allocate_under_56_site_conforming_vvvv(patched_registry):
+    """Direct registry create — non-/48 sites now carry allocations too."""
+    site = reg.create_site("T573", "2600:400:3028:2d00", prefix_length=56,
+                           path=patched_registry)
+    alloc = reg.create_allocation(site["id"], vvvv="2d05", prefix_length=64,
+                                  purpose="ETAS", path=patched_registry)
+    assert alloc["vvvv"] == "2d05"
+    assert alloc["prefix_length"] == 64

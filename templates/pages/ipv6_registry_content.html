@@ -250,6 +250,111 @@
   </div>
 </div>
 
+<!-- ── Provision Standard Site modal (one-click /56 + standard VLAN /64s) ── -->
+<div class="modal fade" id="ipv6-provision-standard-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <form id="ipv6-provision-standard-form" onsubmit="ipv6SubmitProvisionStandard(event)">
+        <div class="modal-header">
+          <h5 class="modal-title">Provision Standard Site</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <div class="alert alert-info small mb-3">
+            <i class="ph ph-info me-1"></i>
+            Creates a <code>/56</code> site (or other carvable length) plus the standard set of VLAN <code>/64</code>
+            allocations under it (L3 Interconnect, MGMT, Data, VoIP, ETAS, HSDN). The whole thing is one
+            atomic write — if any allocation fails, the site is rolled back.
+          </div>
+          <div id="ipv6-prov-form-error" class="alert alert-danger d-none mb-3 small"></div>
+
+          <div class="row g-2 mb-3">
+            <div class="col-md-4">
+              <label class="form-label small fw-bold" for="ipv6-prov-name">Site Code</label>
+              <input class="form-control" id="ipv6-prov-name" name="name" type="text"
+                     placeholder="T573, K023, …" required autocomplete="off">
+            </div>
+            <div class="col-md-5">
+              <label class="form-label small fw-bold" for="ipv6-prov-prefix">Prefix</label>
+              <input class="form-control font-monospace" id="ipv6-prov-prefix" name="prefix"
+                     type="text" placeholder="2600:0400:3028:2d00" required autocomplete="off">
+              <div class="form-text">Leading hextets only; will be normalized server-side.</div>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small fw-bold" for="ipv6-prov-length">Prefix length</label>
+              <select id="ipv6-prov-length" name="prefix_length" class="form-select">
+                {# /49..../63 are all valid carvable parents; /56 is the fleet default. #}
+                {% for p in range(32, 64) %}
+                  <option value="{{ p }}" {% if p == 56 %}selected{% endif %}>/{{ p }}{% if p == 56 %} (default){% elif p == 48 %} (full vvvv){% endif %}</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+
+          <div class="row g-2 mb-3">
+            <div class="col-md-6">
+              <label class="form-label small fw-bold" for="ipv6-prov-role">Role / Region <span class="text-muted">(optional)</span></label>
+              <input class="form-control" id="ipv6-prov-role" name="role" type="text"
+                     placeholder="branch, lab, dc" value="branch">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small fw-bold" for="ipv6-prov-status">Status</label>
+              <select id="ipv6-prov-status" name="status" class="form-select">
+                <option value="active" selected>active</option>
+                <option value="planned">planned</option>
+                <option value="decommissioned">decommissioned</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label small fw-bold" for="ipv6-prov-desc">Description <span class="text-muted">(optional)</span></label>
+            <textarea class="form-control" id="ipv6-prov-desc" name="description" rows="2"></textarea>
+          </div>
+
+          <div class="mb-2">
+            <label class="form-label small fw-bold d-block">Standard VLANs</label>
+            <div class="form-text mb-2">
+              Each checked VLAN becomes a /64 allocation under the site (offsets match the fleet build sheet).
+              Slot <code>04</code> is intentionally skipped — VLAN500/STIP lives in a separate /48 aggregate.
+            </div>
+            <div class="d-flex flex-wrap gap-3">
+              {# Mirrors STANDARD_VLAN_PRESET in routers/ipv6_registry.py.
+                 Keep the (key, offset, purpose) tuples in sync with the server. #}
+              {% set _preset = [
+                ('l3',   0, 'L3 Interconnect'),
+                ('mgmt', 1, 'MGMT (VLAN3)'),
+                ('data', 2, 'Data (VLAN100)'),
+                ('voip', 3, 'VoIP (VLAN600)'),
+                ('etas', 5, 'ETAS (VLAN800)'),
+                ('hsdn', 6, 'HSDN (VLAN700)'),
+              ] %}
+              {% for key, offset, label in _preset %}
+                <div class="form-check">
+                  <input class="form-check-input ipv6-prov-vlan-cb" type="checkbox"
+                         value="{{ key }}" id="ipv6-prov-vlan-{{ key }}" checked
+                         data-offset="{{ offset }}">
+                  <label class="form-check-label small" for="ipv6-prov-vlan-{{ key }}">
+                    {{ label }} <code class="text-muted">+{{ '%02x'|format(offset) }}</code>
+                  </label>
+                </div>
+              {% endfor %}
+            </div>
+          </div>
+
+          <input type="hidden" id="ipv6-prov-vlans" name="vlans" value="l3,mgmt,data,voip,etas,hsdn">
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="ipv6-prov-submit">
+            <i class="ph ph-lightning me-1"></i> Provision Site
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 <!-- ── Create-Parent modal (off-book /64 → register a covering parent) ────── -->
 <div class="modal fade" id="ipv6-create-parent-modal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog">
@@ -366,14 +471,20 @@
                   </div>
                   <div id="ipv6-alloc-site-options" style="max-height: 260px; overflow-y: auto;">
                     {% for s in (sites|sort(attribute='prefix_length'))|sort(attribute='name') %}
-                      <button type="button" class="dropdown-item text-truncate"
-                              data-site-id="{{ s.id }}"
-                              data-site-label="{{ s.name }} ({{ s.prefix }}::/{{ s.prefix_length }}{% if s.prefix_length != 48 %} — leaf{% endif %})"
-                              data-search-text="{{ (s.name ~ ' ' ~ s.prefix ~ ' ' ~ (s.role or ''))|lower }}"
-                              onclick="ipv6SelectSite(this)">
-                        <span class="fw-semibold">{{ s.name }}</span>
-                        <span class="text-muted small ms-1">{{ s.prefix }}::/{{ s.prefix_length }}{% if s.prefix_length != 48 %} — leaf{% endif %}</span>
-                      </button>
+                      {# Sites with prefix_length >= 64 can't carry allocations — skip them. #}
+                      {% if s.prefix_length < 64 %}
+                        <button type="button" class="dropdown-item text-truncate"
+                                data-site-id="{{ s.id }}"
+                                data-site-prefix-length="{{ s.prefix_length }}"
+                                data-site-vvvv-fixed="{{ s|vvvv_fixed_hex }}"
+                                data-site-vvvv-mask="{{ s|vvvv_mask_hex }}"
+                                data-site-label="{{ s.name }} ({{ s.prefix }}::/{{ s.prefix_length }})"
+                                data-search-text="{{ (s.name ~ ' ' ~ s.prefix ~ ' ' ~ (s.role or ''))|lower }}"
+                                onclick="ipv6SelectSite(this)">
+                          <span class="fw-semibold">{{ s.name }}</span>
+                          <span class="text-muted small ms-1">{{ s.prefix }}::/{{ s.prefix_length }}</span>
+                        </button>
+                      {% endif %}
                     {% else %}
                       <div class="text-muted small p-3 text-center">No sites in the Registry yet.</div>
                     {% endfor %}
@@ -394,10 +505,13 @@
                   <i class="ph ph-magic-wand"></i>
                 </button>
               </div>
+              <div id="ipv6-alloc-vvvv-hint" class="form-text d-none"></div>
             </div>
             <div class="col-md-2">
               <label class="form-label small fw-bold" for="ipv6-alloc-prefix">Prefix length</label>
               <select id="ipv6-alloc-prefix" name="prefix_length" class="form-select" required>
+                {# Full /49..../64 range — JS narrows to the selected site's
+                   carvable range and re-defaults to /64 when out of bounds. #}
                 {% for p in range(49, 65) %}
                   <option value="{{ p }}" {% if p == 64 %}selected{% endif %}>/{{ p }}</option>
                 {% endfor %}
@@ -485,6 +599,95 @@
     }
   };
 
+  // ── Provision Standard Site modal ──────────────────────────────────────
+  window.ipv6PrepareProvisionStandardModal = function() {
+    const form = document.getElementById('ipv6-provision-standard-form');
+    const errBox = document.getElementById('ipv6-prov-form-error');
+    errBox.classList.add('d-none');
+    errBox.textContent = '';
+    form.reset();
+    // form.reset() doesn't restore the checkboxes that were "checked" via
+    // initial HTML — Firefox keeps them; Chrome resets. Re-set explicitly.
+    document.querySelectorAll('.ipv6-prov-vlan-cb').forEach(cb => { cb.checked = true; });
+    document.getElementById('ipv6-prov-role').value = 'branch';
+    document.getElementById('ipv6-prov-status').value = 'active';
+    document.getElementById('ipv6-prov-length').value = '56';
+    _ipv6UpdateProvVlansHidden();
+  };
+
+  function _ipv6UpdateProvVlansHidden() {
+    const checked = Array.from(document.querySelectorAll('.ipv6-prov-vlan-cb:checked'))
+      .map(cb => cb.value);
+    document.getElementById('ipv6-prov-vlans').value = checked.join(',');
+  }
+  // Live-update the hidden CSV whenever a checkbox toggles.
+  document.addEventListener('change', (evt) => {
+    if (evt.target && evt.target.classList && evt.target.classList.contains('ipv6-prov-vlan-cb')) {
+      _ipv6UpdateProvVlansHidden();
+    }
+  });
+
+  window.ipv6SubmitProvisionStandard = async function(evt) {
+    evt.preventDefault();
+    const errBox = document.getElementById('ipv6-prov-form-error');
+    errBox.classList.add('d-none');
+    errBox.textContent = '';
+
+    _ipv6UpdateProvVlansHidden();
+    const vlans = document.getElementById('ipv6-prov-vlans').value;
+    if (!vlans) {
+      errBox.textContent = 'Select at least one VLAN to provision.';
+      errBox.classList.remove('d-none');
+      return;
+    }
+
+    const payload = new URLSearchParams();
+    ['name','prefix','prefix_length','role','status','description','vlans'].forEach(k => {
+      const el = document.getElementById('ipv6-prov-' + ({
+        name:'name', prefix:'prefix', prefix_length:'length',
+        role:'role', status:'status', description:'desc', vlans:'vlans',
+      })[k]);
+      if (el && el.value && el.value.trim() !== '') {
+        payload.set(k, el.value.trim());
+      }
+    });
+
+    const csrfCookie = document.cookie.split('; ').find(r => r.startsWith('csrf_token='));
+    const csrfHeader = csrfCookie ? csrfCookie.split('=')[1] : '';
+
+    let res, body;
+    try {
+      res = await fetch('/api/ipv6/sites/provision-standard', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'X-CSRF-Token': csrfHeader,
+        },
+        body: payload.toString(),
+      });
+      body = await res.json().catch(() => ({}));
+    } catch (e) {
+      errBox.textContent = 'Request failed: ' + e;
+      errBox.classList.remove('d-none');
+      return;
+    }
+    if (!res.ok) {
+      errBox.textContent = (body && body.detail) || ('Request failed (HTTP ' + res.status + ')');
+      errBox.classList.remove('d-none');
+      return;
+    }
+
+    bootstrap.Modal.getInstance(document.getElementById('ipv6-provision-standard-modal'))?.hide();
+    // Refresh sites + allocations tables so the new rows show up.
+    htmx.ajax('GET', '/api/ipv6/sites', {target: '#ipv6-tab-sites .card-body', swap: 'innerHTML'});
+    htmx.ajax('GET', '/api/ipv6/allocations', {target: '#ipv6-tab-allocations .card-body', swap: 'innerHTML'});
+    // Tell the user what got created.
+    const n = (body.allocations || []).length;
+    const siteName = (body.site && body.site.name) || 'site';
+    alert(`Provisioned ${siteName}: 1 site + ${n} VLAN /64 allocation${n === 1 ? '' : 's'}.`);
+  };
+
+
   // ── Searchable site dropdown (custom Bootstrap dropdown) ───────────────
   // Bridges the visible button + filterable list with the hidden site_id
   // input the rest of the modal already targets. Keeping the hidden input's
@@ -517,7 +720,59 @@
     const search = document.getElementById('ipv6-alloc-site-search');
     search.value = '';
     ipv6FilterSiteOptions('');
+    // Adapt the allocation form to the selected site's vvvv constraints.
+    _ipv6AdaptAllocFormToSite({
+      prefixLength: parseInt(btn.dataset.sitePrefixLength || '48', 10),
+      vvvvFixed: btn.dataset.siteVvvvFixed || '0000',
+      vvvvMask:  btn.dataset.siteVvvvMask  || '0000',
+    });
   };
+
+  // Narrow the prefix-length select to (site_len, 64] and prefill the vvvv
+  // field with the bits the site already fixes (e.g. "2d00" for a /56 site
+  // at 2600:400:3028:2d00). For /48 sites this is a no-op — full freedom.
+  function _ipv6AdaptAllocFormToSite(ctx) {
+    const prefSel = document.getElementById('ipv6-alloc-prefix');
+    const minLen = ctx.prefixLength + 1;
+    let firstEnabled = null;
+    Array.from(prefSel.options).forEach(opt => {
+      const v = parseInt(opt.value, 10);
+      opt.disabled = v < minLen || v > 64;
+      if (!opt.disabled && firstEnabled === null) firstEnabled = v;
+    });
+    // If the currently-selected prefix length is now disabled, fall back to
+    // /64 if available, otherwise the first enabled option.
+    const current = parseInt(prefSel.value, 10);
+    if (current < minLen || current > 64) {
+      prefSel.value = (Array.from(prefSel.options).some(o => o.value === '64' && !o.disabled))
+        ? '64' : String(firstEnabled || minLen);
+    }
+
+    // vvvv prefill + hint.
+    const vvvvInp = document.getElementById('ipv6-alloc-vvvv');
+    const hint = document.getElementById('ipv6-alloc-vvvv-hint');
+    const fixed = (ctx.vvvvFixed || '0000').toLowerCase();
+    const mask  = (ctx.vvvvMask  || '0000').toLowerCase();
+    if (ctx.prefixLength <= 48 || mask === '0000') {
+      // /48 — no fixed bits. Leave vvvv empty for the user; clear any hint.
+      hint.classList.add('d-none');
+      hint.textContent = '';
+    } else {
+      // Prefill so the user only types the variable low nibbles. Editable —
+      // server still validates conformance on submit.
+      vvvvInp.value = fixed;
+      const freeNibbles = (16 - _popcount16(parseInt(mask, 16))) / 4;
+      hint.textContent = `Site fixes high bits to 0x${fixed} (mask 0x${mask}); only the last ${freeNibbles} hex digit${freeNibbles === 1 ? '' : 's'} are free.`;
+      hint.classList.remove('d-none');
+    }
+  }
+
+  function _popcount16(n) {
+    n = (n - ((n >> 1) & 0x5555)) & 0xFFFF;
+    n = (n & 0x3333) + ((n >> 2) & 0x3333);
+    n = (n + (n >> 4)) & 0x0F0F;
+    return (n + (n >> 8)) & 0xFF;
+  }
 
   window.ipv6SiteSearchKeydown = function(evt) {
     // Enter selects the first currently-visible option.
@@ -539,6 +794,12 @@
     if (search) search.value = '';
     ipv6FilterSiteOptions('');
     document.getElementById('ipv6-alloc-site-button').classList.remove('is-invalid');
+    // Re-enable the full prefix-length range and drop any vvvv hint —
+    // a fresh modal open shouldn't inherit the previous site's narrowing.
+    const prefSel = document.getElementById('ipv6-alloc-prefix');
+    Array.from(prefSel.options).forEach(opt => { opt.disabled = false; });
+    const hint = document.getElementById('ipv6-alloc-vvvv-hint');
+    if (hint) { hint.classList.add('d-none'); hint.textContent = ''; }
   }
 
   function _ipv6SiteSelectById(siteId) {
@@ -551,6 +812,13 @@
     const disp = document.getElementById('ipv6-alloc-site-display');
     disp.textContent = btn.dataset.siteLabel;
     disp.classList.remove('text-muted');
+    // Mirror what ipv6SelectSite does so the rest of the form is constrained
+    // to this site's vvvv mask (matters for /56+ defaults and edit-mode opens).
+    _ipv6AdaptAllocFormToSite({
+      prefixLength: parseInt(btn.dataset.sitePrefixLength || '48', 10),
+      vvvvFixed: btn.dataset.siteVvvvFixed || '0000',
+      vvvvMask:  btn.dataset.siteVvvvMask  || '0000',
+    });
     return true;
   }
 

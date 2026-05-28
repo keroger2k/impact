@@ -274,3 +274,83 @@ def test_next_block_skips_over_smaller_existing_block():
         {"vvvv": "0500", "prefix_length": 64},
     ]
     assert next_block(56, occupied) == "0100"
+
+
+# ── Generalized allocator (non-/48 sites) ───────────────────────────────────
+
+from utils.ipv6_assembler import (
+    site_vvvv_mask,
+    site_vvvv_fixed_value,
+    vvvv_conforms_to_site,
+)
+
+
+def test_validate_prefix_length_respects_site_length():
+    """Allocation must be more specific than its parent site."""
+    validate_prefix_length(64, site_prefix_length=48)
+    validate_prefix_length(57, site_prefix_length=56)
+    validate_prefix_length(64, site_prefix_length=56)
+    with pytest.raises(ValueError):
+        validate_prefix_length(56, site_prefix_length=56)  # not more specific
+    with pytest.raises(ValueError):
+        validate_prefix_length(48, site_prefix_length=48)  # equals site
+    with pytest.raises(ValueError):
+        validate_prefix_length(65, site_prefix_length=48)  # past /64 boundary
+
+
+def test_site_vvvv_mask_matches_fixed_bit_count():
+    assert site_vvvv_mask(48) == 0x0000
+    assert site_vvvv_mask(49) == 0x8000
+    assert site_vvvv_mask(56) == 0xFF00
+    assert site_vvvv_mask(60) == 0xFFF0
+    assert site_vvvv_mask(64) == 0xFFFF
+
+
+def test_site_vvvv_fixed_value_extracts_high_byte_for_56():
+    # T573 example from the spreadsheet
+    assert site_vvvv_fixed_value("2600:400:3028:2d00", 56) == 0x2D00
+    assert site_vvvv_fixed_value("2600:400:3028:2d80", 60) == 0x2D80
+    assert site_vvvv_fixed_value("2600:400:3000", 48) == 0x0000
+
+
+def test_vvvv_conforms_to_site_filters_by_mask():
+    # /56 site at 2d00 only accepts vvvvs whose high byte is 0x2D
+    assert vvvv_conforms_to_site("2d00", "2600:400:3028:2d00", 56)
+    assert vvvv_conforms_to_site("2d06", "2600:400:3028:2d00", 56)
+    assert vvvv_conforms_to_site("2dff", "2600:400:3028:2d00", 56)
+    assert not vvvv_conforms_to_site("2e00", "2600:400:3028:2d00", 56)
+    assert not vvvv_conforms_to_site("0100", "2600:400:3028:2d00", 56)
+    # /48 site accepts anything
+    assert vvvv_conforms_to_site("0100", "2600:400:3000", 48)
+    assert vvvv_conforms_to_site("ffff", "2600:400:3000", 48)
+
+
+def test_next_block_constrains_to_site_range():
+    """For a /56 site at 2d00, next_block should suggest values in 2d00..2dff."""
+    site = {"prefix": "2600:400:3028:2d00", "prefix_length": 56}
+    # Empty site → first slot is the site's fixed value itself
+    assert next_block(64, [], site=site) == "2d00"
+    # Mark 2d00 occupied → next is 2d01
+    occupied = [{"vvvv": "2d00", "prefix_length": 64}]
+    assert next_block(64, occupied, site=site) == "2d01"
+    # Fully exhaust 256 slots → None
+    full = [{"vvvv": f"{0x2D00 + i:04x}", "prefix_length": 64} for i in range(256)]
+    assert next_block(64, full, site=site) is None
+
+
+def test_next_block_unconstrained_for_48_site():
+    """Without `site=`, iteration covers the full 16-bit vvvv space."""
+    assert next_block(64, [{"vvvv": "0000", "prefix_length": 64}]) == "0001"
+
+
+def test_assemble_works_for_56_site():
+    """Assemble for a /56 site: vvvv carries the site's fixed high byte."""
+    addr = assemble("2600:400:3028:2d00", "2d01", "10.0.0.1",
+                    site_prefix_length=56)
+    assert str(addr) == "2600:400:3028:2d01::a00:1"
+
+
+def test_assemble_back_compat_48():
+    """Assemble call without site_prefix_length still works for /48."""
+    addr = assemble("1000:2000:3000", "0100", "1.2.3.4")
+    assert str(addr) == "1000:2000:3000:100::102:304"

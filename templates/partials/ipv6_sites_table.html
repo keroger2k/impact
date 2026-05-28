@@ -1,10 +1,18 @@
 <div class="d-flex justify-content-between align-items-center px-3 py-2 border-bottom">
   <span class="text-muted small">{{ items|length }} site{{ '' if items|length == 1 else 's' }}</span>
-  <button class="btn btn-sm btn-primary"
-          data-bs-toggle="modal" data-bs-target="#ipv6-site-modal"
-          onclick="ipv6PrepareSiteModal()">
-    <i class="ph ph-plus me-1"></i> Add Site
-  </button>
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-outline-primary"
+            data-bs-toggle="modal" data-bs-target="#ipv6-provision-standard-modal"
+            onclick="ipv6PrepareProvisionStandardModal()"
+            title="Create a standard /56 site with the L3/MGMT/Data/VoIP/ETAS/HSDN VLAN /64s in one click">
+      <i class="ph ph-lightning me-1"></i> Provision Standard Site
+    </button>
+    <button class="btn btn-sm btn-primary"
+            data-bs-toggle="modal" data-bs-target="#ipv6-site-modal"
+            onclick="ipv6PrepareSiteModal()">
+      <i class="ph ph-plus me-1"></i> Add Site
+    </button>
+  </div>
 </div>
 {% macro status_badge(status) %}
   {% set s = status or 'active' %}

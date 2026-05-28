@@ -12,7 +12,7 @@ IMPACT II is a **TSA Network Operations Platform** — a unified web dashboard f
 - **Cisco Nexus** — SSH-based collection (Netmiko) of inventory, interfaces, VLANs, port-channels, vPCs
 - **IPAM** — DNAC-sourced address pools rendered as an aggregated tree with stats and export
 - **VPN Tunnels** — enterprise IPsec tunnel inventory; normalizes IOS (DMVPN, sVTI, dVTI, policy-based) + Palo IPsec from cached DNAC running-configs and Panorama IKE/IPsec objects, plus live counters
-- **IPv6 Registry** — hierarchical IPv4-to-IPv6 allocation registry (per-site /48 prefixes + vvvv segment allocations); CRUD UI, two-way decode/assemble, bulk-assemble, CSV export. Local SQLite — not derived from any upstream system
+- **IPv6 Registry** — hierarchical IPv4-to-IPv6 allocation registry; per-site prefixes (/32–/64) carry vvvv-style sub-allocations whose high bits conform to the parent site's mask (full 16-bit vvvv space at /48; narrower windows at /56, /60, …). CRUD UI with searchable site picker, two-way decode/assemble, bulk-assemble, CSV export, one-click "Provision Standard Site" for the /56 + 6-VLAN fleet build pattern. Local SQLite — not derived from any upstream system
 
 The dashboard is mostly read-only. Mutating actions: the **Command Runner** (gated by `COMMANDS_ENABLED`), the **Device Import** workflow, and the **IPv6 Registry** (its writes are local-only to the SQLite registry, not pushed to any platform).
 
@@ -99,7 +99,7 @@ Other notes:
 - `routers/routing.py` — `/api/routing/`: BGP summary, EIGRP topology, OSPF neighbors — all driven by parsing cached DNAC running-configs
 - `routers/ipam.py` — `/api/ipam/`: refresh (SSE), stats, tree, debug, export
 - `routers/tunnels.py` — `/api/tunnels/`: list/detail of normalized IPsec tunnels (DMVPN, sVTI, dVTI, policy-based, Palo IPsec), live counters via SSE refresh. Parsers in `utils/ipsec_parser.py` + `utils/tunnel_inventory.py`; site-code resolution via `utils/site_code.py`.
-- `routers/ipv6_registry.py` — `/api/ipv6/`: sites CRUD, allocations CRUD, `/allocations/next` suggestion, `/decode`, `/assemble`, `/assemble/bulk`, `/export.csv`. Hard 409 on vvvv overlap, soft warn on IPv4-subnet dup (caller can resubmit with `confirm_ipv4_dup=true`). Reads/writes the SQLite registry — *not* the cache.
+- `routers/ipv6_registry.py` — `/api/ipv6/`: sites CRUD, allocations CRUD, `/allocations/next` suggestion, `/decode`, `/assemble`, `/assemble/bulk`, `/export.csv`, `/sites/provision-standard` (atomic /56 site + standard VLAN /64s — `STANDARD_VLAN_PRESET` near the top of the file is the source of truth for offsets and labels). Hard 409 on vvvv overlap, soft warn on IPv4-subnet dup (caller can resubmit with `confirm_ipv4_dup=true`). For non-/48 sites the allocator enforces vvvv conformance (high bits must match the site's mask). Reads/writes the SQLite registry — *not* the cache.
 - `routers/commands.py` — `/api/commands/run`: SSH command execution streamed via SSE; gated by `COMMANDS_ENABLED`
 - `routers/import_.py` — `/api/import/run`: device discovery workflow streamed via SSE
 - `routers/cache_mgmt.py` — `/api/cache/`: cross-cutting cache status, sidebar widget, per-category refresh (`POST /api/cache/refresh/{category}`), and global clear (`clear_all`)
@@ -181,10 +181,15 @@ The `scripts/` directory holds standalone admin/maintenance utilities — invoke
   .venv/bin/python -m scripts.import_ipv6_sites                   # dry-run, default file
   .venv/bin/python -m scripts.import_ipv6_sites --apply           # commit
   ```
-- `scripts/import_ipv6_allocations.py` — bulk-load IPv6 allocations from a flat file (`<site>,<ipv4_subnet>,<ipv4_mask>,<vvvv>[,<prefix_length>]`). Defaults to `/64`, dry-run by default; `--apply` to commit; `--skip-ipv4-dup` to skip the soft-warn rows. Talks to SQLite directly via `clients.ipv6_registry` (no HTTP/CSRF). Sites must already exist as /48s (only /48 sites carry vvvv allocations; leaf-prefix sites are skipped).
+- `scripts/import_ipv6_allocations.py` — bulk-load IPv6 allocations from a flat file (`<site>,<ipv4_subnet>,<ipv4_mask>,<vvvv>[,<prefix_length>]`). Defaults to `/64`, dry-run by default; `--apply` to commit; `--skip-ipv4-dup` to skip the soft-warn rows. Talks to SQLite directly via `clients.ipv6_registry` (no HTTP/CSRF). Sites must already exist; any prefix length < 64 is accepted, but vvvv values must conform to the site's mask (e.g. a /56 site at `2600:400:3028:2d00` only accepts vvvvs in `2d00..2dff`).
   ```bash
   .venv/bin/python -m scripts.import_ipv6_allocations              # dry-run, default file
   .venv/bin/python -m scripts.import_ipv6_allocations --apply      # commit
+  ```
+- `scripts/import_ipv6_stip_allocations.py` — bulk-load per-site STIP `/64` allocations from a CSV (`Site Code,STIP Prefix,STIP VLAN`). Resolves each row's IPv4 VLAN500 subnet from the warmed `dnac_interfaces` cache (matching devices via site-code → `device_site_map`) and creates the allocation under the matching STIP `/48` aggregate site. If the IPv4 lookup fails the allocation is still created without one. Dry-run by default.
+  ```bash
+  .venv/bin/python -m scripts.import_ipv6_stip_allocations stip.csv              # dry-run
+  .venv/bin/python -m scripts.import_ipv6_stip_allocations stip.csv --apply      # commit
   ```
 
 ## Roadmap & gaps

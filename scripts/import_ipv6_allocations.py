@@ -11,9 +11,10 @@ Example:
     DC1,1.2.0.0,255.255.0.0,0200,56
 
 Blank lines and lines starting with '#' are ignored. Sites must already exist
-in the registry as /48s (the file format doesn't carry the prefix, and only
-/48 sites carve vvvv allocations — leaf sites like /56 airports are skipped).
-Hits the SQLite registry directly — no HTTP/CSRF needed.
+in the registry; any site with prefix_length < 64 can carry allocations
+(/48 carries the full 16-bit vvvv space; /56 narrows to 256 slots whose
+high byte must match the site's prefix, etc.). Sites at /64 are skipped —
+they're atomic. Hits the SQLite registry directly — no HTTP/CSRF needed.
 
 Run from the repo root:
     .venv/bin/python -m scripts.import_ipv6_allocations            # dry run
@@ -103,10 +104,23 @@ def main() -> int:
                 stats["skipped_unknown_site"] += 1
                 continue
 
-            if int(site.get("prefix_length", 48)) != ipv6.SITE_PREFIX_FOR_VVVV:
+            site_len = int(site.get("prefix_length", 48))
+            if site_len >= 64:
                 print(f"  line {lineno:>4}  SKIP-LEAF-SITE     '{site_name}' "
-                      f"is /{site['prefix_length']} (leaf); vvvv allocations require /48")
+                      f"is /{site_len} — only sites with prefix_length < 64 can carry allocations")
                 stats["skipped_leaf_site"] += 1
+                continue
+            if prefix_length <= site_len:
+                print(f"  line {lineno:>4}  SKIP-BAD-LENGTH    '{site_name}' "
+                      f"is /{site_len}; allocation /{prefix_length} must be more specific")
+                stats["skipped_overlap"] += 1
+                continue
+            if not ipv6.vvvv_conforms_to_site(vvvv, site["prefix"], site_len):
+                fixed = ipv6.site_vvvv_fixed_value(site["prefix"], site_len)
+                mask = ipv6.site_vvvv_mask(site_len)
+                print(f"  line {lineno:>4}  SKIP-VVVV-MISMATCH '{site_name}' "
+                      f"vvvv {vvvv} must match fixed=0x{fixed:04x} mask=0x{mask:04x}")
+                stats["skipped_overlap"] += 1
                 continue
 
             existing = registry.list_allocations(site_id=site["id"])
