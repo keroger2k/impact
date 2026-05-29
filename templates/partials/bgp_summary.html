@@ -5,39 +5,42 @@
       <span class="fw-bold">BGP Health Analysis{% if ip %}<span class="opacity-75 small ms-2">{{ ip }}</span>{% endif %}</span>
       <span class="badge bg-light text-dark ms-2"><strong>{{ v4_count|default(0) }}</strong> IPv4</span>
       <span class="badge bg-light text-dark"><strong>{{ v6_count|default(0) }}</strong> IPv6</span>
-      <span class="small opacity-75 ms-1">neighbors</span>
+      <span class="badge bg-success-subtle text-success"><strong>{{ up_count|default(0) }}</strong> up</span>
+      <span class="small opacity-75 ms-1">neighbors · all VRFs</span>
     </div>
     <button class="btn btn-sm btn-outline-light" onclick="this.closest('.card').remove()">
       <i class="ph ph-x me-1"></i>Close
     </button>
   </div>
   <div class="card-body p-0">
-    {% if not correlations and not output %}
+    {% if not neighbors and not raw_output %}
     <div class="p-4 text-center">
       <i class="ph ph-warning-circle ph-3x text-muted mb-3 d-block"></i>
       <h6 class="text-muted">No data available</h6>
       <p class="small text-muted mb-0">No results returned from the device.</p>
     </div>
     {% else %}
+
+    <!-- ── Next-hop inventory correlation (IPv4) ──────────────────────────── -->
     <div class="p-3 bg-light border-bottom">
       <h6 class="text-uppercase text-navy fw-bold mb-3 small letter-spacing-1">
         <i class="ph ph-tree-structure me-1"></i>Next-Hop Inventory Correlation
       </h6>
       {% if correlations %}
         <div class="row g-3">
-          {% for ip, info in correlations.items() %}
+          {% for nip, info in correlations.items() %}
             <div class="col-md-6">
               <div class="d-flex align-items-center p-3 bg-white border rounded shadow-sm border-start border-4 border-primary h-100">
                 <div class="bg-primary-subtle text-primary rounded-circle p-2 me-3">
                   <i class="ph ph-tree-structure"></i>
                 </div>
                 <div class="flex-grow-1">
-                  <div class="small text-muted fw-bold text-uppercase mb-1">Neighbor: {{ ip }}</div>
+                  <div class="small text-muted fw-bold text-uppercase mb-1">Neighbor: {{ nip }}</div>
                   <div class="fw-bold text-navy h5 mb-0">{{ info.hostname }}</div>
                   <div class="badge bg-light text-muted small mt-1">{{ info.type }}</div>
                 </div>
                 <div class="ms-auto">
-                  <button class="btn btn-xs btn-outline-primary" hx-get="/api/dnac/ip-lookup/ui?ip={{ ip }}" hx-target="#bgp-results" hx-swap="afterend">
+                  <button class="btn btn-xs btn-outline-primary" hx-get="/api/dnac/ip-lookup/ui?ip={{ nip }}" hx-target="#bgp-results" hx-swap="afterend">
                     <i class="ph ph-info me-1"></i>View Node
                   </button>
                 </div>
@@ -51,19 +54,49 @@
         </div>
       {% endif %}
     </div>
-    <div class="bg-dark p-0">
-      <div class="px-3 py-2 border-bottom border-secondary small text-success opacity-50 fw-bold text-uppercase">
-        <i class="ph ph-terminal me-1"></i>IPv4 Unicast — {{ v4_count|default(0) }} neighbor{{ v4_count|default(0) != 1 and 's' or '' }}
-      </div>
-      <pre class="p-3 mb-0 text-success" style="max-height: 320px; overflow: auto; font-family: 'SF Mono', monospace; font-size: 12px; line-height: 1.5;">{{ output }}</pre>
+
+    <!-- ── Neighbors (every address family + VRF) ─────────────────────────── -->
+    {% if neighbors %}
+    <div class="table-responsive">
+      <table class="table table-sm table-hover mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>Neighbor</th>
+            <th class="text-center">Fam</th>
+            <th>VRF</th>
+            <th>Remote AS</th>
+            <th>State</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for n in neighbors %}
+          <tr>
+            <td class="font-monospace small fw-semibold">{{ n.ip }}</td>
+            <td class="text-center"><span class="badge bg-light text-dark border">v{{ n.family }}</span></td>
+            <td class="small">
+              {% if n.vrf == 'default' %}<span class="text-muted">global</span>
+              {% else %}<span class="badge bg-info-subtle text-info">{{ n.vrf }}</span>{% endif %}
+            </td>
+            <td class="font-monospace small">{{ n.remote_as or '—' }}</td>
+            <td>
+              {% if n.established %}<span class="badge bg-success-subtle text-success">Established</span>
+              {% else %}<span class="badge bg-warning-subtle text-warning">{{ n.state }}</span>{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
     </div>
-    {% if v6_output %}
-    <div class="bg-dark p-0 border-top border-secondary">
-      <div class="px-3 py-2 border-bottom border-secondary small text-success opacity-50 fw-bold text-uppercase">
-        <i class="ph ph-terminal me-1"></i>IPv6 Unicast — {{ v6_count|default(0) }} neighbor{{ v6_count|default(0) != 1 and 's' or '' }}
-      </div>
-      <pre class="p-3 mb-0 text-success" style="max-height: 320px; overflow: auto; font-family: 'SF Mono', monospace; font-size: 12px; line-height: 1.5;">{{ v6_output }}</pre>
-    </div>
+    {% endif %}
+
+    <!-- ── Raw device output (collapsible) ────────────────────────────────── -->
+    {% if raw_output %}
+    <details class="bg-dark">
+      <summary class="px-3 py-2 small text-success opacity-75 fw-bold text-uppercase" style="cursor:pointer">
+        <i class="ph ph-terminal me-1"></i>Raw output
+      </summary>
+      <pre class="p-3 mb-0 text-success" style="max-height: 360px; overflow: auto; font-family: 'SF Mono', monospace; font-size: 12px; line-height: 1.5;">{{ raw_output }}</pre>
+    </details>
     {% endif %}
     {% endif %}
   </div>
