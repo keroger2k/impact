@@ -263,3 +263,76 @@ async def test_assemble_uses_registry_v6_prefix(tmpdb):
     # vvvv 1900 + ipv4 1.2.3.4 under 1000:2000:3000::/48-style carve.
     assert out["ipv6"].startswith("1000:2000:3000:1900")
     assert out["ipv4"] == "1.2.3.4"
+
+
+@pytest.mark.asyncio
+async def test_assemble_auto_vvvv_keeps_non48_site_fixed_bits(tmpdb):
+    # A /56 site fixes the high byte of hextet 4. With vvvv on "auto" the
+    # assembled address must stay inside the site prefix (…:1200::), not zero
+    # those bits out to …::.
+    site = registry.create_site("K040", path=tmpdb)
+    v6 = registry.create_prefix("1000:2000:3000:1200::/56", site_id=site["id"],
+                                role="site", path=tmpdb)
+    out = await r.assemble(_req(), prefix_id=v6["id"], ipv4="1.2.3.4",
+                           vvvv=None, session=None)
+    assert out["ipv6"] == "1000:2000:3000:1200::102:304"
+    assert out["vvvv"] == "1200"
+
+
+@pytest.mark.asyncio
+async def test_assemble_bulk_resolves_vvvv_per_host_via_vlan(tmpdb):
+    site = registry.create_site("K015", path=tmpdb)
+    sid = site["id"]
+    # The site's IPv6 /56, a VLAN-tagged IPv4 subnet, and the /64 carrying the
+    # same VLAN (whose vvvv the host should resolve to). Created via the client
+    # directly so the router's soft-overlap guard doesn't block the nested rows.
+    v6 = registry.create_prefix("1000:2000:3000:1900::/56", site_id=sid,
+                                role="site", path=tmpdb)
+    registry.create_prefix("1.2.3.0/24", site_id=sid, role="subnet",
+                           vlan_id=500, path=tmpdb)
+    registry.create_prefix("1000:2000:3000:1900::/64", site_id=sid, role="stip",
+                           vlan_id=500, vvvv="1900", path=tmpdb)
+
+    out = await r.assemble_bulk(
+        _req(),
+        prefix_id=v6["id"],
+        # in-subnet host, an out-of-subnet host, and a garbage token
+        ipv4_list="1.2.3.4\n9.9.9.9\nnonsense",
+        session=None,
+    )
+    assert out["counts"] == {"ok": 1, "no_match": 1, "invalid": 1}
+    by_ip = {row["ipv4"]: row for row in out["rows"]}
+    assert by_ip["1.2.3.4"]["status"] == "ok"
+    assert by_ip["1.2.3.4"]["ipv6"] == "1000:2000:3000:1900::102:304"
+    assert by_ip["1.2.3.4"]["vvvv"] == "1900"
+    assert by_ip["1.2.3.4"]["vlan"] == 500
+    assert by_ip["9.9.9.9"]["status"] == "no_match"
+    assert by_ip["nonsense"]["status"] == "invalid"
+
+
+@pytest.mark.asyncio
+async def test_assemble_bulk_no_match_when_vlan_has_no_v6(tmpdb):
+    # IPv4 prefix is VLAN-tagged but no IPv6 /64 carries that VLAN → no match,
+    # and the reason names the VLAN so it's diagnosable.
+    site = registry.create_site("K016", path=tmpdb)
+    sid = site["id"]
+    v6 = registry.create_prefix("1000:2000:3000::/48", site_id=sid,
+                                role="site", path=tmpdb)
+    registry.create_prefix("1.2.3.0/24", site_id=sid, role="subnet",
+                           vlan_id=700, path=tmpdb)
+
+    out = await r.assemble_bulk(_req(), prefix_id=v6["id"], ipv4_list="1.2.3.4",
+                                session=None)
+    assert out["counts"]["no_match"] == 1
+    assert "VLAN 700" in out["rows"][0]["detail"]
+
+
+@pytest.mark.asyncio
+async def test_assemble_bulk_rejects_too_specific_prefix(tmpdb):
+    site = registry.create_site("K017", path=tmpdb)
+    v6 = registry.create_prefix("1000:2000:3000:1900::/64", site_id=site["id"],
+                                role="stip", vvvv="1900", path=tmpdb)
+    with pytest.raises(HTTPException) as exc:
+        await r.assemble_bulk(_req(), prefix_id=v6["id"], ipv4_list="1.2.3.4",
+                              session=None)
+    assert exc.value.status_code == 400

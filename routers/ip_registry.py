@@ -527,7 +527,13 @@ async def assemble(
     if p["prefix_length"] >= 64:
         raise HTTPException(400, f"Prefix {p['cidr']} is /{p['prefix_length']} — "
                                  "too specific to assemble a host under.")
-    vvvv_value = (vvvv or "").strip() or (p.get("vvvv") or "0")
+    # Default vvvv must carry the site's fixed 4th-hextet bits. assemble() keeps
+    # only the top 48 bits of the prefix and writes the full 16-bit vvvv into
+    # hextet 4 — so for a non-/48 site (e.g. a /56 at …:1200::) a "0" default
+    # would zero those bits and emit an address *outside* the site's own prefix.
+    # site_vvvv_fixed_value is 0 for /48, so this is a no-op there.
+    fixed = ipv6.site_vvvv_fixed_value(p["network"], int(p["prefix_length"]))
+    vvvv_value = (vvvv or "").strip() or (p.get("vvvv") or "").strip() or f"{fixed:04x}"
     try:
         addr = ipv6.assemble(p["network"], vvvv_value, ipv4,
                              site_prefix_length=int(p["prefix_length"]))
@@ -538,4 +544,141 @@ async def assemble(
     if request.headers.get("HX-Request"):
         return templates.TemplateResponse(
             request, "partials/registry_assemble_result.html", {"result": payload})
+    return payload
+
+
+_IPV4_SPLIT_CHARS = (",", ";", "\t")
+
+
+def _split_ipv4_list(raw: str) -> list[str]:
+    """Tolerant parser: accepts newlines, commas, semicolons, tabs, whitespace.
+    Strips '# comments', drops blanks, dedupes preserving first-seen order."""
+    tokens: list[str] = []
+    for line in raw.splitlines():
+        clean = line.split("#", 1)[0]
+        for ch in _IPV4_SPLIT_CHARS:
+            clean = clean.replace(ch, " ")
+        tokens.extend(tok.strip() for tok in clean.split())
+    seen: set[str] = set()
+    out: list[str] = []
+    for t in tokens:
+        if t and t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out
+
+
+def _hextet4(network: str) -> str:
+    """The 4th hextet of an IPv6 leading-hextets string — the vvvv of a /64
+    carved under a site. Falls back through ipaddress for short forms."""
+    return ipaddress.IPv6Address(f"{network.rstrip(':')}::").exploded.split(":")[3]
+
+
+@router.post("/assemble/bulk")
+async def assemble_bulk(
+    request: Request,
+    prefix_id: int = Form(...),
+    ipv4_list: str = Form(..., min_length=1),
+    session: SessionEntry = Depends(require_auth),
+):
+    """Assemble many IPv4 hosts under a site's IPv6 prefix in one shot.
+
+    Unlike the single tool, the vvvv is resolved *per host* from the registry
+    rather than typed: the host is matched to the site's most-specific IPv4
+    prefix that carries a VLAN, then to the site's IPv6 /64 carrying that same
+    VLAN (whose 4th hextet is the vvvv). Hosts with no VLAN linkage are reported
+    'no match' rather than guessed. VLAN tags on both families are populated by
+    audit-accept of SVIs.
+    """
+    p = registry.get_prefix(prefix_id)
+    if not p or p["family"] != 6:
+        raise HTTPException(404, f"IPv6 prefix {prefix_id} not found")
+    if p["prefix_length"] >= 64:
+        raise HTTPException(400, f"Prefix {p['cidr']} is /{p['prefix_length']} — "
+                                 "too specific to assemble hosts under.")
+    site_id = p.get("site_id")
+    if site_id is None:
+        raise HTTPException(400, "Bulk assemble needs a site-owned IPv6 prefix so "
+                                 "VLANs can be resolved; this prefix has no site.")
+
+    # host → VLAN: the site's VLAN-tagged IPv4 prefixes (longest match wins).
+    v4_nets: list[tuple[ipaddress.IPv4Network, int]] = []
+    for q in registry.list_prefixes(site_id=site_id, family=4):
+        if q.get("vlan_id") is None:
+            continue
+        try:
+            v4_nets.append((ipaddress.IPv4Network(q["cidr"], strict=False), int(q["vlan_id"])))
+        except (ValueError, TypeError):
+            continue
+
+    # VLAN → vvvv: the site's /64s carrying a VLAN.
+    vlan_to_v6: dict[int, dict] = {}
+    for q in registry.list_prefixes(site_id=site_id, family=6):
+        if q.get("vlan_id") is None or q["prefix_length"] < 64:
+            continue
+        vlan_to_v6.setdefault(int(q["vlan_id"]), q)
+
+    site_label = p.get("site_code") or p.get("label") or p["cidr"]
+    rows: list[dict] = []
+    counts = {"ok": 0, "no_match": 0, "invalid": 0}
+
+    for raw in _split_ipv4_list(ipv4_list):
+        row = {"site_code": site_label, "ipv4": raw, "ipv6": "", "vvvv": "",
+               "vlan": "", "matched_subnet": "", "status": "", "detail": ""}
+        try:
+            host = ipaddress.IPv4Address(raw)
+        except (ipaddress.AddressValueError, ValueError) as e:
+            row["status"], row["detail"] = "invalid", str(e)
+            counts["invalid"] += 1
+            rows.append(row)
+            continue
+
+        best: tuple[int, ipaddress.IPv4Network, int] | None = None
+        for net, vlan in v4_nets:
+            if host in net and (best is None or net.prefixlen > best[0]):
+                best = (net.prefixlen, net, vlan)
+        if best is None:
+            row["status"] = "no_match"
+            row["detail"] = "no VLAN-tagged IPv4 prefix in this site covers the host"
+            counts["no_match"] += 1
+            rows.append(row)
+            continue
+
+        vlan = best[2]
+        row["vlan"], row["matched_subnet"] = vlan, str(best[1])
+        v6_child = vlan_to_v6.get(vlan)
+        if v6_child is None:
+            row["status"] = "no_match"
+            row["detail"] = f"no IPv6 /64 in this site carries VLAN {vlan}"
+            counts["no_match"] += 1
+            rows.append(row)
+            continue
+
+        vvvv = v6_child.get("vvvv") or _hextet4(v6_child["network"])
+        try:
+            addr = ipv6.assemble(p["network"], vvvv, raw,
+                                 site_prefix_length=int(p["prefix_length"]))
+        except (ipaddress.AddressValueError, ValueError) as e:
+            row["status"], row["detail"] = "invalid", str(e)
+            counts["invalid"] += 1
+            rows.append(row)
+            continue
+
+        row.update({"status": "ok", "ipv6": addr.compressed,
+                    "vvvv": ipv6.normalize_vvvv(vvvv)})
+        counts["ok"] += 1
+        rows.append(row)
+
+    payload = {
+        "prefix": {"id": p["id"], "cidr": p["cidr"], "site_code": p.get("site_code"),
+                   "network": p["network"], "prefix_length": p["prefix_length"]},
+        "rows": rows, "counts": counts, "total": len(rows),
+    }
+    if request.headers.get("HX-Request"):
+        # TSV body for the copy-paste textarea: site, ipv4, ipv6 (ok rows only).
+        payload["tsv"] = "\n".join(
+            f"{r['site_code']}\t{r['ipv4']}\t{r['ipv6']}"
+            for r in rows if r["status"] == "ok")
+        return templates.TemplateResponse(
+            request, "partials/registry_bulk_assemble_result.html", {"result": payload})
     return payload
