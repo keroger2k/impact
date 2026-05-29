@@ -223,6 +223,28 @@ def test_p2p_tunnel_goes_to_infrastructure_not_dmvpn():
     assert rep["infrastructure"]["by_type"].get("p2p") == 1   # relabeled from tunnel
 
 
+def test_multi_site_supernet_is_shared_not_per_site_mismatch():
+    # An org /48 that contains several airports' /56s is a shared supernet,
+    # not S041's mismatch (the inverse of the single-site /48-over-/56 case).
+    sites = [_site(1, "S041"), _site(2, "S689"), _site(3, "T271")]
+    prefixes = [
+        _prefix(11, 1, "2600:400:3023:200::/56", 6, "site"),
+        _prefix(12, 2, "2600:400:3023:300::/56", 6, "site"),
+        _prefix(13, 3, "2600:400:3023:400::/56", 6, "site"),
+    ]
+    obs = [Observed("2600:400:3023::/48", 6, "dnac",
+                    label="Inferred IPv6 /48 Org Supernet")]
+    rep = reconcile(sites, prefixes, obs)
+    assert rep["summary"]["shared_supernets"] == 1
+    assert rep["summary"]["mismatch"] == 0
+    ss = rep["shared_supernets"][0]
+    assert ss["cidr"] == "2600:400:3023::/48"
+    assert set(ss["sites"]) == {"S041", "S689", "T271"}
+    assert ss["site_count"] == 3
+    assert ss["suggested_role"] == "supernet"
+    assert all(not s["drift"] for s in rep["sites"])   # no per-site drift from it
+
+
 def test_bidirectional_containment_ipv6_48_over_56():
     sites = [_site(1, "K015")]
     prefixes = [_prefix(11, 1, "2600:400:3007:700::/56", 6, "site")]

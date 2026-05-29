@@ -392,6 +392,7 @@ def reconcile(sites: list[dict], prefixes: list[dict], observed: list[Observed],
     """Pure classifier. ``sites``/``prefixes`` are registry rows; ``observed``
     is the collected live view. Returns a JSON-able report."""
     registry_cidrs = {p["cidr"] for p in prefixes}
+    sites_by_id = {s["id"]: s for s in sites}
     code_to_site = {(s["site_code"] or "").upper(): s for s in sites if s.get("site_code")}
     site_prefixes: dict[int, list[dict]] = defaultdict(list)
     for p in prefixes:
@@ -408,33 +409,42 @@ def reconcile(sites: list[dict], prefixes: list[dict], observed: list[Observed],
     hosts = [o for o in rest if is_host(o, v4_min=host_v4_min, v6_min=host_v6_min)]
     normal = [o for o in rest if not is_host(o, v4_min=host_v4_min, v6_min=host_v6_min)]
 
-    # 2) Attribute remaining observations: site code, then containment with a
-    #    site prefix in EITHER direction (obs inside a registered block, or obs a
-    #    supernet of one — the IPv6 /48-vs-/56 case). Anything left that matches a
-    #    shared container (STIP /48, accepted overlay) is 'covered', not drift.
+    # 2) Attribute remaining observations:
+    #    - contains 2+ sites' blocks  → shared SUPERNET (org /48), a container
+    #    - site code match            → that site
+    #    - inside a site block        → that site (member)
+    #    - supernet of exactly 1 site → that site (the /48-vs-/56 mismatch)
+    #    - matches a shared container → covered (STIP /48, accepted overlay)
+    #    - else                       → unattributed
     per_site_obs: dict[int, list[Observed]] = defaultdict(list)
     unattributed: list[Observed] = []
     container_seen: set = set()
+    supernets: dict[str, dict] = {}
     for o in normal:
+        containing = {
+            s["id"] for s in sites
+            if any(ipam_net.contains(o.cidr, p["cidr"])
+                   for p in site_prefixes.get(s["id"], []))
+        }
+        if len(containing) >= 2:                        # spans multiple sites → shared
+            e = supernets.setdefault(o.cidr, {"cidr": o.cidr, "family": o.family,
+                                              "sites": set(), "sources": set(), "label": ""})
+            e["sites"].update(sites_by_id[i]["site_code"] for i in containing)
+            e["sources"].add(o.source)
+            e["label"] = e["label"] or o.label
+            continue
+
         sid = None
         if o.site_code and o.site_code in code_to_site:
             sid = code_to_site[o.site_code]["id"]
-        if sid is None:                                 # obs inside a site block
+        if sid is None:                                 # obs inside a site block (member)
             for s in sites:
                 if any(ipam_net.contains(p["cidr"], o.cidr)
                        for p in site_prefixes.get(s["id"], [])):
                     sid = s["id"]
                     break
-        if sid is None:                                 # obs is a supernet of a block
-            best = None
-            for s in sites:
-                for p in site_prefixes.get(s["id"], []):
-                    if ipam_net.contains(o.cidr, p["cidr"]):
-                        pl = _plen(p["cidr"])
-                        if best is None or pl > best[0]:
-                            best = (pl, s["id"])
-            if best:
-                sid = best[1]
+        if sid is None and len(containing) == 1:        # supernet of exactly one site
+            sid = next(iter(containing))
         if sid is not None:
             per_site_obs[sid].append(o)
             continue
@@ -530,6 +540,15 @@ def reconcile(sites: list[dict], prefixes: list[dict], observed: list[Observed],
                            "label": o.label})
     host_items.sort(key=lambda x: (x["family"], x["cidr"]))
 
+    # Shared supernets — observed prefixes that span 2+ sites' blocks (org /48s).
+    shared_supernets = [{
+        "cidr": e["cidr"], "family": e["family"],
+        "sites": sorted(e["sites"]), "site_count": len(e["sites"]),
+        "sources": sorted(e["sources"]), "label": e["label"],
+        "in_registry": e["cidr"] in registry_cidrs,
+        "suggested_role": "supernet",
+    } for e in sorted(supernets.values(), key=lambda x: x["cidr"])]
+
     # Shared containers (STIP /48 etc.) — credited as in-sync when the live
     # network was seen inside them. DMVPN overlays are reported separately.
     container_findings: list[dict] = []
@@ -560,6 +579,7 @@ def reconcile(sites: list[dict], prefixes: list[dict], observed: list[Observed],
             **totals,
             "dmvpn_overlays": len(dmvpn_overlays),
             "dmvpn_unregistered": sum(1 for d in dmvpn_overlays if not d["in_registry"]),
+            "shared_supernets": len(shared_supernets),
             "host_routes": len(host_items),
             "containers_total": len(container_findings),
             "containers_in_sync": containers_in_sync,
@@ -567,6 +587,7 @@ def reconcile(sites: list[dict], prefixes: list[dict], observed: list[Observed],
             "new_site_candidates": len(new_site_candidates),
         },
         "sites": site_reports,
+        "shared_supernets": shared_supernets,
         "containers": container_findings,
         "dmvpn_overlays": dmvpn_overlays,
         "infrastructure": {"count": len(host_items),

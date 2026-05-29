@@ -49,9 +49,9 @@
          {% if site_code %}data-site-code="{{ site_code }}"{% endif %}>
 {% endmacro %}
 
-{% if not report.sites and not report.dmvpn_overlays and not report.containers
-      and not report.new_site_candidates and not report.unattributed
-      and not report.infrastructure.count %}
+{% if not report.sites and not report.dmvpn_overlays and not report.shared_supernets
+      and not report.containers and not report.new_site_candidates
+      and not report.unattributed and not report.infrastructure.count %}
   <div class="alert alert-success small"><i class="ph ph-check-circle me-1"></i>
     Nothing to reconcile — every site's registry and observed networks line up (or no live data is warmed yet).</div>
 {% endif %}
@@ -136,6 +136,45 @@
           <td class="small">{{ d.sources|join(', ') }}</td>
           <td>
             {% if d.in_registry %}<span class="badge bg-success-subtle text-success">in registry</span>
+            {% else %}<span class="badge bg-info-subtle text-info">undocumented</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% if report.shared_supernets %}
+<div class="card border-0 shadow-sm mb-2">
+  <div class="card-header bg-white py-2">
+    <i class="ph ph-tree-structure me-1 text-primary"></i>
+    <span class="fw-bold">Shared supernets (multi-site)</span>
+    <span class="text-muted small ms-1">— org/regional aggregates spanning several sites' blocks. Accept once as a shared container, not per-site.</span>
+  </div>
+  <div class="card-body py-2">
+    <table class="table table-sm table-hover mb-0">
+      <thead class="bg-light"><tr>
+        <th style="width:2.5rem"></th><th>Supernet</th><th class="text-center">Sites</th>
+        <th>Spans</th><th>Seen by</th><th>Status</th>
+      </tr></thead>
+      <tbody>
+        {% for sup in report.shared_supernets %}
+        <tr>
+          <td>
+            {% if not sup.in_registry %}
+            <input class="form-check-input reg-accept-cb" type="checkbox" onchange="regUpdateAcceptCount()"
+                   data-cidr="{{ sup.cidr }}" data-role="supernet" data-container="1"
+                   data-label="{{ sup.label }}">
+            {% endif %}
+          </td>
+          <td class="font-monospace fw-semibold">{{ sup.cidr }}</td>
+          <td class="text-center small">{{ sup.site_count }}</td>
+          <td class="small">{{ sup.sites|join(', ') }}</td>
+          <td class="small">{{ sup.sources|join(', ') }}</td>
+          <td>
+            {% if sup.in_registry %}<span class="badge bg-success-subtle text-success">in registry</span>
             {% else %}<span class="badge bg-info-subtle text-info">undocumented</span>{% endif %}
           </td>
         </tr>
