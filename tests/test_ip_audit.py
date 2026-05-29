@@ -168,6 +168,79 @@ def test_extract_dnac_interfaces_fallback_and_aci():
     assert aci[0].site_code == ""   # DC subnets attribute by containment only
 
 
+def test_iface_type_classifier():
+    f = ip_audit._iface_type
+    assert f("Tunnel200", 4, 21) == "tunnel"
+    assert f("Virtual-Template1", 4, 30) == "tunnel"
+    assert f("Loopback0", 4, 32) == "loopback"
+    assert f("", 4, 32) == "loopback"          # length rule
+    assert f("", 6, 128) == "loopback"
+    assert f("Vlan100", 4, 24) == "svi"
+    assert f("mgmt0", 4, 24) == "management"
+    assert f("Gi0/0", 4, 30) == "p2p"
+    assert f("Gi0/0", 4, 24) == ""             # ordinary subnet
+
+
+def test_host_routes_are_bucketed_not_drift():
+    sites = [_site(1, "K001")]
+    prefixes = [_prefix(10, 1, "10.0.0.0/16", 4, "site-aggregate")]
+    obs = [
+        Observed("10.0.0.1/32", 4, "dnac", "K001", interface="Loopback0", iface_type="loopback"),
+        Observed("10.0.0.4/30", 4, "dnac", "K001", interface="Gi0/0", iface_type="p2p"),
+        Observed("10.0.5.0/24", 4, "nexus", "K001"),   # member of the /16 → covered
+    ]
+    rep = reconcile(sites, prefixes, obs)
+    assert rep["summary"]["host_routes"] == 2
+    assert rep["infrastructure"]["by_type"] == {"loopback": 1, "p2p": 1}
+    # host routes never appear as per-site drift
+    assert all(not sr["drift"] for sr in rep["sites"])
+    # the /16 is still confirmed in-sync by the covered /24 member
+    assert rep["summary"]["in_sync"] == 1
+
+
+def test_dmvpn_overlay_grouped_across_sites_not_per_site():
+    sites = [_site(1, "K001"), _site(2, "K002"), _site(3, "K003")]
+    prefixes = [_prefix(10, 1, "10.0.0.0/16", 4)]
+    # Same overlay subnet on a Tunnel iface at three sites (canonical cidr).
+    obs = [Observed("10.100.216.0/21", 4, "dnac", code, interface="Tunnel200",
+                    iface_type="tunnel") for code in ("K001", "K002", "K003")]
+    rep = reconcile(sites, prefixes, obs)
+    assert rep["summary"]["dmvpn_overlays"] == 1
+    ov = rep["dmvpn_overlays"][0]
+    assert ov["cidr"] == "10.100.216.0/21"
+    assert ov["label"] == "Tunnel200"
+    assert ov["participants"] == 3
+    assert ov["in_registry"] is False
+    assert ov["suggested_role"] == "dmvpn"
+    # The overlay is NOT counted as per-site drift at any site.
+    assert rep["summary"]["network_only"] == 0
+    assert all(not sr["drift"] for sr in rep["sites"])
+
+
+def test_dmvpn_overlay_flagged_in_registry_when_container_exists():
+    sites = [_site(1, "K001")]
+    prefixes = [{"id": 99, "site_id": None, "cidr": "10.100.216.0/21",
+                 "family": 4, "role": "dmvpn"}]
+    obs = [Observed("10.100.216.0/21", 4, "dnac", "K001", interface="Tunnel200",
+                    iface_type="tunnel")]
+    rep = reconcile(sites, prefixes, obs)
+    assert rep["dmvpn_overlays"][0]["in_registry"] is True
+
+
+def test_collect_observed_classifies_tunnel_from_portname():
+    cache = FakeCache({
+        "dnac_interfaces": [
+            {"deviceId": "d1", "portName": "Tunnel200",
+             "ipv4Address": "10.100.216.5", "ipv4Mask": "255.255.248.0"},
+        ],
+        "device_site_map": {"d1": "Global/CA/K015"},
+    })
+    out = collect_observed(cache, sources=["dnac"])
+    assert out[0].cidr == "10.100.216.0/21"   # /21 from the netmask
+    assert out[0].iface_type == "tunnel"
+    assert out[0].interface == "Tunnel200"
+
+
 def test_collect_observed_dedupes_and_uses_interface_fallback():
     # No IPAM tree → the dnac extractor falls back to raw interfaces, then we
     # dedupe by (cidr, source).

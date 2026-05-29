@@ -327,6 +327,19 @@ async def audit_accept(
             errors.append({"item": it, "error": f"bad cidr: {e}"})
             continue
 
+        # Shared aggregate (DMVPN overlay, STIP /48, …) — no owning site.
+        if it.get("container"):
+            try:
+                _, was_new = registry.get_or_create_container(
+                    canon, role=it.get("role") or "container",
+                    label=it.get("label") or None, source="audit")
+            except (ValueError, TypeError) as e:
+                errors.append({"item": it, "error": str(e)})
+                continue
+            created += 1 if was_new else 0
+            skipped += 0 if was_new else 1
+            continue
+
         site_id = it.get("site_id")
         if site_id is None and it.get("site_code"):
             site, was_new = registry.upsert_site(str(it["site_code"]).strip().upper())

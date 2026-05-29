@@ -110,6 +110,22 @@ async def test_bulk_accept_creates_sites_and_dedupes(tmpdb):
 
 
 @pytest.mark.asyncio
+async def test_bulk_accept_container_is_shared_and_idempotent(tmpdb):
+    items = json.dumps([{"cidr": "10.100.216.5/21", "container": True,
+                         "role": "dmvpn", "label": "Tunnel200"}])
+    res = await r.audit_accept(items=items, session=None)
+    assert res["created"] == 1
+    res2 = await r.audit_accept(items=items, session=None)   # idempotent
+    assert res2["created"] == 0 and res2["skipped"] == 1
+
+    containers = registry.list_prefixes(containers_only=True, path=tmpdb)
+    assert len(containers) == 1
+    assert containers[0]["cidr"] == "10.100.216.0/21"
+    assert containers[0]["role"] == "dmvpn"
+    assert containers[0]["site_id"] is None
+
+
+@pytest.mark.asyncio
 async def test_bulk_accept_rejects_non_array(tmpdb):
     with pytest.raises(HTTPException) as exc:
         await r.audit_accept(items='{"cidr": "10.0.0.0/24"}', session=None)

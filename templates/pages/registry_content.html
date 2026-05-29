@@ -395,7 +395,8 @@
   window.regAcceptSelected = async function() {
     const items = Array.from(document.querySelectorAll('.reg-accept-cb:checked')).map(cb => {
       const it = {cidr: cb.dataset.cidr, role: cb.dataset.role || undefined};
-      if (cb.dataset.siteId) it.site_id = parseInt(cb.dataset.siteId, 10);
+      if (cb.dataset.container) { it.container = true; if (cb.dataset.label) it.label = cb.dataset.label; }
+      else if (cb.dataset.siteId) it.site_id = parseInt(cb.dataset.siteId, 10);
       else if (cb.dataset.siteCode) it.site_code = cb.dataset.siteCode;
       return it;
     });

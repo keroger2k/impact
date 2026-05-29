@@ -19,7 +19,9 @@
   {{ kpi('Registry-only', sm.registry_only, 'text-warning', 'ph-file-dashed') }}
   {{ kpi('Network-only', sm.network_only, 'text-info', 'ph-magnifying-glass') }}
   {{ kpi('Mismatch', sm.mismatch, 'text-danger', 'ph-warning') }}
+  {{ kpi('DMVPN overlays', sm.dmvpn_overlays, 'text-primary', 'ph-graph') }}
   {{ kpi('New sites', sm.new_site_candidates, 'text-primary', 'ph-buildings') }}
+  {{ kpi('Host routes', sm.host_routes, 'text-secondary', 'ph-dots-three') }}
   {{ kpi('Unattributed', sm.unattributed, 'text-secondary', 'ph-question') }}
 </div>
 
@@ -46,7 +48,8 @@
          {% if site_code %}data-site-code="{{ site_code }}"{% endif %}>
 {% endmacro %}
 
-{% if not report.sites and not report.new_site_candidates and not report.unattributed %}
+{% if not report.sites and not report.dmvpn_overlays and not report.new_site_candidates
+      and not report.unattributed and not report.infrastructure.count %}
   <div class="alert alert-success small"><i class="ph ph-check-circle me-1"></i>
     Nothing to reconcile — every site's registry and observed networks line up (or no live data is warmed yet).</div>
 {% endif %}
@@ -102,6 +105,45 @@
 </div>
 {% endfor %}
 
+{% if report.dmvpn_overlays %}
+<div class="card border-0 shadow-sm mb-2">
+  <div class="card-header bg-white py-2">
+    <i class="ph ph-graph me-1 text-primary"></i>
+    <span class="fw-bold">DMVPN / shared overlays</span>
+    <span class="text-muted small ms-1">— tunnel-interface subnets shared across many routers. Accept each once as a shared container (not per-site).</span>
+  </div>
+  <div class="card-body py-2">
+    <table class="table table-sm table-hover mb-0">
+      <thead class="bg-light"><tr>
+        <th style="width:2.5rem"></th><th>Overlay subnet</th><th>Tunnel(s)</th>
+        <th class="text-center">Participants</th><th>Seen by</th><th>Status</th>
+      </tr></thead>
+      <tbody>
+        {% for d in report.dmvpn_overlays %}
+        <tr>
+          <td>
+            {% if not d.in_registry %}
+            <input class="form-check-input reg-accept-cb" type="checkbox" onchange="regUpdateAcceptCount()"
+                   data-cidr="{{ d.cidr }}" data-role="dmvpn" data-container="1"
+                   data-label="{{ d.label }}">
+            {% endif %}
+          </td>
+          <td class="font-monospace fw-semibold">{{ d.cidr }}</td>
+          <td class="small">{{ d.label or '—' }}</td>
+          <td class="text-center small" title="{{ d.participant_sites|join(', ') }}">{{ d.participants }}</td>
+          <td class="small">{{ d.sources|join(', ') }}</td>
+          <td>
+            {% if d.in_registry %}<span class="badge bg-success-subtle text-success">in registry</span>
+            {% else %}<span class="badge bg-info-subtle text-info">undocumented</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
 {% if report.new_site_candidates %}
 <div class="card border-0 shadow-sm mb-2">
   <div class="card-header bg-white py-2">
@@ -148,6 +190,36 @@
       {% endfor %}
     </div>
   </div>
+</div>
+{% endif %}
+
+{% if report.infrastructure.count %}
+<div class="card border-0 shadow-sm mb-2">
+  <details>
+    <summary class="card-header bg-white py-2" style="cursor:pointer; list-style:revert">
+      <i class="ph ph-dots-three me-1 text-secondary"></i>
+      <span class="fw-bold">Infrastructure ({{ report.infrastructure.count }})</span>
+      <span class="text-muted small ms-1">— loopbacks, mgmt, point-to-point &amp; host routes, suppressed from drift.
+        {% for t, n in report.infrastructure.by_type.items() %}<span class="badge bg-light text-dark border ms-1">{{ t }}: {{ n }}</span>{% endfor %}
+      </span>
+    </summary>
+    <div class="card-body py-2" style="max-height:18rem; overflow-y:auto">
+      <table class="table table-sm table-hover mb-0">
+        <thead class="bg-light"><tr><th>CIDR</th><th>Type</th><th>Site</th><th>Seen by</th><th>Where</th></tr></thead>
+        <tbody>
+          {% for h in report.infrastructure['items'] %}
+          <tr>
+            <td class="font-monospace small">{{ h.cidr }}</td>
+            <td class="small">{{ h.iface_type }}</td>
+            <td class="small font-monospace">{{ h.site_code or '—' }}</td>
+            <td class="small">{{ h.sources|join(', ') }}</td>
+            <td class="small text-muted">{{ h.label }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
 </div>
 {% endif %}
 
