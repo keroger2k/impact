@@ -85,8 +85,10 @@
 </div>
 
 <script>
-  var ALL_DEVICES = {{ initial_devices | tojson | safe }};
-  var FILTERED_DEVICES = [...ALL_DEVICES];
+  // Loaded via fetch() in loadInitialDevices() rather than inlined, so a large
+  // inventory isn't serialised into every navigation to this page.
+  var ALL_DEVICES = [];
+  var FILTERED_DEVICES = [];
   var CURRENT_PAGE = 1;
   var PAGE_SIZE = 40;
   var SORT_COL = 'hostname';
@@ -221,7 +223,7 @@
         } else if (data.type === 'complete') {
             eventSource.close();
             loader.classList.add('d-none');
-            alert('Nexus data collection complete: ' + data.count + ' devices.');
+            showToast('Nexus collection complete: ' + data.count + ' devices.', 'success');
             refreshLocalInventory();
         }
     };
@@ -229,7 +231,7 @@
     eventSource.onerror = function() {
         eventSource.close();
         loader.classList.add('d-none');
-        alert("Nexus refresh failed. Check your connection or credentials.");
+        showToast('Nexus refresh failed. Check your connection or credentials.', 'error');
     };
   }
 

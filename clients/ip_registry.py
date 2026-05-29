@@ -32,6 +32,7 @@ family-agnostic CIDR math is in ``utils.ipam_net``.
 from __future__ import annotations
 
 import logging
+import sqlite3
 import threading
 from contextlib import contextmanager
 from pathlib import Path
@@ -116,14 +117,51 @@ def _connect_raw(path: Path):
     return conn
 
 
+def _dedupe_containers(conn) -> None:
+    """Collapse any pre-existing duplicate shared containers (rows with
+    ``site_id IS NULL`` sharing a ``cidr``) before the partial unique index is
+    built — keep the lowest id, re-point orphaned children's ``parent_id`` to it,
+    delete the rest. No-op once the index is in force."""
+    dupes = conn.execute(
+        "SELECT cidr, MIN(id) AS keep FROM prefixes WHERE site_id IS NULL "
+        "GROUP BY cidr HAVING COUNT(*) > 1"
+    ).fetchall()
+    for d in dupes:
+        cidr, keep = d["cidr"], d["keep"]
+        victims = [r["id"] for r in conn.execute(
+            "SELECT id FROM prefixes WHERE site_id IS NULL AND cidr = ? AND id != ?",
+            (cidr, keep)).fetchall()]
+        if not victims:
+            continue
+        qmarks = ",".join("?" * len(victims))
+        conn.execute(f"UPDATE prefixes SET parent_id = ? WHERE parent_id IN ({qmarks})",
+                     [keep, *victims])
+        conn.execute(f"DELETE FROM prefixes WHERE id IN ({qmarks})", victims)
+        logger.warning("ip_registry: collapsed %d duplicate container(s) for %s into #%d",
+                       len(victims), cidr, keep)
+
+
 def init_schema(path: Optional[Path] = None) -> None:
     """Create tables and indexes if missing. Safe to call repeatedly."""
     global _initialized
     target = path or DB_PATH
     with _init_lock:
         target.parent.mkdir(parents=True, exist_ok=True)
-        with _connect_raw(target) as conn:
+        conn = _connect_raw(target)
+        try:
             conn.executescript(SCHEMA)
+            # Enforce one shared container per CIDR. A plain UNIQUE(site_id, cidr)
+            # can't do this because SQLite treats NULL site_id as distinct, so
+            # two containers with the same CIDR would slip through. De-dupe any
+            # legacy rows first so the index can be built on an existing DB.
+            _dedupe_containers(conn)
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_prefixes_container_cidr "
+                "ON prefixes(cidr) WHERE site_id IS NULL"
+            )
+            conn.commit()
+        finally:
+            conn.close()
         if target == DB_PATH:
             _initialized = True
         logger.info(f"IP registry schema ready at {target}")
@@ -367,9 +405,132 @@ def get_or_create_container(cidr: str, *, role: str = "container",
     existing = find_prefix_by_cidr(cidr, site_id=None, path=path)
     if existing:
         return existing, False
-    row = create_prefix(cidr, site_id=None, role=role, label=label,
-                        source=source, description=description, path=path)
-    return row, True
+    try:
+        row = create_prefix(cidr, site_id=None, role=role, label=label,
+                            source=source, description=description, path=path)
+        return row, True
+    except sqlite3.IntegrityError:
+        # Lost a race against a concurrent writer (the partial unique index
+        # fired) — return the row they created rather than propagating.
+        found = find_prefix_by_cidr(cidr, site_id=None, path=path)
+        if found:
+            return found, False
+        raise
+
+
+def _coerce_vlan(value) -> Optional[int]:
+    """Validate a VLAN id from a bulk-accept item. Returns None or 1..4094;
+    raises ValueError otherwise (recorded per-item, not fatal to the batch)."""
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        n = int(str(value).strip())
+    except (TypeError, ValueError):
+        raise ValueError(f"invalid vlan_id {value!r}")
+    if not (1 <= n <= 4094):
+        raise ValueError(f"vlan_id {n} out of range (1..4094)")
+    return n
+
+
+def bulk_accept(items: list[dict], *, path: Optional[Path] = None) -> dict:
+    """Commit a batch of accepted drift items in **one** transaction.
+
+    Each item is one of:
+        {"container": True, "cidr": ..., "role"?, "label"?}        -> shared aggregate
+        {"cidr": ..., "site_id": int,  "role"?, "vlan_id"?, "label"?}
+        {"cidr": ..., "site_code": str, ...}                        -> site auto-created
+
+    Discovered prefixes are written ``source='audit'``, ``status='deployed'``.
+    Site prefixes get a ``parent_id`` set to the tightest enclosing prefix in
+    their scope (the site's own aggregate or a shared container), so the tree
+    renders nested. Per-item failures are collected in ``errors`` without
+    aborting the batch; an already-present prefix/container is ``skipped``. The
+    whole batch commits atomically (or rolls back if a non-item error escapes).
+
+    Returns ``{created, skipped, sites_created, errors}``.
+    """
+    created = skipped = 0
+    sites_created: list[str] = []
+    errors: list[dict] = []
+
+    with connect(path) as conn:
+        for it in items:
+            try:
+                cidr = (it.get("cidr") or "").strip()
+                if not cidr:
+                    raise ValueError("missing cidr")
+                family, network, plen, canon = ipam_net.canonical(cidr)
+
+                # Shared aggregate (DMVPN overlay, STIP /48, …) — no owning site.
+                if it.get("container"):
+                    row = conn.execute(
+                        "SELECT id FROM prefixes WHERE cidr = ? AND site_id IS NULL",
+                        (canon,)).fetchone()
+                    if row:
+                        skipped += 1
+                        continue
+                    conn.execute(
+                        "INSERT INTO prefixes (site_id, family, network, prefix_length, "
+                        "cidr, role, label, status, source) "
+                        "VALUES (NULL, ?, ?, ?, ?, ?, ?, 'deployed', 'audit')",
+                        (family, network, plen, canon, it.get("role") or "container",
+                         it.get("label") or None))
+                    created += 1
+                    continue
+
+                vlan = _coerce_vlan(it.get("vlan_id"))
+
+                # Resolve (or auto-create) the owning site.
+                site_id = it.get("site_id")
+                if site_id is None and it.get("site_code"):
+                    code = str(it["site_code"]).strip().upper()
+                    srow = conn.execute(
+                        "SELECT id FROM sites WHERE site_code = ? COLLATE NOCASE",
+                        (code,)).fetchone()
+                    if srow:
+                        site_id = srow["id"]
+                    else:
+                        cur = conn.execute("INSERT INTO sites (site_code) VALUES (?)", (code,))
+                        site_id = cur.lastrowid
+                        sites_created.append(code)
+                if site_id is None:
+                    raise ValueError("no site_id or site_code")
+                site_id = int(site_id)
+
+                # Already present for this site → skip (UNIQUE(site_id, cidr)).
+                if conn.execute("SELECT 1 FROM prefixes WHERE site_id = ? AND cidr = ?",
+                                (site_id, canon)).fetchone():
+                    skipped += 1
+                    continue
+
+                # Parent linkage: tightest enclosing prefix in this scope (the
+                # site's own rows or a shared container), excluding an identical
+                # CIDR. Sees rows created earlier in this same transaction.
+                cand = [dict(r) for r in conn.execute(
+                    "SELECT id, cidr FROM prefixes "
+                    "WHERE family = ? AND cidr != ? AND (site_id = ? OR site_id IS NULL)",
+                    (family, canon, site_id)).fetchall()]
+                parent = ipam_net.find_container(canon, cand)
+                parent_id = parent["id"] if parent else None
+
+                role = it.get("role") or ("site-aggregate" if family == 4 else "subnet")
+                conn.execute(
+                    "INSERT INTO prefixes (site_id, parent_id, family, network, "
+                    "prefix_length, cidr, role, vlan_id, label, status, source, audit_state) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'deployed', 'audit', 'in-sync')",
+                    (site_id, parent_id, family, network, plen, canon, role, vlan,
+                     it.get("label") or None))
+                created += 1
+
+            except sqlite3.IntegrityError:
+                # Constraint hit (e.g. a concurrent insert) — the statement is
+                # rolled back on its own; treat as already-present.
+                skipped += 1
+            except (ValueError, TypeError) as e:
+                errors.append({"item": it, "error": str(e)})
+
+    return {"created": created, "skipped": skipped,
+            "sites_created": sites_created, "errors": errors}
 
 
 def set_audit_state(prefix_id: int, audit_state: Optional[str], *,

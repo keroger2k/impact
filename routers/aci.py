@@ -1118,7 +1118,8 @@ async def list_bgp_peers(
                 for x in p:
                     x.update({"fabric_id": f.id, "fabric_label": f.label})
                 return p, raw
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Aggregated fabric fetch failed for {f.id}: {e}")
                 return [], {"imdata": []}
 
         results = await asyncio.gather(*[_fetch_single(f) for f in reg.list_fabrics()], return_exceptions=True)
@@ -2354,7 +2355,8 @@ async def list_tenants(
             try:
                 aci = await _get_aci_async(session, f.id)
                 return await _process_for_fabric(aci, loop, f.id, f.label)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Aggregated fabric fetch failed for {f.id}: {e}")
                 return [], {"imdata": []}
         results = await asyncio.gather(*[_fetch_single(f) for f in reg.list_fabrics()])
         items = []
@@ -2434,7 +2436,9 @@ async def list_vrfs(
             try:
                 aci = await _get_aci_async(session, f.id)
                 return await _process_for_fabric(aci, loop, f.id, f.label)
-            except Exception: return [], {"imdata": []}
+            except Exception as e:
+                logger.warning(f"Aggregated fabric fetch failed for {f.id}: {e}")
+                return [], {"imdata": []}
         results = await asyncio.gather(*[_fetch_single(f) for f in reg.list_fabrics()])
         items = [x for r in results for x in r[0]]
         raw_json = {"imdata": [x for r in results for x in r[1].get("imdata", [])]}
@@ -2505,7 +2509,9 @@ async def list_bridge_domains(
             try:
                 aci = await _get_aci_async(session, f.id)
                 return await _process_for_fabric(aci, loop, f.id, f.label)
-            except Exception: return [], {"imdata": []}
+            except Exception as e:
+                logger.warning(f"Aggregated fabric fetch failed for {f.id}: {e}")
+                return [], {"imdata": []}
         results = await asyncio.gather(*[_fetch_single(f) for f in reg.list_fabrics()])
         items = [x for r in results for x in r[0]]
         raw_json = {"imdata": [x for r in results for x in r[1].get("imdata", [])]}
@@ -2568,7 +2574,9 @@ async def list_app_profiles(
             try:
                 aci = await _get_aci_async(session, f.id)
                 return await _process_for_fabric(aci, loop, f.id, f.label)
-            except Exception: return [], {"imdata": []}
+            except Exception as e:
+                logger.warning(f"Aggregated fabric fetch failed for {f.id}: {e}")
+                return [], {"imdata": []}
         results = await asyncio.gather(*[_fetch_single(f) for f in reg.list_fabrics()])
         items = [x for r in results for x in r[0]]
         raw_json = {"imdata": [x for r in results for x in r[1].get("imdata", [])]}
@@ -2685,7 +2693,9 @@ async def list_contracts(
             try:
                 aci = await _get_aci_async(session, f.id)
                 return await _process_for_fabric(aci, loop, f.id, f.label)
-            except Exception: return [], {"imdata": []}
+            except Exception as e:
+                logger.warning(f"Aggregated fabric fetch failed for {f.id}: {e}")
+                return [], {"imdata": []}
         results = await asyncio.gather(*[_fetch_single(f) for f in reg.list_fabrics()])
         items = [x for r in results for x in r[0]]
         raw_json = {"imdata": [x for r in results for x in r[1].get("imdata", [])]}
@@ -2833,7 +2843,9 @@ async def list_filters(
             try:
                 aci = await _get_aci_async(session, f.id)
                 return await _process_for_fabric(aci, loop, f.id, f.label)
-            except Exception: return [], {"imdata": []}
+            except Exception as e:
+                logger.warning(f"Aggregated fabric fetch failed for {f.id}: {e}")
+                return [], {"imdata": []}
         results = await asyncio.gather(*[_fetch_single(f) for f in reg.list_fabrics()])
         items = [x for r in results for x in r[0]]
         raw_json = {"imdata": [x for r in results for x in r[1].get("imdata", [])]}
@@ -2999,7 +3011,9 @@ async def list_policy_groups(
             try:
                 aci = await _get_aci_async(session, f.id)
                 return await _process_for_fabric(aci, loop, f.id, f.label)
-            except Exception: return [], {"imdata": []}
+            except Exception as e:
+                logger.warning(f"Aggregated fabric fetch failed for {f.id}: {e}")
+                return [], {"imdata": []}
         results = await asyncio.gather(*[_fetch_single(f) for f in reg.list_fabrics()])
         items = [x for r in results for x in r[0]]
         raw_json = {"access": {"imdata": [x for r in results for x in r[1].get("access", {}).get("imdata", [])]},
@@ -3121,7 +3135,9 @@ async def list_aaeps(
             try:
                 aci = await _get_aci_async(session, f.id)
                 return await _process_for_fabric(aci, loop, f.id, f.label)
-            except Exception: return [], {"imdata": []}
+            except Exception as e:
+                logger.warning(f"Aggregated fabric fetch failed for {f.id}: {e}")
+                return [], {"imdata": []}
         results = await asyncio.gather(*[_fetch_single(f) for f in reg.list_fabrics()])
         items = [x for r in results for x in r[0]]
         raw_json = {"imdata": [x for r in results for x in r[1].get("imdata", [])]}
@@ -3219,7 +3235,9 @@ async def list_domains(
             try:
                 aci = await _get_aci_async(session, f.id)
                 return await _process_for_fabric(aci, loop, f.id, f.label)
-            except Exception: return [], {}
+            except Exception as e:
+                logger.warning(f"Aggregated fabric fetch failed for {f.id}: {e}")
+                return [], {}
         results = await asyncio.gather(*[_fetch_single(f) for f in reg.list_fabrics()])
         items = [x for r in results for x in r[0]]
         raw_json = {"fabrics": [r[1] for r in results]}
@@ -3265,7 +3283,9 @@ async def list_vlan_pools(
             try:
                 aci = await _get_aci_async(session, f.id)
                 return await _process_for_fabric(aci, loop, f.id, f.label)
-            except Exception: return [], {"imdata": []}
+            except Exception as e:
+                logger.warning(f"Aggregated fabric fetch failed for {f.id}: {e}")
+                return [], {"imdata": []}
         results = await asyncio.gather(*[_fetch_single(f) for f in reg.list_fabrics()])
         items = [x for r in results for x in r[0]]
         raw_json = {"imdata": [x for r in results for x in r[1].get("imdata", [])]}
@@ -3325,7 +3345,9 @@ async def list_interface_policies(
             try:
                 aci = await _get_aci_async(session, f.id)
                 return await _process_for_fabric(aci, loop, f.id, f.label)
-            except Exception: return [], {}
+            except Exception as e:
+                logger.warning(f"Aggregated fabric fetch failed for {f.id}: {e}")
+                return [], {}
         results = await asyncio.gather(*[_fetch_single(f) for f in reg.list_fabrics()])
         items = [x for r in results for x in r[0]]
         raw_json = {"fabrics": [r[1] for r in results]}

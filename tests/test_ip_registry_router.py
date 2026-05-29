@@ -133,6 +133,37 @@ async def test_bulk_accept_rejects_non_array(tmpdb):
 
 
 @pytest.mark.asyncio
+async def test_bulk_accept_links_child_to_container_parent(tmpdb):
+    # Accept a shared /48 container, then a site /64 that falls under it.
+    await r.audit_accept(items=json.dumps([
+        {"cidr": "2600:400:3059::/48", "container": True, "role": "stip-agg"}]),
+        session=None)
+    container = registry.list_prefixes(containers_only=True, path=tmpdb)[0]
+
+    res = await r.audit_accept(items=json.dumps([
+        {"cidr": "2600:400:3059:1::/64", "site_code": "K700", "role": "stip"}]),
+        session=None)
+    assert res["created"] == 1
+
+    k700 = registry.get_site_by_code("K700", path=tmpdb)
+    child = registry.list_prefixes(site_id=k700["id"], path=tmpdb)[0]
+    assert child["parent_id"] == container["id"]  # R3: nested, not flat
+
+
+@pytest.mark.asyncio
+async def test_bulk_accept_validates_vlan_id(tmpdb):
+    res = await r.audit_accept(items=json.dumps([
+        {"cidr": "10.5.0.0/24", "site_code": "K800", "vlan_id": "99999"},  # out of range
+        {"cidr": "10.6.0.0/24", "site_code": "K800", "vlan_id": "abc"},      # not an int
+        {"cidr": "10.7.0.0/24", "site_code": "K800", "vlan_id": "100"},      # ok
+    ]), session=None)
+    assert res["created"] == 1
+    assert len(res["errors"]) == 2
+    # The bad rows errored before the site was touched, so it was created once.
+    assert res["sites_created"] == ["K800"]
+
+
+@pytest.mark.asyncio
 async def test_export_csv(tmpdb):
     site = await r.create_site(site_code="K015", name="K015", region=None,
                                role=None, status="active", description=None,

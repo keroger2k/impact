@@ -13,14 +13,27 @@ from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 logger = logging.getLogger(__name__)
-SESSION_TTL = float(os.getenv("SESSION_TTL_HOURS", "8")) * 3600  # seconds
+SESSION_TTL = float(os.getenv("SESSION_TTL_HOURS", "8")) * 3600  # idle timeout (seconds)
+# Absolute cap on a session's lifetime regardless of activity — the idle TTL
+# above slides on every request, so without this a continuously-used (or
+# stolen-but-active) token would never expire.
+SESSION_ABS_MAX = float(os.getenv("IMPACT_SESSION_MAX_HOURS", "24")) * 3600
 PURGE_INTERVAL = 60
+
+# Login throttle: after _LOGIN_FAIL_MAX failed binds for the same
+# (client_ip, username) within _LOGIN_FAIL_WINDOW seconds, reject further
+# attempts. Protects against credential brute-force and AD account lockout.
+_LOGIN_FAIL_WINDOW = int(os.getenv("IMPACT_LOGIN_FAIL_WINDOW", "300"))  # 5 min
+_LOGIN_FAIL_MAX = int(os.getenv("IMPACT_LOGIN_FAIL_MAX", "5"))
+_login_failures: dict[str, list[float]] = {}
+_login_lock = threading.Lock()
 
 @dataclass
 class SessionEntry:
     username:     str
     password:     str
     expires_at:   float
+    created_at:   float = field(default_factory=time.monotonic)
     dnac_client:  Any = field(default=None, repr=False)
     ise_client:   Any = field(default=None, repr=False)
     aci_clients:  dict[str, Any] = field(default_factory=dict, repr=False)
@@ -48,6 +61,7 @@ async def session_gc_task():
     while True:
         try:
             _purge_expired()
+            _prune_login_failures()
         except Exception as e:
             logger.error(f"Session GC error: {e}")
         await asyncio.sleep(PURGE_INTERVAL)
@@ -84,6 +98,62 @@ def destroy_session(token: str):
     import auth_persist
     if auth_persist.is_enabled():
         auth_persist.delete(token)
+
+
+def session_cookie_kwargs() -> dict:
+    """Shared security flags for the impact_token session cookie, so the two
+    login paths (HTML form in routers/pages.py + JSON API in routers/auth.py)
+    can't drift. secure defaults on; DEV_MODE turns it off unless
+    IMPACT_SECURE_COOKIES is explicitly set."""
+    from dev import DEV_MODE
+    secure = os.getenv("IMPACT_SECURE_COOKIES", "true").lower() == "true"
+    if DEV_MODE and os.getenv("IMPACT_SECURE_COOKIES") is None:
+        secure = False
+    return {"httponly": True, "secure": secure, "samesite": "strict",
+            "max_age": int(SESSION_TTL)}
+
+
+# ── Login throttle ───────────────────────────────────────────────────────────
+
+def _login_key(ip: str, username: str) -> str:
+    return f"{ip or '?'}|{(username or '').lower()}"
+
+
+def login_throttled(ip: str, username: str) -> bool:
+    """True if this (ip, username) has exceeded the failed-attempt budget."""
+    now = time.monotonic()
+    with _login_lock:
+        key = _login_key(ip, username)
+        fails = [t for t in _login_failures.get(key, []) if now - t < _LOGIN_FAIL_WINDOW]
+        _login_failures[key] = fails
+        return len(fails) >= _LOGIN_FAIL_MAX
+
+
+def record_login_failure(ip: str, username: str) -> None:
+    now = time.monotonic()
+    with _login_lock:
+        key = _login_key(ip, username)
+        fails = [t for t in _login_failures.get(key, []) if now - t < _LOGIN_FAIL_WINDOW]
+        fails.append(now)
+        _login_failures[key] = fails
+
+
+def record_login_success(ip: str, username: str) -> None:
+    with _login_lock:
+        _login_failures.pop(_login_key(ip, username), None)
+
+
+def _prune_login_failures() -> None:
+    """Drop fully-aged-out throttle entries so the dict can't grow unbounded
+    across many distinct source IPs."""
+    now = time.monotonic()
+    with _login_lock:
+        for key in list(_login_failures.keys()):
+            fails = [t for t in _login_failures[key] if now - t < _LOGIN_FAIL_WINDOW]
+            if fails:
+                _login_failures[key] = fails
+            else:
+                del _login_failures[key]
 
 def validate_ldap(username: str, password: str) -> bool:
     from dev import DEV_MODE
@@ -171,6 +241,11 @@ def require_auth(request: Request, credentials: HTTPAuthorizationCredentials | N
     if not token: raise HTTPException(401, "Not authenticated")
     session = get_session(token)
     if not session: raise HTTPException(401, "Session expired or invalid")
+    # Absolute lifetime cap: the idle TTL below slides on every request, so this
+    # is the only thing that eventually forces a re-login.
+    if time.monotonic() - session.created_at > SESSION_ABS_MAX:
+        destroy_session(token)
+        raise HTTPException(401, "Session expired (maximum lifetime reached)")
     with _store_lock:
         session.expires_at = time.monotonic() + SESSION_TTL
     return session

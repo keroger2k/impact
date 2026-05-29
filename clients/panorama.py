@@ -28,6 +28,21 @@ class PanoramaAPIError(Exception):
     """Domain-specific error for Panorama API failures."""
     pass
 
+
+def _xp(value: str) -> str:
+    """Validate a name interpolated into an XPath predicate (`[@name='...']`).
+
+    Panorama object/device-group/template names can't legitimately contain
+    quotes or brackets, so reject those defensively — this rules out XPath
+    injection from any name that ever reaches here from a less-trusted source.
+    Names are system-enumerated today (callers validate user input against the
+    real list first), so this is defense-in-depth, not the only guard.
+    """
+    s = "" if value is None else str(value)
+    if any(c in s for c in "'\"[]<>&"):
+        raise PanoramaAPIError(f"Unsafe XPath name: {value!r}")
+    return s
+
 # Module-level API key cache (survives the session, re-keyed if host changes)
 _key_cache: dict[str, tuple[str, float]] = {}  # (key, expires_at)
 KEY_TTL = 23 * 3600
@@ -562,11 +577,11 @@ def get_address_objects_and_groups(
     dg_base = f"{BASE_XPATH}/device-group"
     for dg in device_groups:
         try:
-            r = _config_get(f"{dg_base}/entry[@name='{dg}']/address", api_key)
+            r = _config_get(f"{dg_base}/entry[@name='{_xp(dg)}']/address", api_key)
             objects.update(_parse_address_entries(_unwrap(r, "address")))
         except Exception: pass
         try:
-            r = _config_get(f"{dg_base}/entry[@name='{dg}']/address-group", api_key)
+            r = _config_get(f"{dg_base}/entry[@name='{_xp(dg)}']/address-group", api_key)
             groups.update(_parse_group_entries(_unwrap(r, "address-group")))
         except Exception: pass
 
@@ -660,11 +675,11 @@ def get_services(
     dg_base = f"{BASE_XPATH}/device-group"
     for dg in device_groups:
         try:
-            r = _config_get(f"{dg_base}/entry[@name='{dg}']/service", api_key)
+            r = _config_get(f"{dg_base}/entry[@name='{_xp(dg)}']/service", api_key)
             objects.update(_parse_service_entries(_unwrap(r, "service")))
         except Exception: pass
         try:
-            r = _config_get(f"{dg_base}/entry[@name='{dg}']/service-group", api_key)
+            r = _config_get(f"{dg_base}/entry[@name='{_xp(dg)}']/service-group", api_key)
             groups.update(_parse_service_group_entries(_unwrap(r, "service-group")))
         except Exception: pass
 
@@ -894,14 +909,14 @@ def get_all_security_rules(
     # Per device-group pre
     for dg in device_groups:
         try:
-            r = _config_get(f"{dg_base}/entry[@name='{dg}']/pre-rulebase/security/rules", api_key)
+            r = _config_get(f"{dg_base}/entry[@name='{_xp(dg)}']/pre-rulebase/security/rules", api_key)
             all_rules.extend(_parse_rules(_unwrap(r, "rules"), dg, "pre"))
         except Exception: pass
 
     # Per device-group post
     for dg in device_groups:
         try:
-            r = _config_get(f"{dg_base}/entry[@name='{dg}']/post-rulebase/security/rules", api_key)
+            r = _config_get(f"{dg_base}/entry[@name='{_xp(dg)}']/post-rulebase/security/rules", api_key)
             all_rules.extend(_parse_rules(_unwrap(r, "rules"), dg, "post"))
         except Exception: pass
 
@@ -920,7 +935,7 @@ def get_device_to_group_mapping(api_key: str, device_groups: list[str]) -> dict[
     dg_base = f"{BASE_XPATH}/device-group"
     for dg in device_groups:
         try:
-            xpath = f"{dg_base}/entry[@name='{dg}']/devices"
+            xpath = f"{dg_base}/entry[@name='{_xp(dg)}']/devices"
             result = _config_get(xpath, api_key)
             entries = result.findall(".//entry") or result.findall("entry")
             for entry in entries:
@@ -936,7 +951,7 @@ def get_device_vsys(api_key: str, device_serial: str) -> list[str]:
     """Fetch vsys for a managed device."""
     vsys_list = []
     try:
-        xpath = f"/config/devices/entry[@name='{device_serial}']/vsys"
+        xpath = f"/config/devices/entry[@name='{_xp(device_serial)}']/vsys"
         result = _config_get(xpath, api_key)
         entries = result.findall(".//entry") or result.findall("entry")
         for entry in entries:
@@ -962,25 +977,25 @@ def get_device_vsys_policies(
 
     # Device shared pre-rules
     try:
-        r = _config_get(f"/config/devices/entry[@name='{device_serial}']/pre-rulebase/security/rules", api_key)
+        r = _config_get(f"/config/devices/entry[@name='{_xp(device_serial)}']/pre-rulebase/security/rules", api_key)
         all_rules.extend(_parse_rules(_unwrap(r, "rules"), "shared", "pre"))
     except Exception: pass
 
     # vsys pre-rules
     try:
-        r = _config_get(f"/config/devices/entry[@name='{device_serial}']/vsys/entry[@name='{vsys_name}']/pre-rulebase/security/rules", api_key)
+        r = _config_get(f"/config/devices/entry[@name='{_xp(device_serial)}']/vsys/entry[@name='{_xp(vsys_name)}']/pre-rulebase/security/rules", api_key)
         all_rules.extend(_parse_rules(_unwrap(r, "rules"), vsys_name, "pre"))
     except Exception: pass
 
     # vsys post-rules
     try:
-        r = _config_get(f"/config/devices/entry[@name='{device_serial}']/vsys/entry[@name='{vsys_name}']/post-rulebase/security/rules", api_key)
+        r = _config_get(f"/config/devices/entry[@name='{_xp(device_serial)}']/vsys/entry[@name='{_xp(vsys_name)}']/post-rulebase/security/rules", api_key)
         all_rules.extend(_parse_rules(_unwrap(r, "rules"), vsys_name, "post"))
     except Exception: pass
 
     # Device shared post-rules
     try:
-        r = _config_get(f"/config/devices/entry[@name='{device_serial}']/post-rulebase/security/rules", api_key)
+        r = _config_get(f"/config/devices/entry[@name='{_xp(device_serial)}']/post-rulebase/security/rules", api_key)
         all_rules.extend(_parse_rules(_unwrap(r, "rules"), "shared", "post"))
     except Exception: pass
 
@@ -1275,7 +1290,7 @@ def get_ike_crypto_profiles(api_key: str) -> list[dict]:
     for tpl in _list_templates(api_key):
         try:
             xpath = (
-                f"{BASE_XPATH}/template/entry[@name='{tpl}']"
+                f"{BASE_XPATH}/template/entry[@name='{_xp(tpl)}']"
                 "/config/devices/entry[@name='localhost.localdomain']"
                 "/network/ike/crypto-profiles/ike-crypto-profiles"
             )
@@ -1297,7 +1312,7 @@ def get_ipsec_crypto_profiles(api_key: str) -> list[dict]:
     for tpl in _list_templates(api_key):
         try:
             xpath = (
-                f"{BASE_XPATH}/template/entry[@name='{tpl}']"
+                f"{BASE_XPATH}/template/entry[@name='{_xp(tpl)}']"
                 "/config/devices/entry[@name='localhost.localdomain']"
                 "/network/ike/crypto-profiles/ipsec-crypto-profiles"
             )
@@ -1319,7 +1334,7 @@ def get_ike_gateways(api_key: str) -> list[dict]:
     for tpl in _list_templates(api_key):
         try:
             xpath = (
-                f"{BASE_XPATH}/template/entry[@name='{tpl}']"
+                f"{BASE_XPATH}/template/entry[@name='{_xp(tpl)}']"
                 "/config/devices/entry[@name='localhost.localdomain']"
                 "/network/ike/gateway"
             )
@@ -1341,7 +1356,7 @@ def get_ipsec_tunnels(api_key: str) -> list[dict]:
     for tpl in _list_templates(api_key):
         try:
             xpath = (
-                f"{BASE_XPATH}/template/entry[@name='{tpl}']"
+                f"{BASE_XPATH}/template/entry[@name='{_xp(tpl)}']"
                 "/config/devices/entry[@name='localhost.localdomain']"
                 "/network/tunnel/ipsec"
             )
@@ -1425,7 +1440,7 @@ def get_ipsec_inventory(api_key: str, progress=None) -> dict:
         _emit("template", "loading", f"Fetching template '{tpl}' ({i}/{len(templates)})…",
               current=i, total=len(templates))
         xpath = (
-            f"{BASE_XPATH}/template/entry[@name='{tpl}']"
+            f"{BASE_XPATH}/template/entry[@name='{_xp(tpl)}']"
             "/config/devices/entry[@name='localhost.localdomain']/network"
         )
         try:
@@ -1451,7 +1466,7 @@ def get_ipsec_inventory(api_key: str, progress=None) -> dict:
         _emit("stack", "loading", f"Fetching template-stack '{stack}' ({i}/{len(stacks)})…",
               current=i, total=len(stacks))
         xpath = (
-            f"{BASE_XPATH}/template-stack/entry[@name='{stack}']"
+            f"{BASE_XPATH}/template-stack/entry[@name='{_xp(stack)}']"
             "/config/devices/entry[@name='localhost.localdomain']/network"
         )
         try:

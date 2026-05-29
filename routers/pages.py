@@ -5,7 +5,6 @@ from templates_module import templates
 import auth as auth_module
 from auth import SessionEntry, verify_ldap_or_mock
 from cache import IPAM_TREE_CACHE_KEY
-from logger_config import run_with_context
 import logging
 
 logger = logging.getLogger(__name__)
@@ -24,14 +23,27 @@ async def login_page(request: Request, error: str = None):
 
 @router.post("/login")
 async def login_submit(request: Request, username: str = Form(...), password: str = Form(...)):
+    ip = request.client.host if request.client else ""
+    if auth_module.login_throttled(ip, username):
+        return RedirectResponse(
+            url="/login?error=Too many failed attempts. Please wait a few minutes and try again.",
+            status_code=303)
+
     user_creds = verify_ldap_or_mock(username, password)
     if not user_creds:
+        auth_module.record_login_failure(ip, username)
         return RedirectResponse(url="/login?error=Invalid credentials", status_code=303)
+    auth_module.record_login_success(ip, username)
 
     token = auth_module.create_session(user_creds[0], user_creds[1])
     response = RedirectResponse(url="/dashboard", status_code=303)
-    response.set_cookie(key="impact_token", value=token)
-    response.set_cookie(key="impact_user", value=username)
+    cookie_kwargs = auth_module.session_cookie_kwargs()
+    response.set_cookie("impact_token", token, **cookie_kwargs)
+    # impact_user is cosmetic (topbar display name); it need not be httponly but
+    # gets the same secure/samesite/lifetime scoping.
+    response.set_cookie("impact_user", username,
+                        secure=cookie_kwargs["secure"], samesite="strict",
+                        max_age=cookie_kwargs["max_age"])
 
     from utils.csrf import set_csrf_cookie
     set_csrf_cookie(response)
@@ -47,35 +59,16 @@ async def root(user: SessionEntry = Depends(get_current_user_from_cookie)):
 @router.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
     if not user: return RedirectResponse(url="/login")
-    from routers.dnac import device_stats, _get_dnac
-    import clients.dnac as dc
-    import asyncio
+    from routers.dnac import device_stats
 
-    loop = asyncio.get_event_loop()
-    dnac = _get_dnac(user)
-
+    # Only the cheap, cached pieces are computed inline: device stats (cached
+    # inventory) and connectivity status (cached + probed in parallel). The
+    # expensive widgets — recent issues and live ACI health/faults — load lazily
+    # via /api/dnac/dashboard-activity so the page paints immediately.
     stats = await device_stats(user)
-    issues = await loop.run_in_executor(None, run_with_context(dc.get_recent_issues), dnac)
 
-    # Status check is live
     from utils.system_status import get_system_status
     current_status = await get_system_status(user)
-
-    # Fetch ACI health and faults for dashboard if ACI is online
-    aci_health = None
-    aci_faults = []
-    if current_status.get("aci", {}).get("ok"):
-        from routers.aci import get_health_summary_logic, list_faults_logic
-        import clients.aci_registry as reg
-        try:
-            # Default to the first fabric for the dashboard summary
-            fabrics = reg.list_fabrics()
-            if fabrics:
-                fid = fabrics[0].id
-                aci_health = await get_health_summary_logic(user, fid)
-                aci_faults, _ = await list_faults_logic(user, fid, severity=None)
-        except Exception as e:
-            logger.warning(f"Failed to fetch ACI dashboard data: {e}")
 
     context = {
         "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
@@ -83,9 +76,6 @@ async def dashboard(request: Request, user: SessionEntry = Depends(get_current_u
         "active_page": "dashboard",
         "username": user.username,
         "stats": stats,
-        "issues": issues,
-        "aci_health": aci_health,
-        "aci_faults": aci_faults,
         "systems_online": len([s for s in current_status.values() if s.get("ok")]),
         "systems_total": len(current_status),
         **current_status
@@ -97,16 +87,13 @@ async def dashboard(request: Request, user: SessionEntry = Depends(get_current_u
 @router.get("/devices", response_class=HTMLResponse)
 async def devices_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
     if not user: return RedirectResponse(url="/login")
-    from routers.dnac import get_devices_data
-    devices_resp = await get_devices_data(session=user, limit=5000)
-    devices = devices_resp.get("items", [])
-
+    # The inventory is fetched client-side via /api/dnac/devices (cached) so the
+    # page swap stays small; no need to render the full device list inline.
     context = {
         "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
         "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
         "active_page": "devices",
         "username": user.username,
-        "initial_devices": devices
     }
     if request.headers.get("HX-Request"):
         return templates.TemplateResponse(request, "pages/devices_content.html", context)
@@ -266,7 +253,9 @@ async def ip_lookup_page(request: Request, user: SessionEntry = Depends(get_curr
 async def ipam_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
     if not user: return RedirectResponse(url="/login")
     from cache import cache
-    ipam_tree = cache.get(IPAM_TREE_CACHE_KEY)
+    # Read-only display: prefer last-known tree over a blank page when the TTL
+    # has rolled over (the tree is rebuilt explicitly via the IPAM refresh SSE).
+    ipam_tree = cache.get_stale(IPAM_TREE_CACHE_KEY)
 
     context = {
         "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",

@@ -130,8 +130,10 @@ async def _build_inventory(session: SessionEntry) -> dict:
 async def _get_or_build(session: SessionEntry) -> dict:
     """Return cached inventory. Does NOT trigger a build — the build is slow
     (DNAC parse + Palo template walk can take 5+ min) and must be initiated
-    explicitly via /api/tunnels/refresh-stream so the user gets progress."""
-    cached = cache.get(TUNNEL_INVENTORY_CACHE_KEY)
+    explicitly via /api/tunnels/refresh-stream so the user gets progress.
+    Serves the last-built inventory even past its TTL (rebuild is explicit), so
+    the page shows data rather than an empty list once the 24h TTL rolls over."""
+    cached = cache.get_stale(TUNNEL_INVENTORY_CACHE_KEY)
     if cached:
         return cached
     return {"tunnels": [], "built_at": None, "stats": {"total": 0, "by_type": {}, "by_platform": {}}}

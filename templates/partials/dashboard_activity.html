@@ -1,0 +1,112 @@
+{# Lazy-loaded dashboard widgets: ACI health KPIs, ACI fault summary, recent
+   network events. Fetched by dashboard_content.html via hx-get so these (live
+   ACI calls + the cached DNAC issues feed) never block the initial page paint. #}
+{% if aci_health %}
+<div class="kpi-row cols-4 animate-fade-in mt-4">
+  <div class="kpi-card">
+    <div class="kpi-label">ACI Overall Health</div>
+    <div class="kpi-value {% if aci_health.overall|int >= 90 %}text-success{% elif aci_health.overall|int >= 70 %}text-warning{% else %}text-danger{% endif %}">{{ aci_health.overall }}%</div>
+    <div class="kpi-sub text-muted">Fabric Health Score</div>
+  </div>
+  {% for pod in aci_health.pods %}
+  <div class="kpi-card">
+    <div class="kpi-label">Pod {{ pod.id }} Health</div>
+    <div class="kpi-value {% if pod.health|int >= 90 %}text-success{% elif pod.health|int >= 70 %}text-warning{% else %}text-danger{% endif %}">{{ pod.health }}%</div>
+    <div class="kpi-sub text-muted">Operational Integrity</div>
+  </div>
+  {% endfor %}
+  {% for tenant in aci_health.tenants %}
+  {% if loop.index <= 2 %}
+  <div class="kpi-card">
+    <div class="kpi-label">{{ tenant.name }} Health</div>
+    <div class="kpi-value {% if tenant.health|int >= 90 %}text-success{% elif tenant.health|int >= 70 %}text-warning{% else %}text-danger{% endif %}">{{ tenant.health }}%</div>
+    <div class="kpi-sub text-muted">Tenant Resource Health</div>
+  </div>
+  {% endif %}
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="row g-4 mt-1 animate-fade-in">
+  {% if aci_health %}
+  <div class="col-md-4">
+    <div class="card shadow-md h-100">
+      <div class="card-header flex-between">
+        <div class="d-flex align-items-center gap-2">
+            <i class="ph ph-warning-circle text-danger"></i>
+            <span class="font-weight-bold">ACI Fault Summary</span>
+        </div>
+      </div>
+      <div class="card-body p-0">
+        {% if aci_faults %}
+        <div class="list-group list-group-flush">
+          {% for fault in aci_faults %}
+          {% if fault.severity in ['critical', 'major'] %}
+          <div class="list-group-item d-flex flex-column border-bottom py-3 px-4 hover-bg">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <span class="badge {% if fault.severity == 'critical' %}badge-danger{% else %}badge-warning{% endif %}">{{ fault.severity|upper }}</span>
+              <span class="small text-muted font-weight-bold">{{ fault.code }}</span>
+            </div>
+            <span class="small font-weight-bold" style="color: var(--sidebar-bg)">{{ fault.descr }}</span>
+          </div>
+          {% endif %}
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="p-4 text-center">
+          <p class="text-muted small">No critical/major ACI faults.</p>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="{% if aci_health %}col-md-8{% else %}col-md-12{% endif %}">
+    <div class="card shadow-md h-100">
+       <div class="card-header flex-between">
+        <div class="d-flex align-items-center gap-2">
+            <i class="ph ph-activity text-primary"></i>
+            <span class="font-weight-bold">Recent Network Events (Last 24 Hours)</span>
+        </div>
+      </div>
+      <div class="card-body p-0">
+        {% if issues %}
+        <div class="table-container">
+          <table class="table data-table">
+            <thead>
+              <tr>
+                <th>Severity</th>
+                <th>Issue</th>
+                <th>Device</th>
+                <th>Site</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for issue in issues %}
+              <tr class="hover-bg">
+                <td>
+                  <span class="badge {% if issue.priority == 'P1' %}badge-danger{% elif issue.priority == 'P2' %}badge-warning{% else %}badge-info{% endif %}">
+                    {{ issue.priority }}
+                  </span>
+                </td>
+                <td class="text-wrap font-weight-bold" style="max-width: 300px; color: var(--sidebar-bg)">{{ issue.issue_title }}</td>
+                <td class="mono small text-muted">{{ issue.device_name }}</td>
+                <td class="small text-muted">{{ issue.site_name or '—' }}</td>
+                <td class="small text-muted">{{ issue.last_occurrence_time }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="p-5 text-center">
+          <i class="ph ph-check-circle text-success mb-3" style="font-size: 3rem; opacity: 0.2"></i>
+          <p class="text-muted small font-weight-bold">No critical alerts detected in the last 24 hours.</p>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>

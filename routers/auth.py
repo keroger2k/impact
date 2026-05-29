@@ -2,7 +2,7 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
 import auth as auth_module
@@ -17,31 +17,24 @@ class LoginRequest(BaseModel):
 
 
 @router.post("/login")
-async def login(req: LoginRequest, response: Response):
+async def login(req: LoginRequest, request: Request, response: Response):
     if not req.username or not req.password:
         raise HTTPException(400, "Username and password are required")
 
+    ip = request.client.host if request.client else ""
+    if auth_module.login_throttled(ip, req.username):
+        raise HTTPException(429, "Too many failed attempts. Please wait a few minutes and try again.")
+
     ok = await _run_sync(auth_module.validate_ldap, req.username, req.password)
     if not ok:
+        auth_module.record_login_failure(ip, req.username)
         raise HTTPException(401, "Invalid credentials — check your username and password")
+    auth_module.record_login_success(ip, req.username)
 
     token = auth_module.create_session(req.username, req.password)
 
-    # Set impact_token cookie with proper flags
-    from os import getenv
-    from dev import DEV_MODE
-    secure_cookies = getenv("IMPACT_SECURE_COOKIES", "true").lower() == "true"
-    if DEV_MODE and getenv("IMPACT_SECURE_COOKIES") is None:
-        secure_cookies = False
-
-    response.set_cookie(
-        key="impact_token",
-        value=token,
-        httponly=True,
-        secure=secure_cookies,
-        samesite="strict",
-        max_age=int(auth_module.SESSION_TTL),
-    )
+    # Shared cookie security flags (see auth.session_cookie_kwargs).
+    response.set_cookie("impact_token", token, **auth_module.session_cookie_kwargs())
 
     from utils.csrf import set_csrf_cookie
     set_csrf_cookie(response)

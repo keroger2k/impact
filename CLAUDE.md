@@ -52,20 +52,20 @@ Nexus collection lives in `collectors/nxos.py` (Netmiko SSH) rather than `client
 
 **Cache layer** (`cache.py`) is a singleton TTL cache backed by `diskcache` (SQLite at `data/cache/diskcache/cache.db`); persists across restarts.
 
-Default TTLs are defined as constants in `cache.py:21-30` and each is overridable via an `IMPACT_TTL_*` env var:
+Default TTLs are defined as constants in `cache.py` and each is overridable via an `IMPACT_TTL_*` env var. Defaults are tuned for a slow-changing network (config/topology lives hours-to-a-day; only true telemetry stays short):
 
 | Constant | Default | Env override | Used by |
 |---|---|---|---|
 | `TTL_DEFAULT` | 48h | `IMPACT_TTL_DEFAULT` | fallback for `cache.set(...)` with no TTL |
-| `TTL_DEVICES` | 4h | `IMPACT_TTL_DEVICES` | DNAC `devices` cache |
-| `TTL_SITES` | 4h | `IMPACT_TTL_SITES` | DNAC `sites`, `device_site_map` |
-| `TTL_ISE_POLICIES` | 1h | `IMPACT_TTL_ISE_POLICIES` | all ISE stable lists (NADs, SGTs, policy sets, auth rules per policy set, etc.) |
-| `TTL_ACI_STATUS` | 15m | `IMPACT_TTL_ACI_STATUS` | every ACI call going through `_cached(...)` with no explicit TTL — nodes, L3Outs, BGP/OSPF peers, BGP DOMs, BGP capability probes, BGP/OSPF maps |
-| `TTL_ACI_ROUTE_TABLE` | 5m | `IMPACT_TTL_ACI_ROUTE_TABLE` | per-L3Out route table (`/api/aci/l3outs/route-table`) |
-| `TTL_STATUS` | 5m | `IMPACT_TTL_STATUS` | system connectivity probes (`status_dnac`, `status_ise`, `status_panorama`) |
+| `TTL_DEVICES` | 24h | `IMPACT_TTL_DEVICES` | DNAC `devices` cache |
+| `TTL_SITES` | 24h | `IMPACT_TTL_SITES` | DNAC `sites`, `device_site_map` |
+| `TTL_ISE_POLICIES` | 12h | `IMPACT_TTL_ISE_POLICIES` | all ISE stable lists (NADs, SGTs, policy sets, auth rules per policy set, etc.) |
+| `TTL_ACI_STATUS` | 2h | `IMPACT_TTL_ACI_STATUS` | every ACI call going through `_cached(...)` with no explicit TTL — nodes, L3Outs, BGP/OSPF peers, BGP DOMs, BGP capability probes, BGP/OSPF maps |
+| `TTL_ACI_ROUTE_TABLE` | 30m | `IMPACT_TTL_ACI_ROUTE_TABLE` | per-L3Out route table (`/api/aci/l3outs/route-table`) |
+| `TTL_STATUS` | 5m | `IMPACT_TTL_STATUS` | system connectivity probes (`status_*_live` keys in `utils/system_status.py`) |
 | `TTL_PAN_INTERFACES` | 48h | `IMPACT_TTL_PAN_INTERFACES` | Panorama firewall interface inventory (`pan_interfaces`) |
-| `TTL_PAN_POLICY` | 1h | `IMPACT_TTL_PAN_POLICY` | Panorama policy/inventory data: `pan_rules`, `pan_device_groups`, `pan_managed_devices`, `pan_addr`, `pan_svc` (re-exported as `PAN_TTL` from `routers/firewall.py`) |
-| `TTL_DNAC_INTERFACES` | 4h | `IMPACT_TTL_DNAC_INTERFACES` | DNAC per-device interface inventory |
+| `TTL_PAN_POLICY` | 12h | `IMPACT_TTL_PAN_POLICY` | Panorama policy/inventory data: `pan_rules`, `pan_device_groups`, `pan_managed_devices`, `pan_addr`, `pan_svc` (re-exported as `PAN_TTL` from `routers/firewall.py`) |
+| `TTL_DNAC_INTERFACES` | 24h | `IMPACT_TTL_DNAC_INTERFACES` | DNAC per-device interface inventory |
 | `TTL_CONFIG_SEARCH_RESULT` | 5m | `IMPACT_TTL_CONFIG_SEARCH_RESULT` | DNAC `dnac_config_search_result:*` — cached search results so the CSV download endpoint doesn't re-run the search |
 | `TTL_DNAC_ROUTER_CONFIGS` | 24h | `IMPACT_TTL_DNAC_ROUTER_CONFIGS` | DNAC running-config snapshots used by routing diagnostics |
 | `TTL_DNAC_IP_POOLS` | 24h | `IMPACT_TTL_DNAC_IP_POOLS` | DNAC global IP pools + reserve subpools (IPAM source data) |
@@ -83,7 +83,7 @@ Naming conventions for cache keys:
 - `status_*` — system connectivity probes
 
 Other notes:
-- **Stale-while-revalidate**: physical disk retention is 30 days regardless of logical TTL — if a loader fails on a logically-expired key, `get_or_set` returns the stale value rather than `None`.
+- **Stale-while-revalidate**: physical disk retention is 30 days regardless of logical TTL. On logical expiry `get_or_set` (with the default `background=True`) returns the stale value *immediately* and refreshes it on a background thread pool (`_refresh_pool`, deduped per key so concurrent readers don't stampede the upstream) — callers never block just because a TTL rolled over. Pass `background=False` to revalidate synchronously (for keys where stale is misleading). A true cache *miss* still loads synchronously (nothing to serve). `cache.get_stale(key)` returns a physically-present value even past its logical TTL, for read-only display paths (IPAM tree, tunnel inventory) that prefer last-known data over a blank page.
 - **Helpers**: `cache.keys_for_prefix(prefix)` and `cache.invalidate_prefix(prefix)` scan all keys.
 - **DEV_MODE**: `dev.seed_cache(cache)` runs on every startup when `DEV_MODE=true`, *unconditionally overwriting* every mock key with a 1-year TTL. Real cached data is replaced by mock fixtures on every dev restart — this is intentional for deterministic dev sessions.
 

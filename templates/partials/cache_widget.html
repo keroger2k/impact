@@ -1,9 +1,6 @@
 {% set empty_count = systems | selectattr('status', 'equalto', 'empty') | list | length %}
-{% set partial_count = systems | selectattr('status', 'equalto', 'partial') | list | length %}
 {% if empty_count > 0 %}
   {% set overall = 'empty' %}
-{% elif partial_count > 0 %}
-  {% set overall = 'partial' %}
 {% else %}
   {% set overall = 'warm' %}
 {% endif %}
@@ -18,7 +15,7 @@
 </script>
 
 {% for s in systems %}
-<div class="cache-status-row" title="{{ s.warm_keys }}/{{ s.total_keys }} keys cached · Updated {{ s.age }}">
+<div class="cache-status-row" title="{% if s.status == 'empty' %}Not loaded yet{% else %}Updated {{ s.age }}{% if s.stale %} · stale, auto-refreshes on next use{% endif %}{% endif %}">
   <span class="cache-dot cache-dot-{{ s.status }}"></span>
   <span class="cache-widget-label">{{ s.label }}</span>
   <span class="cache-widget-count ms-auto">
@@ -27,7 +24,7 @@
     {% elif s.count > 0 %}
       {{ "{:,}".format(s.count) }}
     {% else %}
-      <span class="text-warning" style="font-size:10px">partial</span>
+      <span class="text-muted" style="font-size:10px">cached</span>
     {% endif %}
   </span>
 </div>
