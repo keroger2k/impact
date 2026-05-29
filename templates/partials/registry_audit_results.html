@@ -41,9 +41,10 @@
   </div>
 </div>
 
-{% macro accept_cb(cidr, role, site_id, site_code) %}
+{% macro accept_cb(cidr, role, site_id, site_code, vlan=None) %}
   <input class="form-check-input reg-accept-cb" type="checkbox" onchange="regUpdateAcceptCount()"
          data-cidr="{{ cidr }}" data-role="{{ role }}"
+         {% if vlan %}data-vlan="{{ vlan }}"{% endif %}
          {% if site_id is not none %}data-site-id="{{ site_id }}"{% endif %}
          {% if site_code %}data-site-code="{{ site_code }}"{% endif %}>
 {% endmacro %}
@@ -84,14 +85,14 @@
       <tbody>
         {% for d in sr.drift %}
         <tr>
-          <td>{{ accept_cb(d.cidr, d.suggested_role, d.site_id, none) }}</td>
+          <td>{{ accept_cb(d.cidr, d.suggested_role, d.site_id, none, d.vlan_id) }}</td>
           <td class="font-monospace fw-semibold">{{ d.cidr }}</td>
           <td>
             {% if d.kind == 'network-only' %}<span class="badge bg-info-subtle text-info">network-only</span>
             {% else %}<span class="badge bg-danger-subtle text-danger">mismatch</span>{% endif %}
           </td>
           <td class="small">{{ d.sources|join(', ') }}</td>
-          <td class="small">{{ d.suggested_role }}</td>
+          <td class="small">{{ d.suggested_role }}{% if d.vlan_id %} <span class="text-muted">· vlan {{ d.vlan_id }}</span>{% endif %}</td>
           <td class="small text-muted">
             {% if d.related %}overlaps {{ d.related|join(', ') }}{% endif %}
             {{ d.label }}
@@ -160,7 +161,7 @@
         {% for cand in report.new_site_candidates %}
           {% for rec in cand.prefixes %}
           <tr>
-            <td>{{ accept_cb(rec.cidr, rec.suggested_role, none, cand.site_code) }}</td>
+            <td>{{ accept_cb(rec.cidr, rec.suggested_role, none, cand.site_code, rec.vlan_id) }}</td>
             <td class="font-monospace fw-bold">{{ cand.site_code }}</td>
             <td class="font-monospace">{{ rec.cidr }}</td>
             <td class="small">{{ rec.sources|join(', ') }}</td>

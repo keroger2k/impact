@@ -61,7 +61,7 @@ def test_reconcile_all_states():
     netonly = [d for d in site_rep["drift"] if d["kind"] == "network-only"][0]
     assert netonly["cidr"] == "10.9.9.0/24"
     assert netonly["site_id"] == 1
-    assert netonly["suggested_role"] == "site-aggregate"
+    assert netonly["suggested_role"] == "subnet"   # plain subnet, not a fake aggregate
     mismatch = [d for d in site_rep["drift"] if d["kind"] == "mismatch"][0]
     assert mismatch["related"] == ["10.20.0.0/24"]
 
@@ -166,6 +166,51 @@ def test_extract_dnac_interfaces_fallback_and_aci():
     aci = ip_audit._from_aci(cache)
     assert aci[0].cidr == "10.2.2.0/24" and aci[0].source == "aci"
     assert aci[0].site_code == ""   # DC subnets attribute by containment only
+
+
+def test_default_routes_excluded():
+    assert ip_audit._canon("0.0.0.0/0") is None
+    assert ip_audit._canon("::/0") is None
+    assert ip_audit._canon("10.0.0.0/8") is not None
+    cache = FakeCache({"dnac_global_pools": [
+        {"ipPoolCidr": "0.0.0.0/0", "ipPoolName": "default"},
+        {"ipPoolCidr": "10.0.0.0/8", "ipPoolName": "ent"},
+    ]})
+    cidrs = {o.cidr for o in collect_observed(cache, sources=["dnac"])}
+    assert "0.0.0.0/0" not in cidrs and "10.0.0.0/8" in cidrs
+
+
+def test_vlan_from_name():
+    assert ip_audit._vlan_from("Vlan100") == 100
+    assert ip_audit._vlan_from("vlan 20") == 20
+    assert ip_audit._vlan_from("Gi0/0") is None
+
+
+def test_role_suggestion_from_iface_type():
+    sites = [_site(1, "K001")]
+    obs = [
+        Observed("10.1.1.0/24", 4, "dnac", "K001", interface="Vlan100",
+                 iface_type="svi", vlan=100),
+        Observed("10.2.0.0/20", 4, "dnac", "K001", iface_type="aggregate",
+                 label="EIGRP Summary"),
+        Observed("10.3.3.0/24", 4, "dnac", "K001"),     # no hint → subnet
+    ]
+    rep = reconcile(sites, [], obs)
+    drift = {d["cidr"]: d for d in rep["sites"][0]["drift"]}
+    assert drift["10.1.1.0/24"]["suggested_role"] == "vlan"
+    assert drift["10.1.1.0/24"]["vlan_id"] == 100
+    assert drift["10.2.0.0/20"]["suggested_role"] == "site-aggregate"
+    assert drift["10.3.3.0/24"]["suggested_role"] == "subnet"
+
+
+def test_collect_svi_vlan_from_portname():
+    cache = FakeCache({
+        "dnac_interfaces": [{"deviceId": "d1", "portName": "Vlan100",
+                             "ipv4Address": "10.1.1.1", "ipv4Mask": "255.255.255.0"}],
+        "device_site_map": {"d1": "Global/CA/K015"},
+    })
+    out = collect_observed(cache, sources=["dnac"])
+    assert out[0].iface_type == "svi" and out[0].vlan == 100
 
 
 def test_iface_type_classifier():

@@ -64,6 +64,7 @@ class Observed:
     label: str = ""        # device / interface / object name for context
     interface: str = ""    # raw interface name when known (e.g. "Tunnel200")
     iface_type: str = ""   # classified type (tunnel/loopback/p2p/svi/…)
+    vlan: Optional[int] = None  # VLAN id for SVIs (e.g. Vlan100 → 100)
 
 
 # Mirrors utils.ipam_engine.classify_interface (kept local so the audit has no
@@ -72,6 +73,27 @@ _RE_TUNNEL = re.compile(r"^(tu|tunnel|vt|virtual-?template)[\d/.]*", re.I)
 _RE_LOOPBACK = re.compile(r"^(lo|loopback)\d", re.I)
 _RE_MGMT = re.compile(r"^ma\d", re.I)
 _RE_SVI = re.compile(r"^(vl|vlan)\d", re.I)
+
+
+_RE_VLAN_ID = re.compile(r"^(?:vl|vlan)\s*(\d+)", re.I)
+
+# How a discovered prefix's interface type maps to a registry role suggestion.
+_ROLE_BY_IFACE = {
+    "svi": "vlan", "aggregate": "site-aggregate", "tunnel": "dmvpn",
+    "loopback": "loopback", "management": "mgmt", "p2p": "transit",
+}
+
+
+def _vlan_from(name: str) -> Optional[int]:
+    m = _RE_VLAN_ID.match((name or "").strip())
+    return int(m.group(1)) if m else None
+
+
+def _suggest_role(iface_type: str, family: int) -> str:
+    """A sensible registry role for an accepted prefix, from its interface type.
+    Falls back to 'subnet' (NOT 'site-aggregate') so VLAN/host subnets aren't
+    mislabeled as the site's aggregate."""
+    return _ROLE_BY_IFACE.get(iface_type, "subnet")
 
 
 def _iface_type(name: str, family: int, prefixlen: int) -> str:
@@ -90,28 +112,33 @@ def _iface_type(name: str, family: int, prefixlen: int) -> str:
 
 
 def _canon(value: Optional[str]) -> Optional[tuple[int, str, int]]:
-    """(family, canonical_cidr, prefixlen) or None for pseudo-labels / junk."""
+    """(family, canonical_cidr, prefixlen) or None for pseudo-labels / junk.
+    Default routes (/0) are rejected — they are not allocations, and a 0.0.0.0/0
+    in the registry would 'cover' every address and silence the audit."""
     if not value:
         return None
     if "/" not in value and ":" not in value and "." not in value:
         return None  # tree pseudo-labels: "Host Routes (X)", "Loopbacks (n)"
     try:
         fam, _, plen, canon = ipam_net.canonical(value)
-        return fam, canon, plen
     except (ValueError, TypeError):
         return None
+    if plen == 0:
+        return None  # 0.0.0.0/0 or ::/0 — default route, not address space
+    return fam, canon, plen
 
 
 def _obs(cidr_raw: Optional[str], source: str, *, site_code: str = "",
-         label: str = "", interface: str = "",
-         iface_type_hint: str = "") -> Optional[Observed]:
+         label: str = "", interface: str = "", iface_type_hint: str = "",
+         vlan_hint: Optional[int] = None) -> Optional[Observed]:
     c = _canon(cidr_raw)
     if not c:
         return None
     fam, canon, plen = c
     itype = iface_type_hint or _iface_type(interface, fam, plen)
+    vlan = vlan_hint if vlan_hint is not None else _vlan_from(interface)
     return Observed(cidr=canon, family=fam, source=source, site_code=site_code,
-                    label=label, interface=interface, iface_type=itype)
+                    label=label, interface=interface, iface_type=itype, vlan=vlan)
 
 
 # ── Source extractors ──────────────────────────────────────────────────────────
@@ -129,7 +156,8 @@ def _from_ipam_tree(cache) -> list[Observed]:
             o = _obs(n.get("cidr"), "dnac",
                      site_code=site_code_strict(n.get("site") or "").upper(),
                      label=n.get("display_name") or n.get("source") or "",
-                     iface_type_hint=n.get("interface_type") or "")
+                     iface_type_hint=n.get("interface_type") or "",
+                     vlan_hint=n.get("vlan_id"))
             if o:
                 out.append(o)
             walk(n.get("children"))
@@ -325,13 +353,15 @@ class _Drift:
     sources: set = field(default_factory=set)
     related: list = field(default_factory=list)
     label: str = ""
+    iface_type: str = ""
+    vlan: Optional[int] = None
 
     def as_dict(self) -> dict:
         return {"cidr": self.cidr, "family": self.family, "site_id": self.site_id,
                 "site_code": self.site_code, "kind": self.kind,
                 "sources": sorted(self.sources), "related": self.related,
-                "label": self.label,
-                "suggested_role": "site-aggregate" if self.family == 4 else "subnet"}
+                "label": self.label, "vlan_id": self.vlan,
+                "suggested_role": _suggest_role(self.iface_type, self.family)}
 
 
 def reconcile(sites: list[dict], prefixes: list[dict], observed: list[Observed], *,
@@ -399,6 +429,7 @@ def reconcile(sites: list[dict], prefixes: list[dict], observed: list[Observed],
             if d is None:
                 d = _Drift(cidr=o.cidr, family=o.family, site_id=s["id"],
                            site_code=s["site_code"], label=o.label,
+                           iface_type=o.iface_type, vlan=o.vlan,
                            kind="mismatch" if overlap else "network-only",
                            related=[p["cidr"] for p in overlap])
                 drift_by_cidr[o.cidr] = d
@@ -456,8 +487,8 @@ def reconcile(sites: list[dict], prefixes: list[dict], observed: list[Observed],
     loose: list[dict] = []
     for o in unattributed:
         rec = {"cidr": o.cidr, "family": o.family, "sources": [o.source],
-               "label": o.label, "site_code": o.site_code,
-               "suggested_role": "site-aggregate" if o.family == 4 else "subnet"}
+               "label": o.label, "site_code": o.site_code, "vlan_id": o.vlan,
+               "suggested_role": _suggest_role(o.iface_type, o.family)}
         (new_site_candidates[o.site_code].append(rec) if o.site_code else loose.append(rec))
 
     return {
