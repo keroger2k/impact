@@ -109,10 +109,14 @@
 
 {% if report.dmvpn_overlays %}
 <div class="card border-0 shadow-sm mb-2">
-  <div class="card-header bg-white py-2">
+  <div class="card-header bg-white py-2 d-flex align-items-center">
     <i class="ph ph-graph me-1 text-primary"></i>
     <span class="fw-bold">DMVPN / shared overlays</span>
     <span class="text-muted small ms-1">— tunnel-interface subnets shared across many routers. Accept each once as a shared container (not per-site).</span>
+    <button class="btn btn-xs btn-outline-primary ms-auto" onclick="regSyncDmvpnParticipants()"
+            title="Store/refresh each overlay's participant site list in the registry — works for already-accepted overlays too, so the Site Lookup page can show DMVPN membership.">
+      <i class="ph ph-arrows-clockwise me-1"></i> Sync participants
+    </button>
   </div>
   <div class="card-body py-2">
     <table class="table table-sm table-hover mb-0">
@@ -122,7 +126,8 @@
       </tr></thead>
       <tbody>
         {% for d in report.dmvpn_overlays %}
-        <tr>
+        <tr class="reg-dmvpn-row" data-cidr="{{ d.cidr }}" data-label="{{ d.label }}"
+            data-participants="{{ d.participant_sites|join(',') }}">
           <td>
             {% if not d.in_registry %}
             <input class="form-check-input reg-accept-cb" type="checkbox" onchange="regUpdateAcceptCount()"

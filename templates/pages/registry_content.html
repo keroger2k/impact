@@ -450,5 +450,37 @@
     alert(msg);
     regRunAudit(true);   // recompute so accepted rows clear
   };
+
+  // Backfill/refresh participant site lists for EVERY DMVPN overlay in the
+  // current audit — including ones already accepted (their accept checkbox is
+  // hidden). bulk_accept creates new overlays and refreshes existing ones'
+  // participants, so the Site Lookup page can show DMVPN membership.
+  window.regSyncDmvpnParticipants = async function() {
+    const items = Array.from(document.querySelectorAll('.reg-dmvpn-row')).map(tr => ({
+      cidr: tr.dataset.cidr,
+      container: true,
+      role: 'dmvpn',
+      label: tr.dataset.label || undefined,
+      participants: (tr.dataset.participants || '').split(',').filter(Boolean),
+    })).filter(it => it.cidr && it.participants.length);
+    if (!items.length) {
+      alert('No DMVPN participants to sync. Run the audit with DNAC configs warmed so participant sites are observed.');
+      return;
+    }
+    const payload = new URLSearchParams({items: JSON.stringify(items)});
+    let res, body;
+    try {
+      res = await fetch('/api/registry/audit/accept', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': csrf()},
+        body: payload.toString(),
+      });
+      body = await res.json().catch(() => ({}));
+    } catch (e) { alert('Sync failed: ' + e); return; }
+    if (!res.ok) { alert((body && body.detail) || ('Sync failed: ' + res.status)); return; }
+    alert('Synced participants for ' + items.length + ' DMVPN overlay(s): '
+          + (body.created || 0) + ' new, ' + (body.skipped || 0) + ' refreshed.');
+    regRunAudit(true);
+  };
 })();
 </script>
