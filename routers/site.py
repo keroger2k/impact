@@ -38,7 +38,7 @@ def _overview(code: str) -> dict:
     resolved = agg.resolve_site(code)
     devices = agg.list_devices_for_site(code)
     routing = agg.routing_devices(devices)
-    ipv6 = agg.ipv6_for_site(code)
+    registry = agg.registry_for_site(code)
     tunnels = agg.tunnels_for_site(code, site_devices=devices)
 
     by_source = {"DNAC": 0, "Nexus": 0, "Panorama": 0}
@@ -53,7 +53,7 @@ def _overview(code: str) -> dict:
         "hierarchies": resolved["hierarchies"],
         "devices": devices,
         "routing_devices": routing,
-        "ipv6": ipv6,
+        "registry": registry,
         "tunnels": tunnels,
         "stats": {
             "device_count": len(devices),
@@ -61,7 +61,9 @@ def _overview(code: str) -> dict:
             "by_role": by_role,
             "routing_device_count": len(routing),
             "tunnel_count": len(tunnels),
-            "ipv6_present": ipv6 is not None,
+            "registry_present": registry is not None,
+            "registry_v4_count": len(registry["v4"]) if registry else 0,
+            "registry_v6_count": len(registry["v6"]) if registry else 0,
         },
     }
 

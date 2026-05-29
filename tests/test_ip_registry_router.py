@@ -151,6 +151,28 @@ async def test_bulk_accept_links_child_to_container_parent(tmpdb):
 
 
 @pytest.mark.asyncio
+async def test_list_containers_reports_child_sites(tmpdb):
+    # A STIP-style /48 container with one site /64 carved under it…
+    await r.audit_accept(items=json.dumps([
+        {"cidr": "1000:2000:3000::/48", "container": True, "role": "stip-agg"}]),
+        session=None)
+    await r.audit_accept(items=json.dumps([
+        {"cidr": "1000:2000:3000:1::/64", "site_code": "K700"}]), session=None)
+    # …plus a DMVPN overlay that has no children in the registry.
+    await r.audit_accept(items=json.dumps([
+        {"cidr": "10.100.216.0/21", "container": True, "role": "dmvpn"}]),
+        session=None)
+
+    out = await r.list_containers(_req(), session=None)
+    by_cidr = {c["cidr"]: c for c in out["items"]}
+    assert out["total"] == 2
+    assert by_cidr["1000:2000:3000::/48"]["child_count"] == 1
+    assert by_cidr["1000:2000:3000::/48"]["child_sites"] == ["K700"]
+    assert by_cidr["10.100.216.0/21"]["child_count"] == 0
+    assert by_cidr["10.100.216.0/21"]["role"] == "dmvpn"
+
+
+@pytest.mark.asyncio
 async def test_bulk_accept_validates_vlan_id(tmpdb):
     res = await r.audit_accept(items=json.dumps([
         {"cidr": "10.5.0.0/24", "site_code": "K800", "vlan_id": "99999"},  # out of range

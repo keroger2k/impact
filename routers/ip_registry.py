@@ -183,6 +183,35 @@ async def list_prefixes(
     return {"items": items, "total": len(items)}
 
 
+@router.get("/containers")
+async def list_containers(request: Request, session: SessionEntry = Depends(require_auth)):
+    """Shared aggregates — prefixes with no owning site (DMVPN overlays, STIP
+    /48s, org/regional supernets). Each is annotated with the distinct child
+    sites that hang off it via ``parent_id``. DMVPN overlays normally have no
+    children in the registry (the shared subnet is stored once; live
+    participants are visible in the Audit tab), whereas a STIP /48 lists the
+    sites whose /64s carve out of it."""
+    all_prefixes = registry.list_prefixes()
+    children: dict[int, list[dict]] = {}
+    for p in all_prefixes:
+        pid = p.get("parent_id")
+        if pid is not None:
+            children.setdefault(pid, []).append(p)
+    items = []
+    for c in (p for p in all_prefixes if p["site_id"] is None):
+        kids = children.get(c["id"], [])
+        items.append({
+            **c,
+            "child_count": len(kids),
+            "child_sites": sorted({k["site_code"] for k in kids if k.get("site_code")}),
+        })
+    items.sort(key=lambda x: (x["family"], x.get("role") or "", x["cidr"]))
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse(
+            request, "partials/registry_containers_table.html", {"items": items})
+    return {"items": items, "total": len(items)}
+
+
 @router.post("/prefixes", status_code=201)
 async def create_prefix(
     cidr: str = Form(..., min_length=2),
