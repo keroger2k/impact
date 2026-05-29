@@ -187,23 +187,40 @@ async def list_prefixes(
 async def list_containers(request: Request, session: SessionEntry = Depends(require_auth)):
     """Shared aggregates — prefixes with no owning site (DMVPN overlays, STIP
     /48s, org/regional supernets). Each is annotated with the distinct child
-    sites that hang off it via ``parent_id``. DMVPN overlays normally have no
-    children in the registry (the shared subnet is stored once; live
-    participants are visible in the Audit tab), whereas a STIP /48 lists the
-    sites whose /64s carve out of it."""
+    sites whose registered blocks fall **within** it.
+
+    Child sites are attributed by CIDR *containment*, not the stored
+    ``parent_id`` — most rows (seeded/imported, or accepted before parent
+    linkage existed) have no ``parent_id``, so a link-only rollup would show
+    almost nothing. A STIP /48 therefore lists every site whose /64 carves out
+    of it. DMVPN overlays still show none here: sites don't register a prefix
+    inside the shared tunnel subnet, so registry containment can't see
+    participation (it's known only live, in the Audit)."""
     all_prefixes = registry.list_prefixes()
-    children: dict[int, list[dict]] = {}
-    for p in all_prefixes:
-        pid = p.get("parent_id")
-        if pid is not None:
-            children.setdefault(pid, []).append(p)
+    site_prefixes = [p for p in all_prefixes
+                     if p["site_id"] is not None and p.get("site_code")]
+
+    def _contained(outer: str, inner: str) -> bool:
+        try:
+            return ipam_net.contains(outer, inner)
+        except ValueError:
+            return False
+
     items = []
     for c in (p for p in all_prefixes if p["site_id"] is None):
-        kids = children.get(c["id"], [])
+        # Sites whose registered blocks fall inside this aggregate…
+        child_sites = {
+            sp["site_code"] for sp in site_prefixes
+            if sp["family"] == c["family"] and _contained(c["cidr"], sp["cidr"])
+        }
+        # …plus persisted DMVPN participants (sites don't register a prefix in
+        # the overlay subnet, so containment alone can't see them).
+        child_sites |= {s for s in (c.get("participants") or "").split(",") if s}
+        child_sites = sorted(child_sites)
         items.append({
             **c,
-            "child_count": len(kids),
-            "child_sites": sorted({k["site_code"] for k in kids if k.get("site_code")}),
+            "child_count": len(child_sites),
+            "child_sites": child_sites,
         })
     items.sort(key=lambda x: (x["family"], x.get("role") or "", x["cidr"]))
     if request.headers.get("HX-Request"):

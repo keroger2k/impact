@@ -173,6 +173,54 @@ async def test_list_containers_reports_child_sites(tmpdb):
 
 
 @pytest.mark.asyncio
+async def test_bulk_accept_persists_dmvpn_participants(tmpdb):
+    items = json.dumps([{"cidr": "10.100.216.0/21", "container": True, "role": "dmvpn",
+                         "label": "Tunnel200", "participants": ["K010", "K020", "K030"]}])
+    res = await r.audit_accept(items=items, session=None)
+    assert res["created"] == 1
+
+    c = next(x for x in registry.list_shared_containers(path=tmpdb)
+             if x["cidr"] == "10.100.216.0/21")
+    assert c["participants"] == ["K010", "K020", "K030"]
+
+    # The Shared tab surfaces the persisted participants as child sites.
+    out = await r.list_containers(_req(), session=None)
+    ov = next(x for x in out["items"] if x["cidr"] == "10.100.216.0/21")
+    assert ov["child_sites"] == ["K010", "K020", "K030"]
+    assert ov["child_count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_reaccepting_overlay_refreshes_participants(tmpdb):
+    await r.audit_accept(items=json.dumps([
+        {"cidr": "10.100.0.0/21", "container": True, "role": "dmvpn",
+         "participants": ["K010"]}]), session=None)
+    res = await r.audit_accept(items=json.dumps([
+        {"cidr": "10.100.0.0/21", "container": True, "role": "dmvpn",
+         "participants": ["K010", "K099"]}]), session=None)
+    assert res["skipped"] == 1  # already present, not duplicated
+    c = next(x for x in registry.list_shared_containers(path=tmpdb)
+             if x["cidr"] == "10.100.0.0/21")
+    assert c["participants"] == ["K010", "K099"]  # membership refreshed
+
+
+@pytest.mark.asyncio
+async def test_list_containers_attributes_by_containment_without_parent_id(tmpdb):
+    # Mimics seeded/legacy data: a shared supernet and a site block inside it,
+    # with NO parent_id link. Child attribution must still find the site.
+    registry.create_prefix("10.40.0.0/14", site_id=None, role="supernet",
+                           source="manual", path=tmpdb)
+    site = registry.create_site("K500", path=tmpdb)
+    registry.create_prefix("10.41.0.0/16", site_id=site["id"], parent_id=None,
+                           role="site-aggregate", path=tmpdb)
+
+    out = await r.list_containers(_req(), session=None)
+    sup = next(c for c in out["items"] if c["cidr"] == "10.40.0.0/14")
+    assert sup["child_sites"] == ["K500"]
+    assert sup["child_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_bulk_accept_validates_vlan_id(tmpdb):
     res = await r.audit_accept(items=json.dumps([
         {"cidr": "10.5.0.0/24", "site_code": "K800", "vlan_id": "99999"},  # out of range

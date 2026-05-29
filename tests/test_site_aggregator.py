@@ -46,3 +46,19 @@ def test_registry_for_site_with_no_prefixes(tmpdb):
     out = agg.registry_for_site("K099")
     assert out is not None and out["prefixes"] == []
     assert out["v4"] == [] and out["v6"] == []
+
+
+def test_dmvpn_overlays_for_site(tmpdb):
+    registry.bulk_accept([{
+        "cidr": "10.100.216.0/21", "container": True, "role": "dmvpn",
+        "label": "Tunnel200", "participants": ["K010", "K020"],
+    }], path=tmpdb)
+
+    out = agg.dmvpn_overlays_for_site("k010")  # case-insensitive
+    assert len(out) == 1
+    assert out[0]["cidr"] == "10.100.216.0/21"
+    assert out[0]["label"] == "Tunnel200"
+    assert "K010" in out[0]["participants"]
+
+    # A site that isn't a participant gets nothing — even with no registry row.
+    assert agg.dmvpn_overlays_for_site("K999") == []

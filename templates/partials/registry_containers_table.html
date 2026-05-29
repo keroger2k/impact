@@ -21,7 +21,8 @@
         {% else %}{{ c.role or 'container' }}{% endif %}
       </td>
       <td class="small">{{ c.label or '' }}</td>
-      <td class="text-center small" title="{{ c.child_sites|join(', ') }}">
+      <td class="text-center small"
+          title="{% if c.child_sites %}{{ c.child_sites|join(', ') }}{% elif c.role == 'dmvpn' %}DMVPN participation is observed live in the Audit tab — not stored per-site in the registry{% else %}No registered child blocks fall inside this aggregate{% endif %}">
         {% if c.child_count %}{{ c.child_count }}{% else %}<span class="text-muted">—</span>{% endif %}
       </td>
       <td class="small">{{ c.status }}</td>

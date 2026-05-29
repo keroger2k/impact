@@ -39,6 +39,7 @@ def _overview(code: str) -> dict:
     devices = agg.list_devices_for_site(code)
     routing = agg.routing_devices(devices)
     registry = agg.registry_for_site(code)
+    registry_dmvpn = agg.dmvpn_overlays_for_site(code)
     tunnels = agg.tunnels_for_site(code, site_devices=devices)
 
     by_source = {"DNAC": 0, "Nexus": 0, "Panorama": 0}
@@ -54,6 +55,7 @@ def _overview(code: str) -> dict:
         "devices": devices,
         "routing_devices": routing,
         "registry": registry,
+        "registry_dmvpn": registry_dmvpn,
         "tunnels": tunnels,
         "stats": {
             "device_count": len(devices),
@@ -64,6 +66,7 @@ def _overview(code: str) -> dict:
             "registry_present": registry is not None,
             "registry_v4_count": len(registry["v4"]) if registry else 0,
             "registry_v6_count": len(registry["v6"]) if registry else 0,
+            "registry_dmvpn_count": len(registry_dmvpn),
         },
     }
 

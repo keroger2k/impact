@@ -231,6 +231,27 @@ def registry_for_site(code: str) -> Optional[dict]:
     }
 
 
+def dmvpn_overlays_for_site(code: str) -> list[dict]:
+    """Shared DMVPN overlay containers this site participates in, from the
+    participant list persisted when the overlay was accepted in the audit.
+
+    Independent of whether the site has its own registry row — participation is
+    a property of the shared container, not the site. Returns each overlay's
+    ``{cidr, label, role, participants}``."""
+    code_u = (code or "").strip().upper()
+    if not code_u:
+        return []
+    try:
+        containers = ip_registry.list_shared_containers()
+    except Exception:
+        return []
+    return [
+        c for c in containers
+        if c.get("role") == "dmvpn"
+        and code_u in [p.upper() for p in c.get("participants", [])]
+    ]
+
+
 # ── Tunnels ──────────────────────────────────────────────────────────────────
 
 def tunnels_for_site(code: str, site_devices: Optional[list[dict]] = None) -> list[dict]:

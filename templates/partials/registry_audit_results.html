@@ -127,7 +127,7 @@
             {% if not d.in_registry %}
             <input class="form-check-input reg-accept-cb" type="checkbox" onchange="regUpdateAcceptCount()"
                    data-cidr="{{ d.cidr }}" data-role="dmvpn" data-container="1"
-                   data-label="{{ d.label }}">
+                   data-label="{{ d.label }}" data-participants="{{ d.participant_sites|join(',') }}">
             {% endif %}
           </td>
           <td class="font-monospace fw-semibold">{{ d.cidr }}</td>

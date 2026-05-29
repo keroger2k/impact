@@ -97,6 +97,11 @@
         <strong>IP Registry</strong>
         {% if registry %}
           <span class="badge bg-secondary ms-2">{{ registry.v4|length }} v4 · {{ registry.v6|length }} v6</span>
+        {% endif %}
+        {% if registry_dmvpn %}
+          <span class="badge bg-primary-subtle text-primary ms-2">{{ registry_dmvpn|length }} DMVPN</span>
+        {% endif %}
+        {% if registry or registry_dmvpn %}
           <a class="ms-auto small" href="/registry" title="Open in IP Registry"><i class="ph ph-arrow-square-out"></i></a>
         {% endif %}
       </div>
@@ -129,14 +134,38 @@
             </tbody>
           </table>
         </div>
-        {% elif registry %}
-          <div class="text-center text-muted py-4 small">
-            Site <code>{{ registry.site.site_code }}</code> is registered but has no prefixes yet.
-          </div>
-        {% else %}
+        {% endif %}
+
+        {% if registry_dmvpn %}
+        <div class="px-3 py-2 bg-light border-top border-bottom small fw-bold text-uppercase text-muted">
+          <i class="ph ph-graph me-1"></i>DMVPN overlays ({{ registry_dmvpn|length }})
+        </div>
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0">
+            <thead class="table-light">
+              <tr><th>Overlay subnet</th><th>Tunnel</th><th class="text-center">Participants</th></tr>
+            </thead>
+            <tbody>
+            {% for o in registry_dmvpn %}
+              <tr>
+                <td class="font-monospace small fw-semibold">{{ o.cidr }}</td>
+                <td class="small">{{ o.label or "—" }}</td>
+                <td class="text-center small" title="{{ o.participants|join(', ') }}">{{ o.participants|length }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% endif %}
+
+        {% if not registry and not registry_dmvpn %}
           <div class="text-center text-muted py-4 small">
             No registry site matches <code>{{ code }}</code>. Add it on the
             <a href="/registry">IP Registry</a> page.
+          </div>
+        {% elif registry and not registry.prefixes and not registry_dmvpn %}
+          <div class="text-center text-muted py-4 small">
+            Site <code>{{ registry.site.site_code }}</code> is registered but has no prefixes yet.
           </div>
         {% endif %}
       </div>

@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS prefixes (
     audit_state      TEXT,
     last_seen_at     TEXT,
     last_seen_source TEXT,
+    participants     TEXT,                       -- shared containers (DMVPN overlays): CSV of participant site codes
     owner            TEXT,
     description      TEXT,
     created_at       TEXT    NOT NULL DEFAULT (datetime('now')),
@@ -115,6 +116,15 @@ def _connect_raw(path: Path):
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
     return conn
+
+
+def _ensure_column(conn, table: str, column: str, decl: str) -> None:
+    """Add a column to an existing table if it's missing (SQLite has no
+    ADD COLUMN IF NOT EXISTS). No-op when the column is already present."""
+    cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+        logger.info("ip_registry: added column %s.%s", table, column)
 
 
 def _dedupe_containers(conn) -> None:
@@ -150,6 +160,8 @@ def init_schema(path: Optional[Path] = None) -> None:
         conn = _connect_raw(target)
         try:
             conn.executescript(SCHEMA)
+            # Migrate older DBs created before the participants column existed.
+            _ensure_column(conn, "prefixes", "participants", "TEXT")
             # Enforce one shared container per CIDR. A plain UNIQUE(site_id, cidr)
             # can't do this because SQLite treats NULL site_id as distinct, so
             # two containers with the same CIDR would slip through. De-dupe any
@@ -432,6 +444,16 @@ def _coerce_vlan(value) -> Optional[int]:
     return n
 
 
+def _participants_csv(value) -> Optional[str]:
+    """Normalize a participants payload (list or comma string) into an
+    upper-cased, de-duped CSV of site codes — or None when empty."""
+    if value is None:
+        return None
+    raw = value if isinstance(value, (list, tuple)) else str(value).split(",")
+    codes = sorted({str(s).strip().upper() for s in raw if str(s).strip()})
+    return ",".join(codes) or None
+
+
 def bulk_accept(items: list[dict], *, path: Optional[Path] = None) -> dict:
     """Commit a batch of accepted drift items in **one** transaction.
 
@@ -463,18 +485,26 @@ def bulk_accept(items: list[dict], *, path: Optional[Path] = None) -> dict:
 
                 # Shared aggregate (DMVPN overlay, STIP /48, …) — no owning site.
                 if it.get("container"):
+                    part_str = _participants_csv(it.get("participants"))
                     row = conn.execute(
                         "SELECT id FROM prefixes WHERE cidr = ? AND site_id IS NULL",
                         (canon,)).fetchone()
                     if row:
+                        # Already present — refresh participants so re-accepting an
+                        # overlay keeps its membership current.
+                        if part_str:
+                            conn.execute(
+                                "UPDATE prefixes SET participants = ?, "
+                                "updated_at = datetime('now') WHERE id = ?",
+                                (part_str, row["id"]))
                         skipped += 1
                         continue
                     conn.execute(
                         "INSERT INTO prefixes (site_id, family, network, prefix_length, "
-                        "cidr, role, label, status, source) "
-                        "VALUES (NULL, ?, ?, ?, ?, ?, ?, 'deployed', 'audit')",
+                        "cidr, role, label, status, source, participants) "
+                        "VALUES (NULL, ?, ?, ?, ?, ?, ?, 'deployed', 'audit', ?)",
                         (family, network, plen, canon, it.get("role") or "container",
-                         it.get("label") or None))
+                         it.get("label") or None, part_str))
                     created += 1
                     continue
 
@@ -531,6 +561,17 @@ def bulk_accept(items: list[dict], *, path: Optional[Path] = None) -> dict:
 
     return {"created": created, "skipped": skipped,
             "sites_created": sites_created, "errors": errors}
+
+
+def list_shared_containers(path: Optional[Path] = None) -> list[dict]:
+    """Shared containers (``site_id IS NULL``) with ``participants`` parsed from
+    its stored CSV into a list of site codes (empty list when unset). Used to
+    answer "which DMVPN overlays is site X on?" without a join table."""
+    rows = list_prefixes(containers_only=True, path=path)
+    for r in rows:
+        raw = r.get("participants")
+        r["participants"] = [s for s in (raw or "").split(",") if s]
+    return rows
 
 
 def set_audit_state(prefix_id: int, audit_state: Optional[str], *,
