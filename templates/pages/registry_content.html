@@ -399,9 +399,77 @@
   window.regRunAudit = function(refresh) {
     const sources = Array.from(document.querySelectorAll('.reg-source-cb:checked')).map(cb => cb.value);
     const pane = document.getElementById('reg-audit-pane');
-    pane.innerHTML = '<div class="text-muted text-center py-5"><i class="ph ph-circle-notch ph-spin me-1"></i> Running audit…</div>';
+
+    // Tear down any in-flight stream before starting a new one.
+    if (window._regAuditES) { try { window._regAuditES.close(); } catch (e) {} window._regAuditES = null; }
+    if (window._regAuditTimer) { clearInterval(window._regAuditTimer); window._regAuditTimer = null; }
+
+    pane.innerHTML = ''
+      + '<div class="card border-0 shadow-sm"><div class="card-body">'
+      + '  <div class="d-flex align-items-center gap-2 mb-2">'
+      + '    <i class="ph ph-circle-notch ph-spin fs-5 text-primary"></i>'
+      + '    <span class="fw-bold" id="reg-audit-status">Running audit…</span>'
+      + '    <span class="ms-auto badge text-bg-light font-monospace" id="reg-audit-elapsed">0s</span>'
+      + '  </div>'
+      + '  <div class="progress mb-3" style="height:6px;">'
+      + '    <div class="progress-bar progress-bar-striped progress-bar-animated" id="reg-audit-bar" style="width:100%"></div>'
+      + '  </div>'
+      + '  <pre class="small mb-0 text-muted bg-body-tertiary rounded p-2" id="reg-audit-log" '
+      + '       style="max-height:240px;overflow:auto;white-space:pre-wrap;"></pre>'
+      + '</div></div>';
+
+    const statusEl = document.getElementById('reg-audit-status');
+    const logEl = document.getElementById('reg-audit-log');
+    const barEl = document.getElementById('reg-audit-bar');
+    const elapsedEl = document.getElementById('reg-audit-elapsed');
+    const started = Date.now();
+    const fmt = (ms) => { const s = Math.round(ms / 1000); return s < 60 ? s + 's' : Math.floor(s / 60) + 'm ' + (s % 60) + 's'; };
+    window._regAuditTimer = setInterval(() => { elapsedEl.textContent = fmt(Date.now() - started); }, 1000);
+    const appendLog = (line) => {
+      const at = ((Date.now() - started) / 1000).toFixed(0).padStart(4, ' ');
+      logEl.textContent += '[' + at + 's] ' + line + '\n';
+      logEl.scrollTop = logEl.scrollHeight;
+    };
+    const stop = () => {
+      if (window._regAuditTimer) { clearInterval(window._regAuditTimer); window._regAuditTimer = null; }
+      if (window._regAuditES) { try { window._regAuditES.close(); } catch (e) {} window._regAuditES = null; }
+    };
+
     const qs = 'sources=' + encodeURIComponent(sources.join(',')) + (refresh ? '&refresh=1' : '');
-    htmx.ajax('GET', '/api/registry/audit?' + qs, {target: '#reg-audit-pane', swap: 'innerHTML'});
+    const es = new EventSource('/api/registry/audit/stream?' + qs);
+    window._regAuditES = es;
+
+    es.onmessage = (evt) => {
+      let d; try { d = JSON.parse(evt.data); } catch (err) { return; }
+      if (d.type === 'progress') {
+        if (d.message) { statusEl.textContent = d.message; appendLog(d.message); }
+        if (d.total) {
+          barEl.classList.remove('progress-bar-animated', 'progress-bar-striped');
+          barEl.style.width = Math.max(2, Math.round(100 * (d.current || 0) / d.total)) + '%';
+        } else {
+          barEl.classList.add('progress-bar-animated', 'progress-bar-striped');
+          barEl.style.width = '100%';
+        }
+      } else if (d.type === 'done') {
+        stop();
+        pane.innerHTML = d.html;
+        if (window.htmx) htmx.process(pane);
+      } else if (d.type === 'error') {
+        stop();
+        pane.innerHTML = '<div class="alert alert-danger mb-0"><i class="ph ph-warning me-1"></i> Audit failed: '
+          + (d.message || 'unknown error') + '</div>';
+      }
+    };
+    es.onerror = () => {
+      // EventSource fires onerror on normal close too; only surface it if we
+      // hadn't already swapped in results/an error.
+      stop();
+      if (statusEl && statusEl.isConnected) {
+        statusEl.textContent = 'Connection interrupted — click Run / Refresh to retry.';
+        statusEl.classList.add('text-danger');
+        barEl.classList.remove('progress-bar-animated');
+      }
+    };
   };
 
   window.regToggleAllAccept = function(master) {

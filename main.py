@@ -80,7 +80,7 @@ app.add_middleware(CSRFMiddleware)
 
 SSE_LIMITED_PATHS = {"/api/warm", "/api/ipam/refresh", "/api/commands/run",
                      "/api/commands/config-run", "/api/import/run",
-                     "/api/tunnels/refresh-stream"}
+                     "/api/tunnels/refresh-stream", "/api/registry/audit/stream"}
 
 @app.middleware("http")
 async def sse_rate_limit(request: Request, call_next):

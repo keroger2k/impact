@@ -13,6 +13,7 @@ decode / IPv4→IPv6 assemble) operate on the registry's IPv6 prefixes.
 """
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
 import ipaddress
@@ -22,11 +23,12 @@ import sqlite3
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 
 from auth import SessionEntry, require_auth
 from cache import cache
 from clients import ip_registry as registry
+from logger_config import run_with_context
 from templates_module import templates
 from utils import ip_audit, ipam_net
 from utils import ipv6_assembler as ipv6
@@ -337,6 +339,80 @@ async def audit(
         return templates.TemplateResponse(
             request, "partials/registry_audit_results.html", {"report": report})
     return report
+
+
+def _render_audit_html(report: dict) -> str:
+    """Render the audit results partial to a string for embedding in an SSE
+    event (no Request needed — the partial only consumes ``report``)."""
+    return templates.get_template("partials/registry_audit_results.html").render(report=report)
+
+
+@router.get("/audit/stream")
+async def audit_stream(
+    request: Request,
+    sources: Optional[str] = None,
+    refresh: bool = False,
+    session: SessionEntry = Depends(require_auth),
+):
+    """SSE variant of ``/audit`` that streams progress while reconciling.
+
+    The reconciliation is CPU-bound (it can run for minutes on a large estate),
+    so a plain request just spins a spinner with no feedback. This runs the audit
+    on a worker thread and emits ``data:`` events as each phase advances —
+    ``{"type":"progress", ...}`` ticks, then a terminal ``{"type":"done","html":…}``
+    carrying the rendered results partial (or ``{"type":"error"}``).
+
+    A cached report (same source-set, not ``refresh``) is returned immediately as a
+    single ``done`` event. The frontend swaps ``html`` straight into the pane."""
+    src = _parse_sources(sources)
+    key = "ip_audit:" + ",".join(src)
+    cached = None if refresh else cache.get(key)
+    loop = asyncio.get_event_loop()
+
+    async def generate():
+        def sse(payload: dict) -> str:
+            return f"data: {json.dumps(payload)}\n\n"
+
+        if cached is not None:
+            yield sse({"type": "done", "cached": True, "html": _render_audit_html(cached)})
+            return
+
+        aq: asyncio.Queue = asyncio.Queue()
+        _END = object()
+
+        def push(item):
+            # progress callback fires on the worker thread → hop back to the loop
+            loop.call_soon_threadsafe(aq.put_nowait, item)
+
+        def work():
+            try:
+                report = ip_audit.run_audit(
+                    cache, registry.list_sites(), registry.list_prefixes(),
+                    sources=src, progress=lambda ev: push(("progress", ev)))
+                cache.set(key, report, _AUDIT_TTL)
+                push(("done", report))
+            except Exception as e:  # pragma: no cover - defensive
+                logger.exception("audit stream failed")
+                push(("error", str(e)))
+            finally:
+                push((_END, None))
+
+        loop.run_in_executor(None, run_with_context(work))
+        yield sse({"type": "progress", "phase": "start", "message": "Starting audit…"})
+        while True:
+            kind, payload = await aq.get()
+            if kind is _END:
+                break
+            if kind == "progress":
+                yield sse({"type": "progress", **payload})
+            elif kind == "done":
+                yield sse({"type": "done", "html": _render_audit_html(payload)})
+            elif kind == "error":
+                yield sse({"type": "error", "message": str(payload)})
+
+    return StreamingResponse(generate(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
 
 
 @router.post("/audit/accept")

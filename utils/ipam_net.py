@@ -11,9 +11,21 @@ Nothing here touches the DB, the cache, or HTTP. ``parse_network`` raises
 from __future__ import annotations
 
 import ipaddress
+from functools import lru_cache
 from typing import Iterable, Optional, Union
 
 IPNetwork = Union[ipaddress.IPv4Network, ipaddress.IPv6Network]
+
+
+# Memoized to make the audit's reconciliation cheap: ``utils.ip_audit.reconcile``
+# compares the same few-hundred CIDR strings against each other in tightly nested
+# loops, so without caching the parse it builds the same ``ip_network`` object
+# millions of times (the dominant cost of a full audit). ``ip_network`` instances
+# are immutable, so sharing a cached instance across callers is safe. Bounded so a
+# long-lived process can't grow it without limit; CIDR→network is a pure mapping.
+@lru_cache(maxsize=1 << 17)
+def _parse_cached(value: str) -> IPNetwork:
+    return ipaddress.ip_network(value, strict=False)
 
 
 def parse_network(value: str) -> IPNetwork:
@@ -23,7 +35,7 @@ def parse_network(value: str) -> IPNetwork:
     (``10.0.0.5/24`` → ``10.0.0.0/24``). Accepts IPv4 netmask form too
     (``10.0.0.0/255.255.255.0``). Raises ``ValueError`` on bad input.
     """
-    return ipaddress.ip_network(value.strip(), strict=False)
+    return _parse_cached(value.strip())
 
 
 def family_of(net: IPNetwork) -> int:

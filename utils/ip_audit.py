@@ -38,7 +38,7 @@ import os
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Iterable, Optional
+from typing import Callable, Iterable, Optional
 
 from cache import IPAM_TREE_CACHE_KEY
 from utils import ipam_net
@@ -47,6 +47,16 @@ from utils.site_code import site_code_from_hostname, site_code_strict
 logger = logging.getLogger(__name__)
 
 ALL_SOURCES = ("dnac", "nexus", "panorama", "aci")
+
+# A progress sink: called with a small JSON-able dict at each phase boundary (and
+# periodically inside the long loops) so a streaming caller can show live status.
+# Defaults to a no-op, which keeps ``collect_observed`` / ``reconcile`` pure for
+# the unit tests that call them without one.
+Progress = Callable[[dict], None]
+
+
+def _noop_progress(_event: dict) -> None:  # pragma: no cover - trivial
+    pass
 
 # Host-route thresholds (the "bucket & collapse" knobs). A prefix at or beyond
 # these lengths is infrastructure (loopback/p2p/host), not a site allocation.
@@ -335,25 +345,37 @@ def _richness(o: Observed) -> int:
     return (1 if o.interface else 0) + (1 if o.iface_type else 0) + (1 if o.site_code else 0)
 
 
-def collect_observed(cache, sources: Iterable[str] = ALL_SOURCES) -> list[Observed]:
+def collect_observed(cache, sources: Iterable[str] = ALL_SOURCES, *,
+                     progress: Optional[Progress] = None) -> list[Observed]:
     """Run the enabled extractors and de-dupe by ``(cidr, source, site_code)``,
     keeping the richest record. Keying on site_code (not just cidr) preserves
     one sighting per site — essential so a shared overlay isn't collapsed to a
     single site and so DMVPN participant counts survive."""
+    emit = progress or _noop_progress
+    sources = list(sources)
     raw: list[Observed] = []
-    for name in sources:
+    for idx, name in enumerate(sources, 1):
         fn = _EXTRACTORS.get(name)
         if not fn:
             continue
+        emit({"phase": "collect", "current": idx, "total": len(sources),
+              "message": f"Collecting from {name.upper()}…"})
         try:
-            raw.extend(fn(cache))
+            got = fn(cache)
+            raw.extend(got)
+            emit({"phase": "collect", "current": idx, "total": len(sources),
+                  "message": f"{name.upper()}: {len(got)} networks observed"})
         except Exception:  # pragma: no cover
             logger.exception("ip_audit: source %r extractor failed", name)
+            emit({"phase": "collect", "current": idx, "total": len(sources),
+                  "message": f"{name.upper()}: extractor failed (skipped)"})
     best: dict[tuple[str, str, str], Observed] = {}
     for o in raw:
         k = (o.cidr, o.source, o.site_code)
         if k not in best or _richness(o) > _richness(best[k]):
             best[k] = o
+    emit({"phase": "collect", "message":
+          f"De-duped to {len(best)} distinct observations (from {len(raw)} raw)"})
     return list(best.values())
 
 
@@ -427,9 +449,11 @@ class _Drift:
 def reconcile(sites: list[dict], prefixes: list[dict], observed: list[Observed], *,
               sources: Iterable[str] = ALL_SOURCES,
               host_v4_min: int = HOST_V4_MIN_PREFIX,
-              host_v6_min: int = HOST_V6_MIN_PREFIX) -> dict:
+              host_v6_min: int = HOST_V6_MIN_PREFIX,
+              progress: Optional[Progress] = None) -> dict:
     """Pure classifier. ``sites``/``prefixes`` are registry rows; ``observed``
     is the collected live view. Returns a JSON-able report."""
+    emit = progress or _noop_progress
     registry_cidrs = {p["cidr"] for p in prefixes}
     sites_by_id = {s["id"]: s for s in sites}
     code_to_site = {(s["site_code"] or "").upper(): s for s in sites if s.get("site_code")}
@@ -447,6 +471,9 @@ def reconcile(sites: list[dict], prefixes: list[dict], observed: list[Observed],
     rest = [o for o in observed if not is_overlay(o, v4_min=host_v4_min, v6_min=host_v6_min)]
     hosts = [o for o in rest if is_host(o, v4_min=host_v4_min, v6_min=host_v6_min)]
     normal = [o for o in rest if not is_host(o, v4_min=host_v4_min, v6_min=host_v6_min)]
+    emit({"phase": "partition", "message":
+          f"Partitioned {len(observed)} observations: {len(normal)} site-level, "
+          f"{len(tunnels)} overlay, {len(hosts)} host/infra"})
 
     # 2) Attribute remaining observations:
     #    - contains 2+ sites' blocks  → shared SUPERNET (org /48), a container
@@ -459,7 +486,12 @@ def reconcile(sites: list[dict], prefixes: list[dict], observed: list[Observed],
     unattributed: list[Observed] = []
     container_seen: set = set()
     supernets: dict[str, dict] = {}
-    for o in normal:
+    emit({"phase": "attribute", "current": 0, "total": len(normal),
+          "message": f"Attributing {len(normal)} networks to sites…"})
+    for i, o in enumerate(normal, 1):
+        if i % 250 == 0 or i == len(normal):
+            emit({"phase": "attribute", "current": i, "total": len(normal),
+                  "message": f"Attributing networks to sites… {i}/{len(normal)}"})
         containing = {
             s["id"] for s in sites
             if any(ipam_net.contains(o.cidr, p["cidr"])
@@ -497,7 +529,12 @@ def reconcile(sites: list[dict], prefixes: list[dict], observed: list[Observed],
     site_reports: list[dict] = []
     totals = {"in_sync": 0, "registry_only": 0, "registry_only_v6": 0,
               "network_only": 0, "mismatch": 0}
-    for s in sites:
+    emit({"phase": "sites", "current": 0, "total": len(sites),
+          "message": f"Reconciling {len(sites)} sites…"})
+    for si, s in enumerate(sites, 1):
+        if si % 25 == 0 or si == len(sites):
+            emit({"phase": "sites", "current": si, "total": len(sites),
+                  "message": f"Reconciling sites… {si}/{len(sites)}"})
         regp = site_prefixes.get(s["id"], [])
         sobs = per_site_obs.get(s["id"], [])
         findings: list[dict] = []
@@ -600,6 +637,10 @@ def reconcile(sites: list[dict], prefixes: list[dict], observed: list[Observed],
             containers_in_sync += 1
         container_findings.append({"prefix": c, "state": state})
 
+    emit({"phase": "finalize", "message":
+          f"Grouping {len(dmvpn_overlays)} DMVPN overlay(s), "
+          f"{len(host_items)} host route(s), {len(shared_supernets)} supernet(s)…"})
+
     # New-site candidates vs. truly loose unattributed.
     new_site_candidates: dict[str, list[dict]] = defaultdict(list)
     loose: list[dict] = []
@@ -640,6 +681,9 @@ def reconcile(sites: list[dict], prefixes: list[dict], observed: list[Observed],
 
 
 def run_audit(cache, sites: list[dict], prefixes: list[dict], *,
-              sources: Iterable[str] = ALL_SOURCES) -> dict:
-    """Convenience: collect from the cache, then reconcile."""
-    return reconcile(sites, prefixes, collect_observed(cache, sources), sources=sources)
+              sources: Iterable[str] = ALL_SOURCES,
+              progress: Optional[Progress] = None) -> dict:
+    """Convenience: collect from the cache, then reconcile. ``progress`` (if
+    given) is threaded through both phases so a streaming caller sees live ticks."""
+    observed = collect_observed(cache, sources, progress=progress)
+    return reconcile(sites, prefixes, observed, sources=sources, progress=progress)
