@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 import clients.ip_registry as registry
+from cache import cache, TUNNEL_INVENTORY_CACHE_KEY
 from utils import site_aggregator as agg
 
 
@@ -62,3 +63,22 @@ def test_dmvpn_overlays_for_site(tmpdb):
 
     # A site that isn't a participant gets nothing — even with no registry row.
     assert agg.dmvpn_overlays_for_site("K999") == []
+
+
+def test_tunnels_for_site_served_when_logically_expired():
+    """Regression: the tunnel inventory is only rebuilt on a manual refresh,
+    never auto-warmed. Once its logical TTL rolls over the data is still
+    physically present, and the Site Lookup page must keep showing it (it reads
+    get_stale) instead of going blank like cache.get() would make it."""
+    inv = {"tunnels": [{
+        "name": "Tunnel0", "type": "DMVPN",
+        "endpoints": [{"local_site_code": "K042", "device": "k042-rtr-01",
+                       "peer_ip": "1.2.3.4", "interface": "Tunnel0"}],
+    }]}
+    try:
+        cache.set(TUNNEL_INVENTORY_CACHE_KEY, inv, ttl=-1)  # already logically expired
+        out = agg.tunnels_for_site("K042")
+        assert len(out) == 1
+        assert out[0]["matched_endpoints"][0]["local_site_code"] == "K042"
+    finally:
+        cache.invalidate(TUNNEL_INVENTORY_CACHE_KEY)

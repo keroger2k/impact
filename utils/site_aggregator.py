@@ -283,7 +283,12 @@ def tunnels_for_site(code: str, site_devices: Optional[list[dict]] = None) -> li
         for d in site_devices if d.get("hostname")
     }
 
-    inv = cache.get(TUNNEL_INVENTORY_CACHE_KEY) or {}
+    # get_stale, not get: the tunnel inventory is only rebuilt on an explicit
+    # manual refresh, never auto-warmed. Once its 24h logical TTL rolls over,
+    # cache.get() returns None and the site page shows "no tunnels" even though
+    # the data is physically present for 30 days (the Tunnels page itself reads
+    # it stale for the same reason).
+    inv = cache.get_stale(TUNNEL_INVENTORY_CACHE_KEY) or {}
     out: list[dict] = []
     for t in inv.get("tunnels") or []:
         matched: list[dict] = []
