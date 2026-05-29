@@ -116,34 +116,28 @@ def _count_cached(key: str) -> int:
 
 
 def _get_system_status(system: dict) -> dict:
-    # Status is driven by the primary key — the one that represents whether
-    # the system is actually usable. Secondary keys may be missing if the user
-    # hasn't visited every sub-page yet (e.g. ACI faults, ISE authz profiles).
+    # A system is "warm" whenever its primary key is *physically present* in the
+    # cache — even if logically expired — because stale-while-revalidate keeps
+    # that data usable and refreshes it in the background. Only a never-loaded
+    # primary is "empty" (red).
+    #
+    # We deliberately no longer let secondary keys (faults, authz profiles, etc.,
+    # which are fetched lazily as sub-pages are visited) downgrade the status:
+    # that previously made perfectly healthy systems show amber/"partial" until
+    # every sub-page had been opened, which read as "the cache is broken".
     primary_info = cache.cache_info(system["count_key"])
-    primary_warm = primary_info is not None and not primary_info["is_expired"]
-
-    any_warm = False
+    present = primary_info is not None
+    stale = present and primary_info["is_expired"]
     set_at = primary_info["set_at"] if primary_info else None
-    for key in system["keys"]:
-        info = cache.cache_info(key)
-        if info and not info["is_expired"]:
-            any_warm = True
-            if set_at is None:
-                set_at = info["set_at"]
 
     count = _count_cached(system["count_key"])
-
-    if primary_warm:
-        status = "warm"
-    elif any_warm:
-        status = "partial"
-    else:
-        status = "empty"
+    status = "warm" if present else "empty"
 
     return {
         **system,
         "count": count,
         "status": status,
+        "stale": stale,
         "set_at": _fmt_time(set_at),
         "age": _fmt_age(set_at),
     }
@@ -366,7 +360,7 @@ _KEY_TO_CATEGORY = {
 
 
 @router.post("/refresh/{category}")
-async def refresh_specific_cache(category: str, session: SessionEntry = Depends(require_auth)):
+async def refresh_specific_cache(category: str, request: Request, session: SessionEntry = Depends(require_auth)):
     """Invalidate and re-fetch the specified cache category."""
     category = _KEY_TO_CATEGORY.get(category, category)
 
@@ -460,7 +454,14 @@ async def refresh_specific_cache(category: str, session: SessionEntry = Depends(
 
     elif category == "clear_all":
         cache.clear()
-        msg = "Full application cache has been cleared."
+        # Re-warm in the background so the app isn't left fully cold — a cold
+        # miss still blocks the first reader (stale-while-revalidate only helps
+        # once a value exists), so kick the core systems off immediately. ACI
+        # re-warms lazily on visit; Nexus needs an explicit SSH collection.
+        asyncio.create_task(_refetch_dnac(session, include_devices=True, include_sites=True))
+        asyncio.create_task(_refetch_ise(session))
+        asyncio.create_task(_refetch_panorama(session))
+        msg = "Full application cache has been cleared and is re-warming in the background."
 
     else:
         msg = f"{category.replace('_', ' ').title()} cache cleared."

@@ -303,9 +303,13 @@ async def audit_accept(
     ``items`` is a JSON array of objects, each:
         {"cidr": "...", "site_id": 3}                  # into an existing site
         {"cidr": "...", "site_code": "K099"}           # auto-create the site
-    Optional per-item: ``role``, ``family``, ``vlan_id``, ``label``.
+        {"cidr": "...", "container": true}             # shared aggregate
+    Optional per-item: ``role``, ``vlan_id``, ``label``.
     Discovered prefixes are written with source='audit', status='deployed'
-    (they were observed live). Already-present prefixes are skipped, not errored.
+    (they were observed live) and linked to their enclosing parent. The whole
+    batch commits in one transaction; already-present items are skipped, not
+    errored. NOTE: accept intentionally bypasses the soft overlap check that the
+    manual POST /prefixes path applies — you are recording observed reality.
     """
     try:
         parsed = json.loads(items)
@@ -314,57 +318,9 @@ async def audit_accept(
     except (json.JSONDecodeError, ValueError) as e:
         raise HTTPException(400, f"Invalid items payload: {e}")
 
-    created, skipped, errors = 0, 0, []
-    sites_created: list[str] = []
-    for it in parsed:
-        cidr = (it.get("cidr") or "").strip()
-        if not cidr:
-            errors.append({"item": it, "error": "missing cidr"})
-            continue
-        try:
-            fam, _, _, canon = ipam_net.canonical(cidr)
-        except ValueError as e:
-            errors.append({"item": it, "error": f"bad cidr: {e}"})
-            continue
-
-        # Shared aggregate (DMVPN overlay, STIP /48, …) — no owning site.
-        if it.get("container"):
-            try:
-                _, was_new = registry.get_or_create_container(
-                    canon, role=it.get("role") or "container",
-                    label=it.get("label") or None, source="audit")
-            except (ValueError, TypeError) as e:
-                errors.append({"item": it, "error": str(e)})
-                continue
-            created += 1 if was_new else 0
-            skipped += 0 if was_new else 1
-            continue
-
-        site_id = it.get("site_id")
-        if site_id is None and it.get("site_code"):
-            site, was_new = registry.upsert_site(str(it["site_code"]).strip().upper())
-            site_id = site["id"]
-            if was_new:
-                sites_created.append(site["site_code"])
-        if site_id is None:
-            errors.append({"item": it, "error": "no site_id or site_code"})
-            continue
-
-        role = it.get("role") or ("site-aggregate" if fam == 4 else "subnet")
-        try:
-            registry.create_prefix(
-                canon, site_id=int(site_id), role=role,
-                vlan_id=it.get("vlan_id"), label=it.get("label") or None,
-                status="deployed", source="audit", audit_state="in-sync")
-            created += 1
-        except sqlite3.IntegrityError:
-            skipped += 1
-        except (ValueError, TypeError) as e:
-            errors.append({"item": it, "error": str(e)})
-
+    result = registry.bulk_accept(parsed)
     _invalidate_audit()
-    return {"created": created, "skipped": skipped,
-            "sites_created": sites_created, "errors": errors}
+    return result
 
 
 # ── Export ──────────────────────────────────────────────────────────────────────

@@ -17,18 +17,24 @@ async def get_system_status(session: SessionEntry):
         ("aci", _check_aci),
     ]
 
-    results = {}
-    for name, checker in systems:
+    async def _run(name, checker):
         try:
-            res = await asyncio.wait_for(checker(session, loop), timeout=10)
-            if name == "aci" and isinstance(res, dict) and any(k.startswith("aci_") for k in res.keys()):
-                results.update(res)
-            else:
-                results[name] = res
+            return name, await asyncio.wait_for(checker(session, loop), timeout=10)
         except asyncio.TimeoutError:
-            results[name] = {"ok": False, "detail": "Timeout"}
+            return name, {"ok": False, "detail": "Timeout"}
         except Exception as e:
-            results[name] = {"ok": False, "detail": str(e)[:80]}
+            return name, {"ok": False, "detail": str(e)[:80]}
+
+    # Probe every system concurrently — a single dead/slow system can no longer
+    # serialise the others behind its 10s timeout (worst case ~10s, not ~40s).
+    pairs = await asyncio.gather(*[_run(name, checker) for name, checker in systems])
+
+    results = {}
+    for name, res in pairs:
+        if name == "aci" and isinstance(res, dict) and any(k.startswith("aci_") for k in res.keys()):
+            results.update(res)
+        else:
+            results[name] = res
 
     return results
 

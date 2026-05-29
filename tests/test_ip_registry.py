@@ -191,6 +191,59 @@ def test_ipam_net_canonical_and_relations():
     assert ipam_net.overlaps("10.0.0.0/24", "2600:400::/48") is False
 
 
+# ── R2: shared-container uniqueness (partial unique index) ─────────────────────
+
+def test_duplicate_container_is_rejected_by_index(db: Path):
+    reg.create_prefix("10.100.0.0/21", site_id=None, role="container", path=db)
+    # A second NULL-site row with the same CIDR must be rejected — plain
+    # UNIQUE(site_id, cidr) wouldn't catch it because NULL is distinct.
+    with pytest.raises(sqlite3.IntegrityError):
+        reg.create_prefix("10.100.0.0/21", site_id=None, role="container", path=db)
+    # A same-CIDR row owned by a site is still allowed (different scope).
+    s = reg.create_site("K100", path=db)
+    reg.create_prefix("10.100.0.0/21", site_id=s["id"], path=db)
+
+
+def test_get_or_create_container_idempotent_under_index(db: Path):
+    c1, new1 = reg.get_or_create_container("10.100.0.0/21", path=db)
+    c2, new2 = reg.get_or_create_container("10.100.0.0/21", path=db)
+    assert new1 is True and new2 is False
+    assert c1["id"] == c2["id"]
+    assert len(reg.list_prefixes(containers_only=True, path=db)) == 1
+
+
+def test_init_schema_dedupes_legacy_duplicate_containers(tmp_path: Path):
+    # Simulate a pre-index DB: build just the tables, insert two identical
+    # containers + a child pointing at the second, then run init_schema (which
+    # de-dupes before building the partial unique index).
+    path = tmp_path / "legacy.db"
+    conn = reg._connect_raw(path)
+    conn.executescript(reg.SCHEMA)  # tables + regular indexes, no partial index
+    for _ in range(2):
+        conn.execute(
+            "INSERT INTO prefixes (site_id, family, network, prefix_length, cidr, "
+            "role, status, source) VALUES (NULL,4,'10.100.0.0',21,'10.100.0.0/21',"
+            "'container','allocated','manual')")
+    keep, victim = [r[0] for r in conn.execute(
+        "SELECT id FROM prefixes WHERE site_id IS NULL ORDER BY id").fetchall()]
+    cur = conn.execute("INSERT INTO sites (site_code) VALUES ('K900')")
+    sid = cur.lastrowid
+    conn.execute(
+        "INSERT INTO prefixes (site_id, parent_id, family, network, prefix_length, "
+        "cidr, role, status, source) VALUES (?,?,6,'2600:400:3059:1',64,"
+        "'2600:400:3059:1::/64','stip','allocated','manual')", (sid, victim))
+    conn.commit()
+    conn.close()
+
+    reg.init_schema(path)  # de-dupe + create the partial unique index
+
+    containers = reg.list_prefixes(containers_only=True, path=path)
+    assert len(containers) == 1 and containers[0]["id"] == keep
+    # The orphaned child was re-pointed to the surviving container.
+    child = reg.list_prefixes(site_id=sid, path=path)[0]
+    assert child["parent_id"] == keep
+
+
 def test_ipam_net_find_container_longest_prefix():
     rows = [{"id": 1, "cidr": "10.0.0.0/8"}, {"id": 2, "cidr": "10.45.0.0/16"}]
     best = ipam_net.find_container("10.45.44.0/24", rows)

@@ -9,7 +9,9 @@ import asyncio
 import functools
 import logging
 import os
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -18,16 +20,18 @@ import diskcache
 logger = logging.getLogger(__name__)
 
 # TTL Constants (in seconds). Each is overridable via env (IMPACT_TTL_*).
+# Defaults are tuned for a slow-changing network: config/topology data lives for
+# hours-to-a-day; only genuine telemetry (status probes, route tables) stays short.
 TTL_DEFAULT             = int(os.getenv("IMPACT_TTL_DEFAULT",          "172800"))  # 48 hours
-TTL_DEVICES             = int(os.getenv("IMPACT_TTL_DEVICES",           "14400"))  # 4 hours
-TTL_SITES               = int(os.getenv("IMPACT_TTL_SITES",             "14400"))  # 4 hours
-TTL_ISE_POLICIES        = int(os.getenv("IMPACT_TTL_ISE_POLICIES",       "3600"))  # 1 hour
-TTL_ACI_STATUS          = int(os.getenv("IMPACT_TTL_ACI_STATUS",          "900"))  # 15 minutes
-TTL_ACI_ROUTE_TABLE     = int(os.getenv("IMPACT_TTL_ACI_ROUTE_TABLE",     "300"))  # 5 minutes
+TTL_DEVICES             = int(os.getenv("IMPACT_TTL_DEVICES",           "86400"))  # 24 hours
+TTL_SITES               = int(os.getenv("IMPACT_TTL_SITES",             "86400"))  # 24 hours
+TTL_ISE_POLICIES        = int(os.getenv("IMPACT_TTL_ISE_POLICIES",      "43200"))  # 12 hours
+TTL_ACI_STATUS          = int(os.getenv("IMPACT_TTL_ACI_STATUS",         "7200"))  # 2 hours
+TTL_ACI_ROUTE_TABLE     = int(os.getenv("IMPACT_TTL_ACI_ROUTE_TABLE",    "1800"))  # 30 minutes
 TTL_STATUS              = int(os.getenv("IMPACT_TTL_STATUS",              "300"))  # 5 minutes
 TTL_PAN_INTERFACES      = int(os.getenv("IMPACT_TTL_PAN_INTERFACES",   "172800"))  # 48 hours
-TTL_PAN_POLICY          = int(os.getenv("IMPACT_TTL_PAN_POLICY",         "3600"))  # 1 hour
-TTL_DNAC_INTERFACES     = int(os.getenv("IMPACT_TTL_DNAC_INTERFACES",   "14400"))  # 4 hours
+TTL_PAN_POLICY          = int(os.getenv("IMPACT_TTL_PAN_POLICY",        "43200"))  # 12 hours
+TTL_DNAC_INTERFACES     = int(os.getenv("IMPACT_TTL_DNAC_INTERFACES",   "86400"))  # 24 hours
 TTL_CONFIG_SEARCH_RESULT = int(os.getenv("IMPACT_TTL_CONFIG_SEARCH_RESULT", "300"))  # 5 minutes
 TTL_DNAC_ROUTER_CONFIGS = int(os.getenv("IMPACT_TTL_DNAC_ROUTER_CONFIGS", "86400"))  # 24 hours
 TTL_DNAC_IP_POOLS       = int(os.getenv("IMPACT_TTL_DNAC_IP_POOLS",       "86400"))  # 24 hours
@@ -45,6 +49,12 @@ class AppCache:
         # Track the most-recent loader failure per key so the UI can surface
         # silent fetch errors without the user having to grep server logs.
         self._last_errors: dict = {}
+        # Stale-while-revalidate: when a logically-expired key is read we serve
+        # the stale value instantly and refresh it on this pool, so callers never
+        # block on an upstream fetch just because a TTL rolled over.
+        self._refresh_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="cache-swr")
+        self._refreshing: set[str] = set()
+        self._refresh_lock = threading.Lock()
 
     def get(self, key: str) -> Any:
         """Standard get from cache. Returns only if not logically expired."""
@@ -57,6 +67,16 @@ class AppCache:
             return data
         return None
 
+    def get_stale(self, key: str) -> Any:
+        """Return the cached value regardless of logical expiry.
+
+        Physically-present data lives for 30 days (see set()); read-only display
+        paths prefer slightly-stale data over showing a blank/empty state when a
+        logical TTL has rolled over but no refresh has run yet.
+        """
+        entry = self._cache.get(key)
+        return entry[0] if entry is not None else None
+
     def set(self, key: str, value: Any, ttl: Optional[int] = TTL_DEFAULT):
         """Standard set to cache with logical TTL and longer physical TTL for stale support."""
         now = time.time()
@@ -65,10 +85,43 @@ class AppCache:
         # Physical expiry is 30 days to support stale-while-revalidate
         self._cache.set(key, (value, expires_at, now), expire=2592000)
 
-    def get_or_set(self, key: str, loader: Callable, ttl: int = TTL_DEFAULT) -> Any:
+    def _background_refresh(self, key: str, loader: Callable, ttl: int):
+        """Refresh a key on the SWR pool, deduped so concurrent readers of the
+        same expired key trigger at most one upstream fetch (no stampede)."""
+        with self._refresh_lock:
+            if key in self._refreshing:
+                return
+            self._refreshing.add(key)
+
+        def _run():
+            try:
+                data = loader()
+                if data is not None:
+                    self.set(key, data, ttl)
+                    self._last_errors.pop(key, None)
+            except Exception as e:
+                logger.error(f"Background cache refresh failed for '{key}': {e}")
+                self._last_errors[key] = {"at": time.time(), "message": str(e)[:500]}
+            finally:
+                with self._refresh_lock:
+                    self._refreshing.discard(key)
+
+        self._refresh_pool.submit(_run)
+
+    def get_or_set(self, key: str, loader: Callable, ttl: int = TTL_DEFAULT,
+                   background: bool = True) -> Any:
         """
         Get a value from cache or fetch it using the loader if missing or expired.
-        Implements stale-while-revalidate: if the loader fails, returns stale data if available.
+
+        Stale-while-revalidate: when an entry is logically expired but still
+        physically present, the stale value is returned immediately and (when
+        ``background=True``, the default) a refresh is dispatched on a background
+        thread — so requests never block just because a TTL rolled over. If the
+        loader later fails, the stale value simply stays until the next attempt.
+
+        Pass ``background=False`` for keys where serving stale is misleading
+        (e.g. connectivity probes, cached search results); those revalidate
+        synchronously as before.
         """
         entry = self._cache.get(key)
         now = time.time()
@@ -78,7 +131,13 @@ class AppCache:
             if now < expires_at:
                 return data
 
-            # Logically expired, try to revalidate
+            # Logically expired but physically present.
+            if background:
+                # Serve stale instantly; refresh out of band.
+                self._background_refresh(key, loader, ttl)
+                return data
+
+            # Synchronous revalidation (opt-out path).
             try:
                 new_data = loader()
                 if new_data is not None:
@@ -90,7 +149,8 @@ class AppCache:
                 self._last_errors[key] = {"at": time.time(), "message": str(e)[:500]}
                 return data # Return stale data
 
-        # Cache miss (truly missing)
+        # Cache miss (truly missing) — must fetch synchronously, there is nothing
+        # to serve in the meantime.
         try:
             new_data = loader()
             if new_data is not None:
@@ -214,60 +274,9 @@ class AppCache:
         except Exception as e:
             logger.warning(f"Device site map warm failed: {e}")
 
-    # ── Connectivity checks ─────────────────────────────────────────────────────
-
-    async def check_all_systems(self) -> dict:
-        """Non-blocking connectivity check for all three systems."""
-        loop = asyncio.get_event_loop()
-        dnac_f  = loop.run_in_executor(None, self._check_dnac)
-        ise_f   = loop.run_in_executor(None, self._check_ise)
-        pano_f  = loop.run_in_executor(None, self._check_panorama)
-        dnac_r, ise_r, pano_r = await asyncio.gather(dnac_f, ise_f, pano_f, return_exceptions=True)
-
-        def _safe(r):
-            return r if isinstance(r, dict) else {"ok": False, "detail": str(r)}
-
-        return {
-            "dnac":     _safe(dnac_r),
-            "ise":      _safe(ise_r),
-            "panorama": _safe(pano_r),
-        }
-
-    def _check_dnac(self) -> dict:
-        return self.get_or_set("status_dnac", self.__check_dnac_internal, TTL_STATUS)
-
-    def __check_dnac_internal(self) -> dict:
-        try:
-            import clients.dnac as dc
-            dnac   = dc.get_client()
-            result = dnac.custom_caller.call_api("GET", "/dna/intent/api/v1/network-device/count")
-            count  = getattr(result, "response", 0)
-            return {"ok": True, "detail": f"{count:,} devices"}
-        except Exception as e:
-            return {"ok": False, "detail": str(e)[:80]}
-
-    def _check_ise(self) -> dict:
-        return self.get_or_set("status_ise", self.__check_ise_internal, TTL_STATUS)
-
-    def __check_ise_internal(self) -> dict:
-        try:
-            import clients.ise as ic
-            ise = ic.get_client()
-            ok  = ic.connectivity_check(ise)
-            return {"ok": ok, "detail": "Connected" if ok else "Unreachable"}
-        except Exception as e:
-            return {"ok": False, "detail": str(e)[:80]}
-
-    def _check_panorama(self) -> dict:
-        return self.get_or_set("status_panorama", self.__check_panorama_internal, TTL_STATUS)
-
-    def __check_panorama_internal(self) -> dict:
-        try:
-            import clients.panorama as pc
-            ok, detail = pc.connectivity_check()
-            return {"ok": ok, "detail": detail}
-        except Exception as e:
-            return {"ok": False, "detail": str(e)[:80]}
+    # Connectivity checks live in utils/system_status.py (the single source of
+    # truth, using the status_*_live keys). The older duplicate stack that lived
+    # here was dead code and has been removed.
 
 
 # Singleton used by routers

@@ -10,10 +10,10 @@ from contextlib import asynccontextmanager
 # die during normal operation and their connections get GC'd without close().
 warnings.filterwarnings("ignore", category=ResourceWarning, module="sqlite3")
 from pathlib import Path
-from fastapi import Depends, FastAPI, Request, HTTPException
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from templates_module import templates
 from utils.csrf import CSRFMiddleware
 import auth as auth_module
@@ -60,6 +60,7 @@ async def lifespan(app: FastAPI):
     yield
     logger.info("IMPACT II shutting down.")
     import auth_persist
+    cache._refresh_pool.shutdown(wait=False)
     cache._cache.close()
     if auth_persist._store is not None:
         auth_persist._store.close()
@@ -77,22 +78,56 @@ CORS_ORIGINS = os.getenv("IMPACT_ALLOWED_ORIGINS", "").split(",") if os.getenv("
 app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS, allow_methods=["*"], allow_headers=["*"])
 app.add_middleware(CSRFMiddleware)
 
+SSE_LIMITED_PATHS = {"/api/warm", "/api/ipam/refresh", "/api/commands/run",
+                     "/api/commands/config-run", "/api/import/run",
+                     "/api/tunnels/refresh-stream"}
+
 @app.middleware("http")
 async def sse_rate_limit(request: Request, call_next):
-    if request.url.path in ["/api/warm", "/api/ipam/refresh", "/api/commands/run",
-                            "/api/commands/config-run", "/api/import/run",
-                            "/api/tunnels/refresh-stream"]:
-        token = request.cookies.get("impact_token")
-        if token:
-            key = (token, request.url.path)
-            if sse_limit_tracker.get(key, 0) >= 2:
-                raise HTTPException(429, "Too many concurrent stream connections")
-            sse_limit_tracker[key] = sse_limit_tracker.get(key, 0) + 1
-            try:
-                return await call_next(request)
-            finally:
-                sse_limit_tracker[key] = max(0, sse_limit_tracker.get(key, 0) - 1)
-    return await call_next(request)
+    if request.url.path not in SSE_LIMITED_PATHS:
+        return await call_next(request)
+    token = request.cookies.get("impact_token")
+    if not token:
+        return await call_next(request)
+
+    key = (token, request.url.path)
+    # The check-and-increment runs without an await in between, so under asyncio's
+    # single thread it is atomic — no lock needed.
+    if sse_limit_tracker.get(key, 0) >= 2:
+        return JSONResponse(status_code=429,
+                            content={"detail": "Too many concurrent stream connections"})
+    sse_limit_tracker[key] = sse_limit_tracker.get(key, 0) + 1
+
+    def _release():
+        n = sse_limit_tracker.get(key, 0) - 1
+        if n <= 0:
+            sse_limit_tracker.pop(key, None)
+        else:
+            sse_limit_tracker[key] = n
+
+    try:
+        response = await call_next(request)
+    except Exception:
+        _release()
+        raise
+
+    # The body of a StreamingResponse is sent *after* call_next returns, so we
+    # must release the slot when the body iterator is exhausted/closed — not here
+    # — otherwise the cap never actually bounds concurrent streams.
+    orig_iter = getattr(response, "body_iterator", None)
+    if orig_iter is None:
+        _release()
+        return response
+
+    async def _counted():
+        try:
+            async for chunk in orig_iter:
+                yield chunk
+        finally:
+            _release()
+
+    response.body_iterator = _counted()
+    return response
 
 @app.middleware("http")
 async def add_correlation_id(request: Request, call_next):

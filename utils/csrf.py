@@ -1,6 +1,7 @@
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
+import os
 import secrets
 
 class CSRFMiddleware(BaseHTTPMiddleware):
@@ -28,11 +29,18 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 def set_csrf_cookie(response):
+    # Double-submit token: must stay readable by JS (httponly=False) so the
+    # htmx configRequest handler can echo it in the X-CSRF-Token header. Mirror
+    # the session cookie's secure flag so it isn't sent over plaintext HTTP.
+    secure = os.getenv("IMPACT_SECURE_COOKIES", "true").lower() == "true"
+    if os.getenv("DEV_MODE", "false").lower() == "true" and os.getenv("IMPACT_SECURE_COOKIES") is None:
+        secure = False
     token = secrets.token_urlsafe(32)
     response.set_cookie(
         key="csrf_token",
         value=token,
         httponly=False,
+        secure=secure,
         samesite="strict",
     )
     return token

@@ -203,6 +203,44 @@ async def device_stats(session: SessionEntry = Depends(require_auth)):
     }
 
 
+@router.get("/dashboard-activity", response_class=HTMLResponse)
+async def dashboard_activity(request: Request, session: SessionEntry = Depends(require_auth)):
+    """Heavy dashboard widgets (recent issues + ACI health/faults), rendered as a
+    partial and loaded lazily by the dashboard shell so a slow upstream never
+    blanks the whole page. Recent issues are cached (they were previously a live
+    DNAC call on every dashboard open)."""
+    loop = asyncio.get_event_loop()
+    dnac = _get_dnac(session)
+
+    # 15-min cache; background SWR keeps it warm without ever blocking this load.
+    issues = await loop.run_in_executor(
+        None, run_with_context(cache.get_or_set),
+        "dnac_issues", lambda: dc.get_recent_issues(dnac), 900
+    )
+
+    aci_health = None
+    aci_faults = []
+    from utils.system_status import get_system_status
+    current_status = await get_system_status(session)
+    if current_status.get("aci", {}).get("ok"):
+        from routers.aci import get_health_summary_logic, list_faults_logic
+        import clients.aci_registry as reg
+        try:
+            fabrics = reg.list_fabrics()
+            if fabrics:
+                fid = fabrics[0].id
+                aci_health = await get_health_summary_logic(session, fid)
+                aci_faults, _ = await list_faults_logic(session, fid, severity=None)
+        except Exception as e:
+            logger.warning(f"Failed to fetch ACI dashboard data: {e}")
+
+    return templates.TemplateResponse(request, "partials/dashboard_activity.html", {
+        "issues": issues or [],
+        "aci_health": aci_health,
+        "aci_faults": aci_faults,
+    })
+
+
 @router.get("/devices/{device_id}")
 async def get_device(device_id: str):
     """Device detail by ID."""
