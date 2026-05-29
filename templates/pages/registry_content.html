@@ -18,6 +18,11 @@
       </button>
     </li>
     <li class="nav-item" role="presentation">
+      <button class="nav-link" data-bs-toggle="tab" data-bs-target="#reg-tab-shared" type="button" role="tab">
+        <i class="ph ph-share-network me-1"></i> Shared
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
       <button class="nav-link" data-bs-toggle="tab" data-bs-target="#reg-tab-audit" type="button" role="tab"
               onclick="regLoadAuditOnce()">
         <i class="ph ph-shield-check me-1"></i> Audit &amp; Sync
@@ -37,6 +42,23 @@
         <div class="card-body p-0" id="reg-sites-pane"
              hx-get="/api/registry/sites" hx-trigger="load" hx-swap="innerHTML">
           <div class="text-muted text-center py-5"><i class="ph ph-circle-notch ph-spin me-1"></i> Loading sites…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Shared aggregates (containers) ───────────────────────────────── -->
+    <div class="tab-pane fade" id="reg-tab-shared" role="tabpanel">
+      <div class="card shadow-sm border-0">
+        <div class="card-header bg-light d-flex align-items-center">
+          <i class="ph ph-share-network me-2 text-primary"></i>
+          <strong>Shared aggregates</strong>
+          <span class="text-muted small ms-2">
+            DMVPN overlays, STIP /48s, and org/regional supernets — not owned by a single site.
+          </span>
+        </div>
+        <div class="card-body p-0" id="reg-shared-pane"
+             hx-get="/api/registry/containers" hx-trigger="load" hx-swap="innerHTML">
+          <div class="text-muted text-center py-5"><i class="ph ph-circle-notch ph-spin me-1"></i> Loading shared aggregates…</div>
         </div>
       </div>
     </div>

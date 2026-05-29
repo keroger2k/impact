@@ -1,0 +1,36 @@
+<table class="table table-hover table-striped mb-0 data-table">
+  <thead class="bg-light">
+    <tr>
+      <th>CIDR</th>
+      <th class="text-center">Fam</th>
+      <th>Role</th>
+      <th>Label</th>
+      <th class="text-center">Child sites</th>
+      <th>Status</th>
+      <th>Source</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for c in items %}
+    <tr>
+      <td class="font-monospace fw-semibold">{{ c.cidr }}</td>
+      <td class="text-center"><span class="badge bg-light text-dark border">v{{ c.family }}</span></td>
+      <td class="small">
+        {% if c.role == 'dmvpn' %}<span class="badge bg-primary-subtle text-primary">dmvpn</span>
+        {% elif c.role == 'supernet' %}<span class="badge bg-info-subtle text-info">supernet</span>
+        {% else %}{{ c.role or 'container' }}{% endif %}
+      </td>
+      <td class="small">{{ c.label or '' }}</td>
+      <td class="text-center small" title="{{ c.child_sites|join(', ') }}">
+        {% if c.child_count %}{{ c.child_count }}{% else %}<span class="text-muted">—</span>{% endif %}
+      </td>
+      <td class="small">{{ c.status }}</td>
+      <td class="small text-muted">{{ c.source }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7" class="text-center text-muted py-4">
+      No shared aggregates yet. Accept DMVPN overlays or STIP /48s from the <strong>Audit &amp; Sync</strong> tab.
+    </td></tr>
+    {% endfor %}
+  </tbody>
+</table>

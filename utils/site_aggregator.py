@@ -19,7 +19,7 @@ import re
 from typing import Optional
 
 from cache import cache, TUNNEL_INVENTORY_CACHE_KEY
-from clients import ipv6_registry
+from clients import ip_registry
 from utils.site_code import site_code as _sc, site_code_from_hostname as _sch
 
 
@@ -200,36 +200,35 @@ def routing_devices(devices: list[dict]) -> list[dict]:
     return out
 
 
-# ── IPv6 registry ────────────────────────────────────────────────────────────
+# ── IP registry (dual-stack) ──────────────────────────────────────────────────
 
-def ipv6_for_site(code: str) -> Optional[dict]:
-    """Match an IPv6 registry site row by name (case-insensitive substring)
-    against the site code, and return ``{site, allocations}``.
+def registry_for_site(code: str) -> Optional[dict]:
+    """Return everything the dual-stack IP Registry holds for this site.
 
-    Returns ``None`` if no registry row matches. Registry names don't
-    follow the same code convention as DNAC hierarchies, so this is a
-    best-effort lookup — operators name registry sites with codes like
-    "K023" or "DC1 K023" but not always.
+    Matches on the registry's ``site_code`` join key (the new registry is
+    keyed by code, so this is an exact, case-insensitive lookup — no more
+    name-substring guessing against the deprecated IPv6-only registry).
+
+    Returns ``{site, prefixes, v4, v6}`` or ``None`` when the registry has no
+    site with this code. ``prefixes`` carries both families; ``v4``/``v6`` are
+    the convenience splits the template renders.
     """
     code_u = (code or "").strip().upper()
     if not code_u:
         return None
     try:
-        sites = ipv6_registry.list_sites()
+        site = ip_registry.get_site_by_code(code_u)
+        if not site:
+            return None
+        prefixes = ip_registry.list_prefixes(site_id=site["id"])
     except Exception:
         return None
-    # Prefer an exact word-boundary match before falling back to substring.
-    word_re = re.compile(rf"\b{re.escape(code_u)}\b", re.IGNORECASE)
-    site = next((s for s in sites if word_re.search(s.get("name") or "")), None)
-    if not site:
-        site = next((s for s in sites if code_u in (s.get("name") or "").upper()), None)
-    if not site:
-        return None
-    try:
-        allocs = ipv6_registry.list_allocations(site_id=site["id"])
-    except Exception:
-        allocs = []
-    return {"site": site, "allocations": allocs}
+    return {
+        "site": site,
+        "prefixes": prefixes,
+        "v4": [p for p in prefixes if p["family"] == 4],
+        "v6": [p for p in prefixes if p["family"] == 6],
+    }
 
 
 # ── Tunnels ──────────────────────────────────────────────────────────────────

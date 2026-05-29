@@ -27,7 +27,7 @@
       <div class="ms-auto d-flex gap-3 small text-muted flex-wrap">
         <span><i class="ph ph-desktop"></i> <strong>{{ stats.device_count }}</strong> devices</span>
         <span><i class="ph ph-globe-hemisphere-west"></i> <strong>{{ stats.routing_device_count }}</strong> routing</span>
-        <span><i class="ph ph-binary"></i> IPv6 {% if stats.ipv6_present %}<strong class="text-success">present</strong>{% else %}<span class="text-muted">none</span>{% endif %}</span>
+        <span><i class="ph ph-network"></i> Registry <strong>{{ stats.registry_v4_count }}</strong> v4 / <strong>{{ stats.registry_v6_count }}</strong> v6</span>
         <span><i class="ph ph-lock-key"></i> <strong>{{ stats.tunnel_count }}</strong> tunnels</span>
       </div>
     </div>
@@ -89,44 +89,55 @@
 </div>
 
 <div class="row g-3 mb-3">
-  <!-- ── IPv6 registry ─────────────────────────────────────────────────── -->
+  <!-- ── IP Registry (dual-stack) ──────────────────────────────────────── -->
   <div class="col-lg-6">
     <div class="card shadow-sm border-0 animate-fade-in h-100">
       <div class="card-header bg-light d-flex align-items-center">
-        <i class="ph ph-binary me-2 text-primary"></i>
-        <strong>IPv6 Registry</strong>
-        {% if ipv6 %}
-          <span class="ms-2 font-monospace small text-muted">{{ ipv6.site.prefix }}/{{ ipv6.site.prefix_length }}</span>
-          <span class="badge bg-secondary ms-2">{{ ipv6.allocations|length }} allocations</span>
+        <i class="ph ph-network me-2 text-primary"></i>
+        <strong>IP Registry</strong>
+        {% if registry %}
+          <span class="badge bg-secondary ms-2">{{ registry.v4|length }} v4 · {{ registry.v6|length }} v6</span>
+          <a class="ms-auto small" href="/registry" title="Open in IP Registry"><i class="ph ph-arrow-square-out"></i></a>
         {% endif %}
       </div>
       <div class="card-body p-0">
-        {% if ipv6 %}
+        {% if registry and registry.prefixes %}
         <div class="table-responsive">
-          <table class="table table-sm mb-0">
+          <table class="table table-sm table-hover mb-0">
             <thead class="table-light">
-              <tr><th>vvvv</th><th>IPv4 Subnet</th><th>Purpose</th><th>Status</th></tr>
+              <tr><th>CIDR</th><th class="text-center">Fam</th><th>Role</th><th class="text-center">VLAN</th><th>Status</th><th>Source</th></tr>
             </thead>
             <tbody>
-            {% for a in ipv6.allocations %}
+            {% for p in registry.prefixes %}
               <tr>
-                <td class="font-monospace small">{{ a.vvvv }}</td>
-                <td class="font-monospace small">{{ a.ipv4_subnet or "—" }}</td>
-                <td class="small">{{ a.purpose or "—" }}</td>
+                <td class="font-monospace small fw-semibold">{{ p.cidr }}</td>
+                <td class="text-center"><span class="badge bg-light text-dark border">v{{ p.family }}</span></td>
+                <td class="small">{{ p.role or "—" }}</td>
+                <td class="text-center small">{{ p.vlan_id or "" }}</td>
                 <td>
-                  {% if a.status == "allocated" %}
-                    <span class="badge bg-success-subtle text-success">{{ a.status }}</span>
+                  {% if p.status == "deployed" %}
+                    <span class="badge bg-success-subtle text-success">{{ p.status }}</span>
+                  {% elif p.status == "allocated" %}
+                    <span class="badge bg-primary-subtle text-primary">{{ p.status }}</span>
                   {% else %}
-                    <span class="badge bg-light text-muted">{{ a.status }}</span>
+                    <span class="badge bg-light text-muted">{{ p.status }}</span>
                   {% endif %}
                 </td>
+                <td class="small text-muted">{{ p.source }}</td>
               </tr>
             {% endfor %}
             </tbody>
           </table>
         </div>
+        {% elif registry %}
+          <div class="text-center text-muted py-4 small">
+            Site <code>{{ registry.site.site_code }}</code> is registered but has no prefixes yet.
+          </div>
         {% else %}
-          <div class="text-center text-muted py-4 small">No IPv6 registry site matches this code.</div>
+          <div class="text-center text-muted py-4 small">
+            No registry site matches <code>{{ code }}</code>. Add it on the
+            <a href="/registry">IP Registry</a> page.
+          </div>
         {% endif %}
       </div>
     </div>
