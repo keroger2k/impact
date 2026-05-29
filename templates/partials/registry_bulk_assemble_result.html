@@ -1,0 +1,87 @@
+<div class="animate-fade-in">
+  <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+    <span class="badge bg-success-subtle text-success">{{ result.counts.ok }} assembled</span>
+    {% if result.counts.no_match %}
+      <span class="badge bg-warning-subtle text-warning">{{ result.counts.no_match }} no match</span>
+    {% endif %}
+    {% if result.counts.invalid %}
+      <span class="badge bg-danger-subtle text-danger">{{ result.counts.invalid }} invalid</span>
+    {% endif %}
+    <span class="text-muted small ms-auto">Site:
+      <strong>{{ result.prefix.site_code or result.prefix.cidr }}</strong>
+      <span class="font-monospace">({{ result.prefix.cidr }})</span>
+    </span>
+  </div>
+
+  <ul class="nav nav-tabs nav-tabs-sm mb-3" role="tablist">
+    <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#reg-bulk-table" type="button"><i class="ph ph-table me-1"></i> Table</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#reg-bulk-tsv" type="button"><i class="ph ph-copy me-1"></i> Copy-paste (TSV)</button></li>
+  </ul>
+
+  <div class="tab-content">
+    <!-- Table view -->
+    <div class="tab-pane fade show active" id="reg-bulk-table" role="tabpanel">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover table-striped mb-0">
+          <thead class="bg-light">
+            <tr>
+              <th>IPv4</th>
+              <th>IPv6</th>
+              <th>vvvv</th>
+              <th>VLAN</th>
+              <th>Matched subnet</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in result.rows %}
+            <tr {% if r.status != 'ok' %}class="table-warning"{% endif %}>
+              <td class="font-monospace">{{ r.ipv4 }}</td>
+              <td class="font-monospace">{{ r.ipv6 or '—' }}</td>
+              <td class="font-monospace">{{ r.vvvv or '—' }}</td>
+              <td class="font-monospace small text-muted">{{ r.vlan if r.vlan != '' else '—' }}</td>
+              <td class="font-monospace small text-muted">{{ r.matched_subnet or '—' }}</td>
+              <td>
+                {% if r.status == 'ok' %}
+                  <span class="badge bg-success-subtle text-success">ok</span>
+                {% elif r.status == 'no_match' %}
+                  <span class="badge bg-warning-subtle text-warning" title="{{ r.detail }}">no match</span>
+                {% else %}
+                  <span class="badge bg-danger-subtle text-danger" title="{{ r.detail }}">{{ r.status }}</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Copy-paste TSV view -->
+    <div class="tab-pane fade" id="reg-bulk-tsv" role="tabpanel">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <span class="text-muted small">
+          Tab-separated: <code>site</code> · <code>ipv4</code> · <code>ipv6</code>.
+          Pastes into a spreadsheet. Failed rows excluded.
+        </span>
+        <button type="button" class="btn btn-sm btn-outline" onclick="regCopyBulkTsv(this)">
+          <i class="ph ph-copy me-1"></i> Copy
+        </button>
+      </div>
+      <textarea id="reg-bulk-tsv-text" class="form-control font-monospace small"
+                rows="12" readonly onclick="this.select()">{{ result.tsv }}</textarea>
+    </div>
+  </div>
+</div>
+
+<script>
+window.regCopyBulkTsv = function(btn) {
+  const ta = document.getElementById('reg-bulk-tsv-text');
+  ta.select();
+  navigator.clipboard.writeText(ta.value).then(() => {
+    const original = btn.innerHTML;
+    btn.innerHTML = '<i class="ph ph-check me-1"></i> Copied';
+    setTimeout(() => { btn.innerHTML = original; }, 1500);
+  });
+};
+</script>
