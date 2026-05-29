@@ -34,6 +34,7 @@ from __future__ import annotations
 import datetime as _dt
 import ipaddress
 import logging
+import os
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -112,28 +113,45 @@ def _iface_type(name: str, family: int, prefixlen: int) -> str:
     return ""
 
 
-# Special-use / non-allocatable ranges that are never a site allocation — e.g.
-# CGNAT (RFC 6598, often referenced in ACL object-groups like TSA_LOCAL_HOSTS),
-# link-local, multicast, TEST-NET, benchmarking, and IPv6 link-local/multicast.
-_SPECIAL_USE = [ipaddress.ip_network(c) for c in (
-    "0.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16",
-    "192.0.0.0/24", "192.0.2.0/24", "198.18.0.0/15", "198.51.100.0/24",
-    "203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4", "255.255.255.255/32",
-    "::/128", "::1/128", "fe80::/10", "ff00::/8", "2001:db8::/32",
-)]
+# In-scope address space — the ONLY space the registry tracks. Anything that
+# doesn't overlap one of these is out of scope (public/CGNAT/link-local/foreign,
+# incl. ACL object-group references) and is dropped from the audit. Defaults:
+# RFC1918 + the org IPv6 block. Override per family with env vars (comma-separated
+# CIDRs): IMPACT_AUDIT_SCOPE_V4 / IMPACT_AUDIT_SCOPE_V6.
+#   NB: 2600:400:3000::/40 spans 3000..30ff (the sites at 3023/3059/30d1/30e1
+#   etc.); a literal /44 would only cover 3000..300f and drop most of them.
+_DEFAULT_SCOPE_V4 = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+_DEFAULT_SCOPE_V6 = ["2600:400:3000::/40"]
 
 
-def _is_special_use(canon: str) -> bool:
+def _load_scope() -> list:
+    def parse(env: str, default: list[str]) -> list:
+        raw = [c.strip() for c in os.getenv(env, "").split(",") if c.strip()]
+        nets = []
+        for c in (raw or default):
+            try:
+                nets.append(ipaddress.ip_network(c))
+            except ValueError:
+                logger.warning("ip_audit: ignoring bad scope CIDR %r in %s", c, env)
+        return nets
+    return parse("IMPACT_AUDIT_SCOPE_V4", _DEFAULT_SCOPE_V4) + \
+        parse("IMPACT_AUDIT_SCOPE_V6", _DEFAULT_SCOPE_V6)
+
+
+_IN_SCOPE = _load_scope()
+
+
+def _in_scope(canon: str) -> bool:
     n = ipaddress.ip_network(canon)
-    return any(n.version == sp.version and n.subnet_of(sp) for sp in _SPECIAL_USE)
+    return any(n.version == s.version and n.overlaps(s) for s in _IN_SCOPE)
 
 
 def _canon(value: Optional[str]) -> Optional[tuple[int, str, int]]:
     """(family, canonical_cidr, prefixlen) or None for pseudo-labels / junk.
     Rejects default routes (/0) — a 0.0.0.0/0 in the registry would 'cover'
-    everything and silence the audit — and special-use ranges (CGNAT, link-local,
-    multicast, TEST-NET, …) that show up via ACL object-groups but are never
-    site address space."""
+    everything and silence the audit — and anything OUT OF SCOPE (not overlapping
+    the tracked RFC1918 / org-IPv6 space): public, CGNAT, link-local, object-group
+    references, etc."""
     if not value:
         return None
     if "/" not in value and ":" not in value and "." not in value:
@@ -144,7 +162,7 @@ def _canon(value: Optional[str]) -> Optional[tuple[int, str, int]]:
         return None
     if plen == 0:
         return None  # 0.0.0.0/0 or ::/0 — default route, not address space
-    if _is_special_use(canon):
+    if not _in_scope(canon):
         return None
     return fam, canon, plen
 

@@ -168,17 +168,19 @@ def test_extract_dnac_interfaces_fallback_and_aci():
     assert aci[0].site_code == ""   # DC subnets attribute by containment only
 
 
-def test_special_use_ranges_excluded():
-    # CGNAT (object-group TSA_LOCAL_HOSTS), link-local, multicast → not allocations
-    assert ip_audit._canon("100.64.0.0/10") is None
-    assert ip_audit._canon("100.64.5.0/24") is None      # inside CGNAT
-    assert ip_audit._canon("169.254.1.0/24") is None
-    assert ip_audit._canon("224.0.0.0/4") is None
-    assert ip_audit._canon("fe80::/64") is None
-    # Real RFC1918 and public site space are kept.
+def test_out_of_scope_dropped_in_scope_kept():
+    # In scope: RFC1918 + the org IPv6 block (2600:400:3000::/40).
     assert ip_audit._canon("10.0.0.0/8") is not None
-    assert ip_audit._canon("172.16.0.0/12") is not None
-    assert ip_audit._canon("98.97.64.0/21") is not None  # public — can't be range-filtered
+    assert ip_audit._canon("172.17.13.80/29") is not None     # 172.16/12
+    assert ip_audit._canon("192.168.1.0/24") is not None
+    assert ip_audit._canon("2600:400:3023::/48") is not None  # S041 — inside /40
+    assert ip_audit._canon("2600:400:3059:88::/64") is not None
+    # Out of scope: public, CGNAT, link-local, and IPv6 outside the org block.
+    assert ip_audit._canon("98.97.64.0/21") is None           # public — not tracked
+    assert ip_audit._canon("100.64.0.0/10") is None           # CGNAT object-group
+    assert ip_audit._canon("169.254.1.0/24") is None
+    assert ip_audit._canon("2600:400:c0::/48") is None        # 2600:400 but not 30xx
+    assert ip_audit._canon("fe80::/64") is None
 
 
 def test_default_routes_excluded():
