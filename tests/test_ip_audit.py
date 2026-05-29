@@ -168,6 +168,19 @@ def test_extract_dnac_interfaces_fallback_and_aci():
     assert aci[0].site_code == ""   # DC subnets attribute by containment only
 
 
+def test_special_use_ranges_excluded():
+    # CGNAT (object-group TSA_LOCAL_HOSTS), link-local, multicast → not allocations
+    assert ip_audit._canon("100.64.0.0/10") is None
+    assert ip_audit._canon("100.64.5.0/24") is None      # inside CGNAT
+    assert ip_audit._canon("169.254.1.0/24") is None
+    assert ip_audit._canon("224.0.0.0/4") is None
+    assert ip_audit._canon("fe80::/64") is None
+    # Real RFC1918 and public site space are kept.
+    assert ip_audit._canon("10.0.0.0/8") is not None
+    assert ip_audit._canon("172.16.0.0/12") is not None
+    assert ip_audit._canon("98.97.64.0/21") is not None  # public — can't be range-filtered
+
+
 def test_default_routes_excluded():
     assert ip_audit._canon("0.0.0.0/0") is None
     assert ip_audit._canon("::/0") is None

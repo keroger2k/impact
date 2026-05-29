@@ -32,6 +32,7 @@ exception); ``reconcile`` is a pure function and is unit-tested without a cache.
 from __future__ import annotations
 
 import datetime as _dt
+import ipaddress
 import logging
 import re
 from collections import defaultdict
@@ -111,10 +112,28 @@ def _iface_type(name: str, family: int, prefixlen: int) -> str:
     return ""
 
 
+# Special-use / non-allocatable ranges that are never a site allocation — e.g.
+# CGNAT (RFC 6598, often referenced in ACL object-groups like TSA_LOCAL_HOSTS),
+# link-local, multicast, TEST-NET, benchmarking, and IPv6 link-local/multicast.
+_SPECIAL_USE = [ipaddress.ip_network(c) for c in (
+    "0.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16",
+    "192.0.0.0/24", "192.0.2.0/24", "198.18.0.0/15", "198.51.100.0/24",
+    "203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4", "255.255.255.255/32",
+    "::/128", "::1/128", "fe80::/10", "ff00::/8", "2001:db8::/32",
+)]
+
+
+def _is_special_use(canon: str) -> bool:
+    n = ipaddress.ip_network(canon)
+    return any(n.version == sp.version and n.subnet_of(sp) for sp in _SPECIAL_USE)
+
+
 def _canon(value: Optional[str]) -> Optional[tuple[int, str, int]]:
     """(family, canonical_cidr, prefixlen) or None for pseudo-labels / junk.
-    Default routes (/0) are rejected — they are not allocations, and a 0.0.0.0/0
-    in the registry would 'cover' every address and silence the audit."""
+    Rejects default routes (/0) — a 0.0.0.0/0 in the registry would 'cover'
+    everything and silence the audit — and special-use ranges (CGNAT, link-local,
+    multicast, TEST-NET, …) that show up via ACL object-groups but are never
+    site address space."""
     if not value:
         return None
     if "/" not in value and ":" not in value and "." not in value:
@@ -125,6 +144,8 @@ def _canon(value: Optional[str]) -> Optional[tuple[int, str, int]]:
         return None
     if plen == 0:
         return None  # 0.0.0.0/0 or ::/0 — default route, not address space
+    if _is_special_use(canon):
+        return None
     return fam, canon, plen
 
 
