@@ -128,7 +128,10 @@ body {
   color: var(--text-muted);
 }
 
-.nav-item {
+/* Scoped to #sidebar: these are the sidebar's dark nav links. Without the
+   scope they leak onto Bootstrap .nav-tabs (which also use .nav-item on their
+   <li>), painting tab strips with the dark sidebar-hover background. */
+#sidebar .nav-item {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -141,12 +144,12 @@ body {
   border-left: 3px solid transparent;
 }
 
-.nav-item:hover {
+#sidebar .nav-item:hover {
   background: var(--sidebar-hover);
   color: #fff;
 }
 
-.nav-item.active {
+#sidebar .nav-item.active {
   background: rgba(59, 130, 246, 0.1);
   color: #fff;
   border-left-color: var(--accent);
