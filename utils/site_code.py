@@ -72,6 +72,10 @@ _STRICT_STOPWORDS = {
     "TEXA", "TENN",
     "INFO", "ITEM", "IRON", "IDEA",
     "KIND", "KEEP", "KIDS",
+    # DNAC tags / categories that match the 4-letter [KSTI] shape but are NOT
+    # physical sites — listing them here lets the real site code (which usually
+    # appears alongside the tag in the hierarchy path) win instead.
+    "SOHO",
 }
 
 

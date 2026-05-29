@@ -141,6 +141,17 @@ def _obs(cidr_raw: Optional[str], source: str, *, site_code: str = "",
                     label=label, interface=interface, iface_type=itype, vlan=vlan)
 
 
+def _code(*texts: Optional[str]) -> str:
+    """First real 4-char site code found across the given strings (site path,
+    then device hostname). SOHO and other tag-shaped tokens are filtered by
+    site_code_strict's stopword list, so the real code wins."""
+    for t in texts:
+        c = site_code_strict(t or "")
+        if c:
+            return c.upper()
+    return ""
+
+
 # ── Source extractors ──────────────────────────────────────────────────────────
 
 def _from_ipam_tree(cache) -> list[Observed]:
@@ -154,7 +165,7 @@ def _from_ipam_tree(cache) -> list[Observed]:
     def walk(nodes):
         for n in nodes or []:
             o = _obs(n.get("cidr"), "dnac",
-                     site_code=site_code_strict(n.get("site") or "").upper(),
+                     site_code=_code(n.get("site"), n.get("device")),
                      label=n.get("display_name") or n.get("source") or "",
                      iface_type_hint=n.get("interface_type") or "",
                      vlan_hint=n.get("vlan_id"))
@@ -178,7 +189,7 @@ def _from_dnac_interfaces(cache) -> list[Observed]:
             continue
         port = i.get("portName") or ""
         o = _obs(f"{addr}/{mask}", "dnac",
-                 site_code=site_code_strict(sitemap.get(i.get("deviceId"), "") or "").upper(),
+                 site_code=_code(sitemap.get(i.get("deviceId"), ""), i.get("deviceName")),
                  label=i.get("deviceName") or port, interface=port)
         if o:
             out.append(o)
@@ -320,12 +331,22 @@ def is_tunnel(o: Observed) -> bool:
     return o.iface_type == "tunnel"
 
 
-def is_host(o: Observed, *, v4_min: int = HOST_V4_MIN_PREFIX,
-            v6_min: int = HOST_V6_MIN_PREFIX) -> bool:
-    if o.iface_type in HOST_IFACE_TYPES:
-        return True
+def _host_by_length(o: Observed, v4_min: int = HOST_V4_MIN_PREFIX,
+                    v6_min: int = HOST_V6_MIN_PREFIX) -> bool:
     p = _plen(o.cidr)
     return (o.family == 4 and p >= v4_min) or (o.family == 6 and p >= v6_min)
+
+
+def is_host(o: Observed, *, v4_min: int = HOST_V4_MIN_PREFIX,
+            v6_min: int = HOST_V6_MIN_PREFIX) -> bool:
+    return o.iface_type in HOST_IFACE_TYPES or _host_by_length(o, v4_min, v6_min)
+
+
+def is_overlay(o: Observed, *, v4_min: int = HOST_V4_MIN_PREFIX,
+               v6_min: int = HOST_V6_MIN_PREFIX) -> bool:
+    """A tunnel that is NOT host-length — i.e. a multipoint DMVPN overlay. A
+    /30-/31 (or /127) tunnel is a point-to-point link and falls to host bucket."""
+    return is_tunnel(o) and not _host_by_length(o, v4_min, v6_min)
 
 
 # ── Classification core (pure) ──────────────────────────────────────────────────
@@ -377,26 +398,51 @@ def reconcile(sites: list[dict], prefixes: list[dict], observed: list[Observed],
         if p.get("site_id") is not None:        # skip shared containers
             site_prefixes[p["site_id"]].append(p)
 
-    # 1) Pull tunnels + host routes out of the per-site stream first.
-    tunnels = [o for o in observed if is_tunnel(o)]
-    rest = [o for o in observed if not is_tunnel(o)]
+    containers = [p for p in prefixes if p.get("site_id") is None]
+
+    # 1) Partition: multipoint tunnel overlays and host routes come out of the
+    #    per-site stream first. A tunnel at host length (/30+ v4, /127+ v6) is a
+    #    point-to-point link, not a shared overlay → it falls to the host bucket.
+    tunnels = [o for o in observed if is_overlay(o, v4_min=host_v4_min, v6_min=host_v6_min)]
+    rest = [o for o in observed if not is_overlay(o, v4_min=host_v4_min, v6_min=host_v6_min)]
     hosts = [o for o in rest if is_host(o, v4_min=host_v4_min, v6_min=host_v6_min)]
     normal = [o for o in rest if not is_host(o, v4_min=host_v4_min, v6_min=host_v6_min)]
 
-    # 2) Attribute the remaining observations to a site (code, then containment).
+    # 2) Attribute remaining observations: site code, then containment with a
+    #    site prefix in EITHER direction (obs inside a registered block, or obs a
+    #    supernet of one — the IPv6 /48-vs-/56 case). Anything left that matches a
+    #    shared container (STIP /48, accepted overlay) is 'covered', not drift.
     per_site_obs: dict[int, list[Observed]] = defaultdict(list)
     unattributed: list[Observed] = []
+    container_seen: set = set()
     for o in normal:
         sid = None
         if o.site_code and o.site_code in code_to_site:
             sid = code_to_site[o.site_code]["id"]
-        if sid is None:
+        if sid is None:                                 # obs inside a site block
             for s in sites:
                 if any(ipam_net.contains(p["cidr"], o.cidr)
                        for p in site_prefixes.get(s["id"], [])):
                     sid = s["id"]
                     break
-        (per_site_obs[sid].append(o) if sid is not None else unattributed.append(o))
+        if sid is None:                                 # obs is a supernet of a block
+            best = None
+            for s in sites:
+                for p in site_prefixes.get(s["id"], []):
+                    if ipam_net.contains(o.cidr, p["cidr"]):
+                        pl = _plen(p["cidr"])
+                        if best is None or pl > best[0]:
+                            best = (pl, s["id"])
+            if best:
+                sid = best[1]
+        if sid is not None:
+            per_site_obs[sid].append(o)
+            continue
+        cont = next((c for c in containers if _confirms(c["cidr"], o.cidr)), None)
+        if cont:
+            container_seen.add(cont["id"])              # covered by shared infra
+        else:
+            unattributed.append(o)
 
     # 3) Per-site classification.
     site_reports: list[dict] = []
@@ -475,12 +521,26 @@ def reconcile(sites: list[dict], prefixes: list[dict], observed: list[Observed],
     host_by_type: dict[str, int] = defaultdict(int)
     host_items: list[dict] = []
     for o in hosts:
-        host_by_type[o.iface_type or "host"] += 1
-        host_items.append({"cidr": o.cidr, "family": o.family,
-                           "iface_type": o.iface_type or "host",
+        t = o.iface_type or "host"
+        if t == "tunnel":
+            t = "p2p"   # a host-length tunnel is a point-to-point link, not an overlay
+        host_by_type[t] += 1
+        host_items.append({"cidr": o.cidr, "family": o.family, "iface_type": t,
                            "sources": [o.source], "site_code": o.site_code,
                            "label": o.label})
     host_items.sort(key=lambda x: (x["family"], x["cidr"]))
+
+    # Shared containers (STIP /48 etc.) — credited as in-sync when the live
+    # network was seen inside them. DMVPN overlays are reported separately.
+    container_findings: list[dict] = []
+    containers_in_sync = 0
+    for c in containers:
+        if c.get("role") == "dmvpn":
+            continue
+        state = "in-sync" if c["id"] in container_seen else "registry-only"
+        if state == "in-sync":
+            containers_in_sync += 1
+        container_findings.append({"prefix": c, "state": state})
 
     # New-site candidates vs. truly loose unattributed.
     new_site_candidates: dict[str, list[dict]] = defaultdict(list)
@@ -501,10 +561,13 @@ def reconcile(sites: list[dict], prefixes: list[dict], observed: list[Observed],
             "dmvpn_overlays": len(dmvpn_overlays),
             "dmvpn_unregistered": sum(1 for d in dmvpn_overlays if not d["in_registry"]),
             "host_routes": len(host_items),
+            "containers_total": len(container_findings),
+            "containers_in_sync": containers_in_sync,
             "unattributed": len(loose),
             "new_site_candidates": len(new_site_candidates),
         },
         "sites": site_reports,
+        "containers": container_findings,
         "dmvpn_overlays": dmvpn_overlays,
         "infrastructure": {"count": len(host_items),
                            "by_type": dict(sorted(host_by_type.items())),

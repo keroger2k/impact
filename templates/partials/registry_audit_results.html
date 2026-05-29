@@ -49,8 +49,9 @@
          {% if site_code %}data-site-code="{{ site_code }}"{% endif %}>
 {% endmacro %}
 
-{% if not report.sites and not report.dmvpn_overlays and not report.new_site_candidates
-      and not report.unattributed and not report.infrastructure.count %}
+{% if not report.sites and not report.dmvpn_overlays and not report.containers
+      and not report.new_site_candidates and not report.unattributed
+      and not report.infrastructure.count %}
   <div class="alert alert-success small"><i class="ph ph-check-circle me-1"></i>
     Nothing to reconcile — every site's registry and observed networks line up (or no live data is warmed yet).</div>
 {% endif %}
@@ -141,6 +142,24 @@
         {% endfor %}
       </tbody>
     </table>
+  </div>
+</div>
+{% endif %}
+
+{% if report.containers %}
+<div class="card border-0 shadow-sm mb-2">
+  <div class="card-header bg-white py-2">
+    <i class="ph ph-share-network me-1 text-success"></i>
+    <span class="fw-bold">Shared aggregates</span>
+    <span class="text-muted small ms-1">— containers (e.g. STIP /48) not owned by one site.</span>
+  </div>
+  <div class="card-body py-2 d-flex flex-wrap gap-2">
+    {% for c in report.containers %}
+      <span class="badge {% if c.state == 'in-sync' %}bg-success-subtle text-success{% else %}bg-warning-subtle text-warning{% endif %} font-monospace"
+            title="{{ c.prefix.label or c.prefix.role or '' }} · {{ c.state }}">
+        {{ c.prefix.cidr }}{% if c.state == 'in-sync' %} ✓{% endif %}
+      </span>
+    {% endfor %}
   </div>
 </div>
 {% endif %}

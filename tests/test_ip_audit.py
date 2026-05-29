@@ -213,6 +213,52 @@ def test_collect_svi_vlan_from_portname():
     assert out[0].iface_type == "svi" and out[0].vlan == 100
 
 
+def test_p2p_tunnel_goes_to_infrastructure_not_dmvpn():
+    # A /30 Palo tunnel.N is a point-to-point link, not a shared overlay.
+    obs = [Observed("10.100.102.196/30", 4, "panorama", interface="tunnel.1",
+                    iface_type="tunnel")]
+    rep = reconcile([_site(1, "K001")], [], obs)
+    assert rep["summary"]["dmvpn_overlays"] == 0
+    assert rep["summary"]["host_routes"] == 1
+    assert rep["infrastructure"]["by_type"].get("p2p") == 1   # relabeled from tunnel
+
+
+def test_bidirectional_containment_ipv6_48_over_56():
+    sites = [_site(1, "K015")]
+    prefixes = [_prefix(11, 1, "2600:400:3007:700::/56", 6, "site")]
+    # DNAC advertises the /48; the registry documents a /56 inside it, no code.
+    obs = [Observed("2600:400:3007::/48", 6, "dnac")]
+    rep = reconcile(sites, prefixes, obs)
+    assert rep["summary"]["unattributed"] == 0
+    site_rep = rep["sites"][0]
+    assert site_rep["counts"]["in_sync"] == 1            # the /56 is confirmed
+    drift = {d["cidr"]: d for d in site_rep["drift"]}
+    assert drift["2600:400:3007::/48"]["kind"] == "mismatch"
+
+
+def test_container_reconciliation_credits_stip_and_absorbs_members():
+    sites = [_site(1, "K001")]
+    prefixes = [{"id": 99, "site_id": None, "cidr": "2600:400:3059::/48",
+                 "family": 6, "role": "container", "label": "STIP"}]
+    obs = [
+        Observed("2600:400:3059::/48", 6, "dnac"),       # the /48 itself, no code
+        Observed("2600:400:3059:5::/64", 6, "dnac"),     # a member, no code
+    ]
+    rep = reconcile(sites, prefixes, obs)
+    assert rep["summary"]["unattributed"] == 0           # both covered by container
+    assert rep["summary"]["containers_in_sync"] == 1
+    conts = {c["prefix"]["cidr"]: c for c in rep["containers"]}
+    assert conts["2600:400:3059::/48"]["state"] == "in-sync"
+
+
+def test_soho_tag_resolves_to_real_site_code():
+    from utils.site_code import site_code_strict
+    assert site_code_strict("Global/USA/SOHO/SDCZ - Office") == "SDCZ"
+    assert site_code_strict("Global/SOHO") == ""          # only the tag, no real code
+    # the audit's _code falls back to the device hostname when the path has none
+    assert ip_audit._code("Global/SOHO", "sdczfwl001") == "SDCZ"
+
+
 def test_iface_type_classifier():
     f = ip_audit._iface_type
     assert f("Tunnel200", 4, 21) == "tunnel"
