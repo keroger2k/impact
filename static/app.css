@@ -1006,3 +1006,16 @@ body.live-tunnel-resizing {
   flex-shrink: 0;
 }
 .app-toast .app-toast-close:hover { color: #fff; }
+
+/* ── Routing device collapse toggles (Site Lookup) ──────────────────────────
+   A clickable header row (not a Bootstrap .btn) that expands a device's live
+   routing panels. The caret rotates with the collapse's aria-expanded state. */
+.rt-dev-toggle {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  border-radius: var(--radius, 6px);
+}
+.rt-dev-toggle:hover { background: #f1f5f9; }
+.rt-caret { transition: transform var(--transition, 0.15s ease); }
+.rt-dev-toggle[aria-expanded="true"] .rt-caret { transform: rotate(90deg); }

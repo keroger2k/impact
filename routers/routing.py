@@ -95,6 +95,78 @@ def _count_eigrp_neighbors(output: str | None) -> int:
         return 0
     return sum(1 for line in output.splitlines() if _RE_EIGRP_NBR.match(line))
 
+
+# ── Neighbor row parsers (raw `show` → structured rows for clean tables) ──────
+# The count helpers above stay as the authoritative header badge; these add
+# per-row structure so the panels render as tables instead of raw CLI dumps.
+# Token-based (column whitespace varies by platform/terminal width). A parse
+# miss just yields [] and the template falls back to showing the raw output, so
+# nothing is ever hidden.
+
+def _is_ipv4(tok: str) -> bool:
+    parts = tok.split(".")
+    return len(parts) == 4 and all(p.isdigit() and len(p) <= 3 for p in parts)
+
+
+_RE_LINKLOCAL = re.compile(r"fe80::\S+", re.I)
+_EIGRP_COLS = ("h", "address", "interface", "hold", "uptime", "srtt", "rto", "q", "seq")
+
+
+def _parse_eigrp_v4(output: str | None) -> list[dict]:
+    """`show ip eigrp neighbors`: H Address Iface Hold Uptime SRTT RTO Q Seq."""
+    rows = []
+    for line in (output or "").splitlines():
+        t = line.split()
+        if len(t) >= 9 and t[0].isdigit() and _is_ipv4(t[1]):
+            rows.append(dict(zip(_EIGRP_COLS, t[:9])))
+    return rows
+
+
+def _parse_eigrp_v6(output: str | None) -> list[dict]:
+    """`show ipv6 eigrp neighbors`: the neighbor prints as 'Link-local
+    address:' on the row with the FE80:: address on the *next* line; also
+    tolerates an inline IPv6 address."""
+    lines = (output or "").splitlines()
+    rows = []
+    for i, line in enumerate(lines):
+        t = line.split()
+        if len(t) >= 10 and t[0].isdigit() and t[1].lower() == "link-local":
+            addr = ""
+            if i + 1 < len(lines):
+                m = _RE_LINKLOCAL.search(lines[i + 1])
+                if m:
+                    addr = m.group(0)
+            rows.append({"h": t[0], "address": addr or "link-local",
+                         "interface": t[3], "hold": t[4], "uptime": t[5],
+                         "srtt": t[6], "rto": t[7], "q": t[8], "seq": t[9]})
+        elif len(t) >= 9 and t[0].isdigit() and ":" in t[1]:
+            rows.append(dict(zip(_EIGRP_COLS, t[:9])))
+    return rows
+
+
+def _ospf_state_class(state: str) -> str:
+    """Bootstrap color token for an OSPF adjacency state."""
+    s = (state or "").upper()
+    if s.startswith("FULL"):
+        return "success"
+    if any(x in s for x in ("DOWN", "INIT", "ATTEMPT", "EXSTART", "EXCHANGE", "LOADING")):
+        return "warning"
+    return "secondary"  # 2-WAY / DROTHER-DROTHER and the like — normal, not "up"
+
+
+def _parse_ospf_neighbors(output: str | None) -> list[dict]:
+    """`show ip|ipv6 ospf neighbor`: Neighbor-ID Pri State Dead-Time
+    Address|Iface-ID Interface. OSPFv3 keeps an IPv4 router-id, so the same
+    matcher works for both families."""
+    rows = []
+    for line in (output or "").splitlines():
+        t = line.split()
+        if len(t) >= 6 and _is_ipv4(t[0]) and t[1].isdigit():
+            rows.append({"neighbor_id": t[0], "pri": t[1], "state": t[2],
+                         "state_class": _ospf_state_class(t[2]),
+                         "dead_time": t[3], "address": t[4], "interface": t[5]})
+    return rows
+
 @router.post("/bgp/summary", response_class=HTMLResponse)
 async def bgp_summary(
     request: Request,
@@ -235,6 +307,8 @@ H   Address                 Interface              Hold Uptime   SRTT   RTO  Q  
 """
         return templates.TemplateResponse(request, "partials/eigrp_neighbors.html", {
             "v4_output": mock_v4, "v6_output": mock_v6, "ip": ip,
+            "v4_rows":   _parse_eigrp_v4(mock_v4),
+            "v6_rows":   _parse_eigrp_v6(mock_v6),
             "v4_count":  _count_eigrp_neighbors(mock_v4),
             "v6_count":  _count_eigrp_neighbors(mock_v6),
         })
@@ -259,6 +333,8 @@ H   Address                 Interface              Hold Uptime   SRTT   RTO  Q  
         "v4_error":  v4_res.get("error") if v4_res["status"] != "success" else None,
         "v6_output": v6_output,
         "v6_error":  v6_res.get("error") if v6_res["status"] != "success" else None,
+        "v4_rows":   _parse_eigrp_v4(v4_output),
+        "v6_rows":   _parse_eigrp_v6(v6_output),
         "v4_count":  _count_eigrp_neighbors(v4_output),
         "v6_count":  _count_eigrp_neighbors(v6_output),
         "ip": ip,
@@ -291,6 +367,8 @@ async def ospf_neighbors(
         return templates.TemplateResponse(request, "partials/ospf_neighbors.html", {
             "output":      mock_v4,
             "v6_output":   mock_v6,
+            "v4_rows":     _parse_ospf_neighbors(mock_v4),
+            "v6_rows":     _parse_ospf_neighbors(mock_v6),
             "v4_count":    _count_ospf_neighbors(mock_v4),
             "v6_count":    _count_ospf_neighbors(mock_v6),
             "correlations": corr_map,
@@ -330,6 +408,8 @@ async def ospf_neighbors(
     return templates.TemplateResponse(request, "partials/ospf_neighbors.html", {
         "output":       v4_output,
         "v6_output":    v6_output,
+        "v4_rows":      _parse_ospf_neighbors(v4_output),
+        "v6_rows":      _parse_ospf_neighbors(v6_output),
         "v4_count":     _count_ospf_neighbors(v4_output),
         "v6_count":     _count_ospf_neighbors(v6_output),
         "correlations": corr_map,

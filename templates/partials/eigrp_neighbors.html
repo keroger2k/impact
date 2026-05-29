@@ -1,11 +1,59 @@
-<div class="card shadow-sm border-0 animate-fade-in mt-4">
+{% macro raw_block(text) %}
+<pre class="mb-0 p-3 small bg-light text-body border-top" style="max-height:280px;overflow:auto;font-family:'SF Mono',ui-monospace,monospace;font-size:12px;line-height:1.45;">{{ text }}</pre>
+{% endmacro %}
+
+{% macro raw_toggle(text) %}
+<details class="border-top">
+  <summary class="px-3 py-2 small text-muted" style="cursor:pointer;list-style:revert;"><i class="ph ph-terminal-window me-1"></i>Raw CLI</summary>
+  {{ raw_block(text) }}
+</details>
+{% endmacro %}
+
+{% macro eigrp_side(rows, output, error, family) %}
+  {% if error %}
+    <div class="alert alert-warning small mb-0 m-2"><i class="ph ph-warning me-1"></i>{{ error }}</div>
+  {% elif rows %}
+    <div class="table-responsive">
+      <table class="table table-sm table-hover align-middle mb-0 small">
+        <thead class="table-light">
+          <tr>
+            <th class="text-muted">H</th><th>Neighbor</th><th>Interface</th>
+            <th class="text-end">Hold</th><th>Uptime</th>
+            <th class="text-end">SRTT</th><th class="text-end">RTO</th><th class="text-end">Q</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td class="text-muted">{{ r.h }}</td>
+            <td class="font-monospace">{{ r.address }}</td>
+            <td class="font-monospace">{{ r.interface }}</td>
+            <td class="text-end font-monospace">{{ r.hold }}</td>
+            <td class="font-monospace text-muted">{{ r.uptime }}</td>
+            <td class="text-end font-monospace text-muted">{{ r.srtt }}</td>
+            <td class="text-end font-monospace text-muted">{{ r.rto }}</td>
+            <td class="text-end font-monospace {{ 'text-danger fw-bold' if r.q not in ('0', '') else 'text-muted' }}">{{ r.q }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if output %}{{ raw_toggle(output) }}{% endif %}
+  {% elif output %}
+    <div class="small text-muted px-3 pt-2"><i class="ph ph-info me-1"></i>Couldn't parse — showing raw output.</div>
+    {{ raw_block(output) }}
+  {% else %}
+    <div class="text-center text-muted small py-4">No {{ family }} EIGRP neighbors.</div>
+  {% endif %}
+{% endmacro %}
+
+<div class="card shadow-sm border-0 animate-fade-in mt-3">
   <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center">
     <div class="d-flex align-items-center gap-2 flex-wrap">
       <i class="ph ph-tree-structure"></i>
       <span class="fw-bold">EIGRP Neighbors{% if ip %}<span class="opacity-75 small ms-2">{{ ip }}</span>{% endif %}</span>
       <span class="badge bg-light text-dark ms-2"><strong>{{ v4_count|default(0) }}</strong> IPv4</span>
       <span class="badge bg-light text-dark"><strong>{{ v6_count|default(0) }}</strong> IPv6</span>
-      <span class="small opacity-75 ms-1">neighbors</span>
     </div>
     <button class="btn btn-sm btn-outline-light" onclick="this.closest('.card').remove()">
       <i class="ph ph-x me-1"></i>Close
@@ -13,31 +61,19 @@
   </div>
   <div class="card-body p-0">
     <div class="row g-0">
-      <div class="col-md-6 border-end">
-        <div class="px-3 py-2 bg-light border-bottom small fw-bold text-uppercase letter-spacing-1 text-navy d-flex align-items-center">
+      <div class="col-lg-6 border-end">
+        <div class="px-3 py-2 bg-light border-bottom small fw-bold text-uppercase text-navy d-flex align-items-center">
           <i class="ph ph-globe me-1"></i>EIGRPv4
           <span class="badge bg-secondary ms-2">{{ v4_count|default(0) }}</span>
         </div>
-        {% if v4_error %}
-          <div class="alert alert-warning small mb-0 m-2"><i class="ph ph-warning"></i> {{ v4_error }}</div>
-        {% elif v4_output %}
-          <pre class="p-3 mb-0 bg-dark text-warning" style="max-height: 320px; overflow:auto; font-family:'SF Mono',monospace; font-size:12px; line-height:1.5;">{{ v4_output }}</pre>
-        {% else %}
-          <div class="text-center text-muted small py-4">No IPv4 EIGRP neighbors.</div>
-        {% endif %}
+        {{ eigrp_side(v4_rows, v4_output, v4_error, "IPv4") }}
       </div>
-      <div class="col-md-6">
-        <div class="px-3 py-2 bg-light border-bottom small fw-bold text-uppercase letter-spacing-1 text-navy d-flex align-items-center">
+      <div class="col-lg-6">
+        <div class="px-3 py-2 bg-light border-bottom small fw-bold text-uppercase text-navy d-flex align-items-center">
           <i class="ph ph-globe me-1"></i>EIGRPv6
           <span class="badge bg-secondary ms-2">{{ v6_count|default(0) }}</span>
         </div>
-        {% if v6_error %}
-          <div class="alert alert-warning small mb-0 m-2"><i class="ph ph-warning"></i> {{ v6_error }}</div>
-        {% elif v6_output %}
-          <pre class="p-3 mb-0 bg-dark text-warning" style="max-height: 320px; overflow:auto; font-family:'SF Mono',monospace; font-size:12px; line-height:1.5;">{{ v6_output }}</pre>
-        {% else %}
-          <div class="text-center text-muted small py-4">No IPv6 EIGRP neighbors.</div>
-        {% endif %}
+        {{ eigrp_side(v6_rows, v6_output, v6_error, "IPv6") }}
       </div>
     </div>
   </div>

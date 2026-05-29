@@ -1,61 +1,100 @@
-<div class="card shadow-sm border-0 animate-fade-in mt-4">
+{% macro raw_block(text) %}
+<pre class="mb-0 p-3 small bg-light text-body border-top" style="max-height:280px;overflow:auto;font-family:'SF Mono',ui-monospace,monospace;font-size:12px;line-height:1.45;">{{ text }}</pre>
+{% endmacro %}
+
+{% macro raw_toggle(text) %}
+<details class="border-top">
+  <summary class="px-3 py-2 small text-muted" style="cursor:pointer;list-style:revert;"><i class="ph ph-terminal-window me-1"></i>Raw CLI</summary>
+  {{ raw_block(text) }}
+</details>
+{% endmacro %}
+
+{% macro ospf_table(rows, output, family) %}
+  {% if rows %}
+    <div class="table-responsive">
+      <table class="table table-sm table-hover align-middle mb-0 small">
+        <thead class="table-light">
+          <tr>
+            <th>Neighbor ID</th><th class="text-end">Pri</th><th>State</th>
+            <th>Dead Time</th><th>{{ 'Address' if family == 'IPv4' else 'Iface ID' }}</th><th>Interface</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td class="font-monospace">{{ r.neighbor_id }}</td>
+            <td class="text-end text-muted">{{ r.pri }}</td>
+            <td><span class="badge bg-{{ r.state_class }}-subtle text-{{ r.state_class }}">{{ r.state }}</span></td>
+            <td class="font-monospace text-muted">{{ r.dead_time }}</td>
+            <td class="font-monospace">{{ r.address }}</td>
+            <td class="font-monospace">{{ r.interface }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if output %}{{ raw_toggle(output) }}{% endif %}
+  {% elif output %}
+    <div class="small text-muted px-3 pt-2"><i class="ph ph-info me-1"></i>Couldn't parse — showing raw output.</div>
+    {{ raw_block(output) }}
+  {% else %}
+    <div class="text-center text-muted small py-4">No {{ family }} OSPF neighbors.</div>
+  {% endif %}
+{% endmacro %}
+
+<div class="card shadow-sm border-0 animate-fade-in mt-3">
   <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center">
     <div class="d-flex align-items-center gap-2 flex-wrap">
-      <i class=" ph ph-eye"></i>
+      <i class="ph ph-eye"></i>
       <span class="fw-bold">OSPF Neighborhood Analysis{% if ip %}<span class="opacity-75 small ms-2">{{ ip }}</span>{% endif %}</span>
       <span class="badge bg-light text-dark ms-2"><strong>{{ v4_count|default(0) }}</strong> IPv4</span>
       <span class="badge bg-light text-dark"><strong>{{ v6_count|default(0) }}</strong> IPv6</span>
-      <span class="small opacity-75 ms-1">neighbors</span>
     </div>
-    <button class="btn btn-sm btn-outline-light" onclick="this.closest('.card').remove()">Close</button>
+    <button class="btn btn-sm btn-outline-light" onclick="this.closest('.card').remove()">
+      <i class="ph ph-x me-1"></i>Close
+    </button>
   </div>
   <div class="card-body p-0">
-    {% if not correlations and not output %}
+    {% if not correlations and not output and not v6_output %}
     <div class="p-4 text-center">
-      <i class="ph ph-warning-circle ph-3x text-muted mb-3"></i>
-      <h6 class="text-muted">No data available</h6>
+      <i class="ph ph-warning-circle ph-2x text-muted mb-2"></i>
+      <h6 class="text-muted mb-0">No data available</h6>
       <p class="small text-muted mb-0">No results returned from the device.</p>
     </div>
     {% else %}
+    {% if correlations %}
     <div class="p-3 bg-light border-bottom">
-      <h6 class="text-uppercase text-navy fw-bold mb-3 small letter-spacing-1">Next-Hop Inventory Correlation</h6>
-      {% if correlations %}
-        <div class="row g-3">
-          {% for ip, info in correlations.items() %}
-            <div class="col-md-6">
-              <div class="d-flex align-items-center p-3 bg-white border rounded shadow-sm border-start border-4 border-success h-100">
-                <div class="bg-success-subtle text-success rounded-circle p-2 me-3">
-                  <i class=" ph ph-hard-drives"></i>
-                </div>
-                <div class="flex-grow-1">
-                  <div class="small text-muted fw-bold uppercase mb-1">Neighbor IP: {{ ip }}</div>
-                  <div class="fw-bold text-navy h5 mb-0">{{ info.hostname }}</div>
-                  <div class="badge bg-light text-muted small mt-1">{{ info.type }}</div>
-                </div>
-                <div class="ms-auto">
-                   <button class="btn btn-xs btn-outline-primary" hx-get="/api/dnac/ip-lookup/ui?ip={{ ip }}" hx-target="#ospf-results" hx-swap="afterend">
-                     View Node
-                   </button>
-                </div>
+      <h6 class="text-uppercase text-navy fw-bold mb-3 small">Next-Hop Inventory Correlation</h6>
+      <div class="row g-3">
+        {% for ip, info in correlations.items() %}
+          <div class="col-md-6">
+            <div class="d-flex align-items-center p-3 bg-white border rounded shadow-sm border-start border-4 border-success h-100">
+              <div class="bg-success-subtle text-success rounded-circle p-2 me-3"><i class="ph ph-hard-drives"></i></div>
+              <div class="flex-grow-1">
+                <div class="small text-muted fw-bold mb-1">Neighbor IP: {{ ip }}</div>
+                <div class="fw-bold text-navy h6 mb-0">{{ info.hostname }}</div>
+                <div class="badge bg-light text-muted small mt-1">{{ info.type }}</div>
               </div>
+              <button class="btn btn-sm btn-outline-primary ms-auto" hx-get="/api/dnac/ip-lookup/ui?ip={{ ip }}" hx-target="#ospf-results" hx-swap="afterend">
+                View Node
+              </button>
             </div>
-          {% endfor %}
-        </div>
-      {% else %}
-        <div class="alert alert-info py-2 mb-0">
-          <i class=" ph ph-info me-2"></i> No inventory matches found for these neighbor IPs.
-        </div>
-      {% endif %}
+          </div>
+        {% endfor %}
+      </div>
     </div>
-    <div class="bg-dark p-0">
-       <div class="px-3 py-2 border-bottom border-secondary small text-info opacity-50 fw-bold uppercase">OSPFv2 (IPv4) — {{ v4_count|default(0) }} neighbor{{ v4_count|default(0) != 1 and 's' or '' }}</div>
-       <pre class="p-3 mb-0 text-info" style="max-height: 320px; overflow: auto; font-family: 'SF Mono', monospace; font-size: 12px; line-height: 1.5;">{{ output }}</pre>
+    {% endif %}
+
+    <div class="px-3 py-2 bg-light border-bottom small fw-bold text-uppercase text-navy">
+      OSPFv2 (IPv4) — {{ v4_count|default(0) }} neighbor{{ v4_count|default(0) != 1 and 's' or '' }}
     </div>
-    {% if v6_output %}
-    <div class="bg-dark p-0 border-top border-secondary">
-       <div class="px-3 py-2 border-bottom border-secondary small text-info opacity-50 fw-bold uppercase">OSPFv3 (IPv6) — {{ v6_count|default(0) }} neighbor{{ v6_count|default(0) != 1 and 's' or '' }}</div>
-       <pre class="p-3 mb-0 text-info" style="max-height: 320px; overflow: auto; font-family: 'SF Mono', monospace; font-size: 12px; line-height: 1.5;">{{ v6_output }}</pre>
+    {{ ospf_table(v4_rows, output, "IPv4") }}
+
+    {% if v6_rows or v6_output %}
+    <div class="px-3 py-2 bg-light border-top border-bottom small fw-bold text-uppercase text-navy">
+      OSPFv3 (IPv6) — {{ v6_count|default(0) }} neighbor{{ v6_count|default(0) != 1 and 's' or '' }}
     </div>
+    {{ ospf_table(v6_rows, v6_output, "IPv6") }}
     {% endif %}
     {% endif %}
   </div>

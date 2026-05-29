@@ -220,49 +220,57 @@
     <span class="ms-3 small text-muted">Live SSH via existing routing endpoints — panels load independently.</span>
   </div>
   <div class="card-body">
+    <div class="small text-muted mb-2"><i class="ph ph-info me-1"></i> Expand a device to load its live neighbors over SSH.</div>
     {% for d in routing_devices %}
-      <div class="border rounded mb-3 p-3">
-        <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+      <div class="border rounded mb-2">
+        <button type="button"
+                class="rt-dev-toggle w-100 text-start d-flex flex-wrap align-items-center gap-2 p-3 collapsed"
+                data-bs-toggle="collapse" data-bs-target="#rt-dev-{{ loop.index }}"
+                aria-expanded="false" aria-controls="rt-dev-{{ loop.index }}">
+          <i class="ph ph-caret-right rt-caret text-muted"></i>
           <i class="ph ph-router text-primary"></i>
           <strong class="font-monospace">{{ d.hostname }}</strong>
           <span class="badge bg-light text-muted">{{ d.role }}</span>
           <span class="font-monospace small text-muted">{{ d.managementIpAddress }}</span>
-          <div class="ms-auto d-flex gap-2 small">
+          <span class="ms-auto d-flex gap-1 flex-wrap">
             {% if d.protocols.bgp %}<span class="badge bg-primary-subtle text-primary">BGP AS {{ d.protocols.bgp.asn }}</span>{% endif %}
             {% if d.protocols.ospf %}<span class="badge bg-info-subtle text-info">OSPF {{ d.protocols.ospf.process_id }}</span>{% endif %}
             {% if d.protocols.eigrp %}<span class="badge bg-warning-subtle text-warning">EIGRP {{ d.protocols.eigrp.asn if not d.protocols.eigrp.named else d.protocols.eigrp.instance }}</span>{% endif %}
+          </span>
+        </button>
+
+        <div id="rt-dev-{{ loop.index }}" class="collapse">
+          <div class="border-top p-3 pt-0">
+            {# Panels lazy-load when the device is expanded (one SSH burst per
+               device, not on page load). `once` keeps a re-expand from re-running. #}
+            {% if d.protocols.bgp %}
+              <div hx-post="/api/routing/bgp/summary"
+                   hx-vals='{"ip":"{{ d.managementIpAddress }}"}'
+                   hx-trigger="shown.bs.collapse once from:#rt-dev-{{ loop.index }}"
+                   hx-swap="innerHTML">
+                <div class="small text-muted pt-3"><i class="ph ph-circle-notch ph-spin"></i> Loading BGP from {{ d.hostname }}…</div>
+              </div>
+            {% endif %}
+
+            {% if d.protocols.ospf %}
+              <div hx-post="/api/routing/ospf/neighbors"
+                   hx-vals='{"ip":"{{ d.managementIpAddress }}"}'
+                   hx-trigger="shown.bs.collapse once from:#rt-dev-{{ loop.index }}"
+                   hx-swap="innerHTML">
+                <div class="small text-muted pt-3"><i class="ph ph-circle-notch ph-spin"></i> Loading OSPF from {{ d.hostname }}…</div>
+              </div>
+            {% endif %}
+
+            {% if d.protocols.eigrp %}
+              <div hx-post="/api/routing/eigrp/neighbors"
+                   hx-vals='{"ip":"{{ d.managementIpAddress }}"}'
+                   hx-trigger="shown.bs.collapse once from:#rt-dev-{{ loop.index }}"
+                   hx-swap="innerHTML">
+                <div class="small text-muted pt-3"><i class="ph ph-circle-notch ph-spin"></i> Loading EIGRP neighbors (v4 + v6) from {{ d.hostname }}…</div>
+              </div>
+            {% endif %}
           </div>
         </div>
-
-        {% if d.protocols.bgp %}
-          <div hx-post="/api/routing/bgp/summary"
-               hx-vals='{"ip":"{{ d.managementIpAddress }}"}'
-               hx-trigger="load"
-               hx-swap="innerHTML"
-               class="mb-2">
-            <div class="small text-muted"><i class="ph ph-circle-notch ph-spin"></i> Loading BGP from {{ d.hostname }}…</div>
-          </div>
-        {% endif %}
-
-        {% if d.protocols.ospf %}
-          <div hx-post="/api/routing/ospf/neighbors"
-               hx-vals='{"ip":"{{ d.managementIpAddress }}"}'
-               hx-trigger="load"
-               hx-swap="innerHTML"
-               class="mb-2">
-            <div class="small text-muted"><i class="ph ph-circle-notch ph-spin"></i> Loading OSPF from {{ d.hostname }}…</div>
-          </div>
-        {% endif %}
-
-        {% if d.protocols.eigrp %}
-          <div hx-post="/api/routing/eigrp/neighbors"
-               hx-vals='{"ip":"{{ d.managementIpAddress }}"}'
-               hx-trigger="load"
-               hx-swap="innerHTML"
-               class="mb-2">
-            <div class="small text-muted"><i class="ph ph-circle-notch ph-spin"></i> Loading EIGRP neighbors (v4 + v6) from {{ d.hostname }}…</div>
-          </div>
-        {% endif %}
       </div>
     {% endfor %}
   </div>
