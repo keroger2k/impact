@@ -45,9 +45,9 @@ def test_site_crud_roundtrip(db_path: Path):
 
 
 def test_create_site_with_non_default_prefix_length(db_path: Path):
-    airport = reg.create_site("LAX-airport", "2600:0400:3031:0100",
+    airport = reg.create_site("LAX-airport", "1000:2000:3031:0100",
                               prefix_length=56, role="airport", path=db_path)
-    assert airport["prefix"] == "2600:0400:3031:0100"
+    assert airport["prefix"] == "1000:2000:3031:0100"
     assert airport["prefix_length"] == 56
 
 
@@ -256,7 +256,7 @@ def test_provision_standard_site_creates_six_vlan_allocations(patched_registry):
         username = "test"
 
     result = asyncio.run(provision_standard_site(
-        name="T573", prefix="2600:0400:3028:2d00", prefix_length=56,
+        name="T573", prefix="1000:2000:3028:2d00", prefix_length=56,
         role="branch", description="Test site", status="active",
         vlans="l3,mgmt,data,voip,etas,hsdn", session=FakeSession(),
     ))
@@ -275,7 +275,7 @@ def test_provision_standard_site_partial_vlans(patched_registry):
     class FakeSession: username = "test"
 
     result = asyncio.run(provision_standard_site(
-        name="K023", prefix="2600:0400:3028:1f00", prefix_length=56,
+        name="K023", prefix="1000:2000:3028:1f00", prefix_length=56,
         role=None, description=None, status="active",
         vlans="l3,mgmt", session=FakeSession(),
     ))
@@ -291,7 +291,7 @@ def test_provision_standard_site_rejects_64(patched_registry):
 
     with pytest.raises(HTTPException) as exc:
         asyncio.run(provision_standard_site(
-            name="X", prefix="2600:0400:3028:1f00", prefix_length=64,
+            name="X", prefix="1000:2000:3028:1f00", prefix_length=64,
             role=None, description=None, status="active",
             vlans="l3", session=FakeSession(),
         ))
@@ -306,7 +306,7 @@ def test_provision_standard_site_rejects_unknown_vlan(patched_registry):
 
     with pytest.raises(HTTPException) as exc:
         asyncio.run(provision_standard_site(
-            name="X", prefix="2600:0400:3028:1f00", prefix_length=56,
+            name="X", prefix="1000:2000:3028:1f00", prefix_length=56,
             role=None, description=None, status="active",
             vlans="l3,bogus,mgmt", session=FakeSession(),
         ))
@@ -333,20 +333,20 @@ def test_provision_standard_site_rolls_back_on_allocation_failure(patched_regist
 
     with pytest.raises(HTTPException) as exc:
         asyncio.run(provision_standard_site(
-            name="ROLLBACK_TEST", prefix="2600:0400:3028:1f00", prefix_length=56,
+            name="ROLLBACK_TEST", prefix="1000:2000:3028:1f00", prefix_length=56,
             role=None, description=None, status="active",
             vlans="l3,mgmt,data,voip,etas,hsdn", session=FakeSession(),
         ))
     assert exc.value.status_code == 500
     # Site should have been deleted as part of the rollback.
-    assert reg_mod.get_site_by_prefix("2600:400:3028:1f00") is None
+    assert reg_mod.get_site_by_prefix("1000:2000:3028:1f00") is None
 
 
 # ── Generalized /56 allocation flow ─────────────────────────────────────────
 
 def test_allocate_under_56_site_conforming_vvvv(patched_registry):
     """Direct registry create — non-/48 sites now carry allocations too."""
-    site = reg.create_site("T573", "2600:400:3028:2d00", prefix_length=56,
+    site = reg.create_site("T573", "1000:2000:3028:2d00", prefix_length=56,
                            path=patched_registry)
     alloc = reg.create_allocation(site["id"], vvvv="2d05", prefix_length=64,
                                   purpose="ETAS", path=patched_registry)

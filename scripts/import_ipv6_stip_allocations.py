@@ -4,8 +4,8 @@
 CSV format (header row optional):
 
     Site Code,STIP Prefix,STIP VLAN
-    I002,2600:0400:3059:,0001
-    K015,2600:0400:3059:,0002
+    I002,1000:2000:3059:,0001
+    K015,1000:2000:3059:,0002
 
 For each row:
   * Resolves the STIP /48 aggregate site in the Registry by matching
@@ -47,7 +47,7 @@ STIP_VLAN_LABEL = "Vlan500"  # what Cisco IOS / DNAC names the SVI
 
 
 def _normalize_stip_prefix(raw: str) -> str:
-    """`2600:0400:3059:` or `2600:400:3059` → canonical 3-hextet form for a /48."""
+    """`1000:2000:3059:` or `1000:2000:3059` → canonical 3-hextet form for a /48."""
     return ipv6.normalize_prefix(raw.rstrip(":"), 48)
 
 

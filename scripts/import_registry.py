@@ -101,7 +101,7 @@ def _ipv6_high_aligned_cidr(raw: str, length: int) -> str:
     """Build a canonical IPv6 CIDR from a high-aligned written prefix.
 
     The exports drop trailing zeros, writing the *high* bits the mask fixes:
-    ``2600:0400:3010:19`` at /56 means hextet-4 ``0x1900`` → ``…:1900::/56``.
+    ``1000:2000:3010:19`` at /56 means hextet-4 ``0x1900`` → ``…:1900::/56``.
     So the final written group is right-padded to 4 hex digits before parsing.
     """
     s = raw.strip().rstrip(":")

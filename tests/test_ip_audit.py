@@ -5,9 +5,27 @@ The extractors are tested against fake caches matching the real shapes (fake
 addressing per repo convention)."""
 from __future__ import annotations
 
+import ipaddress
+
+import pytest
+
 from cache import IPAM_TREE_CACHE_KEY
 from utils import ip_audit
 from utils.ip_audit import Observed, collect_observed, reconcile
+
+
+@pytest.fixture(autouse=True)
+def _fake_audit_scope(monkeypatch):
+    """Point the audit's in-scope check at fake example space so these fixtures
+    carry no real addressing (see docs/IP_ADDRESS_POLICY.md). Mirrors the real
+    default shape — RFC1918 + a single /40 IPv6 block — using the documentation
+    block 1000:2000:3000::/40 in place of the org's real allocation."""
+    monkeypatch.setattr(ip_audit, "_IN_SCOPE", [
+        ipaddress.ip_network("10.0.0.0/8"),
+        ipaddress.ip_network("172.16.0.0/12"),
+        ipaddress.ip_network("192.168.0.0/16"),
+        ipaddress.ip_network("1000:2000:3000::/40"),
+    ])
 
 
 class FakeCache:
@@ -35,7 +53,7 @@ def test_reconcile_all_states():
     sites = [_site(1, "K001")]
     prefixes = [
         _prefix(10, 1, "10.0.0.0/16", 4, "site-aggregate"),
-        _prefix(11, 1, "2000:2000:3000:1900::/56", 6, "site"),
+        _prefix(11, 1, "1000:2000:3000:1900::/56", 6, "site"),
         _prefix(12, 1, "10.20.0.0/24", 4),
     ]
     observed = [
@@ -169,17 +187,17 @@ def test_extract_dnac_interfaces_fallback_and_aci():
 
 
 def test_out_of_scope_dropped_in_scope_kept():
-    # In scope: RFC1918 + the org IPv6 block (2600:400:3000::/40).
+    # In scope: RFC1918 + the org IPv6 block (1000:2000:3000::/40).
     assert ip_audit._canon("10.0.0.0/8") is not None
     assert ip_audit._canon("172.17.13.80/29") is not None     # 172.16/12
     assert ip_audit._canon("192.168.1.0/24") is not None
-    assert ip_audit._canon("2600:400:3023::/48") is not None  # S041 — inside /40
-    assert ip_audit._canon("2600:400:3059:88::/64") is not None
+    assert ip_audit._canon("1000:2000:3023::/48") is not None  # S041 — inside /40
+    assert ip_audit._canon("1000:2000:3059:88::/64") is not None
     # Out of scope: public, CGNAT, link-local, and IPv6 outside the org block.
     assert ip_audit._canon("98.97.64.0/21") is None           # public — not tracked
     assert ip_audit._canon("100.64.0.0/10") is None           # CGNAT object-group
     assert ip_audit._canon("169.254.1.0/24") is None
-    assert ip_audit._canon("2600:400:c0::/48") is None        # 2600:400 but not 30xx
+    assert ip_audit._canon("1000:2000:c0::/48") is None        # 1000:2000 but not 30xx
     assert ip_audit._canon("fe80::/64") is None
 
 
@@ -243,17 +261,17 @@ def test_multi_site_supernet_is_shared_not_per_site_mismatch():
     # not S041's mismatch (the inverse of the single-site /48-over-/56 case).
     sites = [_site(1, "S041"), _site(2, "S689"), _site(3, "T271")]
     prefixes = [
-        _prefix(11, 1, "2600:400:3023:200::/56", 6, "site"),
-        _prefix(12, 2, "2600:400:3023:300::/56", 6, "site"),
-        _prefix(13, 3, "2600:400:3023:400::/56", 6, "site"),
+        _prefix(11, 1, "1000:2000:3023:200::/56", 6, "site"),
+        _prefix(12, 2, "1000:2000:3023:300::/56", 6, "site"),
+        _prefix(13, 3, "1000:2000:3023:400::/56", 6, "site"),
     ]
-    obs = [Observed("2600:400:3023::/48", 6, "dnac",
+    obs = [Observed("1000:2000:3023::/48", 6, "dnac",
                     label="Inferred IPv6 /48 Org Supernet")]
     rep = reconcile(sites, prefixes, obs)
     assert rep["summary"]["shared_supernets"] == 1
     assert rep["summary"]["mismatch"] == 0
     ss = rep["shared_supernets"][0]
-    assert ss["cidr"] == "2600:400:3023::/48"
+    assert ss["cidr"] == "1000:2000:3023::/48"
     assert set(ss["sites"]) == {"S041", "S689", "T271"}
     assert ss["site_count"] == 3
     assert ss["suggested_role"] == "supernet"
@@ -262,30 +280,30 @@ def test_multi_site_supernet_is_shared_not_per_site_mismatch():
 
 def test_bidirectional_containment_ipv6_48_over_56():
     sites = [_site(1, "K015")]
-    prefixes = [_prefix(11, 1, "2600:400:3007:700::/56", 6, "site")]
+    prefixes = [_prefix(11, 1, "1000:2000:3007:700::/56", 6, "site")]
     # DNAC advertises the /48; the registry documents a /56 inside it, no code.
-    obs = [Observed("2600:400:3007::/48", 6, "dnac")]
+    obs = [Observed("1000:2000:3007::/48", 6, "dnac")]
     rep = reconcile(sites, prefixes, obs)
     assert rep["summary"]["unattributed"] == 0
     site_rep = rep["sites"][0]
     assert site_rep["counts"]["in_sync"] == 1            # the /56 is confirmed
     drift = {d["cidr"]: d for d in site_rep["drift"]}
-    assert drift["2600:400:3007::/48"]["kind"] == "mismatch"
+    assert drift["1000:2000:3007::/48"]["kind"] == "mismatch"
 
 
 def test_container_reconciliation_credits_stip_and_absorbs_members():
     sites = [_site(1, "K001")]
-    prefixes = [{"id": 99, "site_id": None, "cidr": "2600:400:3059::/48",
+    prefixes = [{"id": 99, "site_id": None, "cidr": "1000:2000:3059::/48",
                  "family": 6, "role": "container", "label": "STIP"}]
     obs = [
-        Observed("2600:400:3059::/48", 6, "dnac"),       # the /48 itself, no code
-        Observed("2600:400:3059:5::/64", 6, "dnac"),     # a member, no code
+        Observed("1000:2000:3059::/48", 6, "dnac"),       # the /48 itself, no code
+        Observed("1000:2000:3059:5::/64", 6, "dnac"),     # a member, no code
     ]
     rep = reconcile(sites, prefixes, obs)
     assert rep["summary"]["unattributed"] == 0           # both covered by container
     assert rep["summary"]["containers_in_sync"] == 1
     conts = {c["prefix"]["cidr"]: c for c in rep["containers"]}
-    assert conts["2600:400:3059::/48"]["state"] == "in-sync"
+    assert conts["1000:2000:3059::/48"]["state"] == "in-sync"
 
 
 def test_soho_tag_resolves_to_real_site_code():

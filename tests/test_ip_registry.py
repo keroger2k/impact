@@ -81,10 +81,10 @@ def test_create_prefix_canonicalizes_both_families(db: Path):
     assert v4["prefix_length"] == 24
 
     # IPv6 /56 with messy host bits.
-    v6 = reg.create_prefix("2600:400:3007:0700::/56", site_id=site["id"],
+    v6 = reg.create_prefix("1000:2000:3007:0700::/56", site_id=site["id"],
                            role="site", path=db)
     assert v6["family"] == 6
-    assert v6["cidr"] == "2600:400:3007:700::/56"
+    assert v6["cidr"] == "1000:2000:3007:700::/56"
 
 
 def test_create_prefix_rejects_garbage(db: Path):
@@ -108,7 +108,7 @@ def test_duplicate_cidr_per_site_blocked_but_cross_site_ok(db: Path):
 def test_list_prefixes_filters_by_site_and_family(db: Path):
     s = reg.create_site("K033", path=db)
     reg.create_prefix("10.161.192.0/22", site_id=s["id"], path=db)
-    reg.create_prefix("2600:400:3010:1400::/56", site_id=s["id"], path=db)
+    reg.create_prefix("1000:2000:3010:1400::/56", site_id=s["id"], path=db)
 
     assert len(reg.list_prefixes(site_id=s["id"], path=db)) == 2
     assert len(reg.list_prefixes(site_id=s["id"], family=4, path=db)) == 1
@@ -121,14 +121,14 @@ def test_list_prefixes_filters_by_site_and_family(db: Path):
 
 def test_stip_container_shared_with_per_site_children(db: Path):
     stip, created = reg.get_or_create_container(
-        "2600:400:3059::/48", role="container", label="STIP", path=db)
+        "1000:2000:3059::/48", role="container", label="STIP", path=db)
     assert created is True
     # Idempotent: second call returns the same row, doesn't duplicate.
-    stip2, created2 = reg.get_or_create_container("2600:0400:3059::/48", path=db)
+    stip2, created2 = reg.get_or_create_container("1000:2000:3059::/48", path=db)
     assert created2 is False and stip2["id"] == stip["id"]
 
     i001 = reg.create_site("I001", path=db)
-    child = reg.create_prefix("2600:400:3059:0::/64", site_id=i001["id"],
+    child = reg.create_prefix("1000:2000:3059:0::/64", site_id=i001["id"],
                               parent_id=stip["id"], role="stip", vvvv="0000",
                               label="STIP VLAN", path=db)
     assert child["parent_id"] == stip["id"]
@@ -140,19 +140,19 @@ def test_stip_container_shared_with_per_site_children(db: Path):
     ]
     assert len(reg.list_prefixes(site_id=i001["id"], path=db)) == 1
     containers = reg.list_prefixes(containers_only=True, path=db)
-    assert len(containers) == 1 and containers[0]["cidr"] == "2600:400:3059::/48"
+    assert len(containers) == 1 and containers[0]["cidr"] == "1000:2000:3059::/48"
 
 
 def test_deleting_site_cascades_prefixes_but_keeps_container(db: Path):
-    stip, _ = reg.get_or_create_container("2600:400:3059::/48", path=db)
+    stip, _ = reg.get_or_create_container("1000:2000:3059::/48", path=db)
     site = reg.create_site("I002", path=db)
-    reg.create_prefix("2600:400:3059:1::/64", site_id=site["id"],
+    reg.create_prefix("1000:2000:3059:1::/64", site_id=site["id"],
                       parent_id=stip["id"], role="stip", path=db)
 
     reg.delete_site(site["id"], path=db)
     assert reg.list_prefixes(site_id=site["id"], path=db) == []
     # The shared /48 survives the site deletion.
-    assert reg.find_prefix_by_cidr("2600:400:3059::/48", path=db) is not None
+    assert reg.find_prefix_by_cidr("1000:2000:3059::/48", path=db) is not None
 
 
 # ── audit columns + overlap ────────────────────────────────────────────────────
@@ -182,13 +182,13 @@ def test_find_overlapping_prefixes(db: Path):
 
 def test_ipam_net_canonical_and_relations():
     assert ipam_net.canonical("10.0.0.5/24") == (4, "10.0.0.0", 24, "10.0.0.0/24")
-    fam, net, plen, cidr = ipam_net.canonical("2600:400:3059:0::/64")
-    assert (fam, plen, cidr) == (6, 64, "2600:400:3059::/64")
+    fam, net, plen, cidr = ipam_net.canonical("1000:2000:3059:0::/64")
+    assert (fam, plen, cidr) == (6, 64, "1000:2000:3059::/64")
 
     assert ipam_net.contains("10.0.0.0/16", "10.0.5.0/24") is True
     assert ipam_net.contains("10.0.5.0/24", "10.0.0.0/16") is False
     # Cross-family never overlaps and never raises.
-    assert ipam_net.overlaps("10.0.0.0/24", "2600:400::/48") is False
+    assert ipam_net.overlaps("10.0.0.0/24", "1000:2000::/48") is False
 
 
 # ── R2: shared-container uniqueness (partial unique index) ─────────────────────
@@ -230,8 +230,8 @@ def test_init_schema_dedupes_legacy_duplicate_containers(tmp_path: Path):
     sid = cur.lastrowid
     conn.execute(
         "INSERT INTO prefixes (site_id, parent_id, family, network, prefix_length, "
-        "cidr, role, status, source) VALUES (?,?,6,'2600:400:3059:1',64,"
-        "'2600:400:3059:1::/64','stip','allocated','manual')", (sid, victim))
+        "cidr, role, status, source) VALUES (?,?,6,'1000:2000:3059:1',64,"
+        "'1000:2000:3059:1::/64','stip','allocated','manual')", (sid, victim))
     conn.commit()
     conn.close()
 
@@ -254,4 +254,4 @@ def test_ipam_net_smallest_covering():
     assert ipam_net.smallest_covering(["10.0.0.0/24", "10.0.1.0/24"]) == "10.0.0.0/23"
     assert ipam_net.smallest_covering([]) is None
     # Mixed families have no single cover.
-    assert ipam_net.smallest_covering(["10.0.0.0/24", "2600:400::/48"]) is None
+    assert ipam_net.smallest_covering(["10.0.0.0/24", "1000:2000::/48"]) is None

@@ -8,7 +8,7 @@ decode/assemble compute endpoints.
 Sites can be /32../64 and may all carry vvvv-style /49..../64 allocations.
 For non-/48 sites the vvvv is constrained: its high bits must match the
 bits the site prefix already commits (e.g. a /56 site at
-2600:0400:3028:2d00 allows vvvvs in the 0x2d00..0x2dff range).
+1000:2000:3028:2d00 allows vvvvs in the 0x2d00..0x2dff range).
 """
 from __future__ import annotations
 

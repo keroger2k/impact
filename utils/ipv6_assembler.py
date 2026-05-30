@@ -13,8 +13,8 @@ Sites at other prefix lengths (e.g. /56, /60) also carve vvvv-style /64
 allocations — the only constraint is that the vvvv's high bits must match
 whatever the site already commits in the 4th hextet:
 
-    /56 site 2600:0400:3028:2d00  →  vvvvs must be 2d00..2dff (high byte fixed)
-    /60 site 2600:0400:3028:2d80  →  vvvvs must be 2d80..2d8f (high 12 bits fixed)
+    /56 site 1000:2000:3028:2d00  →  vvvvs must be 2d00..2dff (high byte fixed)
+    /60 site 1000:2000:3028:2d80  →  vvvvs must be 2d80..2d8f (high 12 bits fixed)
 
 vvvv is always stored as a 4-hex-char string representing the full 4th
 hextet (storage is uniform), but `next_block` / validation respect the
@@ -55,8 +55,8 @@ def normalize_prefix(prefix: str, prefix_length: int = 48) -> str:
 
     Examples:
         normalize_prefix("0100:0200:0300", 48)        -> "100:200:300"
-        normalize_prefix("2600:0400:3031:0100", 56)   -> "2600:400:3031:100"
-        normalize_prefix("2600:400::", 32)            -> "2600:400"
+        normalize_prefix("1000:2000:3031:0100", 56)   -> "1000:2000:3031:100"
+        normalize_prefix("1000:2000::", 32)            -> "1000:2000"
     """
     validate_site_prefix_length(prefix_length)
     cleaned = prefix.strip().rstrip(":")
@@ -131,8 +131,8 @@ def site_vvvv_mask(site_prefix_length: int) -> int:
 def site_vvvv_fixed_value(site_prefix: str, site_prefix_length: int) -> int:
     """The site's fixed bits, right-aligned in the 16-bit vvvv space.
 
-    /56 site at "2600:400:3028:2d00" -> 0x2d00
-    /60 site at "2600:400:3028:2d80" -> 0x2d80
+    /56 site at "1000:2000:3028:2d00" -> 0x2d00
+    /60 site at "1000:2000:3028:2d80" -> 0x2d80
     /48 site -> 0x0000 (nothing fixed)
     """
     if site_prefix_length <= 48:
@@ -320,7 +320,7 @@ def next_block(prefix_length: int, allocations: Iterable[dict],
     `allocations`. Returns None when fully exhausted.
 
     If `site` is given, iteration is constrained to vvvvs whose high bits
-    match the site's fixed prefix (e.g. a /56 site at 2600:400:3028:2d00
+    match the site's fixed prefix (e.g. a /56 site at 1000:2000:3028:2d00
     only iterates 0x2d00..0x2dff). Without a site, iterates the full 16-bit
     space — backward-compatible /48 behavior.
 

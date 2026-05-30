@@ -163,7 +163,7 @@ def build_registry_index(
         length = site.get("prefix_length") or 48
         if not raw:
             continue
-        # Registry stores prefixes as hextet-only strings (e.g. "2600:400:30e1")
+        # Registry stores prefixes as hextet-only strings (e.g. "1000:2000:30e1")
         # so we have to attach "::/<len>" before parsing.
         candidate = raw if "/" in raw else f"{raw}::/{length}"
         try:

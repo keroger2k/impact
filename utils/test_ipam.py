@@ -354,8 +354,8 @@ class TestIPAMEngine(unittest.TestCase):
         # Two /64s in the same /56 with no existing /56 or /48 in the data —
         # the /56 should be synthesized so the /64s nest under it instead of
         # scattering as top-level roots.
-        a = self._mk_v6("2600:1700:1a:ab00::1/64", iface="Vlan10")
-        b = self._mk_v6("2600:1700:1a:ab40::1/64", iface="Vlan11")
+        a = self._mk_v6("4000:5000:1a:ab00::1/64", iface="Vlan10")
+        b = self._mk_v6("4000:5000:1a:ab40::1/64", iface="Vlan11")
 
         self.engine.subnets = [a, b]
         self.engine.build_tree()
@@ -364,21 +364,21 @@ class TestIPAMEngine(unittest.TestCase):
         # Single root: the inferred /48 (since two /64s also share a /48).
         # Under it, the inferred /56 with the two /64 children.
         self.assertEqual(len(v6), 1, "expected a single inferred root supernet")
-        site56 = self._find_node(v6, "2600:1700:1a:ab00::/56")
+        site56 = self._find_node(v6, "4000:5000:1a:ab00::/56")
         self.assertIsNotNone(site56, "expected an inferred /56 site supernet")
         self.assertEqual(site56["role"], "supernet")
         self.assertIn("/56", site56["display_name"])
         # Both /64s reachable under the /56.
-        self.assertIsNotNone(self._find_node([site56], "2600:1700:1a:ab00::/64"))
-        self.assertIsNotNone(self._find_node([site56], "2600:1700:1a:ab40::/64"))
+        self.assertIsNotNone(self._find_node([site56], "4000:5000:1a:ab00::/64"))
+        self.assertIsNotNone(self._find_node([site56], "4000:5000:1a:ab40::/64"))
 
     def test_v6_org_supernet_synthesized_from_two_sites(self):
         # Two distinct /56s (each with one /64) in the same /48 — the /48
         # should be synthesized and contain both /56s as children.
-        siteA_64 = self._mk_v6("2600:1700:1a:ab00::1/64", site="A", iface="Vlan10")
-        siteA_64b = self._mk_v6("2600:1700:1a:ab01::1/64", site="A", iface="Vlan11")
-        siteB_64 = self._mk_v6("2600:1700:1a:cd00::1/64", site="B", iface="Vlan10")
-        siteB_64b = self._mk_v6("2600:1700:1a:cd01::1/64", site="B", iface="Vlan11")
+        siteA_64 = self._mk_v6("4000:5000:1a:ab00::1/64", site="A", iface="Vlan10")
+        siteA_64b = self._mk_v6("4000:5000:1a:ab01::1/64", site="A", iface="Vlan11")
+        siteB_64 = self._mk_v6("4000:5000:1a:cd00::1/64", site="B", iface="Vlan10")
+        siteB_64b = self._mk_v6("4000:5000:1a:cd01::1/64", site="B", iface="Vlan11")
 
         self.engine.subnets = [siteA_64, siteA_64b, siteB_64, siteB_64b]
         self.engine.build_tree()
@@ -386,25 +386,25 @@ class TestIPAMEngine(unittest.TestCase):
         v6 = self.engine.tree["ipv6"]
         # Single inferred /48 root containing two inferred /56s.
         self.assertEqual(len(v6), 1)
-        self.assertEqual(v6[0]["cidr"], "2600:1700:1a::/48")
+        self.assertEqual(v6[0]["cidr"], "4000:5000:1a::/48")
         self.assertEqual(v6[0]["role"], "supernet")
         child_cidrs = {c["cidr"] for c in v6[0]["children"]}
-        self.assertIn("2600:1700:1a:ab00::/56", child_cidrs)
-        self.assertIn("2600:1700:1a:cd00::/56", child_cidrs)
+        self.assertIn("4000:5000:1a:ab00::/56", child_cidrs)
+        self.assertIn("4000:5000:1a:cd00::/56", child_cidrs)
 
     def test_v6_synthesis_skipped_when_existing_supernet_present(self):
         # If a real /56 already exists from DNAC config, don't synthesize a
         # duplicate; the existing node wins and the /64 nests under it.
-        real_56 = IPAMNode("2600:1700:1a:ab00::/56", source="DNAC-Config")
+        real_56 = IPAMNode("4000:5000:1a:ab00::/56", source="DNAC-Config")
         real_56.display_name = "EIGRP Summary (Tunnel100)"
         real_56.role = "aggregate"
         real_56.interface_type = "aggregate"
-        leaf = self._mk_v6("2600:1700:1a:ab00::1/64")
+        leaf = self._mk_v6("4000:5000:1a:ab00::1/64")
 
         self.engine.subnets = [real_56, leaf]
         self.engine.build_tree()
 
-        found = self._find_node(self.engine.tree["ipv6"], "2600:1700:1a:ab00::/56")
+        found = self._find_node(self.engine.tree["ipv6"], "4000:5000:1a:ab00::/56")
         self.assertIsNotNone(found)
         # The real one is preserved, not replaced with an inferred supernet.
         self.assertEqual(found["source"], "DNAC-Config")
@@ -413,27 +413,27 @@ class TestIPAMEngine(unittest.TestCase):
     def test_v6_synthesis_skipped_for_singleton(self):
         # A single /64 with no siblings should NOT trigger a /56 wrapper —
         # that would just add noise without grouping anything.
-        only = self._mk_v6("2600:1700:1a:ab00::1/64")
+        only = self._mk_v6("4000:5000:1a:ab00::1/64")
         self.engine.subnets = [only]
         self.engine.build_tree()
 
         v6 = self.engine.tree["ipv6"]
         self.assertEqual(len(v6), 1)
-        self.assertEqual(v6[0]["cidr"], "2600:1700:1a:ab00::/64")
+        self.assertEqual(v6[0]["cidr"], "4000:5000:1a:ab00::/64")
         self.assertNotEqual(v6[0].get("role"), "supernet")
 
     def test_v6_supernet_inherits_single_site_metadata(self):
         # /56 with all children in S093 → synth.site == "S093" and the
         # display_name surfaces it for the user.
-        a = self._mk_v6("2600:400:3002:ab00::1/64", site="S093", iface="Vlan10")
-        b = self._mk_v6("2600:400:3002:ab40::1/64", site="S093", iface="Vlan11")
+        a = self._mk_v6("1000:2000:3002:ab00::1/64", site="S093", iface="Vlan10")
+        b = self._mk_v6("1000:2000:3002:ab40::1/64", site="S093", iface="Vlan11")
         a.device = "S093-CORE-1"
         b.device = "S093-CORE-1"
 
         self.engine.subnets = [a, b]
         self.engine.build_tree()
 
-        site56 = self._find_node(self.engine.tree["ipv6"], "2600:400:3002:ab00::/56")
+        site56 = self._find_node(self.engine.tree["ipv6"], "1000:2000:3002:ab00::/56")
         self.assertIsNotNone(site56)
         self.assertEqual(site56["site"], "S093")
         self.assertIn("S093", site56["display_name"])
@@ -443,16 +443,16 @@ class TestIPAMEngine(unittest.TestCase):
         # /48 spanning two /56s in different sites → synth.site == "2 sites",
         # display_name lists them, logical_container has the full list.
         # Two /64s per site so each /56 has 2 members and itself gets synthesized.
-        s93a = self._mk_v6("2600:400:3002:ab00::1/64", site="S093", iface="Vlan10")
-        s93b = self._mk_v6("2600:400:3002:ab40::1/64", site="S093", iface="Vlan11")
-        s94a = self._mk_v6("2600:400:3002:cd00::1/64", site="S094", iface="Vlan10")
-        s94b = self._mk_v6("2600:400:3002:cd40::1/64", site="S094", iface="Vlan11")
+        s93a = self._mk_v6("1000:2000:3002:ab00::1/64", site="S093", iface="Vlan10")
+        s93b = self._mk_v6("1000:2000:3002:ab40::1/64", site="S093", iface="Vlan11")
+        s94a = self._mk_v6("1000:2000:3002:cd00::1/64", site="S094", iface="Vlan10")
+        s94b = self._mk_v6("1000:2000:3002:cd40::1/64", site="S094", iface="Vlan11")
 
         self.engine.subnets = [s93a, s93b, s94a, s94b]
         self.engine.build_tree()
 
         v6 = self.engine.tree["ipv6"]
-        org48 = self._find_node(v6, "2600:400:3002::/48")
+        org48 = self._find_node(v6, "1000:2000:3002::/48")
         self.assertIsNotNone(org48)
         self.assertEqual(org48["site"], "2 sites")
         self.assertIn("S093", org48["display_name"])
@@ -461,21 +461,21 @@ class TestIPAMEngine(unittest.TestCase):
         self.assertIn("S094", org48["logical_container"])
 
         # The two inferred /56s under it carry their own single-site metadata.
-        s93_56 = self._find_node([org48], "2600:400:3002:ab00::/56")
-        s94_56 = self._find_node([org48], "2600:400:3002:cd00::/56")
+        s93_56 = self._find_node([org48], "1000:2000:3002:ab00::/56")
+        s94_56 = self._find_node([org48], "1000:2000:3002:cd00::/56")
         self.assertEqual(s93_56["site"], "S093")
         self.assertEqual(s94_56["site"], "S094")
 
     def test_v6_supernet_metadata_unknown_when_no_site_info(self):
         # If descendants have no site info, metadata stays unset rather than
         # surfacing a misleading value.
-        a = self._mk_v6("2600:400:3002:ab00::1/64", site="Unknown", iface="Vlan10")
-        b = self._mk_v6("2600:400:3002:ab40::1/64", site="Unknown", iface="Vlan11")
+        a = self._mk_v6("1000:2000:3002:ab00::1/64", site="Unknown", iface="Vlan10")
+        b = self._mk_v6("1000:2000:3002:ab40::1/64", site="Unknown", iface="Vlan11")
 
         self.engine.subnets = [a, b]
         self.engine.build_tree()
 
-        site56 = self._find_node(self.engine.tree["ipv6"], "2600:400:3002:ab00::/56")
+        site56 = self._find_node(self.engine.tree["ipv6"], "1000:2000:3002:ab00::/56")
         self.assertIsNotNone(site56)
         self.assertEqual(site56["site"], "Unknown")
         # Display name carries no spurious site, just the prefix-count tail.
@@ -484,18 +484,18 @@ class TestIPAMEngine(unittest.TestCase):
     def test_v6_synthesis_groups_p2p_and_loopback_under_site(self):
         # Mixed leaf types under the same /56: /127 P2P + /128 loopback + /64.
         # All three should nest under the inferred /56.
-        p2p = self._mk_v6("2600:1700:1a:ab00::/127", iface="Ethernet1/1")
-        lo = self._mk_v6("2600:1700:1a:ab00:1::1/128", iface="Loopback0")
-        svi = self._mk_v6("2600:1700:1a:ab01::1/64", iface="Vlan20")
+        p2p = self._mk_v6("4000:5000:1a:ab00::/127", iface="Ethernet1/1")
+        lo = self._mk_v6("4000:5000:1a:ab00:1::1/128", iface="Loopback0")
+        svi = self._mk_v6("4000:5000:1a:ab01::1/64", iface="Vlan20")
 
         self.engine.subnets = [p2p, lo, svi]
         self.engine.build_tree()
 
-        site56 = self._find_node(self.engine.tree["ipv6"], "2600:1700:1a:ab00::/56")
+        site56 = self._find_node(self.engine.tree["ipv6"], "4000:5000:1a:ab00::/56")
         self.assertIsNotNone(site56)
-        self.assertIsNotNone(self._find_node([site56], "2600:1700:1a:ab00::/127"))
-        self.assertIsNotNone(self._find_node([site56], "2600:1700:1a:ab00:1::1/128"))
-        self.assertIsNotNone(self._find_node([site56], "2600:1700:1a:ab01::/64"))
+        self.assertIsNotNone(self._find_node([site56], "4000:5000:1a:ab00::/127"))
+        self.assertIsNotNone(self._find_node([site56], "4000:5000:1a:ab00:1::1/128"))
+        self.assertIsNotNone(self._find_node([site56], "4000:5000:1a:ab01::/64"))
 
 
 if __name__ == "__main__":

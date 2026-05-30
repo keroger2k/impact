@@ -31,16 +31,16 @@ def test_normalize_prefix_handles_variable_length():
     # /48 trims trailing zero hextets
     assert normalize_prefix("1000:2000:3000::", 48) == "1000:2000:3000"
     # /56 keeps 4 hextets (last one partial)
-    assert normalize_prefix("2600:0400:3031:0100", 56) == "2600:400:3031:100"
+    assert normalize_prefix("1000:2000:3031:0100", 56) == "1000:2000:3031:100"
     # /32 keeps only 2
-    assert normalize_prefix("2600:0400::", 32) == "2600:400"
+    assert normalize_prefix("1000:2000::", 32) == "1000:2000"
     # /64 keeps all 4
-    assert normalize_prefix("2600:0400:3031:0100", 64) == "2600:400:3031:100"
+    assert normalize_prefix("1000:2000:3031:0100", 64) == "1000:2000:3031:100"
 
 
 def test_normalize_prefix_zeroes_host_bits():
     # /56 with mismatched host bits in the trailing hextet is zeroed
-    assert normalize_prefix("2600:0400:3031:01ff", 56) == "2600:400:3031:100"
+    assert normalize_prefix("1000:2000:3031:01ff", 56) == "1000:2000:3031:100"
 
 
 def test_validate_site_prefix_length_bounds():
@@ -176,12 +176,12 @@ def test_decode_prefers_longest_matching_site():
     """A /56 leaf airport wins over its containing /48 state when both
     are registered."""
     sites = [
-        {"id": 1, "name": "California-State", "prefix": "2600:0400:3031",
+        {"id": 1, "name": "California-State", "prefix": "1000:2000:3031",
          "prefix_length": 48},
-        {"id": 2, "name": "LAX-airport", "prefix": "2600:0400:3031:0100",
+        {"id": 2, "name": "LAX-airport", "prefix": "1000:2000:3031:0100",
          "prefix_length": 56},
     ]
-    r = decode("2600:0400:3031:0100::1", sites)
+    r = decode("1000:2000:3031:0100::1", sites)
     assert r.site_id == 2
     assert r.site_name == "LAX-airport"
     assert r.site_prefix_length == 56
@@ -191,10 +191,10 @@ def test_decode_prefers_longest_matching_site():
 
 def test_decode_falls_back_to_containing_48_when_leaf_unregistered():
     sites = [
-        {"id": 1, "name": "California-State", "prefix": "2600:0400:3031",
+        {"id": 1, "name": "California-State", "prefix": "1000:2000:3031",
          "prefix_length": 48},
     ]
-    r = decode("2600:0400:3031:0200::1", sites)
+    r = decode("1000:2000:3031:0200::1", sites)
     assert r.site_id == 1
     assert r.site_prefix_length == 48
 
@@ -308,26 +308,26 @@ def test_site_vvvv_mask_matches_fixed_bit_count():
 
 def test_site_vvvv_fixed_value_extracts_high_byte_for_56():
     # T573 example from the spreadsheet
-    assert site_vvvv_fixed_value("2600:400:3028:2d00", 56) == 0x2D00
-    assert site_vvvv_fixed_value("2600:400:3028:2d80", 60) == 0x2D80
-    assert site_vvvv_fixed_value("2600:400:3000", 48) == 0x0000
+    assert site_vvvv_fixed_value("1000:2000:3028:2d00", 56) == 0x2D00
+    assert site_vvvv_fixed_value("1000:2000:3028:2d80", 60) == 0x2D80
+    assert site_vvvv_fixed_value("1000:2000:3000", 48) == 0x0000
 
 
 def test_vvvv_conforms_to_site_filters_by_mask():
     # /56 site at 2d00 only accepts vvvvs whose high byte is 0x2D
-    assert vvvv_conforms_to_site("2d00", "2600:400:3028:2d00", 56)
-    assert vvvv_conforms_to_site("2d06", "2600:400:3028:2d00", 56)
-    assert vvvv_conforms_to_site("2dff", "2600:400:3028:2d00", 56)
-    assert not vvvv_conforms_to_site("2e00", "2600:400:3028:2d00", 56)
-    assert not vvvv_conforms_to_site("0100", "2600:400:3028:2d00", 56)
+    assert vvvv_conforms_to_site("2d00", "1000:2000:3028:2d00", 56)
+    assert vvvv_conforms_to_site("2d06", "1000:2000:3028:2d00", 56)
+    assert vvvv_conforms_to_site("2dff", "1000:2000:3028:2d00", 56)
+    assert not vvvv_conforms_to_site("2e00", "1000:2000:3028:2d00", 56)
+    assert not vvvv_conforms_to_site("0100", "1000:2000:3028:2d00", 56)
     # /48 site accepts anything
-    assert vvvv_conforms_to_site("0100", "2600:400:3000", 48)
-    assert vvvv_conforms_to_site("ffff", "2600:400:3000", 48)
+    assert vvvv_conforms_to_site("0100", "1000:2000:3000", 48)
+    assert vvvv_conforms_to_site("ffff", "1000:2000:3000", 48)
 
 
 def test_next_block_constrains_to_site_range():
     """For a /56 site at 2d00, next_block should suggest values in 2d00..2dff."""
-    site = {"prefix": "2600:400:3028:2d00", "prefix_length": 56}
+    site = {"prefix": "1000:2000:3028:2d00", "prefix_length": 56}
     # Empty site → first slot is the site's fixed value itself
     assert next_block(64, [], site=site) == "2d00"
     # Mark 2d00 occupied → next is 2d01
@@ -345,9 +345,9 @@ def test_next_block_unconstrained_for_48_site():
 
 def test_assemble_works_for_56_site():
     """Assemble for a /56 site: vvvv carries the site's fixed high byte."""
-    addr = assemble("2600:400:3028:2d00", "2d01", "10.0.0.1",
+    addr = assemble("1000:2000:3028:2d00", "2d01", "10.0.0.1",
                     site_prefix_length=56)
-    assert str(addr) == "2600:400:3028:2d01::a00:1"
+    assert str(addr) == "1000:2000:3028:2d01::a00:1"
 
 
 def test_assemble_back_compat_48():

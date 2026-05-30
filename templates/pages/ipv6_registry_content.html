@@ -210,7 +210,7 @@
               <label class="form-label small fw-bold" for="ipv6-site-prefix">Prefix</label>
               <input class="form-control font-monospace" id="ipv6-site-prefix" name="prefix"
                      type="text" placeholder="1000:2000:3000" required>
-              <div class="form-text">Leading hextets only (e.g. <code>1000:2000:3000</code> for /48, <code>2600:0400:3031:0100</code> for /56). Will be normalized.</div>
+              <div class="form-text">Leading hextets only (e.g. <code>1000:2000:3000</code> for /48, <code>1000:2000:3031:0100</code> for /56). Will be normalized.</div>
             </div>
             <div class="col-md-4">
               <label class="form-label small fw-bold" for="ipv6-site-prefix-length">Prefix length</label>
@@ -283,7 +283,7 @@
             <div class="col-md-5">
               <label class="form-label small fw-bold" for="ipv6-prov-prefix">Prefix</label>
               <input class="form-control font-monospace" id="ipv6-prov-prefix" name="prefix"
-                     type="text" placeholder="2600:0400:3028:2d00" required autocomplete="off">
+                     type="text" placeholder="1000:2000:3028:2d00" required autocomplete="off">
               <div class="form-text">Leading hextets only; will be normalized server-side.</div>
             </div>
             <div class="col-md-3">
@@ -742,7 +742,7 @@
 
   // Narrow the prefix-length select to (site_len, 64] and prefill the vvvv
   // field with the bits the site already fixes (e.g. "2d00" for a /56 site
-  // at 2600:400:3028:2d00). For /48 sites this is a no-op — full freedom.
+  // at 1000:2000:3028:2d00). For /48 sites this is a no-op — full freedom.
   function _ipv6AdaptAllocFormToSite(ctx) {
     const prefSel = document.getElementById('ipv6-alloc-prefix');
     const minLen = ctx.prefixLength + 1;
@@ -963,7 +963,7 @@
     return parts.map(p => p.padStart(4, '0').toLowerCase());
   }
 
-  // Derive a Registry-style hextet prefix (e.g. "2600:400:3031:100") from a
+  // Derive a Registry-style hextet prefix (e.g. "1000:2000:3031:100") from a
   // CIDR + chosen parent prefix length. Server normalizes again, but we want
   // a clean, masked default so the user sees what will be created.
   function _computeParentPrefix(cidr, prefixLength) {

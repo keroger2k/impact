@@ -136,12 +136,12 @@ async def test_bulk_accept_rejects_non_array(tmpdb):
 async def test_bulk_accept_links_child_to_container_parent(tmpdb):
     # Accept a shared /48 container, then a site /64 that falls under it.
     await r.audit_accept(items=json.dumps([
-        {"cidr": "2600:400:3059::/48", "container": True, "role": "stip-agg"}]),
+        {"cidr": "1000:2000:3059::/48", "container": True, "role": "stip-agg"}]),
         session=None)
     container = registry.list_prefixes(containers_only=True, path=tmpdb)[0]
 
     res = await r.audit_accept(items=json.dumps([
-        {"cidr": "2600:400:3059:1::/64", "site_code": "K700", "role": "stip"}]),
+        {"cidr": "1000:2000:3059:1::/64", "site_code": "K700", "role": "stip"}]),
         session=None)
     assert res["created"] == 1
 

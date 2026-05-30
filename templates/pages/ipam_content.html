@@ -320,9 +320,9 @@
             v4Octets.length < 4 ||
             v4Octets.some(o => o === '' || isNaN(parseInt(o, 10)))
         );
-        // Partial IPv6: no `::` compression and fewer than 8 hextets — e.g. "2600:400".
+        // Partial IPv6: no `::` compression and fewer than 8 hextets — e.g. "1000:2000".
         // Without this, `ip6ToBigInt` pads with zeros and the containment test below
-        // would only match subnets that contain the literal address `2600:400::`.
+        // would only match subnets that contain the literal address `1000:2000::`.
         const isPartialV6 = hasV6Chars && !free.includes('::') && free.split(':').length < 8;
         const isCompleteV4 = hasV4Chars && !isPartialV4;
         const isCompleteV6 = hasV6Chars && !isPartialV6;

@@ -7,8 +7,8 @@ line is:
     <name>,<prefix>[,<prefix_length>[,<role>[,<description>]]]
 
 Examples:
-    California-State,2600:0400:3031,48,state,California state-level /48
-    LAX-airport,2600:0400:3031:0100,56,airport,"Los Angeles, CA"
+    California-State,1000:2000:3031,48,state,California state-level /48
+    LAX-airport,1000:2000:3031:0100,56,airport,"Los Angeles, CA"
     DC1,1000:2000:3000
 
 Defaults:
