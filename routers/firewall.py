@@ -29,13 +29,33 @@ class PolicyLookupRequest(BaseModel):
     include_disabled: bool = False
     show_all:         bool = True
 
-def _get_key(session: SessionEntry) -> str:
+def _get_key(session: SessionEntry, force_refresh: bool = False) -> str:
     try:
-        return auth_module.get_panorama_key_for_session(session)
+        return auth_module.get_panorama_key_for_session(session, force_refresh=force_refresh)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(503, f"Panorama authentication failed: {e}")
+
+
+def _pan_loader(session: SessionEntry, op):
+    """Wrap a Panorama ``op(api_key)`` as a cache loader that regenerates the
+    session's API key and retries once if Panorama rejects it as stale
+    (403 / Invalid Credential).
+
+    The retry has to live *here*, inside the loader, because ``cache.get_or_set``
+    swallows loader exceptions (both the cache-miss and background-refresh paths
+    catch and return ``None``) — so a 403 raised by ``op`` would otherwise never
+    reach the request handler to be retried, and the page would silently render
+    empty until the session expired or the process restarted.
+    """
+    def loader():
+        try:
+            return op(_get_key(session))
+        except pc.PanoramaAuthError:
+            logger.warning("Panorama API key rejected as stale; regenerating and retrying")
+            return op(_get_key(session, force_refresh=True))
+    return loader
 
 def _flatten_rules(rules_cache: dict, target_dgs: list[str] | None) -> list[dict]:
     by_dg    = rules_cache["by_dg"]
@@ -60,9 +80,9 @@ from logger_config import run_with_context
 
 @router.get("/device-groups")
 async def list_device_groups(request: Request, session: SessionEntry = Depends(require_auth)):
-    key  = _get_key(session)
+    _get_key(session)  # fail fast on auth; loader re-fetches + auto-refreshes the key
     loop = asyncio.get_event_loop()
-    dgs = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_device_groups", lambda: pc.get_device_groups(key), PAN_TTL)
+    dgs = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_device_groups", _pan_loader(session, pc.get_device_groups), PAN_TTL)
 
     if dgs is None: dgs = []
 
@@ -79,9 +99,9 @@ async def policy_lookup(req: PolicyLookupRequest, session: SessionEntry = Depend
             ipaddress.ip_address(val)
         except ValueError:
             raise HTTPException(400, f"'{val}' is not a valid IP address")
-    key  = _get_key(session)
+    _get_key(session)  # fail fast on auth; loaders re-fetch + auto-refresh the key
     loop = asyncio.get_event_loop()
-    all_dgs = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_device_groups", lambda: pc.get_device_groups(key), PAN_TTL)
+    all_dgs = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_device_groups", _pan_loader(session, pc.get_device_groups), PAN_TTL)
 
     if all_dgs is None: all_dgs = []
 
@@ -90,13 +110,13 @@ async def policy_lookup(req: PolicyLookupRequest, session: SessionEntry = Depend
         if invalid:
             raise HTTPException(400, f"Unknown device groups: {invalid}")
 
-    addr_data = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_addr", lambda: pc.get_address_objects_and_groups(key, all_dgs), PAN_TTL)
+    addr_data = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_addr", _pan_loader(session, lambda key: pc.get_address_objects_and_groups(key, all_dgs)), PAN_TTL)
     objects, groups = addr_data if addr_data else ({}, {})
 
-    svc_data = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_svc", lambda: pc.get_services(key, all_dgs), PAN_TTL)
+    svc_data = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_svc", _pan_loader(session, lambda key: pc.get_services(key, all_dgs)), PAN_TTL)
     svc_obj, svc_grp = svc_data if svc_data else ({}, {})
 
-    def load_rules():
+    def load_rules(key):
         all_rules = pc.get_all_security_rules(key, all_dgs)
         by_dg: dict[str, list] = {}
         for rule in all_rules:
@@ -104,7 +124,7 @@ async def policy_lookup(req: PolicyLookupRequest, session: SessionEntry = Depend
             by_dg.setdefault(dg, []).append(rule)
         return {"dg_order": all_dgs, "by_dg": by_dg}
 
-    rules_cache = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_rules", load_rules, PAN_TTL)
+    rules_cache = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_rules", _pan_loader(session, load_rules), PAN_TTL)
     if not rules_cache: rules_cache = {"dg_order": [], "by_dg": {}}
 
     target_dgs = req.device_groups or None
@@ -171,9 +191,9 @@ async def list_firewall_interfaces(request: Request, session: SessionEntry = Dep
         return {"items": devices}
 
     try:
-        key  = _get_key(session)
+        _get_key(session)  # fail fast on auth; loader re-fetches + auto-refreshes the key
         loop = asyncio.get_event_loop()
-        devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_interfaces", lambda: pc.fetch_firewall_interfaces(key), TTL_PAN_INTERFACES)
+        devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_interfaces", _pan_loader(session, pc.fetch_firewall_interfaces), TTL_PAN_INTERFACES)
         if devices is None:
             devices = []
     except Exception as e:
@@ -189,9 +209,9 @@ async def list_firewall_interfaces(request: Request, session: SessionEntry = Dep
 async def refresh_firewall_interfaces(request: Request, session: SessionEntry = Depends(require_auth)):
     from cache import TTL_PAN_INTERFACES
     cache.invalidate("pan_interfaces")
-    key  = _get_key(session)
+    _get_key(session)  # fail fast on auth; loader re-fetches + auto-refreshes the key
     loop = asyncio.get_event_loop()
-    devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_interfaces", lambda: pc.fetch_firewall_interfaces(key), TTL_PAN_INTERFACES)
+    devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_interfaces", _pan_loader(session, pc.fetch_firewall_interfaces), TTL_PAN_INTERFACES)
     if request.headers.get("HX-Request"):
         from templates_module import templates
         return templates.TemplateResponse(request, "partials/firewall_interfaces.html", {"items": devices})
@@ -199,9 +219,9 @@ async def refresh_firewall_interfaces(request: Request, session: SessionEntry = 
 
 @router.get("/devices")
 async def list_managed_devices(request: Request, session: SessionEntry = Depends(require_auth)):
-    key  = _get_key(session)
+    _get_key(session)  # fail fast on auth; loader re-fetches + auto-refreshes the key
     loop = asyncio.get_event_loop()
-    cached = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_managed_devices", lambda: pc.get_managed_devices(key), PAN_TTL)
+    cached = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_managed_devices", _pan_loader(session, pc.get_managed_devices), PAN_TTL)
 
     if cached is None: cached = []
 
@@ -233,9 +253,9 @@ async def list_panorama_templates_ui(request: Request, session: SessionEntry = D
 async def get_device_group_policies(request: Request, device_group: str, session: SessionEntry = Depends(require_auth)):
     from dev import DEV_MODE, MOCK_FIREWALL_RULES
 
-    key  = _get_key(session)
+    _get_key(session)  # fail fast on auth; loaders re-fetch + auto-refresh the key
     loop = asyncio.get_event_loop()
-    all_dgs = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_device_groups", lambda: pc.get_device_groups(key), PAN_TTL)
+    all_dgs = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_device_groups", _pan_loader(session, pc.get_device_groups), PAN_TTL)
 
     if all_dgs is None: all_dgs = []
 
@@ -245,7 +265,7 @@ async def get_device_group_policies(request: Request, device_group: str, session
     if DEV_MODE:
         rules = [r for r in MOCK_FIREWALL_RULES if r.get("device_group") == device_group or r.get("device_group") == "shared"]
     else:
-        def _build_rules():
+        def _build_rules(key):
             all_rules = pc.get_all_security_rules(key, all_dgs)
             by_dg: dict[str, list] = {}
             for rule in all_rules:
@@ -253,7 +273,7 @@ async def get_device_group_policies(request: Request, device_group: str, session
                 by_dg.setdefault(dg, []).append(rule)
             return {"dg_order": all_dgs, "by_dg": by_dg}
 
-        rules_cache = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_rules", _build_rules, PAN_TTL)
+        rules_cache = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_rules", _pan_loader(session, _build_rules), PAN_TTL)
         if not rules_cache: rules_cache = {"dg_order": [], "by_dg": {}}
         rules = _flatten_rules(rules_cache, [device_group])
 
@@ -273,19 +293,19 @@ async def export_all_rules_csv(
     """Export every security rule across all device groups as CSV (evaluation order)."""
     from dev import DEV_MODE, MOCK_PAN_RULES_CACHE
 
-    key  = _get_key(session)
+    _get_key(session)  # fail fast on auth; loaders re-fetch + auto-refresh the key
     loop = asyncio.get_event_loop()
 
     all_dgs = await loop.run_in_executor(
         None, run_with_context(cache.get_or_set),
-        "pan_device_groups", lambda: pc.get_device_groups(key), PAN_TTL
+        "pan_device_groups", _pan_loader(session, pc.get_device_groups), PAN_TTL
     )
     if all_dgs is None: all_dgs = []
 
     if DEV_MODE:
         rules_cache = MOCK_PAN_RULES_CACHE
     else:
-        def _build_rules():
+        def _build_rules(key):
             all_rules = pc.get_all_security_rules(key, all_dgs)
             by_dg: dict[str, list] = {}
             for rule in all_rules:
@@ -294,7 +314,7 @@ async def export_all_rules_csv(
             return {"dg_order": all_dgs, "by_dg": by_dg}
         rules_cache = await loop.run_in_executor(
             None, run_with_context(cache.get_or_set),
-            "pan_rules", _build_rules, PAN_TTL
+            "pan_rules", _pan_loader(session, _build_rules), PAN_TTL
         )
         if not rules_cache: rules_cache = {"dg_order": [], "by_dg": {}}
 
@@ -307,13 +327,13 @@ async def export_all_rules_csv(
     if expand and not DEV_MODE:
         addr_data = await loop.run_in_executor(
             None, run_with_context(cache.get_or_set),
-            "pan_addr", lambda: pc.get_address_objects_and_groups(key, all_dgs), PAN_TTL
+            "pan_addr", _pan_loader(session, lambda key: pc.get_address_objects_and_groups(key, all_dgs)), PAN_TTL
         )
         objects, groups = addr_data if addr_data else ({}, {})
 
         svc_data = await loop.run_in_executor(
             None, run_with_context(cache.get_or_set),
-            "pan_svc", lambda: pc.get_services(key, all_dgs), PAN_TTL
+            "pan_svc", _pan_loader(session, lambda key: pc.get_services(key, all_dgs)), PAN_TTL
         )
         svc_obj, svc_grp = svc_data if svc_data else ({}, {})
 

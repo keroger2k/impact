@@ -238,29 +238,29 @@ async def _refetch_panorama(session: SessionEntry):
     from logger_config import run_with_context
     import clients.panorama as pc
     import auth as auth_module
-    from routers.firewall import PAN_TTL
+    from routers.firewall import PAN_TTL, _pan_loader
     loop = asyncio.get_event_loop()
     try:
-        pan_key = auth_module.get_panorama_key_for_session(session)
+        auth_module.get_panorama_key_for_session(session)  # fail fast; loaders auto-refresh the key
         all_dgs = await loop.run_in_executor(
             None, run_with_context(cache.get_or_set), "pan_device_groups",
-            lambda: pc.get_device_groups(pan_key), PAN_TTL
+            _pan_loader(session, pc.get_device_groups), PAN_TTL
         )
         await loop.run_in_executor(
             None, run_with_context(cache.get_or_set), "pan_managed_devices",
-            lambda: pc.get_managed_devices(pan_key), PAN_TTL
+            _pan_loader(session, pc.get_managed_devices), PAN_TTL
         )
         await loop.run_in_executor(
             None, run_with_context(cache.get_or_set), "pan_addr",
-            lambda: pc.get_address_objects_and_groups(pan_key, all_dgs), PAN_TTL
+            _pan_loader(session, lambda key: pc.get_address_objects_and_groups(key, all_dgs)), PAN_TTL
         )
         await loop.run_in_executor(
             None, run_with_context(cache.get_or_set), "pan_svc",
-            lambda: pc.get_services(pan_key, all_dgs), PAN_TTL
+            _pan_loader(session, lambda key: pc.get_services(key, all_dgs)), PAN_TTL
         )
 
-        def _build_rules():
-            all_rules = pc.get_all_security_rules(pan_key, all_dgs)
+        def _build_rules(key):
+            all_rules = pc.get_all_security_rules(key, all_dgs)
             by_dg: dict[str, list] = {}
             for rule in all_rules:
                 dg = rule.get("device_group", "shared")
@@ -268,7 +268,8 @@ async def _refetch_panorama(session: SessionEntry):
             return {"dg_order": all_dgs, "by_dg": by_dg}
 
         await loop.run_in_executor(
-            None, run_with_context(cache.get_or_set), "pan_rules", _build_rules, PAN_TTL
+            None, run_with_context(cache.get_or_set), "pan_rules",
+            _pan_loader(session, _build_rules), PAN_TTL
         )
         logger.info("Cache refresh: Panorama re-fetch complete")
     except Exception as e:
@@ -408,13 +409,14 @@ async def refresh_specific_cache(category: str, request: Request, session: Sessi
         from logger_config import run_with_context
         import clients.panorama as pc
         import auth as auth_module
+        from routers.firewall import _pan_loader
         from cache import TTL_PAN_INTERFACES
         cache.invalidate("pan_interfaces")
         async def _refetch_pan_interfaces():
             try:
                 loop = asyncio.get_event_loop()
-                pan_key = auth_module.get_panorama_key_for_session(session)
-                await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_interfaces", lambda: pc.fetch_firewall_interfaces(pan_key), TTL_PAN_INTERFACES)
+                auth_module.get_panorama_key_for_session(session)  # fail fast; loader auto-refreshes the key
+                await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_interfaces", _pan_loader(session, pc.fetch_firewall_interfaces), TTL_PAN_INTERFACES)
                 logger.info("Cache refresh: Panorama interfaces re-fetch complete")
             except Exception as e:
                 logger.warning(f"Panorama interfaces re-fetch failed: {e}")

@@ -29,6 +29,28 @@ class PanoramaAPIError(Exception):
     pass
 
 
+class PanoramaAuthError(PanoramaAPIError):
+    """The API key was rejected by Panorama (403 / "Invalid Credential").
+
+    Distinct from PanoramaAPIError so callers can tell a *stale key* (which is
+    fixable by regenerating the key and retrying) apart from a genuine API/data
+    failure. Subclasses PanoramaAPIError so existing ``except PanoramaAPIError``
+    handlers still catch it.
+    """
+    pass
+
+
+def _is_invalid_credential(status_code: int | None, text: str | None) -> bool:
+    """True if a Panorama response signals a rejected/expired API key.
+
+    Panorama returns HTTP 403 with an ``Invalid Credential`` message body when a
+    key is stale (rotated, expired, or issued before a Panorama restart).
+    """
+    if status_code == 403:
+        return True
+    return "invalid credential" in (text or "").lower()
+
+
 def _xp(value: str) -> str:
     """Validate a name interpolated into an XPath predicate (`[@name='...']`).
 
@@ -95,8 +117,12 @@ def _keygen(user: str, pwd: str) -> str:
         raise PanoramaAPIError(f"Keygen error: {e}")
 
 
-def get_api_key() -> str:
-    """Generate and cache a Panorama API key from shared env credentials."""
+def get_api_key(force: bool = False) -> str:
+    """Generate and cache a Panorama API key from shared env credentials.
+
+    ``force=True`` bypasses the module cache and re-issues a fresh key, used to
+    recover from a key Panorama has since rejected as stale.
+    """
     host = os.getenv("PANORAMA_HOST")
     user = os.getenv("DOMAIN_USERNAME")
     pwd  = os.getenv("DOMAIN_PASSWORD")
@@ -106,7 +132,7 @@ def get_api_key() -> str:
 
     cache_key = f"{host}:{user}"
     now = time.time()
-    if cache_key in _key_cache:
+    if not force and cache_key in _key_cache:
         key, exp = _key_cache[cache_key]
         if now < exp:
             return key
@@ -117,15 +143,19 @@ def get_api_key() -> str:
     return key
 
 
-def get_user_api_key(username: str, password: str) -> str:
-    """Generate a Panorama API key for a specific user. Cached at module level for TTL."""
+def get_user_api_key(username: str, password: str, force: bool = False) -> str:
+    """Generate a Panorama API key for a specific user. Cached at module level for TTL.
+
+    ``force=True`` bypasses the module cache and re-issues a fresh key, used to
+    recover from a key Panorama has since rejected as stale.
+    """
     host = os.getenv("PANORAMA_HOST")
     if not host:
         raise PanoramaAPIError("PANORAMA_HOST not set")
 
     cache_key = f"{host}:{username}"
     now = time.time()
-    if cache_key in _key_cache:
+    if not force and cache_key in _key_cache:
         key, exp = _key_cache[cache_key]
         if now < exp:
             return key
@@ -158,6 +188,8 @@ def _config_get(xpath: str, api_key: str) -> ET.Element:
             "status": resp.status_code,
             "duration_ms": duration
         })
+        if _is_invalid_credential(resp.status_code, resp.text):
+            raise PanoramaAuthError(f"Panorama rejected API key (Invalid Credential): {xpath}")
         root   = ET.fromstring(resp.text)
         status = root.get("status", "")
         if status != "success":
@@ -187,6 +219,8 @@ def _op(cmd: str, api_key: str) -> ET.Element:
             "status": resp.status_code,
             "duration_ms": duration
         })
+        if _is_invalid_credential(resp.status_code, resp.text):
+            raise PanoramaAuthError(f"Panorama rejected API key (Invalid Credential): {cmd}")
         root = ET.fromstring(resp.text)
         if root.get("status") != "success":
              raise PanoramaAPIError(f"Panorama op failed: {cmd}")
@@ -306,6 +340,8 @@ def fetch_firewall_interfaces(api_key: str) -> list[dict]:
     """
     try:
         result = _op("<show><devices><all/></devices></show>", api_key)
+    except PanoramaAuthError:
+        raise
     except Exception as e:
         logger.error(f"Failed to fetch Panorama devices: {e}")
         return []
@@ -508,6 +544,8 @@ def get_device_groups(api_key: str) -> list[str]:
         })
         return names
     except Exception as e:
+        if _is_invalid_credential(None, str(e)):
+            raise PanoramaAuthError(f"Panorama rejected API key (Invalid Credential): {e}")
         raise PanoramaAPIError(f"get_device_groups error: {e}")
 
 
@@ -567,10 +605,12 @@ def get_address_objects_and_groups(
     try:
         r = _config_get("/config/shared/address", api_key)
         objects.update(_parse_address_entries(_unwrap(r, "address")))
+    except PanoramaAuthError: raise
     except Exception: pass
     try:
         r = _config_get("/config/shared/address-group", api_key)
         groups.update(_parse_group_entries(_unwrap(r, "address-group")))
+    except PanoramaAuthError: raise
     except Exception: pass
 
     # Per device-group level
@@ -579,10 +619,12 @@ def get_address_objects_and_groups(
         try:
             r = _config_get(f"{dg_base}/entry[@name='{_xp(dg)}']/address", api_key)
             objects.update(_parse_address_entries(_unwrap(r, "address")))
+        except PanoramaAuthError: raise
         except Exception: pass
         try:
             r = _config_get(f"{dg_base}/entry[@name='{_xp(dg)}']/address-group", api_key)
             groups.update(_parse_group_entries(_unwrap(r, "address-group")))
+        except PanoramaAuthError: raise
         except Exception: pass
 
     return objects, groups
@@ -666,10 +708,12 @@ def get_services(
     try:
         r = _config_get("/config/shared/service", api_key)
         objects.update(_parse_service_entries(_unwrap(r, "service")))
+    except PanoramaAuthError: raise
     except Exception: pass
     try:
         r = _config_get("/config/shared/service-group", api_key)
         groups.update(_parse_service_group_entries(_unwrap(r, "service-group")))
+    except PanoramaAuthError: raise
     except Exception: pass
 
     dg_base = f"{BASE_XPATH}/device-group"
@@ -677,10 +721,12 @@ def get_services(
         try:
             r = _config_get(f"{dg_base}/entry[@name='{_xp(dg)}']/service", api_key)
             objects.update(_parse_service_entries(_unwrap(r, "service")))
+        except PanoramaAuthError: raise
         except Exception: pass
         try:
             r = _config_get(f"{dg_base}/entry[@name='{_xp(dg)}']/service-group", api_key)
             groups.update(_parse_service_group_entries(_unwrap(r, "service-group")))
+        except PanoramaAuthError: raise
         except Exception: pass
 
     return objects, groups
@@ -853,6 +899,8 @@ def get_managed_devices(api_key: str) -> list[dict]:
             })
 
         devices.sort(key=lambda d: (d.get("hostname", "").lower(), d.get("model", "")))
+    except PanoramaAuthError:
+        raise
     except Exception as e:
         logger.error(f"Failed to fetch managed devices: {e}")
 
@@ -904,6 +952,7 @@ def get_all_security_rules(
     try:
         r = _config_get(f"{BASE_XPATH}/pre-rulebase/security/rules", api_key)
         all_rules.extend(_parse_rules(_unwrap(r, "rules"), "shared", "pre"))
+    except PanoramaAuthError: raise
     except Exception: pass
 
     # Per device-group pre
@@ -911,6 +960,7 @@ def get_all_security_rules(
         try:
             r = _config_get(f"{dg_base}/entry[@name='{_xp(dg)}']/pre-rulebase/security/rules", api_key)
             all_rules.extend(_parse_rules(_unwrap(r, "rules"), dg, "pre"))
+        except PanoramaAuthError: raise
         except Exception: pass
 
     # Per device-group post
@@ -918,12 +968,14 @@ def get_all_security_rules(
         try:
             r = _config_get(f"{dg_base}/entry[@name='{_xp(dg)}']/post-rulebase/security/rules", api_key)
             all_rules.extend(_parse_rules(_unwrap(r, "rules"), dg, "post"))
+        except PanoramaAuthError: raise
         except Exception: pass
 
     # Shared post
     try:
         r = _config_get(f"{BASE_XPATH}/post-rulebase/security/rules", api_key)
         all_rules.extend(_parse_rules(_unwrap(r, "rules"), "shared", "post"))
+    except PanoramaAuthError: raise
     except Exception: pass
 
     return all_rules

@@ -193,13 +193,21 @@ def get_ise_for_session(session: SessionEntry):
             session.ise_client = ic.create_user_client(session.username, session.password)
     return session.ise_client
 
-def get_panorama_key_for_session(session: SessionEntry) -> str:
+def get_panorama_key_for_session(session: SessionEntry, force_refresh: bool = False) -> str:
+    """Return the session's Panorama API key, minting one on first use.
+
+    ``force_refresh=True`` discards the cached key (both this session's and the
+    module-level key cache) and re-issues a fresh one — used to recover from a key
+    Panorama has since rejected as stale (403 / Invalid Credential).
+    """
     from dev import DEV_MODE
     if DEV_MODE: return "mock-pan-key"
     with session._lock:
-        if session.panorama_key is None:
+        if force_refresh or session.panorama_key is None:
             import clients.panorama as pc
-            session.panorama_key = pc.get_user_api_key(session.username, session.password)
+            session.panorama_key = pc.get_user_api_key(
+                session.username, session.password, force=force_refresh
+            )
     if not session.panorama_key:
         raise HTTPException(503, "Panorama authentication failed")
     return session.panorama_key

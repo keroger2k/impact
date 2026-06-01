@@ -501,7 +501,16 @@ def _fetch_palo_live(session: SessionEntry, tunnel: dict, endpoint: dict) -> dic
     except Exception as e:
         return _live_error(f"Panorama auth failed: {e}")
 
-    devices = cache.get("pan_managed_devices") or pc.get_managed_devices(api_key)
+    devices = cache.get("pan_managed_devices")
+    if not devices:
+        try:
+            devices = pc.get_managed_devices(api_key)
+        except pc.PanoramaAuthError:
+            # Cached key went stale — regenerate once and retry.
+            api_key = auth_module.get_panorama_key_for_session(session, force_refresh=True)
+            devices = pc.get_managed_devices(api_key)
+        except Exception as e:
+            return _live_error(f"Failed to query managed firewalls: {e}")
     if not devices:
         return _live_error("No managed firewalls available to query")
 
