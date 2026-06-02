@@ -180,11 +180,17 @@ def routing_devices(devices: list[dict]) -> list[dict]:
     """Filter site devices to those likely running a routing protocol,
     and attach a ``protocols`` dict from the cached config-grep.
 
-    Reads ``dnac_device_configs`` (already populated by the IPAM/tunnel
-    refresh paths). Devices without a cached config get the all-None
-    protocols dict — the UI hides them.
+    Reads ``dnac_device_configs`` (populated by the IPAM/tunnel refresh
+    paths). Devices without a cached config get the all-None protocols
+    dict — the UI hides them.
     """
-    configs = cache.get("dnac_device_configs") or {}
+    # get_stale, not get: dnac_device_configs is only written by an explicit
+    # IPAM or tunnel refresh — nothing pre-warms or auto-revalidates it. Once
+    # its 24h logical TTL rolls over, cache.get() returns None and the whole
+    # Routing section disappears (the template gates on routing_devices) even
+    # though the configs are physically present for 30 days. Same rationale as
+    # the tunnel inventory read in tunnels_for_site() below.
+    configs = cache.get_stale("dnac_device_configs") or {}
     out: list[dict] = []
     for d in devices:
         if d.get("source") != "DNAC":
