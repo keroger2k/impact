@@ -25,6 +25,26 @@ from utils.site_code import site_code as _sc, site_code_from_hostname as _sch
 
 # ── Site identity ────────────────────────────────────────────────────────────
 
+def _codes_in_path(site_name: str | None) -> set[str]:
+    """Every site code that appears in any *segment* of a DNAC hierarchy path.
+
+    Splitting on '/' and resolving each segment independently is more robust
+    than running ``site_code()`` over the whole string. The whole-string call
+    returns the first letter+digits token it finds *anywhere* in the path, so a
+    deeper floor/rack token (``…/SDCZ - DC1/Floor S100`` → ``S100``) shadows the
+    real facility code that lives in an ancestor segment (``SDCZ - DC1`` →
+    ``SDCZ``). Devices whose hostname doesn't embed the code — typically WAN
+    routers named by circuit rather than site — then fail to match their own
+    site. Resolving per segment lets the ancestor's real code win.
+    """
+    codes: set[str] = set()
+    for seg in (site_name or "").split("/"):
+        c = _sc(seg)
+        if c:
+            codes.add(c.upper())
+    return codes
+
+
 def resolve_site(code: str) -> dict:
     """Resolve a typed site code against the DNAC site hierarchy cache.
 
@@ -71,14 +91,26 @@ def list_devices_for_site(code: str) -> list[dict]:
 
     out: list[dict] = []
 
-    devices = cache.get("devices") or []
-    dev_site_map = cache.get("device_site_map") or {}
+    # get_stale: devices/device_site_map are warmed once at startup and on a 24h
+    # TTL with no auto-revalidation, so plain cache.get() returns None after the
+    # logical TTL rolls over — blanking the devices table on every site until the
+    # app restarts or someone refreshes the cache. This is a read-only display
+    # path; last-known data beats an empty table (same rationale as the tunnel
+    # inventory read in tunnels_for_site).
+    devices = cache.get_stale("devices") or []
+    dev_site_map = cache.get_stale("device_site_map") or {}
 
     for d in devices:
         dev_id = d.get("id")
         site_name = dev_site_map.get(dev_id) or ""
-        derived = _sc(site_name) or _sch(d.get("hostname") or "")
-        if derived.upper() != code_u:
+        # DNAC site assignment is authoritative — and required for devices whose
+        # hostname doesn't embed the code (WAN routers named by circuit, not site).
+        # Match any segment of the hierarchy path, not the whole string, so a real
+        # facility code in an ancestor node isn't shadowed by a code-shaped floor/
+        # rack token in a deeper node. Hostname embedding is the fallback that
+        # covers the common switch/firewall case (k024sw01 → K024).
+        if code_u not in _codes_in_path(site_name) \
+                and _sch(d.get("hostname") or "").upper() != code_u:
             continue
         out.append({
             "source": "DNAC",

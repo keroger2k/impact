@@ -65,6 +65,55 @@ def test_dmvpn_overlays_for_site(tmpdb):
     assert agg.dmvpn_overlays_for_site("K999") == []
 
 
+def test_codes_in_path_segment_matching():
+    """A facility code in an ancestor segment must win over a code-shaped
+    floor/rack/area token in a deeper segment. site_code() over the whole
+    string returns the first letter+digits token it sees, which would shadow
+    the real code (and drop the device from its site)."""
+    assert agg._codes_in_path("Global/Mississippi/SDCZ - DC1/Floor S100") == {"SDCZ", "S100"}
+    assert "K024" in agg._codes_in_path("Global/California/Area A100/DC15 K024")
+    assert agg._codes_in_path("") == set()
+    assert agg._codes_in_path(None) == set()
+
+
+def test_list_devices_picks_up_router_on_deeper_node():
+    """Regression: a WAN router whose hostname carries no site code, assigned in
+    DNAC to a deeper node (…/SDCZ - DC1/Floor S100), must still attribute to SDCZ.
+    The switches embed the code in their hostname; the router relies entirely on
+    the DNAC site path, where the real code lives in an ancestor segment."""
+    devices = [
+        {"id": "d-sw", "hostname": "sdczsw01", "role": "ACCESS", "family": "Switches and Hubs"},
+        {"id": "d-rtr", "hostname": "wan-edge-circuit-7742", "role": "BORDER ROUTER", "family": "Routers"},
+        {"id": "d-other", "hostname": "k024sw09", "role": "ACCESS", "family": "Switches and Hubs"},
+    ]
+    dev_site_map = {
+        "d-sw": "Global/Mississippi/SDCZ - DC1",
+        "d-rtr": "Global/Mississippi/SDCZ - DC1/Floor S100",  # deeper node, code-shaped token
+        "d-other": "Global/California/DC15 K024",
+    }
+    # The cache singleton is shared with any running dev instance — snapshot and
+    # restore so the test doesn't wipe warmed inventory.
+    orig_devices = cache.get_stale("devices")
+    orig_map = cache.get_stale("device_site_map")
+    try:
+        cache.set("devices", devices, ttl=3600)
+        cache.set("device_site_map", dev_site_map, ttl=3600)
+        out = agg.list_devices_for_site("SDCZ")
+        hostnames = {d["hostname"] for d in out}
+        assert "wan-edge-circuit-7742" in hostnames   # the router, via ancestor segment
+        assert "sdczsw01" in hostnames                # the switch, via its own path/hostname
+        assert "k024sw09" not in hostnames            # a different site is not pulled in
+    finally:
+        if orig_devices is not None:
+            cache.set("devices", orig_devices)
+        else:
+            cache.invalidate("devices")
+        if orig_map is not None:
+            cache.set("device_site_map", orig_map)
+        else:
+            cache.invalidate("device_site_map")
+
+
 def test_tunnels_for_site_served_when_logically_expired():
     """Regression: the tunnel inventory is only rebuilt on a manual refresh,
     never auto-warmed. Once its logical TTL rolls over the data is still
