@@ -1,0 +1,196 @@
+<div class="card shadow-sm border-0 mb-3">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-start flex-wrap gap-3">
+      <div>
+        <h4 class="text-navy mb-1"><i class="ph ph-scales me-1"></i>{{ device.hostname }}</h4>
+        <div class="text-muted mono small">{{ device.managementIpAddress }}</div>
+      </div>
+      <div class="d-flex gap-4 small flex-wrap">
+        <div>
+          <div class="text-muted">Model</div>
+          <div class="fw-bold">{{ device.model }}</div>
+        </div>
+        <div>
+          <div class="text-muted">Version</div>
+          <div class="fw-bold">{{ device.version }}{% if device.edition %} <span class="text-muted">({{ device.edition }})</span>{% endif %}</div>
+        </div>
+        <div>
+          <div class="text-muted">HA State</div>
+          <div>
+            <span class="badge {% if device.failoverState == 'active' %}bg-success-subtle text-success{% elif device.failoverState == 'standby' %}bg-info-subtle text-info{% else %}bg-secondary-subtle text-secondary{% endif %}">
+              {{ device.failoverState }}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<ul class="nav nav-tabs mb-3" role="tablist">
+  <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#f5d-vs"     type="button">Virtual Servers ({{ virtuals|length }})</button></li>
+  <li class="nav-item"><button class="nav-link"        data-bs-toggle="tab" data-bs-target="#f5d-pools"  type="button">Pools ({{ pools|length }})</button></li>
+  <li class="nav-item"><button class="nav-link"        data-bs-toggle="tab" data-bs-target="#f5d-nodes"  type="button">Nodes ({{ nodes|length }})</button></li>
+  <li class="nav-item"><button class="nav-link"        data-bs-toggle="tab" data-bs-target="#f5d-self"   type="button">Self IPs ({{ self_ips|length }})</button></li>
+  <li class="nav-item"><button class="nav-link"        data-bs-toggle="tab" data-bs-target="#f5d-vlans"  type="button">VLANs ({{ vlans|length }})</button></li>
+  <li class="nav-item"><button class="nav-link"        data-bs-toggle="tab" data-bs-target="#f5d-ifaces" type="button">Interfaces ({{ interfaces|length }})</button></li>
+  <li class="nav-item"><button class="nav-link"        data-bs-toggle="tab" data-bs-target="#f5d-routes" type="button">Routes ({{ routes|length }})</button></li>
+</ul>
+
+<div class="tab-content">
+  <!-- Virtual Servers -->
+  <div class="tab-pane fade show active" id="f5d-vs">
+    <div class="card shadow-sm border-0"><div class="card-body p-0 overflow-auto" style="max-height: 60vh;">
+      {% if not virtuals %}<div class="text-center text-muted p-4">No virtual servers.</div>{% else %}
+      <table class="table table-hover table-striped mb-0 data-table">
+        <thead class="bg-light sticky-top"><tr><th>Name</th><th>Destination</th><th>Port</th><th>Protocol</th><th>Pool</th><th>Status</th><th>Availability</th></tr></thead>
+        <tbody>
+          {% for v in virtuals %}
+          <tr>
+            <td class="fw-bold">{{ v.name }}</td>
+            <td class="mono">{{ v.ip }}</td>
+            <td class="mono small">{{ v.port }}</td>
+            <td><span class="badge bg-light text-muted">{{ v.ipProtocol or '—' }}</span></td>
+            <td class="mono small">{{ v.pool or '—' }}</td>
+            <td><span class="badge {% if v.status == 'enabled' %}bg-success-subtle text-success{% elif v.status == 'disabled' %}bg-secondary-subtle text-secondary{% else %}bg-light text-muted{% endif %}">{{ v.status }}</span></td>
+            <td><span class="badge {% if v.availability == 'available' %}bg-success-subtle text-success{% elif v.availability == 'offline' %}bg-danger-subtle text-danger{% else %}bg-light text-muted{% endif %}">{{ v.availability }}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div></div>
+  </div>
+
+  <!-- Pools -->
+  <div class="tab-pane fade" id="f5d-pools">
+    <div class="card shadow-sm border-0"><div class="card-body p-0 overflow-auto" style="max-height: 60vh;">
+      {% if not pools %}<div class="text-center text-muted p-4">No pools.</div>{% else %}
+      <table class="table table-hover table-striped mb-0 data-table">
+        <thead class="bg-light sticky-top"><tr><th>Pool</th><th>LB Mode</th><th>Monitor</th><th data-type="number">Members</th><th>Member Detail</th></tr></thead>
+        <tbody>
+          {% for p in pools %}
+          <tr>
+            <td class="fw-bold">{{ p.name }}</td>
+            <td class="small">{{ p.loadBalancingMode or '—' }}</td>
+            <td class="small mono">{{ p.monitor or '—' }}</td>
+            <td>{{ p.member_count }}</td>
+            <td class="small">
+              {% for m in p.members %}
+                <span class="badge {% if m.state == 'up' %}bg-success-subtle text-success{% elif m.state == 'down' %}bg-danger-subtle text-danger{% else %}bg-light text-muted{% endif %}" title="{{ m.session }}">{{ m.name }}</span>
+              {% else %}<span class="text-muted">—</span>{% endfor %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div></div>
+  </div>
+
+  <!-- Nodes -->
+  <div class="tab-pane fade" id="f5d-nodes">
+    <div class="card shadow-sm border-0"><div class="card-body p-0 overflow-auto" style="max-height: 60vh;">
+      {% if not nodes %}<div class="text-center text-muted p-4">No nodes.</div>{% else %}
+      <table class="table table-hover table-striped mb-0 data-table">
+        <thead class="bg-light sticky-top"><tr><th>Name</th><th>Address</th><th>State</th><th>Session</th></tr></thead>
+        <tbody>
+          {% for n in nodes %}
+          <tr>
+            <td class="fw-bold">{{ n.name }}</td>
+            <td class="mono">{{ n.address }}</td>
+            <td><span class="badge {% if n.state == 'up' %}bg-success-subtle text-success{% elif n.state == 'down' %}bg-danger-subtle text-danger{% else %}bg-light text-muted{% endif %}">{{ n.state or '—' }}</span></td>
+            <td class="small text-muted">{{ n.session or '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div></div>
+  </div>
+
+  <!-- Self IPs -->
+  <div class="tab-pane fade" id="f5d-self">
+    <div class="card shadow-sm border-0"><div class="card-body p-0 overflow-auto" style="max-height: 60vh;">
+      {% if not self_ips %}<div class="text-center text-muted p-4">No self-IPs.</div>{% else %}
+      <table class="table table-hover table-striped mb-0 data-table">
+        <thead class="bg-light sticky-top"><tr><th>Name</th><th>Address</th><th>VLAN</th><th>Floating</th><th>Traffic Group</th></tr></thead>
+        <tbody>
+          {% for s in self_ips %}
+          <tr>
+            <td class="fw-bold">{{ s.name }}</td>
+            <td class="mono">{{ s.address }}</td>
+            <td class="small">{{ s.vlan or '—' }}</td>
+            <td><span class="badge {% if s.floating == 'enabled' %}bg-info-subtle text-info{% else %}bg-light text-muted{% endif %}">{{ s.floating }}</span></td>
+            <td class="small text-muted">{{ s.trafficGroup or '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div></div>
+  </div>
+
+  <!-- VLANs -->
+  <div class="tab-pane fade" id="f5d-vlans">
+    <div class="card shadow-sm border-0"><div class="card-body p-0 overflow-auto" style="max-height: 60vh;">
+      {% if not vlans %}<div class="text-center text-muted p-4">No VLANs.</div>{% else %}
+      <table class="table table-hover table-striped mb-0 data-table">
+        <thead class="bg-light sticky-top"><tr><th>Name</th><th data-type="number">Tag</th><th>MTU</th><th>Interfaces</th></tr></thead>
+        <tbody>
+          {% for v in vlans %}
+          <tr>
+            <td class="fw-bold">{{ v.name }}</td>
+            <td>{{ v.tag or '—' }}</td>
+            <td class="small">{{ v.mtu or '—' }}</td>
+            <td class="mono small">{{ v.interfaces or '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div></div>
+  </div>
+
+  <!-- Interfaces -->
+  <div class="tab-pane fade" id="f5d-ifaces">
+    <div class="card shadow-sm border-0"><div class="card-body p-0 overflow-auto" style="max-height: 60vh;">
+      {% if not interfaces %}<div class="text-center text-muted p-4">No interfaces.</div>{% else %}
+      <table class="table table-hover table-striped mb-0 data-table">
+        <thead class="bg-light sticky-top"><tr><th>Name</th><th>MAC</th><th>Enabled</th><th>Media</th><th>MTU</th></tr></thead>
+        <tbody>
+          {% for i in interfaces %}
+          <tr>
+            <td class="fw-bold mono">{{ i.name }}</td>
+            <td class="mono small text-muted">{{ i.mac or '—' }}</td>
+            <td><span class="badge {% if i.enabled %}bg-success-subtle text-success{% else %}bg-secondary-subtle text-secondary{% endif %}">{{ 'yes' if i.enabled else 'no' }}</span></td>
+            <td class="small">{{ i.mediaActive }}</td>
+            <td class="small">{{ i.mtu or '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div></div>
+  </div>
+
+  <!-- Routes -->
+  <div class="tab-pane fade" id="f5d-routes">
+    <div class="card shadow-sm border-0"><div class="card-body p-0 overflow-auto" style="max-height: 60vh;">
+      {% if not routes %}<div class="text-center text-muted p-4">No static routes.</div>{% else %}
+      <table class="table table-hover table-striped mb-0 data-table">
+        <thead class="bg-light sticky-top"><tr><th>Name</th><th>Network</th><th>Gateway</th></tr></thead>
+        <tbody>
+          {% for r in routes %}
+          <tr>
+            <td class="fw-bold">{{ r.name }}</td>
+            <td class="mono">{{ r.network }}</td>
+            <td class="mono small">{{ r.gw }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div></div>
+  </div>
+</div>

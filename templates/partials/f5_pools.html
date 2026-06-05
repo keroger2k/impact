@@ -1,0 +1,42 @@
+<div class="card shadow-sm border-0 animate-fade-in">
+  <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center">
+    <span class="fw-bold">Pools &amp; Members ({{ items|length }})</span>
+    <button class="btn btn-sm btn-outline-light px-2"
+            hx-get="/api/f5/pools" hx-target="#f5-results" hx-indicator="#f5-loading">
+      <i class="ph ph-arrows-clockwise"></i>
+    </button>
+  </div>
+  <div class="card-body p-0 overflow-auto" style="max-height: calc(100vh - 200px);">
+    {% if not items %}
+      <div class="text-center text-muted p-5">
+        <i class="ph ph-stack" style="font-size: 2.5rem;"></i>
+        <p class="mt-2 mb-0">No pools cached yet.</p>
+      </div>
+    {% else %}
+    <table class="table table-hover table-striped mb-0 data-table">
+      <thead class="bg-light sticky-top">
+        <tr><th>Host</th><th>Pool</th><th>LB Mode</th><th>Monitor</th><th data-type="number">Members</th><th>Member Detail</th></tr>
+      </thead>
+      <tbody>
+        {% for p in items %}
+        <tr>
+          <td class="fw-bold text-navy">
+            <a class="text-decoration-none text-navy" href="/f5/{{ p.hostname }}"
+               hx-get="/f5/{{ p.hostname }}" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">{{ p.hostname }}</a>
+          </td>
+          <td class="fw-bold">{{ p.name }}</td>
+          <td class="small">{{ p.loadBalancingMode or '—' }}</td>
+          <td class="small mono">{{ p.monitor or '—' }}</td>
+          <td>{{ p.member_count }}</td>
+          <td class="small">
+            {% for m in p.members %}
+              <span class="badge {% if m.state == 'up' %}bg-success-subtle text-success{% elif m.state == 'down' %}bg-danger-subtle text-danger{% else %}bg-light text-muted{% endif %}" title="{{ m.session }}">{{ m.name }}</span>
+            {% else %}<span class="text-muted">—</span>{% endfor %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</div>

@@ -10,6 +10,7 @@ IMPACT II is a **TSA Network Operations Platform** — a unified web dashboard f
 - **Palo Alto Panorama** — firewall device groups, security policies, address/service objects, interface inventory
 - **Cisco ACI** — multi-fabric SDN (leaf/spine); nodes, interfaces, tenants/VRFs/BDs/EPGs/contracts, L3Outs, BGP/OSPF maps and peers, route tables, access policies, health, faults
 - **Cisco Nexus** — SSH-based collection (Netmiko) of inventory, interfaces, VLANs, port-channels, vPCs
+- **F5 BIG-IP** — **read-only** iControl REST collection of inventory (HA active/standby), self-IPs, VLANs, interfaces, virtual servers (VIPs), pools/members, nodes, routes. CSV-driven device list (`data/device_lists/f5.csv`), per-user AD creds via HTTP Basic Auth, **GET-only** (see `clients/f5.py`). Self-IPs feed IP lookup + IPAM; VIPs are searchable in IP lookup and shown as /32s in IPAM
 - **IPAM** — DNAC-sourced address pools rendered as an aggregated tree with stats and export
 - **VPN Tunnels** — enterprise IPsec tunnel inventory; normalizes IOS (DMVPN, sVTI, dVTI, policy-based) + Palo IPsec from cached DNAC running-configs and Panorama IKE/IPsec objects, plus live counters
 - **IP Registry** (`/registry`) — site-centric **dual-stack** IPAM. A *site* (keyed by `site_code`) owns any number of IPv4 *and* IPv6 `prefixes`; shared aggregates (e.g. the STIP /48) are containers, per-site /64s hang off them. Stores *intent* (what each site should own) and reconciles it against the live network via the **audit** (DNAC/IPAM tree, Nexus, Panorama, ACI) → in-sync / registry-only / network-only / mismatch, with **bulk-accept** of discovered drift into the registry. Keeps the TSA vvvv decode/IPv4→IPv6 assemble tools. Local SQLite (`data/ip_registry.db`). **This supersedes the older IPv6-only "IPv6 Registry"** (`/ipv6-registry`, `clients/ipv6_registry.py`), which is still wired but deprecated — the `/site` page now reads this dual-stack registry (via `site_aggregator.registry_for_site`), so the old one remains only for the IPAM dashboard's "Add to Registry" cross-links and the standalone `/ipv6-registry` page. Follow-up: repoint those too, then delete the old one. The `/registry` page surfaces shared aggregates (DMVPN overlays / STIP /48s / supernets) under its **Shared** tab via `GET /api/registry/containers`.
@@ -47,8 +48,9 @@ The app is structured in three layers:
 - `clients/panorama.py` — direct XML API via `requests`; generates API keys, parses security policies and rules
 - `clients/aci.py` — direct REST API wrapper for APIC; handles login tokens, class queries, and DN tree queries
 - `clients/aci_registry.py` — singleton registry managing multi-fabric configurations from environment variables
+- `clients/f5.py` — **read-only** F5 BIG-IP iControl REST client. Every network call funnels through one private `_get()` helper (HTTP Basic Auth with the user's AD creds) — there is **no POST/PUT/PATCH/DELETE code path**, so read-only is structural, not discipline-based. `tests/test_f5.py::test_f5_client_is_read_only` greps the module to enforce it. Do not add mutating verbs here.
 
-Nexus collection lives in `collectors/nxos.py` (Netmiko SSH) rather than `clients/`, since it is interactive CLI-driven rather than API-driven.
+Nexus collection lives in `collectors/nxos.py` (Netmiko SSH) rather than `clients/`, since it is interactive CLI-driven rather than API-driven. F5 is API-driven so its client lives in `clients/f5.py`, but its UX model mirrors Nexus (CSV device list in `data/device_lists/f5.csv`, per-user AD creds, SSE refresh).
 
 **Cache layer** (`cache.py`) is a singleton TTL cache backed by `diskcache` (SQLite at `data/cache/diskcache/cache.db`); persists across restarts.
 
@@ -70,6 +72,7 @@ Default TTLs are defined as constants in `cache.py` and each is overridable via 
 | `TTL_DNAC_ROUTER_CONFIGS` | 24h | `IMPACT_TTL_DNAC_ROUTER_CONFIGS` | DNAC running-config snapshots used by routing diagnostics |
 | `TTL_DNAC_IP_POOLS` | 24h | `IMPACT_TTL_DNAC_IP_POOLS` | DNAC global IP pools + reserve subpools (IPAM source data) |
 | `TTL_TUNNEL_INVENTORY` | 24h | `IMPACT_TTL_TUNNEL_INVENTORY` | normalized tunnel inventory (`tunnel_inventory_v1` — bump the key version on a structural change) |
+| `TTL_F5` | 24h | `IMPACT_TTL_F5` | F5 BIG-IP collection caches (`f5_inventory`, `f5_self_ips`, `f5_virtuals`, `f5_pools`, `f5_nodes`, `f5_vlans`, `f5_interfaces`, `f5_routes`) |
 
 The IPAM tree is cached under a fixed, versioned key (`IPAM_TREE_CACHE_KEY = "ipam_tree_v4"` in `cache.py`) — bump the suffix to invalidate the tree shape on a structural change rather than relying on TTL.
 
@@ -80,6 +83,7 @@ Naming conventions for cache keys:
 - `ise_*` — ISE (stable lists, plus `ise_auth_rules_{policy_set_id}` per policy set)
 - `aci_{fabric_id}_{suffix}` — ACI, namespaced per fabric (`_fkey(fabric_id, suffix)` in `routers/aci.py`). Per-L3Out route-table entries are stored under `aci_{fabric_id}_l3out_route_table:{quoted_dn}`.
 - `tunnel_inventory_v1` — normalized IPsec tunnel inventory (versioned key; bump suffix on schema change). Live counters are fetched on-demand, not cached.
+- `f5_*` — F5 BIG-IP (flat per-object lists, each row carries a `hostname`): `f5_inventory`, `f5_self_ips`, `f5_vlans`, `f5_interfaces`, `f5_virtuals`, `f5_pools`, `f5_nodes`, `f5_routes`
 - `status_*` — system connectivity probes
 
 Other notes:
@@ -98,6 +102,7 @@ Other notes:
 - `routers/firewall.py` — `/api/firewall/`: device-groups, policy lookup, policies by DG, rules export, interfaces (list/refresh/search), devices, templates, cache info/refresh
 - `routers/aci.py` — `/api/aci/`: fabrics, fabric/nodes, nodes/{id}/interfaces, L3Outs (list/detail/routes/route-table), BGP map/peers/diagnose, OSPF map/peers, traffic/EPGs, traffic/faults, health/summary, tenants (+detail), VRFs, bridge-domains, app-profiles, EPGs/detail, contracts (+detail), filters, access (policy-groups, AAEPs, domains, VLAN pools, interface policies). All cache keys are namespaced per fabric and most endpoints accept `?fabric=<id>` or `?fabric=all` for cross-fabric aggregation.
 - `routers/nexus.py` — `/api/nexus/`: SSH-driven inventory refresh (SSE), inventory, devices (HTML), per-device detail (HTML), interfaces, port-channels, vPCs, VLANs, cache info/refresh
+- `routers/f5.py` — `/api/f5/`: **read-only** iControl REST collection refresh (SSE), inventory (JSON), devices (HTML), per-device detail (HTML), virtual-servers, pools, nodes, self-ips, vlans, interfaces, routes, cache info/refresh. CSV at `data/device_lists/f5.csv`; uses the session's AD creds. All reads via `clients.f5` (GET-only)
 - `routers/routing.py` — `/api/routing/`: BGP summary, EIGRP topology, OSPF neighbors — all driven by parsing cached DNAC running-configs
 - `routers/ipam.py` — `/api/ipam/`: refresh (SSE), stats, tree, debug, export
 - `routers/tunnels.py` — `/api/tunnels/`: list/detail of normalized IPsec tunnels (DMVPN, sVTI, dVTI, policy-based, Palo IPsec), live counters via SSE refresh. Parsers in `utils/ipsec_parser.py` + `utils/tunnel_inventory.py`; site-code resolution via `utils/site_code.py`.
@@ -107,7 +112,7 @@ Other notes:
 - `routers/import_.py` — `/api/import/run`: device discovery workflow streamed via SSE
 - `routers/cache_mgmt.py` — `/api/cache/`: cross-cutting cache status, sidebar widget, per-category refresh (`POST /api/cache/refresh/{category}`), and global clear (`clear_all`)
 - `routers/auth.py` — `/api/auth/`: login, logout, session refresh
-- `routers/pages.py` — top-level HTML pages: `/login`, `/dashboard`, `/devices`, `/ise`, `/firewall`, `/aci`, `/nexus`, `/nexus/{hostname}`, `/path-trace`, `/routing/bgp`, `/config-search`, `/ip-lookup`, `/ipam`, `/tunnels`, `/registry` (IP Registry; sidebar links here), `/ipv6-registry` (deprecated), `/command-runner`, `/import`, `/cache-mgmt`
+- `routers/pages.py` — top-level HTML pages: `/login`, `/dashboard`, `/devices`, `/ise`, `/firewall`, `/aci`, `/nexus`, `/nexus/{hostname}`, `/f5`, `/f5/{hostname}`, `/path-trace`, `/routing/bgp`, `/config-search`, `/ip-lookup`, `/ipam`, `/tunnels`, `/registry` (IP Registry; sidebar links here), `/ipv6-registry` (deprecated), `/command-runner`, `/import`, `/cache-mgmt`
 
 App-level (in `main.py`, not under a router prefix):
 - `POST /api/warm` — SSE stream that warms DNAC/ISE/Panorama/ACI/Nexus on demand

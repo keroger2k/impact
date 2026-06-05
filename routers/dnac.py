@@ -439,13 +439,51 @@ async def ip_lookup_handler(ip: str, session: SessionEntry = Depends(require_aut
             except Exception:
                 continue
 
-    found = bool(enriched or firewall_hits or nexus_hits)
+    # ── F5 BIG-IP lookup (read-only cached data) ──
+    query_obj = ipaddress.ip_address(ip)
+
+    def _ip_eq(raw: str) -> bool:
+        bare = (raw or "").split("/")[0].split("%")[0].strip()
+        if not bare:
+            return False
+        try:
+            return ipaddress.ip_address(bare) == query_obj
+        except ValueError:
+            return False
+
+    f5_self_hits = []
+    for s in (cache.get("f5_self_ips") or []):
+        if _ip_eq(s.get("address")):
+            f5_self_hits.append({
+                "hostname":     s.get("hostname"),
+                "name":         s.get("name"),
+                "address":      s.get("address"),
+                "vlan":         s.get("vlan"),
+                "trafficGroup": s.get("trafficGroup"),
+            })
+
+    f5_vip_hits = []
+    for v in (cache.get("f5_virtuals") or []):
+        if _ip_eq(v.get("ip")):
+            f5_vip_hits.append({
+                "hostname":     v.get("hostname"),
+                "name":         v.get("name"),
+                "ip":           v.get("ip"),
+                "port":         v.get("port"),
+                "pool":         v.get("pool"),
+                "status":       v.get("status"),
+                "availability": v.get("availability"),
+            })
+
+    found = bool(enriched or firewall_hits or nexus_hits or f5_self_hits or f5_vip_hits)
     return {
         "ip":                ip,
         "found":             found,
         "interfaces":        enriched,
         "firewall_interfaces": firewall_hits,
         "nexus_interfaces": nexus_hits,
+        "f5_self_ips":       f5_self_hits,
+        "f5_virtual_servers": f5_vip_hits,
     }
 
 @router.get("/ip-lookup/ui", response_class=HTMLResponse)

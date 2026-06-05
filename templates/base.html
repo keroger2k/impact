@@ -50,6 +50,10 @@
          hx-get="/nexus" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
         <span class="nav-icon"><i class="ph ph-hard-drives"></i></span> <span class="nav-text">Nexus Insights</span>
       </a>
+      <a class="nav-item {% if active_page == 'f5' %}active{% endif %}"
+         hx-get="/f5" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+        <span class="nav-icon"><i class="ph ph-scales"></i></span> <span class="nav-text">F5 Load Balancers</span>
+      </a>
       <a class="nav-item {% if active_page == 'ipam' %}active{% endif %}"
          hx-get="/ipam" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
         <span class="nav-icon"><i class="ph ph-network"></i></span> <span class="nav-text">IPAM Dashboard</span>

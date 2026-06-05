@@ -81,6 +81,16 @@ CACHE_SYSTEMS = [
         "refresh_url": "/api/cache/refresh/tunnels",
         "sse": False,
     },
+    {
+        "id": "f5",
+        "label": "F5",
+        "icon": "ph-scales",
+        "keys": ["f5_inventory", "f5_self_ips", "f5_virtuals", "f5_pools", "f5_nodes"],
+        "count_key": "f5_inventory",
+        "refresh_url": None,
+        "sse": True,
+        "sse_fn": "triggerF5CacheRefresh()",
+    },
 ]
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -311,6 +321,9 @@ async def get_cache_status(request: Request, session: SessionEntry = Depends(req
         _get_card_info("nexus_port_channels", "Nexus Port-Channels",   "ph ph-stack",            "warning",   None,                             sse=True, sse_fn="triggerNexusCacheRefresh()"),
         _get_card_info("nexus_vpcs",          "Nexus vPCs",            "ph ph-share-network",    "warning",   None,                             sse=True, sse_fn="triggerNexusCacheRefresh()"),
         _get_card_info("nexus_vlans",         "Nexus VLANs",           "ph ph-tag",              "warning",   None,                             sse=True, sse_fn="triggerNexusCacheRefresh()"),
+        _get_card_info("f5_inventory",        "F5 Inventory",          "ph ph-scales",           "primary",   None,                             sse=True, sse_fn="triggerF5CacheRefresh()"),
+        _get_card_info("f5_virtuals",         "F5 Virtual Servers",    "ph ph-globe-hemisphere-west", "primary", None,                          sse=True, sse_fn="triggerF5CacheRefresh()"),
+        _get_card_info("f5_self_ips",         "F5 Self IPs",           "ph ph-network",          "primary",   None,                             sse=True, sse_fn="triggerF5CacheRefresh()"),
     ])
 
     return templates.TemplateResponse(request, "partials/cache_cards.html", {"cards": cards})
@@ -357,6 +370,9 @@ _KEY_TO_CATEGORY = {
     "aci_faults": "aci", "aci_subnets": "aci", "aci_health_overall": "aci",
     "nexus_inventory": "nexus", "nexus_interfaces": "nexus",
     "nexus_port_channels": "nexus", "nexus_vpcs": "nexus", "nexus_vlans": "nexus",
+    "f5_inventory": "f5", "f5_self_ips": "f5", "f5_vlans": "f5",
+    "f5_interfaces": "f5", "f5_virtuals": "f5", "f5_pools": "f5",
+    "f5_nodes": "f5", "f5_routes": "f5",
 }
 
 
@@ -404,6 +420,12 @@ async def refresh_specific_cache(category: str, request: Request, session: Sessi
         cache.invalidate("nexus_vpcs")
         cache.invalidate("nexus_vlans")
         msg = "Nexus cache cleared. Use the Collect button to run SSH collection."
+
+    elif category == "f5":
+        from routers.f5 import F5_CACHE_KEYS
+        for k in F5_CACHE_KEYS:
+            cache.invalidate(k)
+        msg = "F5 cache cleared. Use the Collect button to run a read-only iControl REST collection."
 
     elif category == "pan_interfaces":
         from logger_config import run_with_context

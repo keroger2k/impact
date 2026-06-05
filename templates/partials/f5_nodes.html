@@ -1,0 +1,37 @@
+<div class="card shadow-sm border-0 animate-fade-in">
+  <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center">
+    <span class="fw-bold">Nodes ({{ items|length }})</span>
+    <button class="btn btn-sm btn-outline-light px-2"
+            hx-get="/api/f5/nodes" hx-target="#f5-results" hx-indicator="#f5-loading">
+      <i class="ph ph-arrows-clockwise"></i>
+    </button>
+  </div>
+  <div class="card-body p-0 overflow-auto" style="max-height: calc(100vh - 200px);">
+    {% if not items %}
+      <div class="text-center text-muted p-5">
+        <i class="ph ph-circles-three" style="font-size: 2.5rem;"></i>
+        <p class="mt-2 mb-0">No nodes cached yet.</p>
+      </div>
+    {% else %}
+    <table class="table table-hover table-striped mb-0 data-table">
+      <thead class="bg-light sticky-top">
+        <tr><th>Host</th><th>Name</th><th>Address</th><th>State</th><th>Session</th></tr>
+      </thead>
+      <tbody>
+        {% for n in items %}
+        <tr>
+          <td class="fw-bold text-navy">
+            <a class="text-decoration-none text-navy" href="/f5/{{ n.hostname }}"
+               hx-get="/f5/{{ n.hostname }}" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">{{ n.hostname }}</a>
+          </td>
+          <td class="fw-bold">{{ n.name }}</td>
+          <td class="mono">{{ n.address }}</td>
+          <td><span class="badge {% if n.state == 'up' %}bg-success-subtle text-success{% elif n.state == 'down' %}bg-danger-subtle text-danger{% else %}bg-light text-muted{% endif %}">{{ n.state or '—' }}</span></td>
+          <td class="small text-muted">{{ n.session or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</div>

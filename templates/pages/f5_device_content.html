@@ -1,0 +1,14 @@
+<div class="d-flex flex-column gap-3 animate-fade-in">
+  <div>
+    <a href="/f5" hx-get="/f5" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML"
+       class="text-muted small text-decoration-none">
+      <i class="ph ph-arrow-left"></i> Back to F5 Load Balancers
+    </a>
+  </div>
+  <div id="f5-device-body" hx-get="/api/f5/devices/{{ hostname }}" hx-trigger="load" hx-swap="innerHTML">
+    <div class="text-center p-5 text-muted">
+      <div class="spinner-border text-primary"></div>
+      <p class="mt-3">Loading device details…</p>
+    </div>
+  </div>
+</div>

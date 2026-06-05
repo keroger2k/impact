@@ -163,6 +163,7 @@ class IPAMEngine:
             "dnac_iface_v6":   self._discover_dnac_iface_v6,
             "nexus":           self._discover_nexus,
             "panorama":        self._discover_panorama,
+            "f5":              self._discover_f5,
         }
 
     def is_excluded(self, net: netaddr.IPNetwork, name: str = "", desc: str = "") -> bool:
@@ -676,9 +677,58 @@ class IPAMEngine:
         except Exception as e:
             logger.error(f"Nexus discovery failed: {e}")
 
+    async def _discover_f5(self, session, loop):
+        """F5 BIG-IP source (read-only cached data). Self-IPs become real subnets;
+        virtual servers become VIP host routes (/32 or /128)."""
+        try:
+            from cache import cache
+
+            # Self-IPs → L3 subnets the F5 owns.
+            for s in (cache.get("f5_self_ips") or []):
+                addr = s.get("address")
+                if not addr:
+                    continue
+                try:
+                    net = netaddr.IPNetwork(addr)
+                except Exception:
+                    continue
+                if self.is_excluded(net, s.get("name", "")):
+                    continue
+                node = IPAMNode(str(net.cidr), source="F5")
+                node.display_name = s.get("name") or "self-ip"
+                node.site = "LoadBalancer"
+                node.device = s.get("hostname")
+                node.host_ip = str(net.ip)
+                node.interface_name = s.get("name")
+                node.interface_type, node.vlan_id = classify_interface(s.get("name"), net)
+                self.subnets.append(node)
+
+            # Virtual servers → VIP host routes.
+            for v in (cache.get("f5_virtuals") or []):
+                vip = v.get("ip")
+                if not vip:
+                    continue
+                try:
+                    host = netaddr.IPAddress(vip)
+                    net = netaddr.IPNetwork(f"{vip}/{32 if host.version == 4 else 128}")
+                except Exception:
+                    continue
+                if self.is_excluded(net):
+                    continue
+                node = IPAMNode(str(net.cidr), source="F5")
+                node.display_name = f"VIP: {v.get('name')}"
+                node.site = "LoadBalancer"
+                node.device = v.get("hostname")
+                node.host_ip = vip
+                node.interface_type = "vip"
+                node.role = "vip"
+                self.subnets.append(node)
+        except Exception as e:
+            logger.error(f"F5 discovery failed: {e}")
+
     def build_tree(self):
         """Construct a recursive hierarchy from the flat subnets list."""
-        priority = ["DNAC-Pool", "DNAC-Config", "ACI", "DNAC", "Nexus", "Panorama"]
+        priority = ["DNAC-Pool", "DNAC-Config", "ACI", "DNAC", "Nexus", "Panorama", "F5"]
         unique_nets: Dict[str, IPAMNode] = {}
         tunnel_endpoints: Dict[str, List[IPAMNode]] = {}
 

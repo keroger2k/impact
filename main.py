@@ -19,7 +19,7 @@ from utils.csrf import CSRFMiddleware
 import auth as auth_module
 from auth import require_auth, SessionEntry
 from clients import verify_ssl
-from routers import dnac, ise, firewall, aci, commands, import_, auth as auth_router, pages, routing, nexus, cache_mgmt, ipam, tunnels, ipv6_registry, ip_registry, site
+from routers import dnac, ise, firewall, aci, commands, import_, auth as auth_router, pages, routing, nexus, cache_mgmt, ipam, tunnels, ipv6_registry, ip_registry, site, f5
 from logger_config import setup_logging, set_correlation_id, run_with_context
 
 setup_logging()
@@ -147,6 +147,7 @@ app.include_router(commands.router, prefix="/api/commands", tags=["Commands"], *
 app.include_router(import_.router, prefix="/api/import", tags=["Import"], **_auth_dep)
 app.include_router(routing.router, prefix="/api/routing", tags=["Routing"], **_auth_dep)
 app.include_router(nexus.router, prefix="/api/nexus", tags=["Nexus"], **_auth_dep)
+app.include_router(f5.router, prefix="/api/f5", tags=["F5"], **_auth_dep)
 app.include_router(cache_mgmt.router, prefix="/api/cache", tags=["Cache"], **_auth_dep)
 app.include_router(ipam.router, prefix="/api/ipam", tags=["IPAM"], **_auth_dep)
 app.include_router(tunnels.router, prefix="/api/tunnels", tags=["Tunnels"], **_auth_dep)
@@ -165,6 +166,7 @@ async def warm_cache(session: SessionEntry = Depends(require_auth)):
     import clients.panorama as pc
     import clients.aci as ac
     from routers.nexus import init_nexus_collection, get_cached_nexus_inventory
+    from routers.f5 import init_f5_collection
 
     async def generate():
         loop = asyncio.get_event_loop()
@@ -175,7 +177,8 @@ async def warm_cache(session: SessionEntry = Depends(require_auth)):
             ("ise", lambda: ic.connectivity_check(auth_module.get_ise_for_session(session)), "ISE Connection", 3600, None),
             ("panorama", lambda: pc.connectivity_check_with_key(auth_module.get_panorama_key_for_session(session)), "Panorama Connection", 3600, None),
             ("aci", lambda: ac.connectivity_check(auth_module.get_aci_for_session(session)), "ACI Connection", 3600, None),
-            ("nexus", lambda: init_nexus_collection(username=session.username, password=session.password), "Nexus Collection", 3600, None)
+            ("nexus", lambda: init_nexus_collection(username=session.username, password=session.password), "Nexus Collection", 3600, None),
+            ("f5", lambda: init_f5_collection(username=session.username, password=session.password), "F5 Collection", 3600, None)
         ]
 
         for name, func, label, ttl, cache_key in warmers:

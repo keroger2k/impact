@@ -64,6 +64,56 @@
         </div>
       </div>
     {% endfor %}
+
+    {% for s in r.f5_self_ips %}
+      <div class="card shadow-sm border-0 mb-3 overflow-hidden">
+        <div class="card-header bg-primary text-white small fw-bold">F5 SELF-IP MATCH</div>
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-start mb-3">
+            <div>
+              <h5 class="fw-bold text-navy mb-0">
+                <a class="text-decoration-none text-navy" href="/f5/{{ s.hostname }}"
+                   hx-get="/f5/{{ s.hostname }}" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">{{ s.hostname }}</a>
+              </h5>
+              <span class="text-muted small">F5 BIG-IP • Self IP</span>
+            </div>
+            <span class="badge bg-primary">Self IP</span>
+          </div>
+          <div class="bg-light p-3 rounded">
+            <div class="row">
+              <div class="col-6 small"><strong>Name:</strong> {{ s.name }}</div>
+              <div class="col-6 small text-end"><strong>Address:</strong> {{ s.address }}</div>
+            </div>
+            <div class="mt-1 small"><strong>VLAN:</strong> {{ s.vlan or '—' }} &nbsp;•&nbsp; <strong>Traffic Group:</strong> {{ s.trafficGroup or '—' }}</div>
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+
+    {% for v in r.f5_virtual_servers %}
+      <div class="card shadow-sm border-0 mb-3 overflow-hidden">
+        <div class="card-header bg-primary text-white small fw-bold">F5 VIRTUAL SERVER MATCH</div>
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-start mb-3">
+            <div>
+              <h5 class="fw-bold text-navy mb-0">
+                <a class="text-decoration-none text-navy" href="/f5/{{ v.hostname }}"
+                   hx-get="/f5/{{ v.hostname }}" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">{{ v.hostname }}</a>
+              </h5>
+              <span class="text-muted small">F5 BIG-IP • Virtual Server (VIP)</span>
+            </div>
+            <span class="badge {% if v.availability == 'available' %}bg-success{% elif v.availability == 'offline' %}bg-danger{% else %}bg-secondary{% endif %}">{{ v.availability }}</span>
+          </div>
+          <div class="bg-light p-3 rounded">
+            <div class="row">
+              <div class="col-6 small"><strong>Virtual Server:</strong> {{ v.name }}</div>
+              <div class="col-6 small text-end"><strong>VIP:</strong> {{ v.ip }}:{{ v.port }}</div>
+            </div>
+            <div class="mt-1 small"><strong>Pool:</strong> {{ v.pool or '—' }} &nbsp;•&nbsp; <strong>Admin:</strong> {{ v.status }}</div>
+          </div>
+        </div>
+      </div>
+    {% endfor %}
   </div>
 {% else %}
   <div class="alert alert-warning text-center animate-fade-in">

@@ -306,6 +306,107 @@ for _peer in _VPC_PEERS:
             "ports":    list(_ports),
         })
 
+# ── F5 BIG-IP mocks (fake IPs only — see docs/IP_ADDRESS_POLICY.md) ────────────
+# An HA pair: f5-dca-01 (active) / f5-dca-02 (standby). Config is synced, so
+# virtuals/pools/nodes/routes/vlans are identical on both units; self-IPs differ
+# per unit (last octet 1/2) with a shared floating self-IP (.4).
+MOCK_F5_DEVICES = [
+    {
+        "id": "f5_f5-dca-01", "hostname": "f5-dca-01", "managementIpAddress": "10.20.0.10",
+        "model": "BIG-IP i5800", "platformId": "F5 BIG-IP", "version": "16.1.3.1",
+        "edition": "Final", "failoverState": "active", "chassisId": "chs-aaaa-0001",
+        "reachabilityStatus": "Reachable", "source": "F5", "lastUpdateTime": _now_ms,
+    },
+    {
+        "id": "f5_f5-dca-02", "hostname": "f5-dca-02", "managementIpAddress": "10.20.0.11",
+        "model": "BIG-IP i5800", "platformId": "F5 BIG-IP", "version": "16.1.3.1",
+        "edition": "Final", "failoverState": "standby", "chassisId": "chs-aaaa-0002",
+        "reachabilityStatus": "Reachable", "source": "F5", "lastUpdateTime": _now_ms,
+    },
+]
+
+_F5_HOSTS = [d["hostname"] for d in MOCK_F5_DEVICES]
+
+MOCK_F5_SELF_IPS = []
+for _i, _h in enumerate(_F5_HOSTS, start=1):
+    MOCK_F5_SELF_IPS.extend([
+        {"hostname": _h, "name": "external-self", "address": f"1.2.3.{_i}/24",
+         "vlan": "external", "trafficGroup": "traffic-group-local-only", "floating": "disabled", "allowService": "none"},
+        {"hostname": _h, "name": "internal-self", "address": f"5.6.7.{_i}/24",
+         "vlan": "internal", "trafficGroup": "traffic-group-local-only", "floating": "disabled", "allowService": "default"},
+        {"hostname": _h, "name": "external-float", "address": "1.2.3.4/24",
+         "vlan": "external", "trafficGroup": "traffic-group-1", "floating": "enabled", "allowService": "none"},
+    ])
+
+MOCK_F5_VLANS = []
+MOCK_F5_INTERFACES = []
+for _h in _F5_HOSTS:
+    MOCK_F5_VLANS.extend([
+        {"hostname": _h, "name": "external", "tag": 1010, "mtu": 1500, "interfaces": "1.1"},
+        {"hostname": _h, "name": "internal", "tag": 1020, "mtu": 1500, "interfaces": "1.2"},
+        {"hostname": _h, "name": "ha",       "tag": 1030, "mtu": 1500, "interfaces": "1.3"},
+    ])
+    MOCK_F5_INTERFACES.extend([
+        {"hostname": _h, "name": "1.1",  "mac": "00:50:56:aa:01:01", "enabled": True,  "mediaActive": "10000SR-FD", "mtu": 1500},
+        {"hostname": _h, "name": "1.2",  "mac": "00:50:56:aa:01:02", "enabled": True,  "mediaActive": "10000SR-FD", "mtu": 1500},
+        {"hostname": _h, "name": "1.3",  "mac": "00:50:56:aa:01:03", "enabled": True,  "mediaActive": "1000T-FD",   "mtu": 1500},
+        {"hostname": _h, "name": "mgmt", "mac": "00:50:56:aa:01:00", "enabled": True,  "mediaActive": "1000T-FD",   "mtu": 1500},
+    ])
+
+# Synced objects — identical on both units.
+_F5_VS_DEFS = [
+    ("vs_web_https", "1.2.3.100", "443", "pool_web", "tcp", "enabled",  "available"),
+    ("vs_app_https", "1.2.3.101", "443", "pool_app", "tcp", "enabled",  "offline"),
+    ("vs_dns",       "1.2.3.102", "53",  "pool_dns", "udp", "enabled",  "available"),
+    ("vs_legacy",    "1.2.3.103", "80",  "",         "tcp", "disabled", "unknown"),
+]
+MOCK_F5_VIRTUALS = []
+for _h in _F5_HOSTS:
+    for _name, _ip, _port, _pool, _proto, _status, _avail in _F5_VS_DEFS:
+        MOCK_F5_VIRTUALS.append({
+            "hostname": _h, "name": _name, "partition": "Common",
+            "destination": f"/Common/{_ip}:{_port}", "ip": _ip, "port": _port,
+            "pool": _pool, "ipProtocol": _proto, "status": _status,
+            "availability": _avail, "description": "",
+        })
+
+_F5_POOL_DEFS = [
+    ("pool_web", "round-robin",        "https", [("10.50.1.11", "443", "up"),   ("10.50.1.12", "443", "up")]),
+    ("pool_app", "least-connections-member", "tcp", [("10.50.2.11", "8443", "up"), ("10.50.2.12", "8443", "down")]),
+    ("pool_dns", "round-robin",        "gateway_icmp", [("10.50.3.11", "53", "up")]),
+]
+MOCK_F5_POOLS = []
+MOCK_F5_NODES = []
+_seen_nodes = set()
+for _h in _F5_HOSTS:
+    for _pname, _lb, _mon, _members in _F5_POOL_DEFS:
+        members = [
+            {"name": f"{_addr}:{_port}", "address": _addr, "state": _state,
+             "session": "user-disabled" if _state == "down" else "monitor-enabled"}
+            for _addr, _port, _state in _members
+        ]
+        MOCK_F5_POOLS.append({
+            "hostname": _h, "name": _pname, "partition": "Common",
+            "loadBalancingMode": _lb, "monitor": _mon,
+            "member_count": len(members), "members": members,
+        })
+        for _addr, _port, _state in _members:
+            _key = (_h, _addr)
+            if _key in _seen_nodes:
+                continue
+            _seen_nodes.add(_key)
+            MOCK_F5_NODES.append({
+                "hostname": _h, "name": _addr, "address": _addr, "state": _state,
+                "session": "user-disabled" if _state == "down" else "monitor-enabled",
+            })
+
+MOCK_F5_ROUTES = []
+for _h in _F5_HOSTS:
+    MOCK_F5_ROUTES.extend([
+        {"hostname": _h, "name": "default",    "network": "default",      "gw": "1.2.3.1"},
+        {"hostname": _h, "name": "to-backend", "network": "10.50.0.0/16", "gw": "5.6.7.1"},
+    ])
+
 MOCK_USERS = [
     {"id": _uid("user-admin"), "name": "admin", "description": "Network Administrator", "enabled": True, "passwordPolicy": "Strong"},
     {"id": _uid("user-ops"),   "name": "ops-user", "description": "NOC Operations", "enabled": True, "passwordPolicy": "Standard"},
@@ -2049,6 +2150,7 @@ def _build_ipam_tree_from_mocks() -> dict:
             loop.run_until_complete(engine._discover_dnac_pools(None, loop))
             loop.run_until_complete(engine._discover_nexus(None, None))
             loop.run_until_complete(engine._discover_panorama(None, None))
+            loop.run_until_complete(engine._discover_f5(None, None))
             engine.build_tree()
             result.update(engine.get_tree())
         except Exception as e:
@@ -2183,6 +2285,16 @@ def seed_cache(cache) -> None:
     cache.set("nexus_port_channels", MOCK_NEXUS_PORT_CHANNELS,  LONG)
     cache.set("nexus_vpcs",          MOCK_NEXUS_VPCS,           LONG)
     cache.set("nexus_vlans",         MOCK_NEXUS_VLANS,          LONG)
+
+    # F5 (seed source caches BEFORE computing the IPAM tree below)
+    cache.set("f5_inventory",  MOCK_F5_DEVICES,    LONG)
+    cache.set("f5_self_ips",   MOCK_F5_SELF_IPS,   LONG)
+    cache.set("f5_vlans",      MOCK_F5_VLANS,      LONG)
+    cache.set("f5_interfaces", MOCK_F5_INTERFACES, LONG)
+    cache.set("f5_virtuals",   MOCK_F5_VIRTUALS,   LONG)
+    cache.set("f5_pools",      MOCK_F5_POOLS,      LONG)
+    cache.set("f5_nodes",      MOCK_F5_NODES,      LONG)
+    cache.set("f5_routes",     MOCK_F5_ROUTES,     LONG)
 
     # DNAC device configs — keyed by device id, consumed by both the EIGRP
     # summary discovery and the IPv6-from-configs discovery. Includes routers

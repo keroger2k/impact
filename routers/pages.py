@@ -191,6 +191,33 @@ async def nexus_device_page(request: Request, hostname: str, user: SessionEntry 
         return templates.TemplateResponse(request, "pages/nexus_device_content.html", context)
     return templates.TemplateResponse(request, "nexus_device.html", context)
 
+@router.get("/f5", response_class=HTMLResponse)
+async def f5_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
+    if not user: return RedirectResponse(url="/login")
+    context = {
+        "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
+        "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
+        "active_page": "f5",
+        "username": user.username,
+    }
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse(request, "pages/f5_content.html", context)
+    return templates.TemplateResponse(request, "f5.html", context)
+
+@router.get("/f5/{hostname}", response_class=HTMLResponse)
+async def f5_device_page(request: Request, hostname: str, user: SessionEntry = Depends(get_current_user_from_cookie)):
+    if not user: return RedirectResponse(url="/login")
+    context = {
+        "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
+        "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
+        "active_page": "f5",
+        "hostname": hostname,
+        "username": user.username,
+    }
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse(request, "pages/f5_device_content.html", context)
+    return templates.TemplateResponse(request, "f5_device.html", context)
+
 @router.get("/command-runner", response_class=HTMLResponse)
 async def command_runner_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
     if not user: return RedirectResponse(url="/login")

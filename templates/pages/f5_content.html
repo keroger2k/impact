@@ -1,0 +1,116 @@
+<div class="row g-4 h-100">
+  <div class="col-md-3">
+    <div class="card shadow-md border-0 animate-fade-in h-100">
+      <div class="card-header bg-white border-bottom py-3">
+        <div class="d-flex align-items-center gap-2 mb-1">
+          <i class="ph ph-scales text-primary"></i>
+          <span class="fw-bold text-navy">F5 Load Balancers</span>
+        </div>
+        <div class="small text-muted mb-2"><i class="ph ph-lock-simple"></i> Read-only (GET only)</div>
+        <div id="f5-cache-bar" class="d-flex align-items-center justify-content-between gap-2 small text-muted"></div>
+      </div>
+      <div class="card-body p-0">
+        <div class="list-group list-group-flush">
+          <button class="list-group-item list-group-item-action py-3 px-4 active"
+                  hx-get="/api/f5/devices" hx-target="#f5-results" hx-indicator="#f5-loading"
+                  onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-scales me-2"></i> Inventory
+          </button>
+          <button class="list-group-item list-group-item-action py-3 px-4"
+                  hx-get="/api/f5/virtual-servers" hx-target="#f5-results" hx-indicator="#f5-loading"
+                  onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-globe-hemisphere-west me-2"></i> Virtual Servers
+          </button>
+          <button class="list-group-item list-group-item-action py-3 px-4"
+                  hx-get="/api/f5/pools" hx-target="#f5-results" hx-indicator="#f5-loading"
+                  onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-stack me-2"></i> Pools &amp; Members
+          </button>
+          <button class="list-group-item list-group-item-action py-3 px-4"
+                  hx-get="/api/f5/nodes" hx-target="#f5-results" hx-indicator="#f5-loading"
+                  onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-circles-three me-2"></i> Nodes
+          </button>
+          <button class="list-group-item list-group-item-action py-3 px-4"
+                  hx-get="/api/f5/self-ips" hx-target="#f5-results" hx-indicator="#f5-loading"
+                  onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-network me-2"></i> Self IPs
+          </button>
+          <button class="list-group-item list-group-item-action py-3 px-4"
+                  hx-get="/api/f5/vlans" hx-target="#f5-results" hx-indicator="#f5-loading"
+                  onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-tag me-2"></i> VLANs
+          </button>
+          <button class="list-group-item list-group-item-action py-3 px-4"
+                  hx-get="/api/f5/interfaces" hx-target="#f5-results" hx-indicator="#f5-loading"
+                  onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-plugs me-2"></i> Interfaces
+          </button>
+          <button class="list-group-item list-group-item-action py-3 px-4"
+                  hx-get="/api/f5/routes" hx-target="#f5-results" hx-indicator="#f5-loading"
+                  onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
+            <i class="ph ph-signpost me-2"></i> Routes
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-9 d-flex flex-column position-relative">
+    <div id="f5-loading" class="htmx-indicator position-absolute top-0 start-0 w-100 h-100 bg-white bg-opacity-75" style="z-index: 100; pointer-events: none;">
+      <div class="d-flex flex-column align-items-center justify-content-center h-100">
+        <div class="spinner-border text-primary" style="width: 3rem; height: 3rem;"></div>
+        <p class="text-main font-weight-bold mt-3">Loading F5 data…</p>
+      </div>
+    </div>
+    <div id="f5-results" hx-get="/api/f5/devices" hx-trigger="load once" hx-indicator="#f5-loading"
+         style="min-height: 600px;" class="table-container shadow-md"></div>
+  </div>
+</div>
+
+<script type="module">
+  import { initCacheBar } from '/static/js/utils.js';
+  const bar = document.getElementById('f5-cache-bar');
+
+  let activeStream = null;
+
+  const setBar = (html) => { if (bar) bar.innerHTML = html; };
+
+  window.f5Refresh = async () => {
+    if (activeStream) return; // already refreshing
+    setBar('<span class="cache-ts cache-ts-warn">Refreshing…</span>');
+    try { await fetch('/api/f5/cache/refresh', { method: 'POST', credentials: 'include' }); } catch {}
+
+    let total = 0, done = 0;
+    const es = new EventSource('/api/f5/refresh', { withCredentials: true });
+    activeStream = es;
+
+    const finish = (msg) => {
+      es.close();
+      activeStream = null;
+      if (msg) setBar(`<span class="cache-ts cache-ts-warn">${msg}</span>`);
+      htmx.ajax('GET', '/api/f5/devices', { target: '#f5-results', indicator: '#f5-loading' });
+      initCacheBar(bar, '/api/f5/cache/info', '/api/f5/cache/refresh', window.f5Refresh);
+    };
+
+    es.onmessage = (evt) => {
+      let data;
+      try { data = JSON.parse(evt.data); } catch { return; }
+      if (data.type === 'log' && typeof data.message === 'string') {
+        const start = data.message.match(/Starting collection for (\d+)/);
+        if (start) total = parseInt(start[1], 10);
+        const prog = data.message.match(/\[(\d+)\/(\d+)\]/);
+        if (prog) { done = parseInt(prog[1], 10); total = parseInt(prog[2], 10); }
+        if (total > 0) setBar(`<span class="cache-ts cache-ts-warn">Collecting ${done}/${total}…</span>`);
+      } else if (data.type === 'complete') {
+        finish(null);
+      }
+    };
+
+    es.onerror = () => {
+      if (activeStream !== es) return;
+      finish('Refresh failed');
+    };
+  };
+
+  initCacheBar(bar, '/api/f5/cache/info', '/api/f5/cache/refresh', window.f5Refresh);
+</script>
