@@ -167,6 +167,32 @@ def test_csv_parsing(tmp_path, monkeypatch):
     ]
 
 
+# ── Site filtering ────────────────────────────────────────────────────────────
+
+def test_site_helpers():
+    import routers.f5 as rf5
+    assert rf5._site_of("dal1-f5-01") == "DAL1"
+    assert rf5._site_of("") == ""
+
+    rows = [
+        {"hostname": "dal1-f5-01"}, {"hostname": "dal1-f5-02"},
+        {"hostname": "res1-f5-01"}, {"hostname": "cos1-f5-01"},
+    ]
+    assert len(rf5._by_site(rows, "all")) == 4
+    assert len(rf5._by_site(rows, None)) == 4
+    assert [r["hostname"] for r in rf5._by_site(rows, "dal1")] == ["dal1-f5-01", "dal1-f5-02"]
+    assert [r["hostname"] for r in rf5._by_site(rows, "RES1")] == ["res1-f5-01"]
+
+
+def test_get_f5_sites(monkeypatch):
+    import routers.f5 as rf5
+    from cache import cache, TTL_F5
+    cache.set("f5_inventory", [
+        {"hostname": "dal1-f5-01"}, {"hostname": "res1-f5-02"}, {"hostname": "dal1-f5-02"},
+    ], TTL_F5)
+    assert rf5.get_f5_sites() == ["DAL1", "RES1"]
+
+
 # ── IPAM discovery ────────────────────────────────────────────────────────────
 
 def test_ipam_discover_f5():

@@ -64,6 +64,26 @@ def get_cached_f5_virtuals() -> List[Dict]:
     return cache.get("f5_virtuals") or []
 
 
+# ── Site filtering ────────────────────────────────────────────────────────────
+# F5s reside at a handful of locations; the site code is the first 4 chars of the
+# hostname. The UI exposes a dropdown (built from the live inventory) so a user
+# can scope every tab to one site instead of one big cross-site table.
+
+def _site_of(hostname: str) -> str:
+    return (hostname or "")[:4].upper()
+
+
+def _by_site(rows: List[Dict], site: Optional[str]) -> List[Dict]:
+    if not site or site.lower() == "all":
+        return rows
+    s = site.upper()
+    return [r for r in rows if _site_of(r.get("hostname")) == s]
+
+
+def get_f5_sites() -> List[str]:
+    return sorted({_site_of(d.get("hostname")) for d in get_cached_f5_inventory() if d.get("hostname")})
+
+
 # ── Collection helpers ────────────────────────────────────────────────────────
 
 def _store_bundles(bundles: List[dict]) -> int:
@@ -199,12 +219,21 @@ def _filter(key: str, hostname: str) -> list[dict]:
     return [r for r in (cache.get(key) or []) if r.get("hostname") == hostname]
 
 
+@router.get("/sites", response_class=HTMLResponse)
+async def f5_site_options(request: Request, site: str = "all"):
+    """Dropdown <option>s for the site filter, derived live from the inventory."""
+    return templates.TemplateResponse(
+        request, "partials/f5_site_options.html",
+        {"sites": get_f5_sites(), "selected": (site or "all")},
+    )
+
+
 @router.get("/devices", response_class=HTMLResponse)
-async def f5_devices(request: Request):
+async def f5_devices(request: Request, site: str = "all"):
     """Inventory list — rendered as an HTMX partial."""
-    devices = sorted(get_cached_f5_inventory(), key=lambda d: (d.get("hostname") or "").lower())
+    devices = sorted(_by_site(get_cached_f5_inventory(), site), key=lambda d: (d.get("hostname") or "").lower())
     vip_counts: dict[str, int] = {}
-    for v in get_cached_f5_virtuals():
+    for v in _by_site(get_cached_f5_virtuals(), site):
         h = v.get("hostname") or ""
         vip_counts[h] = vip_counts.get(h, 0) + 1
     return templates.TemplateResponse(
@@ -234,63 +263,63 @@ async def f5_device_detail(request: Request, hostname: str):
 
 
 @router.get("/virtual-servers", response_class=HTMLResponse)
-async def f5_virtual_servers(request: Request):
+async def f5_virtual_servers(request: Request, site: str = "all"):
     items = sorted(
-        cache.get("f5_virtuals") or [],
+        _by_site(cache.get("f5_virtuals") or [], site),
         key=lambda v: ((v.get("hostname") or "").lower(), (v.get("name") or "").lower()),
     )
     return templates.TemplateResponse(request, "partials/f5_virtual_servers.html", {"items": items})
 
 
 @router.get("/pools", response_class=HTMLResponse)
-async def f5_pools(request: Request):
+async def f5_pools(request: Request, site: str = "all"):
     items = sorted(
-        cache.get("f5_pools") or [],
+        _by_site(cache.get("f5_pools") or [], site),
         key=lambda p: ((p.get("hostname") or "").lower(), (p.get("name") or "").lower()),
     )
     return templates.TemplateResponse(request, "partials/f5_pools.html", {"items": items})
 
 
 @router.get("/nodes", response_class=HTMLResponse)
-async def f5_nodes(request: Request):
+async def f5_nodes(request: Request, site: str = "all"):
     items = sorted(
-        cache.get("f5_nodes") or [],
+        _by_site(cache.get("f5_nodes") or [], site),
         key=lambda n: ((n.get("hostname") or "").lower(), (n.get("name") or "").lower()),
     )
     return templates.TemplateResponse(request, "partials/f5_nodes.html", {"items": items})
 
 
 @router.get("/self-ips", response_class=HTMLResponse)
-async def f5_self_ips(request: Request):
+async def f5_self_ips(request: Request, site: str = "all"):
     items = sorted(
-        cache.get("f5_self_ips") or [],
+        _by_site(cache.get("f5_self_ips") or [], site),
         key=lambda s: ((s.get("hostname") or "").lower(), (s.get("name") or "").lower()),
     )
     return templates.TemplateResponse(request, "partials/f5_self_ips.html", {"items": items})
 
 
 @router.get("/vlans", response_class=HTMLResponse)
-async def f5_vlans(request: Request):
+async def f5_vlans(request: Request, site: str = "all"):
     items = sorted(
-        cache.get("f5_vlans") or [],
+        _by_site(cache.get("f5_vlans") or [], site),
         key=lambda v: ((v.get("hostname") or "").lower(), (v.get("tag") or 0)),
     )
     return templates.TemplateResponse(request, "partials/f5_vlans.html", {"items": items})
 
 
 @router.get("/interfaces", response_class=HTMLResponse)
-async def f5_interfaces(request: Request):
+async def f5_interfaces(request: Request, site: str = "all"):
     items = sorted(
-        cache.get("f5_interfaces") or [],
+        _by_site(cache.get("f5_interfaces") or [], site),
         key=lambda i: ((i.get("hostname") or "").lower(), (i.get("name") or "").lower()),
     )
     return templates.TemplateResponse(request, "partials/f5_interfaces.html", {"items": items})
 
 
 @router.get("/routes", response_class=HTMLResponse)
-async def f5_routes(request: Request):
+async def f5_routes(request: Request, site: str = "all"):
     items = sorted(
-        cache.get("f5_routes") or [],
+        _by_site(cache.get("f5_routes") or [], site),
         key=lambda r: ((r.get("hostname") or "").lower(), (r.get("name") or "").lower()),
     )
     return templates.TemplateResponse(request, "partials/f5_routes.html", {"items": items})

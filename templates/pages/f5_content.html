@@ -7,47 +7,53 @@
           <span class="fw-bold text-navy">F5 Load Balancers</span>
         </div>
         <div class="small text-muted mb-2"><i class="ph ph-lock-simple"></i> Read-only (GET only)</div>
+        <label class="form-label small text-muted mb-1" for="f5-site-filter">Site</label>
+        <select id="f5-site-filter" name="site" class="form-select form-select-sm mb-2"
+                hx-get="/api/f5/sites" hx-trigger="load" hx-target="this" hx-swap="innerHTML"
+                onchange="window.f5ApplySiteFilter && window.f5ApplySiteFilter()">
+          <option value="all">All Sites</option>
+        </select>
         <div id="f5-cache-bar" class="d-flex align-items-center justify-content-between gap-2 small text-muted"></div>
       </div>
       <div class="card-body p-0">
-        <div class="list-group list-group-flush">
+        <div class="list-group list-group-flush" id="f5-nav">
           <button class="list-group-item list-group-item-action py-3 px-4 active"
-                  hx-get="/api/f5/devices" hx-target="#f5-results" hx-indicator="#f5-loading"
+                  hx-get="/api/f5/devices" hx-target="#f5-results" hx-indicator="#f5-loading" hx-include="#f5-site-filter"
                   onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
             <i class="ph ph-scales me-2"></i> Inventory
           </button>
           <button class="list-group-item list-group-item-action py-3 px-4"
-                  hx-get="/api/f5/virtual-servers" hx-target="#f5-results" hx-indicator="#f5-loading"
+                  hx-get="/api/f5/virtual-servers" hx-target="#f5-results" hx-indicator="#f5-loading" hx-include="#f5-site-filter"
                   onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
             <i class="ph ph-globe-hemisphere-west me-2"></i> Virtual Servers
           </button>
           <button class="list-group-item list-group-item-action py-3 px-4"
-                  hx-get="/api/f5/pools" hx-target="#f5-results" hx-indicator="#f5-loading"
+                  hx-get="/api/f5/pools" hx-target="#f5-results" hx-indicator="#f5-loading" hx-include="#f5-site-filter"
                   onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
             <i class="ph ph-stack me-2"></i> Pools &amp; Members
           </button>
           <button class="list-group-item list-group-item-action py-3 px-4"
-                  hx-get="/api/f5/nodes" hx-target="#f5-results" hx-indicator="#f5-loading"
+                  hx-get="/api/f5/nodes" hx-target="#f5-results" hx-indicator="#f5-loading" hx-include="#f5-site-filter"
                   onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
             <i class="ph ph-circles-three me-2"></i> Nodes
           </button>
           <button class="list-group-item list-group-item-action py-3 px-4"
-                  hx-get="/api/f5/self-ips" hx-target="#f5-results" hx-indicator="#f5-loading"
+                  hx-get="/api/f5/self-ips" hx-target="#f5-results" hx-indicator="#f5-loading" hx-include="#f5-site-filter"
                   onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
             <i class="ph ph-network me-2"></i> Self IPs
           </button>
           <button class="list-group-item list-group-item-action py-3 px-4"
-                  hx-get="/api/f5/vlans" hx-target="#f5-results" hx-indicator="#f5-loading"
+                  hx-get="/api/f5/vlans" hx-target="#f5-results" hx-indicator="#f5-loading" hx-include="#f5-site-filter"
                   onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
             <i class="ph ph-tag me-2"></i> VLANs
           </button>
           <button class="list-group-item list-group-item-action py-3 px-4"
-                  hx-get="/api/f5/interfaces" hx-target="#f5-results" hx-indicator="#f5-loading"
+                  hx-get="/api/f5/interfaces" hx-target="#f5-results" hx-indicator="#f5-loading" hx-include="#f5-site-filter"
                   onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
             <i class="ph ph-plugs me-2"></i> Interfaces
           </button>
           <button class="list-group-item list-group-item-action py-3 px-4"
-                  hx-get="/api/f5/routes" hx-target="#f5-results" hx-indicator="#f5-loading"
+                  hx-get="/api/f5/routes" hx-target="#f5-results" hx-indicator="#f5-loading" hx-include="#f5-site-filter"
                   onclick="this.closest('.list-group').querySelectorAll('.list-group-item').forEach(el => el.classList.remove('active')); this.classList.add('active')">
             <i class="ph ph-signpost me-2"></i> Routes
           </button>
@@ -62,7 +68,7 @@
         <p class="text-main font-weight-bold mt-3">Loading F5 data…</p>
       </div>
     </div>
-    <div id="f5-results" hx-get="/api/f5/devices" hx-trigger="load once" hx-indicator="#f5-loading"
+    <div id="f5-results" hx-get="/api/f5/devices" hx-trigger="load once" hx-indicator="#f5-loading" hx-include="#f5-site-filter"
          style="min-height: 600px;" class="table-container shadow-md"></div>
   </div>
 </div>
@@ -74,6 +80,13 @@
   let activeStream = null;
 
   const setBar = (html) => { if (bar) bar.innerHTML = html; };
+
+  // Re-fetch whichever tab is active, picking up the current site filter via
+  // each button's hx-include.
+  window.f5ApplySiteFilter = () => {
+    const active = document.querySelector('#f5-nav .list-group-item.active');
+    if (active) active.click();
+  };
 
   window.f5Refresh = async () => {
     if (activeStream) return; // already refreshing
@@ -88,6 +101,9 @@
       es.close();
       activeStream = null;
       if (msg) setBar(`<span class="cache-ts cache-ts-warn">${msg}</span>`);
+      // Rebuild the site dropdown (a first-ever collection may add new sites),
+      // then reload the inventory tab.
+      htmx.ajax('GET', '/api/f5/sites', { target: '#f5-site-filter', swap: 'innerHTML' });
       htmx.ajax('GET', '/api/f5/devices', { target: '#f5-results', indicator: '#f5-loading' });
       initCacheBar(bar, '/api/f5/cache/info', '/api/f5/cache/refresh', window.f5Refresh);
     };
