@@ -1,0 +1,4 @@
+<option value="all" {% if selected == 'all' %}selected{% endif %}>All Sites</option>
+{% for s in sites %}
+<option value="{{ s }}" {% if selected == s %}selected{% endif %}>{{ s }}</option>
+{% endfor %}
