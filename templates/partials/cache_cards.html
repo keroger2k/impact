@@ -18,9 +18,10 @@
                 <div class="mt-auto">
                     <p class="card-text mb-3 small">
                         <i class=" ph ph-clock me-1 text-muted"></i>
-                        Last updated: <span class="fw-bold">{{ card.set_at }}</span>
+                        Last updated: <span class="fw-bold">{{ card.set_at }}</span> ({{ card.age }})
                         {% if card.is_expired %}
-                        <span class="badge bg-warning text-dark ms-1">Expired</span>
+                        <span class="badge bg-warning text-dark ms-1"
+                              title="Still served from cache; refreshes automatically on next use">Stale</span>
                         {% endif %}
                     </p>
 

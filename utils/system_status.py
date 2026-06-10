@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from auth import SessionEntry, get_dnac_for_session, get_ise_for_session, get_panorama_key_for_session, get_aci_for_session
-from cache import cache, TTL_STATUS
+from cache import cache, TTL_LIVE
 from logger_config import run_with_context
 
 logger = logging.getLogger(__name__)
@@ -54,7 +54,7 @@ async def _check_dnac(session, loop):
         )
         count = getattr(result, "response", 0)
         res = {"ok": True, "detail": f"{count:,} devices"}
-        cache.set(key, res, TTL_STATUS)
+        cache.set(key, res, TTL_LIVE)
         return res
     except Exception as e:
         return {"ok": False, "detail": str(e)[:80]}
@@ -72,7 +72,7 @@ async def _check_ise(session, loop):
         ise = get_ise_for_session(session)
         ok = await loop.run_in_executor(None, run_with_context(ic.connectivity_check, ise))
         res = {"ok": ok, "detail": "Connected" if ok else "Unreachable"}
-        cache.set(key, res, TTL_STATUS)
+        cache.set(key, res, TTL_LIVE)
         return res
     except Exception as e:
         return {"ok": False, "detail": str(e)[:80]}
@@ -90,7 +90,7 @@ async def _check_panorama(session, loop):
         pan_key = get_panorama_key_for_session(session)
         ok, detail = await loop.run_in_executor(None, run_with_context(pc.connectivity_check_with_key, pan_key))
         res = {"ok": ok, "detail": detail}
-        cache.set(key, res, TTL_STATUS)
+        cache.set(key, res, TTL_LIVE)
         return res
     except Exception as e:
         return {"ok": False, "detail": str(e)[:80]}
@@ -111,7 +111,7 @@ async def _check_aci(session, loop):
 
         if DEV_MODE:
             res = {"ok": True, "detail": "Connected (mock)"}
-            cache.set(key, res, TTL_STATUS)
+            cache.set(key, res, TTL_LIVE)
             return fid, res
 
         try:
@@ -122,7 +122,7 @@ async def _check_aci(session, loop):
                 res = {"ok": True, "detail": f"{up}/{len(processed)} Nodes"}
             else:
                 res = {"ok": False, "detail": "No nodes found"}
-            cache.set(key, res, TTL_STATUS)
+            cache.set(key, res, TTL_LIVE)
             return fid, res
         except Exception as e:
             res = {"ok": False, "detail": str(e)[:80]}

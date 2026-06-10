@@ -127,22 +127,7 @@ def get_fabric_id(request: Request) -> str:
 
     return fid
 
-from cache import TTL_ACI_STATUS as ACI_TTL, TTL_ACI_ROUTE_TABLE
-
-# Standard keys used for namespacing ACI cache entries
-ACI_CACHE_KEYS = [
-    "nodes", "l3outs", "bgp_peers", "bgp_peer_cfg",
-    "ospf_peers", "epgs", "faults", "subnets",
-    "health_overall", "health_tenants", "health_pods",
-    "bgp_doms_all", "bgp_map", "ospf_map", "l3out_vrf",
-    "l3out_route_table",
-    "tenants", "vrfs", "bridge_domains", "subnets_bd",
-    "app_profiles", "contracts", "filters",
-    "epg_relations", "access_pgs", "aaeps", "domains", "vlan_pools",
-    "if_pol_cdp", "if_pol_lldp", "if_pol_lacp", "if_pol_link",
-    "if_pol_mcp", "if_pol_stp", "if_pol_l2", "if_pol_stormctrl",
-    "access_topology"
-]
+from cache import TTL_STANDARD as ACI_TTL
 
 def _fkey(fabric_id: str, suffix: str) -> str:
     """Helper to generate a namespaced cache key for a specific fabric."""
@@ -189,44 +174,8 @@ async def list_fabrics():
     import clients.aci_registry as reg
     return [{"id": f.id, "label": f.label, "url": f.url} for f in reg.list_fabrics()]
 
-# ── Cache management ──────────────────────────────────────────────────────────
-
-@router.get("/cache/info")
-async def aci_cache_info():
-    """Return cache metadata grouped by fabric."""
-    import clients.aci_registry as reg
-    fabrics = reg.list_fabrics()
-    results = {}
-
-    for f in fabrics:
-        fabric_keys = [f"aci_{f.id}_{k}" for k in ACI_CACHE_KEYS]
-        infos = {k: cache.cache_info(k) for k in fabric_keys}
-
-        # Per-L3Out route-table entries are stored under
-        # `aci_{fabric}_l3out_route_table:{quoted_dn}`, so the literal lookup
-        # above never finds them. Surface them via prefix scan.
-        for sub_key in cache.keys_for_prefix(f"aci_{f.id}_l3out_route_table:"):
-            infos[sub_key] = cache.cache_info(sub_key)
-
-        # Find the oldest valid timestamp to represent fabric "freshness"
-        valid_ts = [v["set_at"] for v in infos.values() if v]
-
-        results[f.id] = {
-            "label": f.label,
-            "oldest_at": min(valid_ts) if valid_ts else None,
-            "keys": infos
-        }
-    return results
-
-@router.post("/cache/refresh")
-async def refresh_aci_cache(fabric: Optional[str] = None):
-    """Invalidate ACI cache entries, optionally scoped to a single fabric."""
-    if fabric:
-        cache.invalidate_prefix(f"aci_{fabric}_")
-        return {"status": f"ACI cache for {fabric} cleared"}
-    else:
-        cache.invalidate_prefix("aci_")
-        return {"status": "All ACI caches cleared"}
+# Cache management lives at POST /api/cache/refresh/aci (routers/cache_mgmt.py,
+# driven by datasets.py) — it accepts ?fabric=<id> for a single-fabric clear.
 
 # ── Fabric Nodes ──────────────────────────────────────────────────────────────
 
@@ -917,8 +866,8 @@ async def _enrich_bgp_peers(session: SessionEntry, peers: List[Dict]):
             key = _get_key(session)
             pan_devices = pc.fetch_firewall_interfaces(key)
             if pan_devices:
-                from cache import TTL_PAN_INTERFACES
-                cache.set("pan_firewalls", pan_devices, TTL_PAN_INTERFACES)
+                from cache import TTL_STANDARD
+                cache.set("pan_firewalls", pan_devices, TTL_STANDARD)
         except Exception as e:
             logger.warning(f"Failed to fetch Panorama devices for enrichment: {e}")
             pan_devices = []
@@ -1419,8 +1368,8 @@ async def _enrich_ospf_peers(session: SessionEntry, peers: List[Dict]):
             key = _get_key(session)
             pan_devices = pc.fetch_firewall_interfaces(key)
             if pan_devices:
-                from cache import TTL_PAN_INTERFACES
-                cache.set("pan_firewalls", pan_devices, TTL_PAN_INTERFACES)
+                from cache import TTL_STANDARD
+                cache.set("pan_firewalls", pan_devices, TTL_STANDARD)
         except Exception as e:
             logger.warning(f"Failed to fetch Panorama devices for enrichment: {e}")
             pan_devices = []
@@ -2160,7 +2109,7 @@ async def get_l3out_route_table(
         None, run_with_context(_cached),
         _fkey(fabric_id, f"l3out_route_table:{quote(dn)}"),
         _loader,
-        TTL_ACI_ROUTE_TABLE
+        ACI_TTL
     )
 
     if request.headers.get("HX-Request"):

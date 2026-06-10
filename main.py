@@ -80,7 +80,8 @@ app.add_middleware(CSRFMiddleware)
 
 SSE_LIMITED_PATHS = {"/api/warm", "/api/ipam/refresh", "/api/commands/run",
                      "/api/commands/config-run", "/api/import/run",
-                     "/api/tunnels/refresh-stream", "/api/registry/audit/stream"}
+                     "/api/tunnels/refresh-stream", "/api/registry/audit/stream",
+                     "/api/nexus/refresh", "/api/f5/refresh"}
 
 @app.middleware("http")
 async def sse_rate_limit(request: Request, call_next):
@@ -160,7 +161,7 @@ app.include_router(pages.router)
 @app.post("/api/warm")
 async def warm_cache(session: SessionEntry = Depends(require_auth)):
     from dev import DEV_MODE
-    from cache import cache, TTL_DEVICES, TTL_SITES
+    from cache import cache, TTL_STANDARD
     import clients.dnac as dc
     import clients.ise as ic
     import clients.panorama as pc
@@ -173,7 +174,7 @@ async def warm_cache(session: SessionEntry = Depends(require_auth)):
         def emit(d): return f"data: {json.dumps(d)}\n\n"
 
         warmers = [
-            ("dnac", lambda: dc.get_all_devices(auth_module.get_dnac_for_session(session)), "DNAC Inventory", TTL_DEVICES, "devices"),
+            ("dnac", lambda: dc.get_all_devices(auth_module.get_dnac_for_session(session)), "DNAC Inventory", TTL_STANDARD, "devices"),
             ("ise", lambda: ic.connectivity_check(auth_module.get_ise_for_session(session)), "ISE Connection", 3600, None),
             ("panorama", lambda: pc.connectivity_check_with_key(auth_module.get_panorama_key_for_session(session)), "Panorama Connection", 3600, None),
             ("aci", lambda: ac.connectivity_check(auth_module.get_aci_for_session(session)), "ACI Connection", 3600, None),

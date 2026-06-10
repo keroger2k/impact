@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from auth import SessionEntry, require_auth
 from utils.ipam_engine import IPAMEngine
 from utils.ipam_export import generate_solarwinds_csv
-from cache import cache, IPAM_TREE_CACHE_KEY
+from cache import cache, IPAM_TREE_CACHE_KEY, TTL_MANUAL
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -18,8 +18,7 @@ async def refresh_ipam(
     sources: Optional[List[str]] = Query(None),
     session: SessionEntry = Depends(require_auth)
 ):
-    # Ensure sources is a list if it's a Query object
-    actual_sources = sources.default if hasattr(sources, "default") else sources
+    actual_sources = sources
 
     async def generate():
         def emit(msg: str, type: str = "log"):
@@ -30,17 +29,6 @@ async def refresh_ipam(
 
         yield emit(f"Starting discovery for sources: {actual_sources or 'ALL'}")
 
-        # Load existing subnets if we are doing a partial refresh
-        existing_tree = cache.get(IPAM_TREE_CACHE_KEY)
-        if sources and existing_tree:
-             # This is a bit complex since we store the tree, not flat subnets.
-             # For now, if partial refresh is requested, we still rebuild the whole tree
-             # but only 'refresh' discovery for requested sources.
-             # Better: IPAMEngine should probably support additive discovery or we store flat subnets.
-             # For simplicity in this step, we just do selective discovery but result replaces all.
-             pass
-
-        # We redefine yield_progress to be usable
         progress_queue = asyncio.Queue()
         async def progress_callback(msg):
             await progress_queue.put(msg)
@@ -61,7 +49,7 @@ async def refresh_ipam(
         engine.build_tree()
 
         tree_data = engine.get_tree()
-        cache.set(IPAM_TREE_CACHE_KEY, tree_data, ttl=3600*24)
+        cache.set(IPAM_TREE_CACHE_KEY, tree_data, ttl=TTL_MANUAL)
 
         yield emit("Discovery complete!", type="complete")
 

@@ -26,9 +26,8 @@ from auth import SessionEntry, require_auth
 from cache import (
     cache,
     TUNNEL_INVENTORY_CACHE_KEY,
-    TTL_DNAC_ROUTER_CONFIGS,
-    TTL_PAN_POLICY,
-    TTL_TUNNEL_INVENTORY,
+    TTL_STANDARD,
+    TTL_MANUAL,
 )
 from logger_config import run_with_context
 from utils.ipsec_parser import parse_ipsec_config
@@ -64,7 +63,7 @@ async def _load_dnac_configs(session: SessionEntry, loop) -> dict[str, str]:
 
     return await loop.run_in_executor(
         None, run_with_context(cache.get_or_set),
-        "dnac_device_configs", _fetch_all, TTL_DNAC_ROUTER_CONFIGS,
+        "dnac_device_configs", _fetch_all, TTL_STANDARD,
     ) or {}
 
 
@@ -78,19 +77,19 @@ async def _load_palo(session: SessionEntry, loop) -> dict[str, list]:
 
     ike_gw = await loop.run_in_executor(
         None, run_with_context(cache.get_or_set),
-        "pan_ike_gateways", lambda: pc.get_ike_gateways(key), TTL_PAN_POLICY,
+        "pan_ike_gateways", lambda: pc.get_ike_gateways(key), TTL_STANDARD,
     ) or []
     ipsec_tun = await loop.run_in_executor(
         None, run_with_context(cache.get_or_set),
-        "pan_ipsec_tunnels", lambda: pc.get_ipsec_tunnels(key), TTL_PAN_POLICY,
+        "pan_ipsec_tunnels", lambda: pc.get_ipsec_tunnels(key), TTL_STANDARD,
     ) or []
     ike_prof = await loop.run_in_executor(
         None, run_with_context(cache.get_or_set),
-        "pan_ike_crypto_profiles", lambda: pc.get_ike_crypto_profiles(key), TTL_PAN_POLICY,
+        "pan_ike_crypto_profiles", lambda: pc.get_ike_crypto_profiles(key), TTL_STANDARD,
     ) or []
     ipsec_prof = await loop.run_in_executor(
         None, run_with_context(cache.get_or_set),
-        "pan_ipsec_crypto_profiles", lambda: pc.get_ipsec_crypto_profiles(key), TTL_PAN_POLICY,
+        "pan_ipsec_crypto_profiles", lambda: pc.get_ipsec_crypto_profiles(key), TTL_STANDARD,
     ) or []
 
     return {
@@ -146,7 +145,7 @@ async def _get_or_build_blocking(session: SessionEntry) -> dict:
     if cached:
         return cached
     inv = await _build_inventory(session)
-    cache.set(TUNNEL_INVENTORY_CACHE_KEY, inv, TTL_TUNNEL_INVENTORY)
+    cache.set(TUNNEL_INVENTORY_CACHE_KEY, inv, TTL_MANUAL)
     return inv
 
 
@@ -284,7 +283,7 @@ async def refresh_inventory(session: SessionEntry = Depends(require_auth)):
     cache.invalidate("pan_ike_crypto_profiles")
     cache.invalidate("pan_ipsec_crypto_profiles")
     inv = await _build_inventory(session)
-    cache.set(TUNNEL_INVENTORY_CACHE_KEY, inv, TTL_TUNNEL_INVENTORY)
+    cache.set(TUNNEL_INVENTORY_CACHE_KEY, inv, TTL_MANUAL)
     return {"status": "ok", "stats": inv.get("stats", {}), "built_at": inv.get("built_at")}
 
 
@@ -1120,10 +1119,10 @@ async def refresh_stream(
                                        "network/tunnel/ipsec entries."})
 
             # Cache the raw Palo data for parity with the non-streaming path.
-            cache.set("pan_ike_gateways",         palo["ike_gateways"],   TTL_PAN_POLICY)
-            cache.set("pan_ipsec_tunnels",        palo["ipsec_tunnels"],  TTL_PAN_POLICY)
-            cache.set("pan_ike_crypto_profiles",  palo["ike_profiles"],   TTL_PAN_POLICY)
-            cache.set("pan_ipsec_crypto_profiles", palo["ipsec_profiles"], TTL_PAN_POLICY)
+            cache.set("pan_ike_gateways",         palo["ike_gateways"],   TTL_STANDARD)
+            cache.set("pan_ipsec_tunnels",        palo["ipsec_tunnels"],  TTL_STANDARD)
+            cache.set("pan_ike_crypto_profiles",  palo["ike_profiles"],   TTL_STANDARD)
+            cache.set("pan_ipsec_crypto_profiles", palo["ipsec_profiles"], TTL_STANDARD)
 
             yield emit({"type": "phase", "phase": "palo", "status": "done",
                         "summary": f"{len(palo['ipsec_tunnels'])} tunnels · "
@@ -1141,7 +1140,7 @@ async def refresh_stream(
             device_site_map=device_site_map, dnac_interfaces=dnac_interfaces,
             pan_interfaces=pan_interfaces,
         )
-        cache.set(TUNNEL_INVENTORY_CACHE_KEY, inv, TTL_TUNNEL_INVENTORY)
+        cache.set(TUNNEL_INVENTORY_CACHE_KEY, inv, TTL_MANUAL)
 
         stats = inv.get("stats", {})
 

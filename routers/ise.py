@@ -11,19 +11,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 import auth as auth_module
 import clients.ise as ic
 from auth import SessionEntry, require_auth
-from cache import cache, TTL_ISE_POLICIES as ISE_TTL
+from cache import cache, TTL_STANDARD as ISE_TTL
 from logger_config import run_with_context
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-ISE_CACHE_KEYS = [
-    "ise_nads", "ise_nad_groups", "ise_endpoint_groups", "ise_identity_groups",
-    "ise_users", "ise_sgts", "ise_sgacls", "ise_egress_matrix",
-    "ise_policy_sets", "ise_authz_profiles", "ise_allowed_protocols",
-    "ise_profiling_policies", "ise_deployment_nodes",
-]
-
 
 def _get_ise(session: SessionEntry):
     try:
@@ -49,20 +41,8 @@ async def _get_mapping_dicts(ise, loop):
     return group_map, profile_map
 
 
-# ── Cache management ──────────────────────────────────────────────────────────
-
-@router.get("/cache/info")
-async def ise_cache_info():
-    infos = {k: cache.cache_info(k) for k in ISE_CACHE_KEYS}
-    valid_ts = [v["set_at"] for v in infos.values() if v]
-    return {"oldest_at": min(valid_ts) if valid_ts else None, "keys": infos}
-
-
-@router.post("/cache/refresh")
-async def refresh_ise_cache():
-    cache.invalidate_prefix("ise_")
-    return {"status": "ise cache cleared"}
-
+# Cache management lives at POST /api/cache/refresh/ise (routers/cache_mgmt.py,
+# driven by datasets.py — the canonical ISE key list is datasets.ISE_KEYS).
 
 # ── Network Access Devices ────────────────────────────────────────────────────
 

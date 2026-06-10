@@ -54,27 +54,17 @@ Nexus collection lives in `collectors/nxos.py` (Netmiko SSH) rather than `client
 
 **Cache layer** (`cache.py`) is a singleton TTL cache backed by `diskcache` (SQLite at `data/cache/diskcache/cache.db`); persists across restarts.
 
-Default TTLs are defined as constants in `cache.py` and each is overridable via an `IMPACT_TTL_*` env var. Defaults are tuned for a slow-changing network (config/topology lives hours-to-a-day; only true telemetry stays short):
+TTLs come in three tiers, defined in `cache.py`. Pick the tier that matches how the data is loaded — do not invent new per-dataset TTL constants:
 
-| Constant | Default | Env override | Used by |
+| Constant | Default | Env override | Used for |
 |---|---|---|---|
-| `TTL_DEFAULT` | 48h | `IMPACT_TTL_DEFAULT` | fallback for `cache.set(...)` with no TTL |
-| `TTL_DEVICES` | 24h | `IMPACT_TTL_DEVICES` | DNAC `devices` cache |
-| `TTL_SITES` | 24h | `IMPACT_TTL_SITES` | DNAC `sites`, `device_site_map` |
-| `TTL_ISE_POLICIES` | 12h | `IMPACT_TTL_ISE_POLICIES` | all ISE stable lists (NADs, SGTs, policy sets, auth rules per policy set, etc.) |
-| `TTL_ACI_STATUS` | 2h | `IMPACT_TTL_ACI_STATUS` | every ACI call going through `_cached(...)` with no explicit TTL — nodes, L3Outs, BGP/OSPF peers, BGP DOMs, BGP capability probes, BGP/OSPF maps |
-| `TTL_ACI_ROUTE_TABLE` | 30m | `IMPACT_TTL_ACI_ROUTE_TABLE` | per-L3Out route table (`/api/aci/l3outs/route-table`) |
-| `TTL_STATUS` | 5m | `IMPACT_TTL_STATUS` | system connectivity probes (`status_*_live` keys in `utils/system_status.py`) |
-| `TTL_PAN_INTERFACES` | 48h | `IMPACT_TTL_PAN_INTERFACES` | Panorama firewall interface inventory (`pan_interfaces`) |
-| `TTL_PAN_POLICY` | 12h | `IMPACT_TTL_PAN_POLICY` | Panorama policy/inventory data: `pan_rules`, `pan_device_groups`, `pan_managed_devices`, `pan_addr`, `pan_svc` (re-exported as `PAN_TTL` from `routers/firewall.py`) |
-| `TTL_DNAC_INTERFACES` | 24h | `IMPACT_TTL_DNAC_INTERFACES` | DNAC per-device interface inventory |
-| `TTL_CONFIG_SEARCH_RESULT` | 5m | `IMPACT_TTL_CONFIG_SEARCH_RESULT` | DNAC `dnac_config_search_result:*` — cached search results so the CSV download endpoint doesn't re-run the search |
-| `TTL_DNAC_ROUTER_CONFIGS` | 24h | `IMPACT_TTL_DNAC_ROUTER_CONFIGS` | DNAC running-config snapshots used by routing diagnostics |
-| `TTL_DNAC_IP_POOLS` | 24h | `IMPACT_TTL_DNAC_IP_POOLS` | DNAC global IP pools + reserve subpools (IPAM source data) |
-| `TTL_TUNNEL_INVENTORY` | 24h | `IMPACT_TTL_TUNNEL_INVENTORY` | normalized tunnel inventory (`tunnel_inventory_v1` — bump the key version on a structural change) |
-| `TTL_F5` | 24h | `IMPACT_TTL_F5` | F5 BIG-IP collection caches (`f5_inventory`, `f5_self_ips`, `f5_virtuals`, `f5_pools`, `f5_nodes`, `f5_vlans`, `f5_interfaces`, `f5_routes`) |
+| `TTL_STANDARD` | 7 days | `IMPACT_TTL_STANDARD` | every API-backed read (DNAC devices/sites/interfaces/configs/pools, ISE lists, Panorama policy + interfaces, ACI everything). These flow through `get_or_set`, so stale-while-revalidate re-pulls them in the background on normal page visits — no manual refresh needed. |
+| `TTL_LIVE` | 5 min | `IMPACT_TTL_LIVE` | true telemetry: system connectivity probes (`status_*_live`), cached config-search results (`dnac_config_search_result:*`). |
+| `TTL_MANUAL` | never (10y) | — | collection-backed data: Nexus (`nexus_*`, `config:nexus:*`), F5 (`f5_*`), the IPAM tree, and the tunnel inventory. Nothing re-collects these automatically, so they never expire logically — the data is valid until the user runs the next Collect, and the UI shows its age. Physical retention extends to cover the TTL (see `cache.set`). |
 
 The IPAM tree is cached under a fixed, versioned key (`IPAM_TREE_CACHE_KEY = "ipam_tree_v4"` in `cache.py`) — bump the suffix to invalidate the tree shape on a structural change rather than relying on TTL.
+
+**Dataset registry (`datasets.py`)** is the single source of truth for every cached dataset: its cache keys, its refresh kind (`api` = invalidate + background re-fetch, `lazy` = invalidate only and rebuild on next visit, `collect` = user-driven SSE collection), and its UI metadata. The sidebar cache widget, the Cache Management cards, and `POST /api/cache/refresh/{dataset}` all derive from this registry — add a dataset there and every surface picks it up. Canonical key lists (`ISE_KEYS`, `F5_CACHE_KEYS`, `NEXUS_CACHE_KEYS`, …) live there; do not duplicate them in routers.
 
 Naming conventions for cache keys:
 - `devices` / `sites` / `device_site_map` — DNAC top-level, pre-warmed at startup
@@ -97,12 +87,12 @@ Other notes:
 
 **Router layer** (`routers/`) contains FastAPI request handlers. All API routers are wired in `main.py` behind `require_auth`; `pages.py` is the only public router (it serves the login page itself).
 
-- `routers/dnac.py` — `/api/dnac/`: devices (list/stats/detail/config/select-partial), sites, ip-lookup (JSON + UI partial), config-search (JSON + UI + CSV download), path-trace (UI + result partial), tag-devices, cache info/refresh
-- `routers/ise.py` — `/api/ise/`: NADs, device-groups, endpoints, endpoint-groups, sessions (active/history/recent), identity-groups, users, SGTs, SGACLs, egress-matrix, policy-sets + per-set auth/authz rules, authz-profiles, allowed-protocols, profiling-policies, deployment-nodes, cache info/refresh
-- `routers/firewall.py` — `/api/firewall/`: device-groups, policy lookup, policies by DG, rules export, interfaces (list/refresh/search), devices, templates, cache info/refresh
+- `routers/dnac.py` — `/api/dnac/`: devices (list/stats/detail/config/select-partial), sites, ip-lookup (JSON + UI partial), config-search (JSON + UI + CSV download), path-trace (UI + result partial), tag-devices
+- `routers/ise.py` — `/api/ise/`: NADs, device-groups, endpoints, endpoint-groups, sessions (active/history/recent), identity-groups, users, SGTs, SGACLs, egress-matrix, policy-sets + per-set auth/authz rules, authz-profiles, allowed-protocols, profiling-policies, deployment-nodes
+- `routers/firewall.py` — `/api/firewall/`: device-groups, policy lookup, policies by DG, rules export, interfaces (list/search), devices, templates
 - `routers/aci.py` — `/api/aci/`: fabrics, fabric/nodes, nodes/{id}/interfaces, L3Outs (list/detail/routes/route-table), BGP map/peers/diagnose, OSPF map/peers, traffic/EPGs, traffic/faults, health/summary, tenants (+detail), VRFs, bridge-domains, app-profiles, EPGs/detail, contracts (+detail), filters, access (policy-groups, AAEPs, domains, VLAN pools, interface policies). All cache keys are namespaced per fabric and most endpoints accept `?fabric=<id>` or `?fabric=all` for cross-fabric aggregation.
-- `routers/nexus.py` — `/api/nexus/`: SSH-driven inventory refresh (SSE), inventory, devices (HTML), per-device detail (HTML), interfaces, port-channels, vPCs, VLANs, cache info/refresh
-- `routers/f5.py` — `/api/f5/`: **read-only** iControl REST collection refresh (SSE), inventory (JSON), devices (HTML), per-device detail (HTML), virtual-servers, pools, nodes, self-ips, vlans, interfaces, routes, cache info/refresh, plus `/sites` (dropdown options). Every list endpoint accepts `?site=<code>` (or `all`); the site code is the first 4 chars of the hostname (`_site_of`/`_by_site`), and the F5 page has a dynamic site dropdown that scopes all tabs. CSV at `data/device_lists/f5.csv`; uses the session's AD creds. All reads via `clients.f5` (GET-only)
+- `routers/nexus.py` — `/api/nexus/`: SSH-driven inventory refresh (SSE), inventory, devices (HTML), per-device detail (HTML), interfaces, port-channels, vPCs, VLANs, cache info/refresh (used by the Nexus page cache bar)
+- `routers/f5.py` — `/api/f5/`: **read-only** iControl REST collection refresh (SSE), inventory (JSON), devices (HTML), per-device detail (HTML), virtual-servers, pools, nodes, self-ips, vlans, interfaces, routes, cache info/refresh (used by the F5 page cache bar), plus `/sites` (dropdown options). Every list endpoint accepts `?site=<code>` (or `all`); the site code is the first 4 chars of the hostname (`_site_of`/`_by_site`), and the F5 page has a dynamic site dropdown that scopes all tabs. CSV at `data/device_lists/f5.csv`; uses the session's AD creds. All reads via `clients.f5` (GET-only)
 - `routers/routing.py` — `/api/routing/`: BGP summary, EIGRP topology, OSPF neighbors — all driven by parsing cached DNAC running-configs
 - `routers/ipam.py` — `/api/ipam/`: refresh (SSE), stats, tree, debug, export
 - `routers/tunnels.py` — `/api/tunnels/`: list/detail of normalized IPsec tunnels (DMVPN, sVTI, dVTI, policy-based, Palo IPsec), live counters via SSE refresh. Parsers in `utils/ipsec_parser.py` + `utils/tunnel_inventory.py`; site-code resolution via `utils/site_code.py`.
@@ -110,7 +100,7 @@ Other notes:
 - `routers/ipv6_registry.py` — `/api/ipv6/` (**deprecated**, superseded by `/api/registry`): sites/allocations CRUD, `/decode`, `/assemble`, `/assemble/bulk`, `/export.csv`, `/sites/provision-standard` (`STANDARD_VLAN_PRESET`). Hard 409 on vvvv overlap, soft warn on IPv4-subnet dup.
 - `routers/commands.py` — `/api/commands/run`: SSH command execution streamed via SSE; gated by `COMMANDS_ENABLED`
 - `routers/import_.py` — `/api/import/run`: device discovery workflow streamed via SSE
-- `routers/cache_mgmt.py` — `/api/cache/`: cross-cutting cache status, sidebar widget, per-category refresh (`POST /api/cache/refresh/{category}`), and global clear (`clear_all`)
+- `routers/cache_mgmt.py` — `/api/cache/`: cache status cards, sidebar widget, and the **single** refresh endpoint (`POST /api/cache/refresh/{dataset}`, `?fabric=<id>` for a one-fabric ACI clear; `clear_all` clears + re-warms). All driven by the `datasets.py` registry; the per-router `cache/refresh` twins were removed (only Nexus/F5 keep theirs, for their pages' clear-then-collect flow)
 - `routers/auth.py` — `/api/auth/`: login, logout, session refresh
 - `routers/pages.py` — top-level HTML pages: `/login`, `/dashboard`, `/devices`, `/ise`, `/firewall`, `/aci`, `/nexus`, `/nexus/{hostname}`, `/f5`, `/f5/{hostname}`, `/path-trace`, `/routing/bgp`, `/config-search`, `/ip-lookup`, `/ipam`, `/tunnels`, `/registry` (IP Registry; sidebar links here), `/ipv6-registry` (deprecated), `/command-runner`, `/import`, `/cache-mgmt`
 
@@ -167,7 +157,7 @@ See `.env.template`. Required vars:
 - `ACI_FABRICS` — Comma-separated fabric IDs (e.g., `dc1,dc2,dc3`)
 - `ACI_{ID}_URL` / `ACI_{ID}_DOMAIN` / `ACI_{ID}_LABEL` — per-fabric settings
 
-Optional cache TTL overrides (seconds — see the Cache layer table above for defaults and which keys each one governs): `IMPACT_TTL_DEFAULT`, `IMPACT_TTL_DEVICES`, `IMPACT_TTL_SITES`, `IMPACT_TTL_ISE_POLICIES`, `IMPACT_TTL_ACI_STATUS`, `IMPACT_TTL_ACI_ROUTE_TABLE`, `IMPACT_TTL_STATUS`, `IMPACT_TTL_PAN_INTERFACES`, `IMPACT_TTL_PAN_POLICY`, `IMPACT_TTL_DNAC_INTERFACES`, `IMPACT_TTL_CONFIG_SEARCH_RESULT`, `IMPACT_TTL_DNAC_ROUTER_CONFIGS`, `IMPACT_TTL_DNAC_IP_POOLS`.
+Optional cache TTL overrides (seconds — see the Cache layer tiers above): `IMPACT_TTL_STANDARD` (default 7 days, all API-backed reads), `IMPACT_TTL_LIVE` (default 5 minutes, telemetry). Collection-backed data has no TTL knob — it lives until re-collected.
 
 Other optional vars:
 - `DEV_MODE` — when `true`, seeds mock fixtures into cache on every startup (deterministic dev mode). Disables LDAP and APIC/DNAC/ISE/Panorama calls. Also enables `/api/docs`, `/api/redoc`, and `/openapi.json`.

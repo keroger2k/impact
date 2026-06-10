@@ -239,26 +239,26 @@ class IPAMEngine:
             dnac = auth_module.get_dnac_for_session(session) if session else None
             import clients.dnac as dc
 
-            from cache import cache, TTL_DEVICES, TTL_SITES, TTL_DNAC_INTERFACES
+            from cache import cache, TTL_STANDARD
 
             def _loader_or_empty(loader):
                 return (lambda: loader()) if dnac else (lambda: None)
 
             devices = await loop.run_in_executor(
                 None, run_with_context(cache.get_or_set),
-                "devices", _loader_or_empty(lambda: dc.get_all_devices(dnac)), TTL_DEVICES
+                "devices", _loader_or_empty(lambda: dc.get_all_devices(dnac)), TTL_STANDARD
             ) or []
             sites = await loop.run_in_executor(
                 None, run_with_context(cache.get_or_set),
-                "sites", _loader_or_empty(lambda: dc.get_site_cache(dnac)), TTL_SITES
+                "sites", _loader_or_empty(lambda: dc.get_site_cache(dnac)), TTL_STANDARD
             ) or []
             dev_site_map = await loop.run_in_executor(
                 None, run_with_context(cache.get_or_set),
-                "device_site_map", _loader_or_empty(lambda: dc.build_device_site_map(dnac, sites)), TTL_SITES
+                "device_site_map", _loader_or_empty(lambda: dc.build_device_site_map(dnac, sites)), TTL_STANDARD
             ) or {}
             interfaces = await loop.run_in_executor(
                 None, run_with_context(cache.get_or_set),
-                "dnac_interfaces", _loader_or_empty(lambda: dc.get_all_interfaces(dnac)), TTL_DNAC_INTERFACES
+                "dnac_interfaces", _loader_or_empty(lambda: dc.get_all_interfaces(dnac)), TTL_STANDARD
             ) or []
 
             id_to_dev = {d.get('id'): d for d in devices if d.get('id')}
@@ -356,7 +356,7 @@ class IPAMEngine:
         """Shared loader for device list, site list, and device->site map.
         Returns (devices, dev_site_map, id_to_dev) — all from cache where possible.
         """
-        from cache import cache, TTL_DEVICES, TTL_SITES
+        from cache import cache, TTL_STANDARD
         import clients.dnac as dc
 
         dnac = auth_module.get_dnac_for_session(session) if session else None
@@ -366,15 +366,15 @@ class IPAMEngine:
 
         devices = await loop.run_in_executor(
             None, run_with_context(cache.get_or_set),
-            "devices", _loader_or_empty(lambda: dc.get_all_devices(dnac)), TTL_DEVICES
+            "devices", _loader_or_empty(lambda: dc.get_all_devices(dnac)), TTL_STANDARD
         ) or []
         sites = await loop.run_in_executor(
             None, run_with_context(cache.get_or_set),
-            "sites", _loader_or_empty(lambda: dc.get_site_cache(dnac)), TTL_SITES
+            "sites", _loader_or_empty(lambda: dc.get_site_cache(dnac)), TTL_STANDARD
         ) or []
         dev_site_map = await loop.run_in_executor(
             None, run_with_context(cache.get_or_set),
-            "device_site_map", _loader_or_empty(lambda: dc.build_device_site_map(dnac, sites)), TTL_SITES
+            "device_site_map", _loader_or_empty(lambda: dc.build_device_site_map(dnac, sites)), TTL_STANDARD
         ) or {}
 
         return devices, dev_site_map, {d.get("id"): d for d in devices}
@@ -384,7 +384,7 @@ class IPAMEngine:
         Cached as a single dict {device_id: config_str} under 'dnac_device_configs'.
         Both EIGRP summary discovery and IPv6 interface discovery consume this.
         """
-        from cache import cache, TTL_DNAC_ROUTER_CONFIGS
+        from cache import cache, TTL_STANDARD
         import clients.dnac as dc
 
         dnac = auth_module.get_dnac_for_session(session) if session else None
@@ -412,7 +412,7 @@ class IPAMEngine:
 
         configs = await loop.run_in_executor(
             None, run_with_context(cache.get_or_set),
-            "dnac_device_configs", _fetch_all_configs, TTL_DNAC_ROUTER_CONFIGS
+            "dnac_device_configs", _fetch_all_configs, TTL_STANDARD
         ) or {}
         return configs
 
@@ -527,7 +527,7 @@ class IPAMEngine:
                                   this is where the real per-site IPv6 allocations live.
         """
         try:
-            from cache import cache, TTL_DNAC_IP_POOLS
+            from cache import cache, TTL_STANDARD
             import clients.dnac as dc
 
             dnac = auth_module.get_dnac_for_session(session) if session else None
@@ -538,13 +538,13 @@ class IPAMEngine:
             global_pools = await loop.run_in_executor(
                 None, run_with_context(cache.get_or_set),
                 "dnac_global_pools", _loader_or_empty(lambda: dc.get_global_ip_pools(dnac)),
-                TTL_DNAC_IP_POOLS
+                TTL_STANDARD
             ) or []
 
             subpools = await loop.run_in_executor(
                 None, run_with_context(cache.get_or_set),
                 "dnac_reserve_subpools", _loader_or_empty(lambda: dc.get_reserve_ip_subpools(dnac)),
-                TTL_DNAC_IP_POOLS
+                TTL_STANDARD
             ) or []
 
             # Global pools — single CIDR per row, no site attribution.

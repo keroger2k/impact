@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 
 from auth import SessionEntry, require_auth
-from cache import cache, TTL_F5
+from cache import cache, TTL_MANUAL as TTL_F5
 import clients.f5 as f5c
 from logger_config import run_with_context
 from templates_module import templates
@@ -29,10 +29,7 @@ logger = logging.getLogger(__name__)
 
 F5_CSV_PATH = Path("data/device_lists/f5.csv")
 
-F5_CACHE_KEYS = [
-    "f5_inventory", "f5_self_ips", "f5_vlans", "f5_interfaces",
-    "f5_virtuals", "f5_pools", "f5_nodes", "f5_routes",
-]
+from datasets import F5_CACHE_KEYS
 
 
 def get_f5_devices_from_csv() -> List[Dict[str, str]]:

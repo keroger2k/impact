@@ -18,7 +18,7 @@ import clients.dnac as dc
 import clients.panorama as pc
 import auth as auth_module
 from auth import SessionEntry, require_auth
-from cache import cache, TTL_DEVICES, TTL_SITES, TTL_CONFIG_SEARCH_RESULT
+from cache import cache, TTL_STANDARD, TTL_LIVE
 from logger_config import run_with_context
 from templates_module import templates
 
@@ -70,7 +70,7 @@ async def get_devices_data(
     loop = asyncio.get_event_loop()
     dnac = _get_dnac(session)
 
-    devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "devices", lambda: dc.get_all_devices(dnac), TTL_DEVICES)
+    devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "devices", lambda: dc.get_all_devices(dnac), TTL_STANDARD)
     devices = devices or []
 
     filtered = devices
@@ -88,9 +88,9 @@ async def get_devices_data(
         elif reachability.lower() == "unreachable":
             filtered = [d for d in filtered if d.get("reachabilityStatus") != "Reachable"]
 
-    sites = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "sites", lambda: dc.get_site_cache(dnac), TTL_SITES)
+    sites = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "sites", lambda: dc.get_site_cache(dnac), TTL_STANDARD)
     sites = sites or []
-    dev_site_map = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "device_site_map", lambda: dc.build_device_site_map(dnac, sites), TTL_SITES)
+    dev_site_map = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "device_site_map", lambda: dc.build_device_site_map(dnac, sites), TTL_STANDARD)
     dev_site_map = dev_site_map or {}
 
     if site:
@@ -177,7 +177,7 @@ async def device_stats(session: SessionEntry = Depends(require_auth)):
     """Summary statistics for the dashboard."""
     loop    = asyncio.get_event_loop()
     dnac    = _get_dnac(session)
-    devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "devices", lambda: dc.get_all_devices(dnac), TTL_DEVICES)
+    devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "devices", lambda: dc.get_all_devices(dnac), TTL_STANDARD)
     devices = devices or []
 
     from routers.nexus import get_cached_nexus_inventory
@@ -498,7 +498,7 @@ async def ip_lookup_ui(request: Request, ip: str, session: SessionEntry = Depend
 async def list_sites(filter: Optional[str] = None, session: SessionEntry = Depends(require_auth)):
     loop  = asyncio.get_event_loop()
     dnac  = _get_dnac(session)
-    sites = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "sites", lambda: dc.get_site_cache(dnac), TTL_SITES)
+    sites = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "sites", lambda: dc.get_site_cache(dnac), TTL_STANDARD)
 
     if filter:
         sites = [s for s in sites if filter.lower() in s["name"].lower()]
@@ -506,25 +506,8 @@ async def list_sites(filter: Optional[str] = None, session: SessionEntry = Depen
     return {"total": len(sites), "items": sites}
 
 
-# ── Cache management ──────────────────────────────────────────────────────────
-
-@router.get("/cache/info")
-async def dnac_cache_info():
-    return {
-        "devices": cache.cache_info("devices"),
-        "sites":   cache.cache_info("sites"),
-    }
-
-
-@router.post("/cache/refresh")
-async def refresh_cache():
-    # Legacy endpoint — use /api/cache/refresh/devices or similar
-    # Scoped to DNAC only
-    cache.invalidate_prefix("devices")
-    cache.invalidate_prefix("sites")
-    cache.invalidate_prefix("device_site_map")
-    return {"status": "DNAC Cache invalidated"}
-
+# Cache management lives at POST /api/cache/refresh/dnac (routers/cache_mgmt.py,
+# driven by datasets.py).
 
 # ── Tag devices ───────────────────────────────────────────────────────────────
 
@@ -738,7 +721,7 @@ async def config_search(req: ConfigSearchRequestV2, session: SessionEntry = Depe
 
     loop    = asyncio.get_event_loop()
     dnac    = _get_dnac(session)
-    devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "devices", lambda: dc.get_all_devices(dnac), TTL_DEVICES)
+    devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "devices", lambda: dc.get_all_devices(dnac), TTL_STANDARD)
     devices = devices or []
 
     filtered = devices
@@ -940,7 +923,7 @@ async def config_search_ui(
 
     # Stash results in cache for download
     cache_key = _search_cache_key(req)
-    cache.set(cache_key, results, TTL_CONFIG_SEARCH_RESULT)
+    cache.set(cache_key, results, TTL_LIVE)
 
     return templates.TemplateResponse(request, "partials/config_search_results.html", {
         "results": results, "groups": groups
@@ -1074,6 +1057,6 @@ async def path_trace_result_ui(request: Request, flow_id: str, session: SessionE
 async def device_select_partial(request: Request, session: SessionEntry = Depends(require_auth)):
     loop = asyncio.get_event_loop()
     dnac = _get_dnac(session)
-    devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "devices", lambda: dc.get_all_devices(dnac), TTL_DEVICES)
+    devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "devices", lambda: dc.get_all_devices(dnac), TTL_STANDARD)
     devices = devices or []
     return templates.TemplateResponse(request, "partials/device_select.html", {"devices": devices})

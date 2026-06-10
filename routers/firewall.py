@@ -13,12 +13,12 @@ from pydantic import BaseModel
 import auth as auth_module
 import clients.panorama as pc
 from auth import SessionEntry, require_auth
-from cache import cache, TTL_PAN_INTERFACES, TTL_PAN_POLICY
+from cache import cache, TTL_STANDARD
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-PAN_TTL = TTL_PAN_POLICY
+PAN_TTL = TTL_STANDARD
 
 class PolicyLookupRequest(BaseModel):
     src_ip:           str
@@ -157,21 +157,11 @@ async def policy_lookup(req: PolicyLookupRequest, session: SessionEntry = Depend
         "matches": matches,
     }
 
-@router.get("/cache/info")
-async def firewall_cache_info():
-    keys     = cache.keys_for_prefix("pan_")
-    infos    = {k: cache.cache_info(k) for k in keys}
-    valid_ts = [v["set_at"] for v in infos.values() if v]
-    return {"oldest_at": min(valid_ts) if valid_ts else None, "keys": infos}
-
-@router.post("/cache/refresh")
-async def refresh_firewall_cache():
-    cache.invalidate_prefix("pan_")
-    return {"status": "firewall cache cleared"}
+# Cache management lives at POST /api/cache/refresh/panorama (routers/cache_mgmt.py,
+# driven by datasets.py).
 
 @router.get("/interfaces")
 async def list_firewall_interfaces(request: Request, session: SessionEntry = Depends(require_auth)):
-    from cache import TTL_PAN_INTERFACES
     from dev import DEV_MODE
     if DEV_MODE:
         devices = [
@@ -193,25 +183,13 @@ async def list_firewall_interfaces(request: Request, session: SessionEntry = Dep
     try:
         _get_key(session)  # fail fast on auth; loader re-fetches + auto-refreshes the key
         loop = asyncio.get_event_loop()
-        devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_interfaces", _pan_loader(session, pc.fetch_firewall_interfaces), TTL_PAN_INTERFACES)
+        devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_interfaces", _pan_loader(session, pc.fetch_firewall_interfaces), TTL_STANDARD)
         if devices is None:
             devices = []
     except Exception as e:
         logger.error(f"Failed to list firewall interfaces: {e}")
         raise HTTPException(500, f"Panorama Error: {str(e)}")
 
-    if request.headers.get("HX-Request"):
-        from templates_module import templates
-        return templates.TemplateResponse(request, "partials/firewall_interfaces.html", {"items": devices})
-    return {"items": devices, "total": len(devices)}
-
-@router.post("/interfaces/refresh")
-async def refresh_firewall_interfaces(request: Request, session: SessionEntry = Depends(require_auth)):
-    from cache import TTL_PAN_INTERFACES
-    cache.invalidate("pan_interfaces")
-    _get_key(session)  # fail fast on auth; loader re-fetches + auto-refreshes the key
-    loop = asyncio.get_event_loop()
-    devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_interfaces", _pan_loader(session, pc.fetch_firewall_interfaces), TTL_PAN_INTERFACES)
     if request.headers.get("HX-Request"):
         from templates_module import templates
         return templates.TemplateResponse(request, "partials/firewall_interfaces.html", {"items": devices})

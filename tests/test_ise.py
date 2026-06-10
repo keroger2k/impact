@@ -30,20 +30,16 @@ def htmx_headers(auth_headers):
     return {**auth_headers, "HX-Request": "true"}
 
 
-# ── Cache ─────────────────────────────────────────────────────────────────────
-
-def test_cache_info(auth_headers):
-    r = client.get("/api/ise/cache/info", headers=auth_headers)
-    assert r.status_code == 200
-    data = r.json()
-    assert "keys" in data
-    assert "ise_nads" in data["keys"]
-    assert "ise_sgts" in data["keys"]
+# ── Cache (unified endpoint — per-router cache routes were removed) ───────────
 
 def test_cache_refresh(auth_headers):
-    r = client.post("/api/ise/cache/refresh", headers=auth_headers)
+    r = client.post("/api/cache/refresh/ise", headers=auth_headers)
     assert r.status_code == 200
-    assert r.json()["status"] == "ise cache cleared"
+    assert "refreshed in the background" in r.text
+
+def test_cache_refresh_unknown_dataset(auth_headers):
+    r = client.post("/api/cache/refresh/nonsense", headers=auth_headers)
+    assert r.status_code == 404
 
 
 # ── Network Access Devices ────────────────────────────────────────────────────

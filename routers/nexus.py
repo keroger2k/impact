@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 
 from auth import SessionEntry, require_auth
-from cache import cache, TTL_DEVICES
+from cache import cache, TTL_MANUAL
 from collectors.nxos import NXOSCollector
 from models.interface import InterfaceResult
 from logger_config import run_with_context
@@ -98,7 +98,7 @@ async def refresh_nexus_data(session: SessionEntry = Depends(require_auth)):
             try:
                 interfaces, config, extras = collector.collect(collect_config=True)
                 if config:
-                    cache.set(f"config:nexus:{hostname}", config, 86400 * 7)
+                    cache.set(f"config:nexus:{hostname}", config, TTL_MANUAL)
 
                 inv_item = {
                     "id": f"nexus_{hostname}",
@@ -133,11 +133,11 @@ async def refresh_nexus_data(session: SessionEntry = Depends(require_auth)):
                 else:
                     yield emit({"type": "log", "level": "error", "message": f"[{completed}/{len(devices)}] Failed to collect."})
 
-        cache.set("nexus_inventory",     all_inventory_items, TTL_DEVICES)
-        cache.set("nexus_interfaces",    all_interfaces,      TTL_DEVICES)
-        cache.set("nexus_port_channels", all_port_channels,   TTL_DEVICES)
-        cache.set("nexus_vpcs",          all_vpcs,            TTL_DEVICES)
-        cache.set("nexus_vlans",         all_vlans,           TTL_DEVICES)
+        cache.set("nexus_inventory",     all_inventory_items, TTL_MANUAL)
+        cache.set("nexus_interfaces",    all_interfaces,      TTL_MANUAL)
+        cache.set("nexus_port_channels", all_port_channels,   TTL_MANUAL)
+        cache.set("nexus_vpcs",          all_vpcs,            TTL_MANUAL)
+        cache.set("nexus_vlans",         all_vlans,           TTL_MANUAL)
         yield emit({"type": "log", "level": "info", "message": "Nexus cache updated."})
         yield emit({"type": "complete", "count": len(all_inventory_items)})
 
@@ -154,10 +154,7 @@ async def list_nexus_inventory():
 
 # ── HTMX list/detail endpoints (Nexus Insights page) ─────────────────────────
 
-NEXUS_CACHE_KEYS = [
-    "nexus_inventory", "nexus_interfaces",
-    "nexus_port_channels", "nexus_vpcs", "nexus_vlans",
-]
+from datasets import NEXUS_CACHE_KEYS
 
 
 @router.get("/cache/info")
@@ -308,7 +305,7 @@ async def init_nexus_collection(username: Optional[str] = None, password: Option
         try:
             interfaces, config, extras = collector.collect(collect_config=True)
             if config:
-                cache.set(f"config:nexus:{hostname}", config, 86400 * 7)
+                cache.set(f"config:nexus:{hostname}", config, TTL_MANUAL)
             inv_item = {
                 "id": f"nexus_{hostname}",
                 "hostname": hostname,
@@ -344,8 +341,8 @@ async def init_nexus_collection(username: Optional[str] = None, password: Option
                     all_vlans.extend(extras.get("vlans", []))
 
         if all_inventory_items:
-            cache.set("nexus_inventory",     all_inventory_items, TTL_DEVICES)
-            cache.set("nexus_interfaces",    all_interfaces,      TTL_DEVICES)
-            cache.set("nexus_port_channels", all_port_channels,   TTL_DEVICES)
-            cache.set("nexus_vpcs",          all_vpcs,            TTL_DEVICES)
-            cache.set("nexus_vlans",         all_vlans,           TTL_DEVICES)
+            cache.set("nexus_inventory",     all_inventory_items, TTL_MANUAL)
+            cache.set("nexus_interfaces",    all_interfaces,      TTL_MANUAL)
+            cache.set("nexus_port_channels", all_port_channels,   TTL_MANUAL)
+            cache.set("nexus_vpcs",          all_vpcs,            TTL_MANUAL)
+            cache.set("nexus_vlans",         all_vlans,           TTL_MANUAL)

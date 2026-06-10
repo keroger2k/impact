@@ -2170,9 +2170,9 @@ def seed_cache(cache) -> None:
     from cache import IPAM_TREE_CACHE_KEY
     LONG = 86400 * 365  # 1 year — mock data never expires
 
-    # DNAC — use LONG for everything; the seed runs on every restart anyway
-    # and prod TTLs (TTL_DEVICES/TTL_SITES = 4h) make the dev cache widget
-    # go red while the mock data is still perfectly valid.
+    # DNAC — use LONG for everything; the seed runs on every restart anyway,
+    # so short TTLs would just make the dev cache widget go red while the
+    # mock data is still perfectly valid.
     cache.set("devices",         MOCK_DEVICES,          LONG)
     cache.set("sites",           MOCK_SITES,            LONG)
     cache.set("device_site_map", MOCK_DEVICE_SITE_MAP,  LONG)

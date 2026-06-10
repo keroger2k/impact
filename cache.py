@@ -6,7 +6,6 @@ thread-safe, and process-safe SQLite-backed disk cache.
 """
 
 import asyncio
-import functools
 import logging
 import os
 import threading
@@ -19,24 +18,22 @@ import diskcache
 
 logger = logging.getLogger(__name__)
 
-# TTL Constants (in seconds). Each is overridable via env (IMPACT_TTL_*).
-# Defaults are tuned for a slow-changing network: config/topology data lives for
-# hours-to-a-day; only genuine telemetry (status probes, route tables) stays short.
-TTL_DEFAULT             = int(os.getenv("IMPACT_TTL_DEFAULT",          "172800"))  # 48 hours
-TTL_DEVICES             = int(os.getenv("IMPACT_TTL_DEVICES",           "86400"))  # 24 hours
-TTL_SITES               = int(os.getenv("IMPACT_TTL_SITES",             "86400"))  # 24 hours
-TTL_ISE_POLICIES        = int(os.getenv("IMPACT_TTL_ISE_POLICIES",      "43200"))  # 12 hours
-TTL_ACI_STATUS          = int(os.getenv("IMPACT_TTL_ACI_STATUS",         "7200"))  # 2 hours
-TTL_ACI_ROUTE_TABLE     = int(os.getenv("IMPACT_TTL_ACI_ROUTE_TABLE",    "1800"))  # 30 minutes
-TTL_STATUS              = int(os.getenv("IMPACT_TTL_STATUS",              "300"))  # 5 minutes
-TTL_PAN_INTERFACES      = int(os.getenv("IMPACT_TTL_PAN_INTERFACES",   "172800"))  # 48 hours
-TTL_PAN_POLICY          = int(os.getenv("IMPACT_TTL_PAN_POLICY",        "43200"))  # 12 hours
-TTL_DNAC_INTERFACES     = int(os.getenv("IMPACT_TTL_DNAC_INTERFACES",   "86400"))  # 24 hours
-TTL_CONFIG_SEARCH_RESULT = int(os.getenv("IMPACT_TTL_CONFIG_SEARCH_RESULT", "300"))  # 5 minutes
-TTL_DNAC_ROUTER_CONFIGS = int(os.getenv("IMPACT_TTL_DNAC_ROUTER_CONFIGS", "86400"))  # 24 hours
-TTL_DNAC_IP_POOLS       = int(os.getenv("IMPACT_TTL_DNAC_IP_POOLS",       "86400"))  # 24 hours
-TTL_TUNNEL_INVENTORY    = int(os.getenv("IMPACT_TTL_TUNNEL_INVENTORY",    "86400"))  # 24 hours
-TTL_F5                  = int(os.getenv("IMPACT_TTL_F5",                  "86400"))  # 24 hours
+# TTL tiers (in seconds). The network is slow-changing, so there are exactly
+# three freshness models — pick the one that matches how the data is loaded:
+#
+#   TTL_STANDARD  API-backed reads (DNAC/ISE/Panorama/ACI) that flow through
+#                 get_or_set(). Stale-while-revalidate re-pulls them in the
+#                 background when a page is visited past the TTL, so nobody
+#                 ever needs to refresh these by hand.
+#   TTL_LIVE      True telemetry: connectivity probes, cached search results.
+#                 Short enough that "cached" and "current" are the same thing.
+#   TTL_MANUAL    Collection-backed data (Nexus SSH, F5 REST, IPAM tree,
+#                 tunnel inventory). Nothing re-collects it automatically, so
+#                 it never expires logically — it is valid until the user runs
+#                 the next Collect. The UI shows its age instead of nagging.
+TTL_STANDARD = int(os.getenv("IMPACT_TTL_STANDARD", str(7 * 24 * 3600)))  # 7 days
+TTL_LIVE     = int(os.getenv("IMPACT_TTL_LIVE",     "300"))               # 5 minutes
+TTL_MANUAL   = 10 * 365 * 24 * 3600                                       # never (10 years)
 
 IPAM_TREE_CACHE_KEY = "ipam_tree_v4" # Bumped — RFC1918 supernet aggregation + IP-first sort (was v3)
 TUNNEL_INVENTORY_CACHE_KEY = "tunnel_inventory_v1"
@@ -78,13 +75,16 @@ class AppCache:
         entry = self._cache.get(key)
         return entry[0] if entry is not None else None
 
-    def set(self, key: str, value: Any, ttl: Optional[int] = TTL_DEFAULT):
+    def set(self, key: str, value: Any, ttl: Optional[int] = TTL_STANDARD):
         """Standard set to cache with logical TTL and longer physical TTL for stale support."""
         now = time.time()
-        expires_at = now + (ttl if ttl is not None else TTL_DEFAULT)
-        # Store (data, logical_expiry, set_at)
-        # Physical expiry is 30 days to support stale-while-revalidate
-        self._cache.set(key, (value, expires_at, now), expire=2592000)
+        ttl_val = ttl if ttl is not None else TTL_STANDARD
+        expires_at = now + ttl_val
+        # Store (data, logical_expiry, set_at). Physical retention is 30 days
+        # for stale-while-revalidate, or the full TTL for manual-refresh keys
+        # whose logical lifetime exceeds 30 days (they must not vanish from
+        # disk just because the user hasn't re-collected in a month).
+        self._cache.set(key, (value, expires_at, now), expire=max(2592000, ttl_val))
 
     def _background_refresh(self, key: str, loader: Callable, ttl: int):
         """Refresh a key on the SWR pool, deduped so concurrent readers of the
@@ -109,7 +109,7 @@ class AppCache:
 
         self._refresh_pool.submit(_run)
 
-    def get_or_set(self, key: str, loader: Callable, ttl: int = TTL_DEFAULT,
+    def get_or_set(self, key: str, loader: Callable, ttl: int = TTL_STANDARD,
                    background: bool = True) -> Any:
         """
         Get a value from cache or fetch it using the loader if missing or expired.
@@ -167,17 +167,6 @@ class AppCache:
     def last_error(self, key: str) -> Optional[dict]:
         """Return the most recent loader failure for a key (or None if last load succeeded)."""
         return self._last_errors.get(key)
-
-    def cache_result(self, ttl: int = TTL_DEFAULT):
-        """Decorator for caching function results."""
-        def decorator(func: Callable):
-            @functools.wraps(func)
-            def wrapper(*args, **kwargs):
-                # Simple key generation based on function name and args
-                key = f"decorator:{func.__module__}.{func.__name__}:{args}:{kwargs}"
-                return self.get_or_set(key, lambda: func(*args, **kwargs), ttl)
-            return wrapper
-        return decorator
 
     def invalidate(self, key: str):
         self._cache.delete(key)
@@ -249,7 +238,7 @@ class AppCache:
             import clients.dnac as dc
             dnac    = dc.get_client()
             devices = dc.get_all_devices(dnac)
-            self.set("devices", devices, TTL_DEVICES)
+            self.set("devices", devices, TTL_STANDARD)
             logger.info(f"Cache warmed: {len(devices)} devices")
         except Exception as e:
             logger.warning(f"Device cache warm failed: {e}")
@@ -259,7 +248,7 @@ class AppCache:
             import clients.dnac as dc
             dnac  = dc.get_client()
             sites = dc.get_site_cache(dnac)
-            self.set("sites", sites, TTL_SITES)
+            self.set("sites", sites, TTL_STANDARD)
             logger.info(f"Cache warmed: {len(sites)} sites")
         except Exception as e:
             logger.warning(f"Site cache warm failed: {e}")
@@ -270,7 +259,7 @@ class AppCache:
             dnac         = dc.get_client()
             sites        = self.get("sites") or []
             dev_site_map = dc.build_device_site_map(dnac, sites)
-            self.set("device_site_map", dev_site_map, TTL_SITES)
+            self.set("device_site_map", dev_site_map, TTL_STANDARD)
             logger.info(f"Cache warmed: device_site_map ({len(dev_site_map)} entries)")
         except Exception as e:
             logger.warning(f"Device site map warm failed: {e}")

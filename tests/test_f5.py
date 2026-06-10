@@ -186,7 +186,7 @@ def test_site_helpers():
 
 def test_get_f5_sites(monkeypatch):
     import routers.f5 as rf5
-    from cache import cache, TTL_F5
+    from cache import cache, TTL_MANUAL as TTL_F5
     cache.set("f5_inventory", [
         {"hostname": "dal1-f5-01"}, {"hostname": "res1-f5-02"}, {"hostname": "dal1-f5-02"},
     ], TTL_F5)
@@ -197,7 +197,7 @@ def test_get_f5_sites(monkeypatch):
 
 def test_ipam_discover_f5():
     import asyncio
-    from cache import cache, TTL_F5
+    from cache import cache, TTL_MANUAL as TTL_F5
     from utils.ipam_engine import IPAMEngine
 
     cache.set("f5_self_ips", [
@@ -222,7 +222,7 @@ def test_ipam_discover_f5():
 def test_ip_lookup_finds_f5(monkeypatch):
     import asyncio
     import time as _t
-    from cache import cache, TTL_F5
+    from cache import cache, TTL_MANUAL as TTL_F5
     from auth import SessionEntry
     from routers.dnac import ip_lookup_handler
 
