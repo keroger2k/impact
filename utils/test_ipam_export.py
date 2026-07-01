@@ -400,6 +400,41 @@ class TestIPAMExport(unittest.TestCase):
         self.assertEqual(r16["ParentId"], r8["Id"])
         self.assertEqual(r8["ParentId"], "1")
 
+    def test_every_parent_precedes_its_children(self):
+        # SolarWinds resolves ParentId against already-read rows, so no row may
+        # reference a parent defined later in the file. The engine can hand us a
+        # /29 nested under a /23 while a /24 that belongs between them shows up
+        # elsewhere in the tree; the containment re-parent pass then makes the
+        # /29's parent the /24 — which, before ordering, was emitted after it.
+        tree = {
+            "ipv4": [
+                {"cidr": "1.1.1.0/23", "source": "DNAC", "role": "subnet",
+                 "children": [
+                     {"cidr": "1.1.1.0/29", "source": "DNAC", "role": "subnet"},
+                 ]},
+                {"cidr": "1.1.1.0/24", "source": "DNAC", "role": "subnet"},
+            ],
+            "ipv6": []
+        }
+        csv_out = generate_solarwinds_csv(tree)
+        rows = self.parse_csv(csv_out)
+
+        # The hierarchy must be /23 -> /24 -> /29 by containment.
+        r23 = next(r for r in rows if r["CIDR"] == "23")
+        r24 = next(r for r in rows if r["CIDR"] == "24")
+        r29 = next(r for r in rows if r["CIDR"] == "29")
+        self.assertEqual(r24["ParentId"], r23["Id"])
+        self.assertEqual(r29["ParentId"], r24["Id"])
+
+        # And crucially, every row's parent must appear earlier in the file.
+        seen = set()
+        for r in rows:
+            parent = int(r["ParentId"])
+            if parent != 0:
+                self.assertIn(parent, seen,
+                              f"row {r['Id']} references not-yet-seen parent {parent}")
+            seen.add(int(r["Id"]))
+
     def test_reparent_respects_ip_version_boundary(self):
         # An IPv4 row must never get parented under an IPv6 row (and vice
         # versa), even when prefix-length math would otherwise "fit".

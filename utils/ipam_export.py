@@ -218,6 +218,43 @@ def generate_solarwinds_csv(tree_data: Dict[str, List[Dict]]) -> str:
             else (ipv6_group_id if isv6 else ipv4_group_id)
         )
 
+    # Emit parents before children. SolarWinds' Subnet Import resolves each
+    # row's ParentId against rows it has already read, so a child that points
+    # at a parent appearing later in the file is rejected. The containment
+    # re-parent pass above assigns parents purely by network nesting,
+    # independent of walk order, so a row emitted early (e.g. a /29) can end up
+    # referencing a supernet emitted later (e.g. a /24 discovered further down
+    # the tree). Reorder the rows depth-first from the two root Groups — every
+    # parent ahead of its children — and renumber Ids contiguously so file
+    # order, Id order, and hierarchy depth all agree. The re-parent pass makes
+    # each ParentId strictly less specific than its child, so the ParentId
+    # graph is a forest rooted at the Groups and this walk reaches every row.
+    children_of = {}
+    for r in emitted_rows:
+        children_of.setdefault(r["ParentId"], []).append(r)
+
+    group_rows = [r for r in emitted_rows if r.get("Type") == "Group"]
+    ordered = list(group_rows)  # both root Groups stay at the top (Ids 1, 2)
+    for grp in group_rows:
+        stack = list(reversed(children_of.get(grp["Id"], [])))
+        while stack:
+            r = stack.pop()
+            ordered.append(r)
+            stack.extend(reversed(children_of.get(r["Id"], [])))
+
+    # Renumber Id/ParentId to the new positional order. absorbed_nodes is keyed
+    # by the pre-renumber ids, so remap it before rewriting the rows.
+    new_id = {0: 0}
+    for pos, r in enumerate(ordered, start=1):
+        new_id[r["Id"]] = pos
+    absorbed_nodes = {
+        new_id[k]: v for k, v in absorbed_nodes.items() if k in new_id
+    }
+    for r in ordered:
+        r["ParentId"] = new_id[r["ParentId"]]
+        r["Id"] = new_id[r["Id"]]
+    emitted_rows = ordered
+
     # Secondary pass to determine Types and build final field values
     has_children_ids = {row["ParentId"] for row in emitted_rows}
 
