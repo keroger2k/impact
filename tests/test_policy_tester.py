@@ -32,11 +32,31 @@ def test_build_policy_match_cmd_full_and_minimal():
     cmd = pc.build_policy_match_cmd(
         "1.2.3.4", "5.6.7.8", "tcp", dst_port=443,
         from_zone="trust", to_zone="untrust", application="ssl")
-    assert cmd == ('test security-policy-match source 1.2.3.4 destination 5.6.7.8 '
-                   'protocol 6 destination-port 443 from "trust" to "untrust" application "ssl"')
+    assert cmd == ('test security-policy-match source "1.2.3.4" destination "5.6.7.8" '
+                   'protocol "6" destination-port "443" from "trust" to "untrust" application "ssl"')
     assert pc.build_policy_match_cmd("1.2.3.4", "5.6.7.8", "icmp") == \
-        "test security-policy-match source 1.2.3.4 destination 5.6.7.8 protocol 1"
-    assert "protocol 17" in pc.build_policy_match_cmd("1.2.3.4", "5.6.7.8", "udp")
+        'test security-policy-match source "1.2.3.4" destination "5.6.7.8" protocol "1"'
+    assert 'protocol "17"' in pc.build_policy_match_cmd("1.2.3.4", "5.6.7.8", "udp")
+
+
+def test_build_policy_match_cmd_produces_valid_op_xml():
+    """Every value token must be quoted — unquoted tokens become XML element
+    names in panos.string_to_xml and Panorama rejects the request as invalid."""
+    from panos import string_to_xml
+    import xml.etree.ElementTree as ET
+    cmd = pc.build_policy_match_cmd(
+        "1.2.3.4", "5.6.7.8", "tcp", dst_port=443,
+        from_zone="trust", to_zone="untrust", application="ssl")
+    root = ET.fromstring(string_to_xml(cmd))  # raises if malformed
+    match = root.find("security-policy-match")
+    assert match is not None
+    assert match.findtext("source") == "1.2.3.4"
+    assert match.findtext("destination") == "5.6.7.8"
+    assert match.findtext("protocol") == "6"
+    assert match.findtext("destination-port") == "443"
+    assert match.findtext("from") == "trust"
+    assert match.findtext("to") == "untrust"
+    assert match.findtext("application") == "ssl"
 
 
 def test_parse_policy_match_result_modern_xml():

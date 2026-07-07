@@ -1128,15 +1128,21 @@ def build_policy_match_cmd(
     to_zone:     str | None = None,
     application: str | None = None,
 ) -> str:
-    """Build the ``test security-policy-match`` CLI string for op_via_sdk."""
+    """Build the ``test security-policy-match`` CLI string for op_via_sdk.
+
+    Every value must be double-quoted: panos.string_to_xml turns *unquoted*
+    tokens into XML element names (``source 1.2.3.4`` → ``<source><1.2.3.4>``,
+    which Panorama rejects as "request is not valid xml"); quoted tokens become
+    the preceding element's text (``<source>1.2.3.4</source>``).
+    """
     parts = [
         "test security-policy-match",
-        f"source {src_ip}",
-        f"destination {dst_ip}",
-        f"protocol {_PROTO_NUMBERS[protocol]}",
+        f'source "{src_ip}"',
+        f'destination "{dst_ip}"',
+        f'protocol "{_PROTO_NUMBERS[protocol]}"',
     ]
     if dst_port is not None:
-        parts.append(f"destination-port {dst_port}")
+        parts.append(f'destination-port "{dst_port}"')
     if from_zone:
         parts.append(f'from "{from_zone}"')
     if to_zone:
