@@ -38,7 +38,7 @@ ISE_KEYS = [
 
 PANORAMA_KEYS = [
     "pan_device_groups", "pan_managed_devices", "pan_rules",
-    "pan_addr", "pan_svc", "pan_interfaces",
+    "pan_addr", "pan_svc", "pan_interfaces", "pan_dg_device_map",
 ]
 
 NEXUS_CACHE_KEYS = [

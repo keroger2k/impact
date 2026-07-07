@@ -215,6 +215,30 @@ async def list_zone_options(request: Request, device_group: str = Query(""), ses
     return HTMLResponse("".join(f'<option value="{html.escape(z, quote=True)}"></option>' for z in zones))
 
 
+async def _firewalls_in_dg(session: SessionEntry, device_group: str) -> list[dict]:
+    """Managed firewalls belonging to a device group.
+
+    DG membership comes from Panorama *config* (device-group → devices, via
+    get_device_to_group_mapping) — the ``device_group`` field on ``show devices
+    all`` output is unreliable (often absent → "N/A"), so it's only a fallback.
+    """
+    _get_key(session)  # fail fast on auth; loaders re-fetch + auto-refresh the key
+    loop = asyncio.get_event_loop()
+    devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_managed_devices", _pan_loader(session, pc.get_managed_devices), PAN_TTL)
+    all_dgs = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_device_groups", _pan_loader(session, pc.get_device_groups), PAN_TTL)
+
+    def load_map(key):
+        return pc.get_device_to_group_mapping(key, all_dgs or [])
+    mapping = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_dg_device_map", _pan_loader(session, load_map), PAN_TTL)
+    mapping = mapping or {}
+
+    return [
+        d for d in (devices or [])
+        if mapping.get(d.get("serial")) == device_group
+        or (d.get("serial") not in mapping and d.get("device_group") == device_group)
+    ]
+
+
 @router.get("/firewall-options", response_class=HTMLResponse)
 async def list_firewall_options(request: Request, device_group: str = Query(""), session: SessionEntry = Depends(require_auth)):
     """<option> fragment of firewalls in a device group (live-test targets).
@@ -223,10 +247,7 @@ async def list_firewall_options(request: Request, device_group: str = Query(""),
     disabled — a live test needs a firewall Panorama can reach.
     """
     import html
-    _get_key(session)  # fail fast on auth; loader re-fetches + auto-refreshes the key
-    loop = asyncio.get_event_loop()
-    devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_managed_devices", _pan_loader(session, pc.get_managed_devices), PAN_TTL)
-    fws = [d for d in (devices or []) if d.get("device_group") == device_group]
+    fws = await _firewalls_in_dg(session, device_group)
 
     def rank(d):
         return (
@@ -273,14 +294,11 @@ async def policy_test(
     import ipaddress
     from dev import DEV_MODE
 
-    _get_key(session)  # fail fast on auth; loader re-fetches + auto-refreshes the key
-    loop = asyncio.get_event_loop()
-    devices = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_managed_devices", _pan_loader(session, pc.get_managed_devices), PAN_TTL)
-    target = next((d for d in (devices or []) if d.get("serial") == firewall), None)
+    fws = await _firewalls_in_dg(session, device_group)
+    target = next((d for d in fws if d.get("serial") == firewall), None)
     if target is None:
-        raise HTTPException(400, f"Unknown firewall serial: {firewall}")
-    if target.get("device_group") != device_group:
-        raise HTTPException(400, f"Firewall {target.get('hostname') or firewall} is not in device group {device_group}")
+        raise HTTPException(400, f"Firewall {firewall} is not in device group {device_group}")
+    loop = asyncio.get_event_loop()
 
     def _cell(values: list[str], i: int) -> str:
         return values[i].strip() if i < len(values) else ""

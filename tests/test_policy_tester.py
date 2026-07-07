@@ -70,14 +70,25 @@ def test_parse_policy_match_result_handles_failure():
 
 # ── endpoint tests ───────────────────────────────────────────────────────────
 
+# show-devices-all output in production often lacks device-group (→ "N/A"), so
+# DG membership must come from the config-sourced serial→DG mapping instead.
 DEVICES = [
     {"serial": "SN-A1", "hostname": "FW-A-01", "model": "PA-3220",
-     "device_group": "DG-A", "ha_enabled": True, "ha_state": "active", "connected": True},
+     "device_group": "N/A", "ha_enabled": True, "ha_state": "active", "connected": True},
     {"serial": "SN-A2", "hostname": "FW-A-02", "model": "PA-3220",
-     "device_group": "DG-A", "ha_enabled": True, "ha_state": "passive", "connected": False},
+     "device_group": "N/A", "ha_enabled": True, "ha_state": "passive", "connected": False},
     {"serial": "SN-B1", "hostname": "FW-B-01", "model": "PA-850",
-     "device_group": "DG-B", "ha_enabled": False, "ha_state": "", "connected": True},
+     "device_group": "N/A", "ha_enabled": False, "ha_state": "", "connected": True},
+    # not in the config mapping at all → device_group field is the fallback
+    {"serial": "SN-C1", "hostname": "FW-C-01", "model": "PA-850",
+     "device_group": "DG-C", "ha_enabled": False, "ha_state": "", "connected": True},
 ]
+DG_MAP = {"SN-A1": "DG-A", "SN-A2": "DG-A", "SN-B1": "DG-B"}
+CACHED = {
+    "pan_managed_devices": DEVICES,
+    "pan_device_groups": ["DG-A", "DG-B", "DG-C"],
+    "pan_dg_device_map": DG_MAP,
+}
 
 
 @pytest.fixture
@@ -87,7 +98,7 @@ def live(monkeypatch):
     monkeypatch.setattr(dev, "DEV_MODE", False)
     monkeypatch.setattr(fw, "_get_key", lambda session, force_refresh=False: "test-key")
     monkeypatch.setattr(fw.cache, "get_or_set",
-                        lambda key, loader, ttl, **kw: DEVICES, raising=False)
+                        lambda key, loader, ttl, **kw: CACHED.get(key), raising=False)
 
     calls = []
     def fake_test(api_key, serial, **kwargs):
@@ -170,8 +181,19 @@ async def test_firewall_options_prefers_connected_active(live):
     assert body.index("SN-A1") < body.index("SN-A2")   # active+connected first
     assert 'value="SN-A1" selected' in body
     assert 'value="SN-A2" disabled' in body            # disconnected not selectable
+    assert "SN-B1" not in body and "SN-C1" not in body
     resp = await fw.list_firewall_options(_req(), device_group="DG-EMPTY", session=None)
     assert "No firewalls" in resp.body.decode()
+
+
+@pytest.mark.asyncio
+async def test_firewall_membership_uses_config_map_with_field_fallback(live):
+    # config mapping wins even though show-devices-all said "N/A"
+    fws = await fw._firewalls_in_dg(None, "DG-B")
+    assert [d["serial"] for d in fws] == ["SN-B1"]
+    # device absent from the mapping falls back to its device_group field
+    fws = await fw._firewalls_in_dg(None, "DG-C")
+    assert [d["serial"] for d in fws] == ["SN-C1"]
 
 
 def test_zones_for_dg_merges_rules_and_interfaces(monkeypatch):

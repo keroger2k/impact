@@ -2219,6 +2219,8 @@ def seed_cache(cache) -> None:
     # these are the keys policy lookup / policy tester actually read.
     cache.set("pan_addr", ({o["name"]: [o["value"]] for o in MOCK_ADDRESS_OBJECTS}, {}), LONG)
     cache.set("pan_svc",  ({s["name"]: [(s["protocol"], s["port"])] for s in MOCK_SERVICES}, {}), LONG)
+    # Config-sourced serial → device-group mapping (what _firewalls_in_dg trusts)
+    cache.set("pan_dg_device_map", {fw["serial"]: fw["device_group"] for fw in MOCK_PAN_INTERFACES}, LONG)
 
     # Panorama IKE/IPsec — for the VPN Tunnels page
     cache.set("pan_ike_gateways",          MOCK_PAN_IKE_GATEWAYS,          LONG)
