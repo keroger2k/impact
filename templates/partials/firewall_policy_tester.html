@@ -1,0 +1,111 @@
+<div class="card shadow-sm border-0 animate-fade-in">
+  <div class="card-header bg-navy text-white d-flex justify-content-between align-items-center">
+    <div class="d-flex align-items-center gap-2">
+      <i class="ph ph-flask"></i>
+      <span class="fw-bold">Policy Tester</span>
+    </div>
+    <span class="badge bg-primary">{{ device_groups|length }} Device Groups</span>
+  </div>
+  <div class="card-body">
+    <p class="text-muted small mb-3">
+      Evaluates each flow against the cached Panorama rulebase for the selected device group
+      (shared pre &rarr; DG pre &rarr; DG post &rarr; shared post), resolving address and service
+      objects. App-ID is not evaluated &mdash; rules matched on <code>application-default</code>
+      or specific apps are treated as matching on port. Zones left blank are wildcards.
+    </p>
+    <form id="pt-form" hx-post="/api/firewall/policy-test" hx-target="#pt-results" hx-indicator="#pan-loading">
+      <div class="row g-3 align-items-end mb-3">
+        <div class="col-md-5">
+          <label class="form-label small fw-bold" for="pt-dg">Device Group <span class="text-danger">*</span></label>
+          <select id="pt-dg" name="device_group" class="form-select" required
+                  hx-get="/api/firewall/zones" hx-trigger="change" hx-target="#pt-zones" hx-swap="innerHTML">
+            <option value="" selected disabled>Select a device group&hellip;</option>
+            {% for dg in device_groups %}
+            <option value="{{ dg }}">{{ dg }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-4">
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" id="pt-disabled" name="include_disabled" value="true">
+            <label class="form-check-label small" for="pt-disabled">Include disabled rules</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-2">
+          <thead class="bg-light">
+            <tr>
+              <th style="width: 3%">#</th>
+              <th style="width: 18%">Source IP</th>
+              <th style="width: 15%">Source Zone</th>
+              <th style="width: 18%">Destination IP</th>
+              <th style="width: 15%">Destination Zone</th>
+              <th style="width: 12%">Protocol</th>
+              <th style="width: 12%">Dest Port</th>
+              <th style="width: 7%"></th>
+            </tr>
+          </thead>
+          <tbody id="pt-rows"></tbody>
+        </table>
+      </div>
+      <datalist id="pt-zones"></datalist>
+
+      <div class="d-flex gap-2">
+        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="ptAddRow()">
+          <i class="ph ph-plus"></i> Add Flow
+        </button>
+        <button type="submit" class="btn btn-primary btn-sm">
+          <i class="ph ph-play"></i> Test All Flows
+        </button>
+      </div>
+    </form>
+
+    <template id="pt-row-template">
+      <tr>
+        <td class="small text-muted pt-row-num"></td>
+        <td><input type="text" class="form-control form-control-sm" name="src_ip" placeholder="1.2.3.4" autocomplete="off" spellcheck="false"></td>
+        <td><input type="text" class="form-control form-control-sm" name="src_zone" list="pt-zones" placeholder="any" autocomplete="off" spellcheck="false"></td>
+        <td><input type="text" class="form-control form-control-sm" name="dst_ip" placeholder="5.6.7.8" autocomplete="off" spellcheck="false"></td>
+        <td><input type="text" class="form-control form-control-sm" name="dst_zone" list="pt-zones" placeholder="any" autocomplete="off" spellcheck="false"></td>
+        <td>
+          <select class="form-select form-select-sm" name="protocol">
+            <option value="any">any</option>
+            <option value="tcp">tcp</option>
+            <option value="udp">udp</option>
+          </select>
+        </td>
+        <td><input type="number" class="form-control form-control-sm" name="dst_port" placeholder="443" min="1" max="65535"></td>
+        <td class="text-end">
+          <button type="button" class="btn btn-outline-danger btn-sm px-2 py-0" title="Remove flow" onclick="ptRemoveRow(this)">
+            <i class="ph ph-x"></i>
+          </button>
+        </td>
+      </tr>
+    </template>
+
+    <div id="pt-results" class="mt-4"></div>
+  </div>
+</div>
+
+<script>
+  function ptRenumber() {
+    document.querySelectorAll('#pt-rows tr').forEach(function (tr, i) {
+      tr.querySelector('.pt-row-num').textContent = i + 1;
+    });
+  }
+  function ptAddRow() {
+    var row = document.getElementById('pt-row-template').content.cloneNode(true);
+    document.getElementById('pt-rows').appendChild(row);
+    ptRenumber();
+    var rows = document.querySelectorAll('#pt-rows tr');
+    rows[rows.length - 1].querySelector('input[name="src_ip"]').focus();
+  }
+  function ptRemoveRow(btn) {
+    var rows = document.querySelectorAll('#pt-rows tr');
+    if (rows.length > 1) btn.closest('tr').remove();
+    ptRenumber();
+  }
+  ptAddRow();
+</script>

@@ -650,7 +650,21 @@ def resolve_name(
         for member in groups[name]:
             result.extend(resolve_name(member, objects, groups, visited))
         return result
-    return []
+    # Rules may reference literal IPs/CIDRs/ranges instead of named objects
+    value = name.strip()
+    try:
+        if "/" in value:
+            ipaddress.ip_network(value, strict=False)
+            return [value]
+        if "-" in value:
+            lo, hi = value.split("-", 1)
+            ipaddress.ip_address(lo.strip())
+            ipaddress.ip_address(hi.strip())
+            return [value]
+        ipaddress.ip_address(value)
+        return [value]
+    except ValueError:
+        return []
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -818,6 +832,19 @@ def _ip_in_value(query_ip: str, value: str) -> bool:
         return ip == ipaddress.ip_address(value)
     except ValueError:
         return False
+
+
+def zone_matches(query_zone: str | None, rule_zones: list[str]) -> bool:
+    """Return True if query_zone is covered by rule_zones.
+
+    A blank/``any`` query zone is a wildcard (zone not part of the test);
+    a rule with no zones or ``any`` matches every zone.
+    """
+    if not query_zone or query_zone == "any":
+        return True
+    if not rule_zones or "any" in rule_zones:
+        return True
+    return query_zone in rule_zones
 
 
 def ip_matches_address_list(
@@ -1072,6 +1099,8 @@ def find_matching_rules(
     dst_port:    int | None = None,
     proto:       str        = "any",
     include_disabled: bool  = False,
+    src_zone:    str | None = None,
+    dst_zone:    str | None = None,
 ) -> list[dict]:
     """Return matching rules in evaluation order."""
     if svc_obj is None:
@@ -1087,8 +1116,11 @@ def find_matching_rules(
         src_ok = ip_matches_address_list(src_ip, rule["source"], objects, groups, rule.get("source_negate", False))
         dst_ok = ip_matches_address_list(dst_ip, rule["destination"], objects, groups, rule.get("dest_negate", False))
         svc_ok = service_matches(proto, dst_port, rule["service"], svc_obj, svc_grp)
+        # Mock/legacy rule dicts carry zones under "from"/"to" instead of *_zones
+        zsrc_ok = zone_matches(src_zone, rule.get("from_zones") or rule.get("from") or [])
+        zdst_ok = zone_matches(dst_zone, rule.get("to_zones") or rule.get("to") or [])
 
-        if src_ok and dst_ok and svc_ok:
+        if src_ok and dst_ok and svc_ok and zsrc_ok and zdst_ok:
             r = dict(rule)
             r["first_match"] = not first_recorded
             if not first_recorded:

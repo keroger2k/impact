@@ -2214,6 +2214,11 @@ def seed_cache(cache) -> None:
     cache.set("pan_address_objects",  MOCK_ADDRESS_OBJECTS,     LONG)
     cache.set("pan_services",         MOCK_SERVICES,            LONG)
     cache.set("pan_interfaces",       MOCK_PAN_INTERFACES,      LONG)
+    # Resolver-shaped twins of the two lists above, matching what
+    # pc.get_address_objects_and_groups / pc.get_services return —
+    # these are the keys policy lookup / policy tester actually read.
+    cache.set("pan_addr", ({o["name"]: [o["value"]] for o in MOCK_ADDRESS_OBJECTS}, {}), LONG)
+    cache.set("pan_svc",  ({s["name"]: [(s["protocol"], s["port"])] for s in MOCK_SERVICES}, {}), LONG)
 
     # Panorama IKE/IPsec — for the VPN Tunnels page
     cache.set("pan_ike_gateways",          MOCK_PAN_IKE_GATEWAYS,          LONG)

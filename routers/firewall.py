@@ -91,24 +91,16 @@ async def list_device_groups(request: Request, session: SessionEntry = Depends(r
         return templates.TemplateResponse(request, "partials/firewall_device_groups.html", {"items": dgs})
     return {"items": dgs, "total": len(dgs)}
 
-@router.post("/lookup")
-async def policy_lookup(req: PolicyLookupRequest, session: SessionEntry = Depends(require_auth)):
-    import ipaddress
-    for field, val in [("src_ip", req.src_ip), ("dst_ip", req.dst_ip)]:
-        try:
-            ipaddress.ip_address(val)
-        except ValueError:
-            raise HTTPException(400, f"'{val}' is not a valid IP address")
+async def _load_policy_context(session: SessionEntry):
+    """Load device groups, address/service objects, and the rulebase via cache.
+
+    Shared by the single-flow policy lookup and the multi-flow policy tester.
+    Returns ``(all_dgs, objects, groups, svc_obj, svc_grp, rules_cache)``.
+    """
     _get_key(session)  # fail fast on auth; loaders re-fetch + auto-refresh the key
     loop = asyncio.get_event_loop()
     all_dgs = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_device_groups", _pan_loader(session, pc.get_device_groups), PAN_TTL)
-
     if all_dgs is None: all_dgs = []
-
-    if req.device_groups:
-        invalid = [dg for dg in req.device_groups if dg not in all_dgs]
-        if invalid:
-            raise HTTPException(400, f"Unknown device groups: {invalid}")
 
     addr_data = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_addr", _pan_loader(session, lambda key: pc.get_address_objects_and_groups(key, all_dgs)), PAN_TTL)
     objects, groups = addr_data if addr_data else ({}, {})
@@ -126,6 +118,23 @@ async def policy_lookup(req: PolicyLookupRequest, session: SessionEntry = Depend
 
     rules_cache = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_rules", _pan_loader(session, load_rules), PAN_TTL)
     if not rules_cache: rules_cache = {"dg_order": [], "by_dg": {}}
+    return all_dgs, objects, groups, svc_obj, svc_grp, rules_cache
+
+
+@router.post("/lookup")
+async def policy_lookup(req: PolicyLookupRequest, session: SessionEntry = Depends(require_auth)):
+    import ipaddress
+    for field, val in [("src_ip", req.src_ip), ("dst_ip", req.dst_ip)]:
+        try:
+            ipaddress.ip_address(val)
+        except ValueError:
+            raise HTTPException(400, f"'{val}' is not a valid IP address")
+    all_dgs, objects, groups, svc_obj, svc_grp, rules_cache = await _load_policy_context(session)
+
+    if req.device_groups:
+        invalid = [dg for dg in req.device_groups if dg not in all_dgs]
+        if invalid:
+            raise HTTPException(400, f"Unknown device groups: {invalid}")
 
     target_dgs = req.device_groups or None
     rules = _flatten_rules(rules_cache, target_dgs)
@@ -156,6 +165,130 @@ async def policy_lookup(req: PolicyLookupRequest, session: SessionEntry = Depend
         "match_count": len(matches), "traffic_decision": (effective or {}).get("action", "implicit-deny"),
         "matches": matches,
     }
+
+MAX_TEST_FLOWS = 50
+
+
+def _zones_for_dg(device_group: str) -> list[str]:
+    """Collect known zone names for a device group from cached rules + interfaces.
+
+    Pure cache reads (stale OK) — this feeds an autocomplete datalist, so
+    last-known data beats blocking on Panorama.
+    """
+    zones: set[str] = set()
+    rules_cache = cache.get_stale("pan_rules") or {}
+    by_dg = rules_cache.get("by_dg", {})
+    for dg in ("shared", device_group):
+        for rule in by_dg.get(dg, []):
+            for z in (rule.get("from_zones") or rule.get("from") or []):
+                zones.add(z)
+            for z in (rule.get("to_zones") or rule.get("to") or []):
+                zones.add(z)
+    for fw in cache.get_stale("pan_interfaces") or []:
+        if fw.get("device_group") == device_group:
+            for iface in fw.get("interfaces", []):
+                if iface.get("zone"):
+                    zones.add(iface["zone"])
+    zones.discard("any")
+    return sorted(zones, key=str.lower)
+
+
+@router.get("/policy-tester", response_class=HTMLResponse)
+async def policy_tester_ui(request: Request, session: SessionEntry = Depends(require_auth)):
+    _get_key(session)  # fail fast on auth; loader re-fetches + auto-refreshes the key
+    loop = asyncio.get_event_loop()
+    dgs = await loop.run_in_executor(None, run_with_context(cache.get_or_set), "pan_device_groups", _pan_loader(session, pc.get_device_groups), PAN_TTL)
+    from templates_module import templates
+    return templates.TemplateResponse(request, "partials/firewall_policy_tester.html", {"device_groups": dgs or []})
+
+
+@router.get("/zones", response_class=HTMLResponse)
+async def list_zone_options(request: Request, device_group: str = Query(""), session: SessionEntry = Depends(require_auth)):
+    """Datalist <option> fragment of zone names known for a device group."""
+    import html
+    zones = _zones_for_dg(device_group) if device_group else []
+    return HTMLResponse("".join(f'<option value="{html.escape(z, quote=True)}"></option>' for z in zones))
+
+
+@router.post("/policy-test")
+async def policy_test(
+    request: Request,
+    device_group: str = Form(...),
+    src_ip:   list[str] = Form(default=[]),
+    src_zone: list[str] = Form(default=[]),
+    dst_ip:   list[str] = Form(default=[]),
+    dst_zone: list[str] = Form(default=[]),
+    protocol: list[str] = Form(default=[]),
+    dst_port: list[str] = Form(default=[]),
+    include_disabled: bool = Form(False),
+    session: SessionEntry = Depends(require_auth),
+):
+    """Evaluate multiple flows against one device group's rulebase (cached, offline)."""
+    import ipaddress
+
+    all_dgs, objects, groups, svc_obj, svc_grp, rules_cache = await _load_policy_context(session)
+    if device_group not in all_dgs and device_group != "shared":
+        raise HTTPException(400, f"Unknown device group: {device_group}")
+
+    rules = _flatten_rules(rules_cache, [device_group])
+
+    def _cell(values: list[str], i: int) -> str:
+        return values[i].strip() if i < len(values) else ""
+
+    results = []
+    n = min(max(len(src_ip), len(dst_ip)), MAX_TEST_FLOWS)
+    for i in range(n):
+        flow = {
+            "src_ip":   _cell(src_ip, i),   "src_zone": _cell(src_zone, i),
+            "dst_ip":   _cell(dst_ip, i),   "dst_zone": _cell(dst_zone, i),
+            "protocol": _cell(protocol, i) or "any",
+            "dst_port": _cell(dst_port, i),
+        }
+        if not any(flow.values()) or (not flow["src_ip"] and not flow["dst_ip"]):
+            continue  # blank row
+        row = {"index": len(results) + 1, **flow, "matches": [], "match_count": 0,
+               "matched_rule": None, "verdict": "", "verdict_kind": "", "error": ""}
+        results.append(row)
+
+        try:
+            for label, val in (("source IP", flow["src_ip"]), ("destination IP", flow["dst_ip"])):
+                if not val:
+                    raise ValueError(f"missing {label}")
+                ipaddress.ip_address(val)
+            port = int(flow["dst_port"]) if flow["dst_port"] else None
+            if port is not None and not (0 < port < 65536):
+                raise ValueError(f"invalid port {port}")
+        except ValueError as e:
+            row["verdict"], row["verdict_kind"], row["error"] = "error", "error", str(e)
+            continue
+
+        matches = pc.find_matching_rules(
+            src_ip=flow["src_ip"], dst_ip=flow["dst_ip"], rules=rules,
+            objects=objects, groups=groups, svc_obj=svc_obj, svc_grp=svc_grp,
+            dst_port=port, proto=flow["protocol"], include_disabled=include_disabled,
+            src_zone=flow["src_zone"] or None, dst_zone=flow["dst_zone"] or None,
+        )
+        row["matches"] = matches
+        row["match_count"] = len(matches)
+        effective = next((m for m in matches if not m.get("disabled")), None)
+        if effective:
+            row["matched_rule"] = effective
+            row["verdict"] = effective.get("action", "allow")
+            row["verdict_kind"] = "allow" if row["verdict"] == "allow" else "deny"
+        elif flow["src_zone"] and flow["src_zone"] == flow["dst_zone"]:
+            row["verdict"], row["verdict_kind"] = "allow (intrazone-default)", "allow"
+        else:
+            row["verdict"], row["verdict_kind"] = "deny (interzone-default)", "deny"
+
+    if request.headers.get("HX-Request"):
+        from templates_module import templates
+        return templates.TemplateResponse(request, "partials/firewall_policy_test_results.html", {
+            "device_group": device_group,
+            "rules_searched": len(rules),
+            "results": results,
+        })
+    return {"device_group": device_group, "rules_searched": len(rules), "results": results}
+
 
 # Cache management lives at POST /api/cache/refresh/panorama (routers/cache_mgmt.py,
 # driven by datasets.py).
