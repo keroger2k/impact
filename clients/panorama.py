@@ -834,19 +834,6 @@ def _ip_in_value(query_ip: str, value: str) -> bool:
         return False
 
 
-def zone_matches(query_zone: str | None, rule_zones: list[str]) -> bool:
-    """Return True if query_zone is covered by rule_zones.
-
-    A blank/``any`` query zone is a wildcard (zone not part of the test);
-    a rule with no zones or ``any`` matches every zone.
-    """
-    if not query_zone or query_zone == "any":
-        return True
-    if not rule_zones or "any" in rule_zones:
-        return True
-    return query_zone in rule_zones
-
-
 def ip_matches_address_list(
     query_ip: str,
     address_names: list[str],
@@ -1099,8 +1086,6 @@ def find_matching_rules(
     dst_port:    int | None = None,
     proto:       str        = "any",
     include_disabled: bool  = False,
-    src_zone:    str | None = None,
-    dst_zone:    str | None = None,
 ) -> list[dict]:
     """Return matching rules in evaluation order."""
     if svc_obj is None:
@@ -1116,11 +1101,8 @@ def find_matching_rules(
         src_ok = ip_matches_address_list(src_ip, rule["source"], objects, groups, rule.get("source_negate", False))
         dst_ok = ip_matches_address_list(dst_ip, rule["destination"], objects, groups, rule.get("dest_negate", False))
         svc_ok = service_matches(proto, dst_port, rule["service"], svc_obj, svc_grp)
-        # Mock/legacy rule dicts carry zones under "from"/"to" instead of *_zones
-        zsrc_ok = zone_matches(src_zone, rule.get("from_zones") or rule.get("from") or [])
-        zdst_ok = zone_matches(dst_zone, rule.get("to_zones") or rule.get("to") or [])
 
-        if src_ok and dst_ok and svc_ok and zsrc_ok and zdst_ok:
+        if src_ok and dst_ok and svc_ok:
             r = dict(rule)
             r["first_match"] = not first_recorded
             if not first_recorded:
@@ -1128,6 +1110,90 @@ def find_matching_rules(
             matches.append(r)
 
     return matches
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# LIVE POLICY TEST (test security-policy-match on a managed firewall)
+# ──────────────────────────────────────────────────────────────────────────────
+
+_PROTO_NUMBERS = {"tcp": 6, "udp": 17, "icmp": 1}
+
+
+def build_policy_match_cmd(
+    src_ip:      str,
+    dst_ip:      str,
+    protocol:    str,
+    dst_port:    int | None = None,
+    from_zone:   str | None = None,
+    to_zone:     str | None = None,
+    application: str | None = None,
+) -> str:
+    """Build the ``test security-policy-match`` CLI string for op_via_sdk."""
+    parts = [
+        "test security-policy-match",
+        f"source {src_ip}",
+        f"destination {dst_ip}",
+        f"protocol {_PROTO_NUMBERS[protocol]}",
+    ]
+    if dst_port is not None:
+        parts.append(f"destination-port {dst_port}")
+    if from_zone:
+        parts.append(f'from "{from_zone}"')
+    if to_zone:
+        parts.append(f'to "{to_zone}"')
+    if application:
+        parts.append(f'application "{application}"')
+    return " ".join(parts)
+
+
+def parse_policy_match_result(result: ET.Element | None) -> dict:
+    """Parse the firewall's response into {ok, rules: [{name, action, ...}]}.
+
+    Newer PAN-OS returns ``<rules><entry name="..."><action>...</action>...``;
+    older versions return bare ``<entry>rule-name</entry>`` text. The implicit
+    default rules come back named intrazone-default / interzone-default — infer
+    their action when the firewall omits it.
+    """
+    if result is None:
+        return {"ok": False, "error": "no response from firewall (offline, unreachable, or command failed)"}
+    rules = []
+    for entry in result.findall(".//rules/entry"):
+        name = entry.get("name") or (entry.text or "").strip()
+        rule = {"name": name}
+        for tag in ("action", "index", "from", "to", "source", "destination",
+                    "application", "service", "category", "terminal"):
+            val = entry.findtext(tag)
+            if val is not None:
+                rule[tag] = val.strip()
+        if not rule.get("action"):
+            if name == "intrazone-default":
+                rule["action"] = "allow"
+            elif name == "interzone-default":
+                rule["action"] = "deny"
+        rules.append(rule)
+    return {"ok": True, "rules": rules}
+
+
+def test_security_policy_match(
+    api_key:     str,
+    serial:      str,
+    src_ip:      str,
+    dst_ip:      str,
+    protocol:    str,
+    dst_port:    int | None = None,
+    from_zone:   str | None = None,
+    to_zone:     str | None = None,
+    application: str | None = None,
+) -> dict:
+    """Run ``test security-policy-match`` on a managed firewall via Panorama.
+
+    This asks the firewall's own policy engine, so the verdict reflects the
+    actually-pushed config — authoritative, unlike offline rule matching.
+    """
+    cmd = build_policy_match_cmd(src_ip, dst_ip, protocol, dst_port, from_zone, to_zone, application)
+    parsed = parse_policy_match_result(op_via_sdk(cmd, api_key, target=serial))
+    parsed["cmd"] = cmd
+    return parsed
 
 
 def run_diagnostics(api_key: str) -> dict[str, str]:

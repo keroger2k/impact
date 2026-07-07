@@ -1,12 +1,15 @@
-"""Tests for the firewall Policy Tester: zone-aware rule matching in
-clients.panorama and the multi-flow /api/firewall/policy-test endpoint.
+"""Tests for the firewall Policy Tester: live `test security-policy-match`
+command building/parsing in clients.panorama and the multi-flow
+/api/firewall/policy-test endpoint.
 
 Endpoint tests call the async handler directly (the project's pattern, see
-test_ip_registry_router) with _load_policy_context monkeypatched, so no cache
-or Panorama access is involved. All addresses are fake per IP_ADDRESS_POLICY.
+test_ip_registry_router) with the Panorama call and cache monkeypatched, so no
+network or cache access is involved. All addresses are fake per
+IP_ADDRESS_POLICY.
 """
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
 from unittest.mock import MagicMock
 
 import pytest
@@ -18,16 +21,6 @@ from routers import firewall as fw
 
 # ── clients.panorama unit tests ──────────────────────────────────────────────
 
-def test_zone_matches_wildcards_and_membership():
-    assert pc.zone_matches(None, ["trust"])          # no query zone → wildcard
-    assert pc.zone_matches("", ["trust"])
-    assert pc.zone_matches("any", ["trust"])
-    assert pc.zone_matches("trust", [])              # rule with no zones
-    assert pc.zone_matches("trust", ["any"])
-    assert pc.zone_matches("trust", ["trust", "dmz"])
-    assert not pc.zone_matches("untrust", ["trust", "dmz"])
-
-
 def test_resolve_name_falls_back_to_literal_values():
     assert pc.resolve_name("10.10.0.0/16", {}, {}) == ["10.10.0.0/16"]
     assert pc.resolve_name("1.2.3.4", {}, {}) == ["1.2.3.4"]
@@ -35,60 +28,79 @@ def test_resolve_name_falls_back_to_literal_values():
     assert pc.resolve_name("NET-UNDEFINED", {}, {}) == []
 
 
-def _rule(**over):
-    base = {
-        "device_group": "DG-A", "rulebase": "pre", "name": "R1",
-        "action": "allow", "disabled": False,
-        "source": ["any"], "source_negate": False, "from_zones": ["trust"],
-        "destination": ["any"], "dest_negate": False, "to_zones": ["untrust"],
-        "application": ["any"], "service": ["any"],
-    }
-    base.update(over)
-    return base
+def test_build_policy_match_cmd_full_and_minimal():
+    cmd = pc.build_policy_match_cmd(
+        "1.2.3.4", "5.6.7.8", "tcp", dst_port=443,
+        from_zone="trust", to_zone="untrust", application="ssl")
+    assert cmd == ('test security-policy-match source 1.2.3.4 destination 5.6.7.8 '
+                   'protocol 6 destination-port 443 from "trust" to "untrust" application "ssl"')
+    assert pc.build_policy_match_cmd("1.2.3.4", "5.6.7.8", "icmp") == \
+        "test security-policy-match source 1.2.3.4 destination 5.6.7.8 protocol 1"
+    assert "protocol 17" in pc.build_policy_match_cmd("1.2.3.4", "5.6.7.8", "udp")
 
 
-def test_find_matching_rules_filters_on_zones():
-    rules = [_rule()]
-    kw = dict(src_ip="1.2.3.4", dst_ip="5.6.7.8", rules=rules,
-              objects={}, groups={})
-    assert len(pc.find_matching_rules(**kw)) == 1                       # no zones queried
-    assert len(pc.find_matching_rules(**kw, src_zone="trust", dst_zone="untrust")) == 1
-    assert pc.find_matching_rules(**kw, src_zone="dmz") == []
-    assert pc.find_matching_rules(**kw, dst_zone="trust") == []
+def test_parse_policy_match_result_modern_xml():
+    xml = """<response status="success"><result><rules>
+      <entry name="Allow-Web"><action>allow</action><index>7</index>
+        <from>trust</from><to>untrust</to></entry>
+    </rules></result></response>"""
+    parsed = pc.parse_policy_match_result(ET.fromstring(xml))
+    assert parsed["ok"]
+    assert parsed["rules"][0] == {"name": "Allow-Web", "action": "allow",
+                                  "index": "7", "from": "trust", "to": "untrust"}
 
 
-def test_find_matching_rules_reads_legacy_from_to_keys():
-    rule = _rule()
-    rule["from"] = rule.pop("from_zones")
-    rule["to"] = rule.pop("to_zones")
-    matches = pc.find_matching_rules(
-        src_ip="1.2.3.4", dst_ip="5.6.7.8", rules=[rule],
-        objects={}, groups={}, src_zone="trust", dst_zone="untrust")
-    assert len(matches) == 1
+def test_parse_policy_match_result_legacy_text_and_default_rules():
+    xml = "<result><rules><entry>interzone-default</entry></rules></result>"
+    parsed = pc.parse_policy_match_result(ET.fromstring(xml))
+    assert parsed["rules"][0]["name"] == "interzone-default"
+    assert parsed["rules"][0]["action"] == "deny"  # inferred
+
+    xml = '<result><rules><entry name="intrazone-default"/></rules></result>'
+    parsed = pc.parse_policy_match_result(ET.fromstring(xml))
+    assert parsed["rules"][0]["action"] == "allow"  # inferred
+
+
+def test_parse_policy_match_result_handles_failure():
+    parsed = pc.parse_policy_match_result(None)
+    assert not parsed["ok"] and "no response" in parsed["error"]
+    parsed = pc.parse_policy_match_result(ET.fromstring("<result/>"))
+    assert parsed["ok"] and parsed["rules"] == []
 
 
 # ── endpoint tests ───────────────────────────────────────────────────────────
 
-RULES = [
-    _rule(name="Allow-Web", source=["NET-CORP"], destination=["1.2.3.0/24"],
-          service=["SVC-HTTPS"]),
-    _rule(name="Deny-DMZ", action="deny", from_zones=["dmz"], to_zones=["any"]),
+DEVICES = [
+    {"serial": "SN-A1", "hostname": "FW-A-01", "model": "PA-3220",
+     "device_group": "DG-A", "ha_enabled": True, "ha_state": "active", "connected": True},
+    {"serial": "SN-A2", "hostname": "FW-A-02", "model": "PA-3220",
+     "device_group": "DG-A", "ha_enabled": True, "ha_state": "passive", "connected": False},
+    {"serial": "SN-B1", "hostname": "FW-B-01", "model": "PA-850",
+     "device_group": "DG-B", "ha_enabled": False, "ha_state": "", "connected": True},
 ]
-CONTEXT = (
-    ["DG-A"],                          # all_dgs
-    {"NET-CORP": ["10.10.0.0/16"]},    # objects
-    {},                                # groups
-    {"SVC-HTTPS": [("tcp", "443")]},   # svc_obj
-    {},                                # svc_grp
-    {"dg_order": ["DG-A"], "by_dg": {"shared": [], "DG-A": RULES}},
-)
 
 
 @pytest.fixture
-def ctx(monkeypatch):
-    async def fake_context(session):
-        return CONTEXT
-    monkeypatch.setattr(fw, "_load_policy_context", fake_context)
+def live(monkeypatch):
+    """Route the endpoint's cache/auth/Panorama dependencies to fixtures."""
+    import dev
+    monkeypatch.setattr(dev, "DEV_MODE", False)
+    monkeypatch.setattr(fw, "_get_key", lambda session, force_refresh=False: "test-key")
+    monkeypatch.setattr(fw.cache, "get_or_set",
+                        lambda key, loader, ttl, **kw: DEVICES, raising=False)
+
+    calls = []
+    def fake_test(api_key, serial, **kwargs):
+        calls.append((serial, kwargs))
+        if kwargs["dst_ip"] == "5.6.7.9":   # canned deny
+            rules = [{"name": "Deny-Bad", "action": "deny", "index": "3"}]
+        elif kwargs["dst_ip"] == "5.6.7.10":  # canned op failure
+            return {"ok": False, "error": "no response from firewall", "cmd": "test ..."}
+        else:
+            rules = [{"name": "Allow-Web", "action": "allow", "index": "7"}]
+        return {"ok": True, "rules": rules, "cmd": "test security-policy-match ..."}
+    monkeypatch.setattr(fw.pc, "test_security_policy_match", fake_test)
+    return calls
 
 
 def _req(hx: bool = False):
@@ -98,55 +110,68 @@ def _req(hx: bool = False):
 
 
 @pytest.mark.asyncio
-async def test_policy_test_multi_flow_verdicts(ctx):
+async def test_policy_test_runs_live_per_flow(live):
     out = await fw.policy_test(
-        _req(), device_group="DG-A",
-        src_ip=["10.10.1.1", "5.6.7.8", "5.6.7.8"],
-        src_zone=["trust", "", "guest"],
-        dst_ip=["1.2.3.4", "1.2.3.4", "5.6.7.9"],
-        dst_zone=["untrust", "", "guest"],
-        protocol=["tcp", "any", "any"],
-        dst_port=["443", "", ""],
-        include_disabled=False, session=None,
+        _req(), device_group="DG-A", firewall="SN-A1",
+        src_ip=["10.10.1.1", "10.10.1.1", "10.10.1.1", ""],
+        src_zone=["trust", "", "", ""],
+        dst_ip=["1.2.3.4", "5.6.7.9", "5.6.7.10", ""],
+        dst_zone=["untrust", "", "", ""],
+        protocol=["tcp", "udp", "tcp", "tcp"],
+        dst_port=["443", "53", "", ""],
+        application=["ssl", "", "", ""],
+        session=None,
     )
-    r1, r2, r3 = out["results"]
-    # flow 1: hits Allow-Web on zones + object + service
-    assert r1["verdict"] == "allow"
-    assert r1["matched_rule"]["name"] == "Allow-Web"
-    # flow 2: zones blank are wildcards → hits Deny-DMZ (from dmz, any/any)
-    assert r2["verdict"] == "deny"
-    assert r2["matched_rule"]["name"] == "Deny-DMZ"
-    # flow 3: same src/dst zone, no match → intrazone default allow
-    assert r3["verdict"] == "allow (intrazone-default)"
+    r1, r2, r3 = out["results"]  # blank 4th row skipped
+    assert out["firewall"] == {"serial": "SN-A1", "hostname": "FW-A-01"}
+    assert (r1["verdict"], r1["matched_rule"]["name"]) == ("allow", "Allow-Web")
+    assert (r2["verdict"], r2["matched_rule"]["name"]) == ("deny", "Deny-Bad")
+    assert r3["verdict_kind"] == "error" and "no response" in r3["error"]
+    # every non-error flow hit the firewall's own engine — no local matching
+    assert [c[0] for c in live] == ["SN-A1"] * 3
+    assert live[0][1] == {"src_ip": "10.10.1.1", "dst_ip": "1.2.3.4", "protocol": "tcp",
+                          "dst_port": 443, "from_zone": "trust", "to_zone": "untrust",
+                          "application": "ssl"}
 
 
 @pytest.mark.asyncio
-async def test_policy_test_row_errors_and_blank_rows(ctx):
+async def test_policy_test_validates_rows_without_calling_firewall(live):
     out = await fw.policy_test(
-        _req(), device_group="DG-A",
-        src_ip=["not-an-ip", "", "10.10.1.1"],
-        src_zone=["", "", ""],
-        dst_ip=["1.2.3.4", "", "1.2.3.4"],
+        _req(), device_group="DG-A", firewall="SN-A1",
+        src_ip=["not-an-ip", "10.10.1.1", "10.10.1.1"],
+        src_zone=["", "", 'bad"zone'],
+        dst_ip=["1.2.3.4", "1.2.3.4", "1.2.3.4"],
         dst_zone=["", "", ""],
-        protocol=["any", "any", "tcp"],
-        dst_port=["", "", "99999"],
-        include_disabled=False, session=None,
+        protocol=["tcp", "tcp", "tcp"],
+        dst_port=["", "99999", ""],
+        application=["", "", ""],
+        session=None,
     )
-    assert len(out["results"]) == 2  # blank row skipped entirely
-    assert out["results"][0]["verdict_kind"] == "error"
-    assert out["results"][1]["verdict_kind"] == "error"  # port out of range
+    assert [r["verdict_kind"] for r in out["results"]] == ["error"] * 3
+    assert live == []  # invalid rows never reach the firewall
 
 
 @pytest.mark.asyncio
-async def test_policy_test_rejects_unknown_device_group(ctx):
+async def test_policy_test_rejects_bad_targets(live):
+    kw = dict(src_ip=["1.2.3.4"], src_zone=[""], dst_ip=["5.6.7.8"], dst_zone=[""],
+              protocol=["tcp"], dst_port=[""], application=[""], session=None)
     with pytest.raises(HTTPException) as exc:
-        await fw.policy_test(
-            _req(), device_group="DG-NOPE",
-            src_ip=["1.2.3.4"], src_zone=[""], dst_ip=["5.6.7.8"],
-            dst_zone=[""], protocol=["any"], dst_port=[""],
-            include_disabled=False, session=None,
-        )
+        await fw.policy_test(_req(), device_group="DG-A", firewall="SN-NOPE", **kw)
     assert exc.value.status_code == 400
+    with pytest.raises(HTTPException) as exc:
+        await fw.policy_test(_req(), device_group="DG-A", firewall="SN-B1", **kw)
+    assert exc.value.status_code == 400  # firewall exists but in another DG
+
+
+@pytest.mark.asyncio
+async def test_firewall_options_prefers_connected_active(live):
+    resp = await fw.list_firewall_options(_req(), device_group="DG-A", session=None)
+    body = resp.body.decode()
+    assert body.index("SN-A1") < body.index("SN-A2")   # active+connected first
+    assert 'value="SN-A1" selected' in body
+    assert 'value="SN-A2" disabled' in body            # disconnected not selectable
+    resp = await fw.list_firewall_options(_req(), device_group="DG-EMPTY", session=None)
+    assert "No firewalls" in resp.body.decode()
 
 
 def test_zones_for_dg_merges_rules_and_interfaces(monkeypatch):

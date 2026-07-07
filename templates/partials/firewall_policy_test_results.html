@@ -1,7 +1,7 @@
 <div class="card shadow-sm border-0 animate-fade-in">
   <div class="card-header bg-light d-flex justify-content-between align-items-center">
-    <span class="fw-bold small">Results &mdash; {{ device_group }}</span>
-    <span class="badge bg-secondary">{{ rules_searched }} rules evaluated</span>
+    <span class="fw-bold small">Live Results &mdash; {{ device_group }}</span>
+    <span class="badge bg-secondary">tested on {{ firewall.hostname or firewall.serial }}</span>
   </div>
   <div class="card-body p-0">
     {% if not results %}
@@ -17,12 +17,12 @@
             <th>Service</th>
             <th>Verdict</th>
             <th>Matched Rule</th>
-            <th class="text-end">Matches</th>
+            <th class="text-end"></th>
           </tr>
         </thead>
         <tbody>
           {% for r in results %}
-          <tr {% if r.matches %}data-bs-toggle="collapse" data-bs-target="#pt-detail-{{ r.index }}" style="cursor: pointer;"{% endif %}>
+          <tr {% if r.matched_rule %}data-bs-toggle="collapse" data-bs-target="#pt-detail-{{ r.index }}" style="cursor: pointer;"{% endif %}>
             <td class="small text-muted">{{ r.index }}</td>
             <td class="small">
               <span class="font-monospace">{{ r.src_ip or "—" }}</span>
@@ -32,71 +32,47 @@
               <span class="font-monospace">{{ r.dst_ip or "—" }}</span>
               {% if r.dst_zone %}<span class="badge bg-light text-dark border ms-1">{{ r.dst_zone }}</span>{% endif %}
             </td>
-            <td class="small font-monospace">{{ r.protocol }}{% if r.dst_port %}/{{ r.dst_port }}{% endif %}</td>
+            <td class="small font-monospace">
+              {{ r.protocol }}{% if r.dst_port %}/{{ r.dst_port }}{% endif %}
+              {% if r.application %}<span class="badge bg-light text-dark border ms-1">{{ r.application }}</span>{% endif %}
+            </td>
             <td>
               {% if r.verdict_kind == "allow" %}
               <span class="badge bg-success">{{ r.verdict }}</span>
               {% elif r.verdict_kind == "deny" %}
               <span class="badge bg-danger">{{ r.verdict }}</span>
               {% else %}
-              <span class="badge bg-warning text-dark" title="{{ r.error }}">{{ r.error or "error" }}</span>
+              <span class="badge bg-warning text-dark" title="{{ r.error }}">{{ r.verdict or "error" }}</span>
               {% endif %}
             </td>
             <td class="small">
               {% if r.matched_rule %}
               <span class="fw-bold">{{ r.matched_rule.name }}</span>
-              <span class="text-muted">({{ r.matched_rule.device_group }} / {{ r.matched_rule.rulebase }})</span>
-              {% elif r.verdict_kind and r.verdict_kind != "error" %}
-              <span class="text-muted fst-italic">default rule</span>
+              {% if r.matched_rule.index %}<span class="text-muted">(rule #{{ r.matched_rule.index }})</span>{% endif %}
+              {% elif r.error %}
+              <span class="text-muted fst-italic">{{ r.error }}</span>
               {% endif %}
             </td>
             <td class="text-end small">
-              {% if r.matches %}
-              <span class="badge bg-info">{{ r.match_count }}</span>
-              <i class="ph ph-caret-down text-muted"></i>
-              {% else %}
-              <span class="text-muted">0</span>
-              {% endif %}
+              {% if r.matched_rule %}<i class="ph ph-caret-down text-muted"></i>{% endif %}
             </td>
           </tr>
-          {% if r.matches %}
+          {% if r.matched_rule %}
           <tr class="collapse" id="pt-detail-{{ r.index }}">
             <td colspan="7" class="bg-light p-3">
-              <table class="table table-sm table-bordered mb-0 bg-white">
-                <thead>
-                  <tr class="small">
-                    <th>Rule</th>
-                    <th>DG / Rulebase</th>
-                    <th>From &rarr; To</th>
-                    <th>Source</th>
-                    <th>Destination</th>
-                    <th>App / Service</th>
-                    <th>Action</th>
+              <table class="table table-sm table-bordered mb-2 bg-white">
+                <tbody class="small">
+                  {% for key in ["action", "from", "to", "source", "destination", "application", "service", "category", "terminal"] %}
+                  {% if r.matched_rule.get(key) %}
+                  <tr>
+                    <th style="width: 15%" class="text-capitalize">{{ key }}</th>
+                    <td class="font-monospace">{{ r.matched_rule[key] }}</td>
                   </tr>
-                </thead>
-                <tbody>
-                  {% for m in r.matches %}
-                  <tr class="small {{ 'opacity-50' if m.disabled }}">
-                    <td class="fw-bold">
-                      {{ m.name }}
-                      {% if m.first_match %}<span class="badge bg-primary ms-1">first match</span>{% endif %}
-                      {% if m.disabled %}<span class="badge bg-secondary ms-1">disabled</span>{% endif %}
-                    </td>
-                    <td>{{ m.device_group }} / {{ m.rulebase }}</td>
-                    <td class="font-monospace">
-                      {{ (m.from_zones or m['from'] or ['any']) | join(', ') }} &rarr; {{ (m.to_zones or m['to'] or ['any']) | join(', ') }}
-                    </td>
-                    <td>{{ m.source | join(', ') or 'any' }}{% if m.source_negate %} <span class="badge bg-warning text-dark">negated</span>{% endif %}</td>
-                    <td>{{ m.destination | join(', ') or 'any' }}{% if m.dest_negate %} <span class="badge bg-warning text-dark">negated</span>{% endif %}</td>
-                    <td>
-                      {% for a in m.application %}<span class="badge bg-light text-dark border me-1">{{ a }}</span>{% endfor %}
-                      {% for s in m.service %}<span class="badge bg-light text-dark border me-1">{{ s }}</span>{% endfor %}
-                    </td>
-                    <td><span class="badge {{ 'bg-success' if m.action == 'allow' else 'bg-danger' }}">{{ m.action }}</span></td>
-                  </tr>
+                  {% endif %}
                   {% endfor %}
                 </tbody>
               </table>
+              <div class="small text-muted font-monospace">&gt; {{ r.cmd }}</div>
             </td>
           </tr>
           {% endif %}

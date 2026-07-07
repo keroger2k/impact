@@ -8,14 +8,15 @@
   </div>
   <div class="card-body">
     <p class="text-muted small mb-3">
-      Evaluates each flow against the cached Panorama rulebase for the selected device group
-      (shared pre &rarr; DG pre &rarr; DG post &rarr; shared post), resolving address and service
-      objects. App-ID is not evaluated &mdash; rules matched on <code>application-default</code>
-      or specific apps are treated as matching on port. Zones left blank are wildcards.
+      Each flow runs a live <code>test security-policy-match</code> on the selected firewall
+      (proxied through Panorama), so the verdict comes from the firewall's own policy engine
+      against its actually-pushed config &mdash; App-ID, defaults, and all. Zones left blank
+      are omitted from the test. Zone names autocomplete from the device group's rules and
+      interfaces.
     </p>
     <form id="pt-form" hx-post="/api/firewall/policy-test" hx-target="#pt-results" hx-indicator="#pan-loading">
       <div class="row g-3 align-items-end mb-3">
-        <div class="col-md-5">
+        <div class="col-md-4">
           <label class="form-label small fw-bold" for="pt-dg">Device Group <span class="text-danger">*</span></label>
           <select id="pt-dg" name="device_group" class="form-select" required
                   hx-get="/api/firewall/zones" hx-trigger="change" hx-target="#pt-zones" hx-swap="innerHTML">
@@ -26,10 +27,11 @@
           </select>
         </div>
         <div class="col-md-4">
-          <div class="form-check mb-2">
-            <input class="form-check-input" type="checkbox" id="pt-disabled" name="include_disabled" value="true">
-            <label class="form-check-label small" for="pt-disabled">Include disabled rules</label>
-          </div>
+          <label class="form-label small fw-bold" for="pt-fw">Test Firewall <span class="text-danger">*</span></label>
+          <select id="pt-fw" name="firewall" class="form-select" required
+                  hx-get="/api/firewall/firewall-options" hx-trigger="change from:#pt-dg" hx-include="#pt-dg" hx-target="this" hx-swap="innerHTML">
+            <option value="" selected disabled>Select a device group first&hellip;</option>
+          </select>
         </div>
       </div>
 
@@ -38,13 +40,14 @@
           <thead class="bg-light">
             <tr>
               <th style="width: 3%">#</th>
-              <th style="width: 18%">Source IP</th>
-              <th style="width: 15%">Source Zone</th>
-              <th style="width: 18%">Destination IP</th>
-              <th style="width: 15%">Destination Zone</th>
-              <th style="width: 12%">Protocol</th>
-              <th style="width: 12%">Dest Port</th>
-              <th style="width: 7%"></th>
+              <th style="width: 16%">Source IP</th>
+              <th style="width: 13%">Source Zone</th>
+              <th style="width: 16%">Destination IP</th>
+              <th style="width: 13%">Destination Zone</th>
+              <th style="width: 9%">Protocol</th>
+              <th style="width: 10%">Dest Port</th>
+              <th style="width: 13%">Application <span class="text-muted fw-normal">(opt.)</span></th>
+              <th style="width: 5%"></th>
             </tr>
           </thead>
           <tbody id="pt-rows"></tbody>
@@ -66,17 +69,18 @@
       <tr>
         <td class="small text-muted pt-row-num"></td>
         <td><input type="text" class="form-control form-control-sm" name="src_ip" placeholder="1.2.3.4" autocomplete="off" spellcheck="false"></td>
-        <td><input type="text" class="form-control form-control-sm" name="src_zone" list="pt-zones" placeholder="any" autocomplete="off" spellcheck="false"></td>
+        <td><input type="text" class="form-control form-control-sm" name="src_zone" list="pt-zones" placeholder="(omit)" autocomplete="off" spellcheck="false"></td>
         <td><input type="text" class="form-control form-control-sm" name="dst_ip" placeholder="5.6.7.8" autocomplete="off" spellcheck="false"></td>
-        <td><input type="text" class="form-control form-control-sm" name="dst_zone" list="pt-zones" placeholder="any" autocomplete="off" spellcheck="false"></td>
+        <td><input type="text" class="form-control form-control-sm" name="dst_zone" list="pt-zones" placeholder="(omit)" autocomplete="off" spellcheck="false"></td>
         <td>
           <select class="form-select form-select-sm" name="protocol">
-            <option value="any">any</option>
             <option value="tcp">tcp</option>
             <option value="udp">udp</option>
+            <option value="icmp">icmp</option>
           </select>
         </td>
         <td><input type="number" class="form-control form-control-sm" name="dst_port" placeholder="443" min="1" max="65535"></td>
+        <td><input type="text" class="form-control form-control-sm" name="application" placeholder="ssl" autocomplete="off" spellcheck="false"></td>
         <td class="text-end">
           <button type="button" class="btn btn-outline-danger btn-sm px-2 py-0" title="Remove flow" onclick="ptRemoveRow(this)">
             <i class="ph ph-x"></i>
