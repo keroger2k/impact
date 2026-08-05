@@ -19,7 +19,7 @@ from utils.csrf import CSRFMiddleware
 import auth as auth_module
 from auth import require_auth, SessionEntry
 from clients import verify_ssl
-from routers import dnac, ise, firewall, aci, commands, import_, auth as auth_router, pages, routing, nexus, cache_mgmt, ipam, tunnels, ipv6_registry, ip_registry, site, f5
+from routers import dnac, ise, firewall, aci, commands, import_, auth as auth_router, pages, routing, nexus, cache_mgmt, ipam, tunnels, ipv6_registry, ip_registry, site, f5, reports
 from logger_config import setup_logging, set_correlation_id, run_with_context
 
 setup_logging()
@@ -155,6 +155,7 @@ app.include_router(tunnels.router, prefix="/api/tunnels", tags=["Tunnels"], **_a
 app.include_router(ipv6_registry.router, prefix="/api/ipv6", tags=["IPv6Registry"], **_auth_dep)
 app.include_router(ip_registry.router, prefix="/api/registry", tags=["Registry"], **_auth_dep)
 app.include_router(site.router, prefix="/api/site", tags=["Site"], **_auth_dep)
+app.include_router(reports.router, prefix="/api/reports", tags=["Reports"], **_auth_dep)
 app.include_router(pages.router)
 
 # C2: Consolidate SSE warm

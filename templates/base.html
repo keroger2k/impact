@@ -66,6 +66,10 @@
          hx-get="/tunnels" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
         <span class="nav-icon"><i class="ph ph-lock-key"></i></span> <span class="nav-text">VPN Tunnels</span>
       </a>
+      <a class="nav-item {% if active_page == 'reports' %}active{% endif %}"
+         hx-get="/reports" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+        <span class="nav-icon"><i class="ph ph-file-pdf"></i></span> <span class="nav-text">Reports</span>
+      </a>
 
       <!-- Security & Compliance -->
       <div class="sidebar-section-label">Security & Compliance</div>

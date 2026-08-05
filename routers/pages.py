@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Request, Depends, Form, HTTPException, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from templates_module import templates
@@ -384,6 +385,22 @@ async def site_page_with_code(request: Request, code: str, user: SessionEntry = 
         return templates.TemplateResponse(request, "pages/site_content.html", context)
     return templates.TemplateResponse(request, "site.html", context)
 
+
+@router.get("/reports", response_class=HTMLResponse)
+async def reports_page(request: Request, response: Response, user: SessionEntry = Depends(get_current_user_from_cookie)):
+    if not user: return RedirectResponse(url="/login")
+    from utils.csrf import set_csrf_cookie
+    set_csrf_cookie(response)
+    context = {
+        "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
+        "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
+        "active_page": "reports",
+        "username": user.username,
+        "default_report_date": (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d"),
+    }
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse(request, "pages/reports_content.html", context)
+    return templates.TemplateResponse(request, "reports.html", context)
 
 @router.get("/cache-mgmt", response_class=HTMLResponse)
 async def cache_mgmt_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
