@@ -20,16 +20,20 @@ all — so this script asks SolarWinds directly rather than guessing:
      so we can see the *actual* TargetEntity strings this install uses rather
      than assuming 'Orion.Nodes' is the right literal — and confirm whether
      any node-targeted custom properties exist at all).
-  3. Orion.NodesCustomProperties for the sample router — the actual custom
-     property values on that node, to cross-reference against step 2's field
-     names and confirm the values look like the report fields we're after.
+  3. Orion.NodesCustomProperties for the sample router — the actual node-level
+     custom property values, to cross-reference against step 2's field names.
+  4. Orion.NPM.InterfacesCustomProperties for that router's interfaces —
+     circuit info (CarrierName/CircuitID/Bandwith_Utilization) lives here,
+     not on the node, since a circuit is naturally per-interface.
 
 This talks to the SWIS endpoint directly with raw requests (rather than
 clients.solarwinds.query(), which calls raise_for_status() and discards the
 response body) because SolarWinds' SWQL validation errors on a 400 usually
 name the exact invalid field/entity in the body — that's the fastest way to
 fix a bad query, same reasoning as scripts/sna_discover.py's raw-response
-printing.
+printing. Confirmed empirically: SWQL's SELECT clause rejects `*` outright
+("no viable alternative at input '*'") — every SELECT here lists columns
+explicitly.
 
 Nothing here writes anything — every query is a plain SWQL SELECT. Run it
 against your real SolarWinds and paste the output back; that's what nails
@@ -189,8 +193,15 @@ ORDER BY TargetEntity, Field
 
 def probe_node_custom_property_values(node: str, username: str, password: str, verify_ssl: bool, timeout: int):
     _print_header(f"STEP 3 — Orion.NodesCustomProperties values for '{node}'")
+    # SWQL rejects `SELECT *` — explicit columns only. Narrowed to the fields
+    # from STEP 2's list that plausibly map to the report (dropped SLA*,
+    # STIP, TAZ, DC15, FISMA, Imported_From_NCM, AssetTag, Application,
+    # Country, CDRL118, device_description, FieldSite, Region, ServiceProvider
+    # as unlikely for this specific report).
     swql = f"""
-SELECT *
+SELECT NodeID, Caption, Address, Airport_Code, AirportCategory, Building,
+       Carrier, City, State, ZipCode, ContactName, Contract_Vehicle, Site,
+       TSADeviceCode, Comments
 FROM Orion.NodesCustomProperties
 WHERE Caption = '{node}' OR Caption LIKE '%{node}%'
 """
@@ -198,6 +209,29 @@ WHERE Caption = '{node}' OR Caption LIKE '%{node}%'
     if rows is None:
         return
     _print_rows(rows)
+
+
+def probe_interface_custom_property_values(node: str, username: str, password: str, verify_ssl: bool, timeout: int):
+    _print_header(f"STEP 4 — Orion.NPM.InterfacesCustomProperties for '{node}''s interfaces")
+    swql = f"""
+SELECT i.InterfaceID, i.Caption AS InterfaceCaption, i.Name AS InterfaceName,
+       cp.Carrier, cp.CarrierName, cp.CircuitID, cp.Bandwith_Utilization, cp.Comments
+FROM Orion.NPM.Interfaces i
+JOIN Orion.Nodes n ON i.NodeID = n.NodeID
+JOIN Orion.NPM.InterfacesCustomProperties cp ON cp.InterfaceID = i.InterfaceID
+WHERE n.Caption = '{node}' OR n.Caption LIKE '%{node}%'
+"""
+    rows = run_query(swql, username, password, verify_ssl, timeout)
+    if rows is None:
+        return
+    _print_rows(rows)
+    if rows:
+        print(
+            "\nCircuit Size & Provider is likely built from CarrierName/CircuitID/"
+            "Bandwith_Utilization on whichever interface here is the WAN circuit "
+            "(often Tunnel5000 or the physical WAN-facing interface, not every "
+            "row above)."
+        )
 
 
 def main():
@@ -226,6 +260,7 @@ def main():
     probe_standard_node_fields(node, username, password, verify_ssl, timeout)
     probe_custom_property_definitions(username, password, verify_ssl, timeout)
     probe_node_custom_property_values(node, username, password, verify_ssl, timeout)
+    probe_interface_custom_property_values(node, username, password, verify_ssl, timeout)
 
     print()
     print("=" * 78)
