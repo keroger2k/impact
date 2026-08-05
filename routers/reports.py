@@ -1,9 +1,13 @@
 """routers/reports.py — On-demand SolarWinds-backed compliance reports.
 
-Currently just CDRL49 (daily WAN response-time, AT&T EIS + SOHO routers).
-Every generate call runs a live SWQL query against SolarWinds and streams
-back a freshly-built PDF (optionally zipped with the underlying CSVs).
-Nothing here is cached — a CDRL is a point-in-time deliverable, not a
+- **CDRL49**: daily WAN response-time, AT&T EIS + SOHO routers. Every generate
+  call runs a live SWQL query against SolarWinds and streams back a
+  freshly-built PDF (optionally zipped with the underlying CSVs).
+- **Bandwidth Utilization**: per-interface percent-utilization history (24h +
+  7d) for a router, returned as JSON — rendered client-side as an inline SVG
+  chart, no PDF/PNG generated.
+
+Nothing here is cached — a report is a point-in-time deliverable, not a
 dataset that benefits from staleness (see the "Live verify over local logic"
 posture used elsewhere in the app).
 """
@@ -21,6 +25,7 @@ from fastapi.responses import Response
 
 from auth import SessionEntry, require_auth
 from logger_config import run_with_context
+from utils.bandwidth_report import DEFAULT_INTERFACE, InvalidNameError, generate_bandwidth_report
 from utils.cdrl49_report import REPORT_DEFS, generate_report, rows_to_csv
 
 router = APIRouter()
@@ -83,3 +88,30 @@ async def generate_cdrl49(
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename=CDRL49_{date_part}.pdf"},
     )
+
+
+@router.post("/bandwidth/generate")
+async def generate_bandwidth(
+    router: Optional[str] = Form(None),
+    interface: str = Form(DEFAULT_INTERFACE),
+    interface_id: Optional[int] = Form(None),
+    session: SessionEntry = Depends(require_auth),
+):
+    if not router and interface_id is None:
+        raise HTTPException(400, "Router name is required")
+
+    loop = asyncio.get_event_loop()
+    try:
+        result = await loop.run_in_executor(
+            None, run_with_context(generate_bandwidth_report),
+            router, interface, interface_id, session.username, session.password,
+        )
+    except InvalidNameError as e:
+        raise HTTPException(400, str(e))
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        logger.error(f"Bandwidth report generation failed: {e}", extra={"target": "SolarWinds", "action": "BANDWIDTH_GENERATE"})
+        raise HTTPException(502, f"SolarWinds query failed: {e}")
+
+    return result
