@@ -39,31 +39,38 @@ def auth_headers():
 def test_application_traffic_ok(auth_headers, monkeypatch):
     monkeypatch.setenv("SNA_BASE_URL", "https://sna.example.com")
 
-    def fake_report(base_url, domain, username, password, router_name, interface_name, hours):
+    def fake_report(base_url, domain, username, password, router_name, interface_name):
         assert router_name == "R-SITE-01"
         assert interface_name == "Tunnel5000"
-        assert hours == 24
         return {
             "status": "ok",
             "node_name": "R-SITE-01",
             "interface_name": "Tunnel5000",
-            "buckets": ["2026-08-04T00:00:00Z", "2026-08-04T01:00:00Z"],
-            "applications": ["Teams", "Other"],
-            "series": {"Teams": [1000.0, 2000.0], "Other": [500.0, 500.0]},
+            "traffic_24h": {
+                "buckets": ["2026-08-04T00:00:00Z", "2026-08-04T01:00:00Z"],
+                "applications": ["Teams", "Other Apps"],
+                "series": {"Teams": [1000.0, 2000.0], "Other Apps": [500.0, 500.0]},
+            },
+            "traffic_7d": {
+                "buckets": ["2026-07-29T00:00:00Z", "2026-07-30T00:00:00Z"],
+                "applications": ["Teams", "Other Apps"],
+                "series": {"Teams": [900.0, 1500.0], "Other Apps": [400.0, 450.0]},
+            },
         }
 
     monkeypatch.setattr("routers.reports.generate_application_traffic_report", fake_report)
 
     r = client.post(
         "/api/reports/bandwidth/application-traffic",
-        data={"router": "R-SITE-01", "interface": "Tunnel5000", "hours": 24},
+        data={"router": "R-SITE-01", "interface": "Tunnel5000"},
         headers=auth_headers,
     )
     assert r.status_code == 200
     data = r.json()
     assert data["status"] == "ok"
     assert data["node_name"] == "R-SITE-01"
-    assert data["applications"] == ["Teams", "Other"]
+    assert data["traffic_24h"]["applications"] == ["Teams", "Other Apps"]
+    assert data["traffic_7d"]["applications"] == ["Teams", "Other Apps"]
 
 
 def test_application_traffic_ambiguous_exporter(auth_headers, monkeypatch):
@@ -83,7 +90,7 @@ def test_application_traffic_ambiguous_exporter(auth_headers, monkeypatch):
 
     r = client.post(
         "/api/reports/bandwidth/application-traffic",
-        data={"router": "R-SITE-01", "interface": "Tunnel5000", "hours": 24},
+        data={"router": "R-SITE-01", "interface": "Tunnel5000"},
         headers=auth_headers,
     )
     assert r.status_code == 200
@@ -103,7 +110,7 @@ def test_application_traffic_not_found(auth_headers, monkeypatch):
 
     r = client.post(
         "/api/reports/bandwidth/application-traffic",
-        data={"router": "nope", "interface": "Tunnel5000", "hours": 24},
+        data={"router": "nope", "interface": "Tunnel5000"},
         headers=auth_headers,
     )
     assert r.status_code == 404
@@ -119,7 +126,7 @@ def test_application_traffic_sna_error(auth_headers, monkeypatch):
 
     r = client.post(
         "/api/reports/bandwidth/application-traffic",
-        data={"router": "R-SITE-01", "interface": "Tunnel5000", "hours": 24},
+        data={"router": "R-SITE-01", "interface": "Tunnel5000"},
         headers=auth_headers,
     )
     assert r.status_code == 502
@@ -130,7 +137,7 @@ def test_application_traffic_requires_base_url(auth_headers, monkeypatch):
 
     r = client.post(
         "/api/reports/bandwidth/application-traffic",
-        data={"router": "R-SITE-01", "interface": "Tunnel5000", "hours": 24},
+        data={"router": "R-SITE-01", "interface": "Tunnel5000"},
         headers=auth_headers,
     )
     assert r.status_code == 503
@@ -148,7 +155,7 @@ def test_application_traffic_invalid_router_name(auth_headers, monkeypatch):
 
     r = client.post(
         "/api/reports/bandwidth/application-traffic",
-        data={"router": "bad;name", "interface": "Tunnel5000", "hours": 24},
+        data={"router": "bad;name", "interface": "Tunnel5000"},
         headers=auth_headers,
     )
     assert r.status_code == 400
@@ -164,18 +171,7 @@ def test_application_traffic_solarwinds_failure(auth_headers, monkeypatch):
 
     r = client.post(
         "/api/reports/bandwidth/application-traffic",
-        data={"router": "R-SITE-01", "interface": "Tunnel5000", "hours": 24},
+        data={"router": "R-SITE-01", "interface": "Tunnel5000"},
         headers=auth_headers,
     )
     assert r.status_code == 502
-
-
-def test_application_traffic_invalid_hours(auth_headers, monkeypatch):
-    monkeypatch.setenv("SNA_BASE_URL", "https://sna.example.com")
-
-    r = client.post(
-        "/api/reports/bandwidth/application-traffic",
-        data={"router": "R-SITE-01", "interface": "Tunnel5000", "hours": 12},
-        headers=auth_headers,
-    )
-    assert r.status_code == 400

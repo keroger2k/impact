@@ -89,12 +89,14 @@ def test_generate_report_resolves_ip_before_matching_exporters():
              {"applicationName": "Teams", "time": "2026-08-04T00:00:00Z", "trafficInboundBps": 1000, "trafficOutboundBps": 500},
          ]):
         result = sna_report.generate_application_traffic_report(
-            "https://sna.example.com", "network", "dev", "dev", "RTRYL005AA001", "Tunnel5000", 24,
+            "https://sna.example.com", "network", "dev", "dev", "RTRYL005AA001", "Tunnel5000",
         )
 
     mock_find_ip.assert_called_once_with("RTRYL005AA001", "dev", "dev")
     assert result["status"] == "ok"
     assert result["interface_name"] == "Tunnel5000"
+    assert "traffic_24h" in result and "traffic_7d" in result
+    assert result["traffic_24h"]["applications"] == ["Teams"]
 
 
 def test_generate_report_no_exporter_match_raises_lookup_error_with_ip_hint():
@@ -105,7 +107,7 @@ def test_generate_report_no_exporter_match_raises_lookup_error_with_ip_hint():
          patch("clients.sna.list_exporters", return_value=[{"id": "9.9.9.9", "name": "nope"}]):
         with pytest.raises(LookupError, match="1.2.3.4"):
             sna_report.generate_application_traffic_report(
-                "https://sna.example.com", "network", "dev", "dev", "RTRYL005AA001", "Tunnel5000", 24,
+                "https://sna.example.com", "network", "dev", "dev", "RTRYL005AA001", "Tunnel5000",
             )
 
 
@@ -113,12 +115,12 @@ def test_generate_report_propagates_solarwinds_failure():
     with patch("utils.sna_report.find_node_ip", side_effect=RuntimeError("SolarWinds credentials are required")):
         with pytest.raises(RuntimeError):
             sna_report.generate_application_traffic_report(
-                "https://sna.example.com", "network", "", "", "RTRYL005AA001", "Tunnel5000", 24,
+                "https://sna.example.com", "network", "", "", "RTRYL005AA001", "Tunnel5000",
             )
 
 
 def test_generate_report_invalid_router_name():
     with pytest.raises(InvalidNameError):
         sna_report.generate_application_traffic_report(
-            "https://sna.example.com", "network", "dev", "dev", "bad;name", "Tunnel5000", 24,
+            "https://sna.example.com", "network", "dev", "dev", "bad;name", "Tunnel5000",
         )

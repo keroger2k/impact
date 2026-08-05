@@ -131,21 +131,18 @@ async def generate_bandwidth(
 async def get_application_traffic(
     router: str = Form(...),
     interface: str = Form(DEFAULT_INTERFACE),
-    hours: int = Form(24),
     session: SessionEntry = Depends(require_auth),
 ):
     base_url = os.getenv("SNA_BASE_URL", "").rstrip("/")
     if not base_url:
         raise HTTPException(503, "SNA_BASE_URL is not configured")
-    if hours not in (24, 24 * 7):
-        raise HTTPException(400, "hours must be 24 or 168")
 
     domain = os.getenv("SNA_DOMAIN", "")
     loop = asyncio.get_event_loop()
     try:
         result = await loop.run_in_executor(
             None, run_with_context(generate_application_traffic_report),
-            base_url, domain, session.username, session.password, router, interface, hours,
+            base_url, domain, session.username, session.password, router, interface,
         )
     except sna_client.SNAError as e:
         logger.error(f"SNA application traffic query failed: {e}", extra={"target": "SNA", "action": "SNA_APP_TRAFFIC"})

@@ -1,0 +1,131 @@
+<div class="d-flex flex-column gap-3 animate-fade-in">
+  <div>
+    <a href="/reports" hx-get="/reports" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML"
+       class="text-muted small text-decoration-none">
+      <i class="ph ph-arrow-left"></i> Back to Reports
+    </a>
+  </div>
+
+  <div class="row g-4">
+    <div class="col-md-6 col-lg-5">
+      <div class="card shadow-sm border-0">
+        <div class="card-header bg-navy text-white d-flex align-items-center gap-2">
+          <i class="ph ph-file-pdf"></i>
+          <span class="fw-bold">CDRL49 — Daily WAN Response Time</span>
+        </div>
+        <div class="card-body">
+          <p class="text-muted small mb-3">
+            Runs a live SolarWinds SWQL query for AT&T EIS and SOHO Cisco routers and builds
+            the combined landscape PDF (Deliverable 65). Nothing is cached — each run queries
+            SolarWinds fresh for the selected day.
+          </p>
+
+          <form id="cdrl49-form">
+            <div class="mb-3">
+              <label class="form-label small fw-bold uppercase letter-spacing-1">Report Date</label>
+              <input type="date" name="report_date" id="cdrl49-date" class="form-control"
+                     value="{{ default_report_date }}" max="{{ default_report_date }}">
+              <div class="form-text">Defaults to yesterday, matching the response-time window SolarWinds has fully populated.</div>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label small fw-bold uppercase letter-spacing-1">Include</label>
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="include_eis" id="cdrl49-eis" checked>
+                <label class="form-check-label" for="cdrl49-eis">AT&T EIS Routers</label>
+              </div>
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="include_soho" id="cdrl49-soho" checked>
+                <label class="form-check-label" for="cdrl49-soho">SOHO Routers</label>
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="include_csv" id="cdrl49-csv">
+                <label class="form-check-label" for="cdrl49-csv">
+                  Also include raw CSVs (downloads a .zip instead of a .pdf)
+                </label>
+              </div>
+            </div>
+
+            <div id="cdrl49-error" class="alert alert-danger py-2 small d-none" role="alert"></div>
+
+            <button type="button" class="btn btn-primary w-100" id="cdrl49-generate-btn" onclick="generateCdrl49()">
+              <i class="ph ph-download-simple me-1"></i>
+              <span id="cdrl49-generate-label">Generate &amp; Download</span>
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  function generateCdrl49() {
+    const btn = document.getElementById('cdrl49-generate-btn');
+    const label = document.getElementById('cdrl49-generate-label');
+    const errorBox = document.getElementById('cdrl49-error');
+    const eis = document.getElementById('cdrl49-eis').checked;
+    const soho = document.getElementById('cdrl49-soho').checked;
+
+    errorBox.classList.add('d-none');
+
+    if (!eis && !soho) {
+      errorBox.textContent = 'Select at least one report to include.';
+      errorBox.classList.remove('d-none');
+      return;
+    }
+
+    const form = document.getElementById('cdrl49-form');
+    const formData = new FormData(form);
+    formData.set('include_eis', eis);
+    formData.set('include_soho', soho);
+    formData.set('include_csv', document.getElementById('cdrl49-csv').checked);
+
+    const csrfToken = document.cookie.split('; ').find(row => row.startsWith('csrf_token='));
+
+    btn.disabled = true;
+    label.textContent = 'Querying SolarWinds…';
+
+    fetch('/api/reports/cdrl49/generate', {
+      method: 'POST',
+      body: formData,
+      headers: { 'X-CSRF-Token': csrfToken ? csrfToken.split('=')[1] : '' }
+    })
+    .then(async response => {
+      if (!response.ok) {
+        let message = 'Report generation failed';
+        try { message = (await response.json()).detail || message; } catch (e) {}
+        throw new Error(message);
+      }
+      const disposition = response.headers.get('Content-Disposition') || '';
+      const match = disposition.match(/filename=([^;]+)/);
+      const filename = match ? match[1].trim() : 'CDRL49.pdf';
+      return response.blob().then(blob => ({ blob, filename }));
+    })
+    .then(({ blob, filename }) => {
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      a.remove();
+    })
+    .catch(err => {
+      errorBox.textContent = err.message;
+      errorBox.classList.remove('d-none');
+    })
+    .finally(() => {
+      btn.disabled = false;
+      label.textContent = 'Generate & Download';
+    });
+  }
+
+  window.generateCdrl49 = generateCdrl49;
+})();
+</script>

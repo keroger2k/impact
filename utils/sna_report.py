@@ -18,8 +18,6 @@ from __future__ import annotations
 import clients.sna as sna_client
 from utils.bandwidth_report import find_node_ip
 
-VALID_HOURS = (24, 24 * 7)
-
 
 def find_exporters(
     session, base_url: str, domain_id: str, router_name: str, router_ip: str | None = None,
@@ -74,13 +72,17 @@ def generate_application_traffic_report(
     password: str,
     router_name: str,
     interface_name: str,
-    hours: int,
 ) -> dict:
-    """Resolve router+interface against SNA, then pull the application-traffic report.
+    """Resolve router+interface against SNA, then pull the application-traffic
+    report for both the last 24 hours and the last 7 days in one call — mirrors
+    utils.bandwidth_report.generate_bandwidth_report's single-request,
+    both-windows shape, so one "Generate" click on the Bandwidth Utilization
+    report can produce every chart without a second click.
 
     Returns one of:
       {"status": "ambiguous", "level": "exporter"|"interface", "candidates": [...]}
-      {"status": "ok", "node_name", "interface_name", "buckets", "applications", "series"}
+      {"status": "ok", "node_name", "interface_name", "traffic_24h": {...}, "traffic_7d": {...}}
+      (each traffic_* is {"buckets", "applications", "series"}, see utils.sna_traffic)
 
     Raises sna_client.SNAError on auth/API failure, LookupError if nothing
     matches, InvalidNameError if router_name fails the SolarWinds charset
@@ -89,9 +91,6 @@ def generate_application_traffic_report(
     it would surface a misleading "no exporter found" instead of the real
     cause).
     """
-    if hours not in VALID_HOURS:
-        raise ValueError(f"hours must be one of {VALID_HOURS}")
-
     router_ip = find_node_ip(router_name, username, password)
 
     session = sna_client.login(base_url, username, password, domain)
@@ -128,18 +127,20 @@ def generate_application_traffic_report(
 
     from utils.sna_traffic import bucket_application_traffic
 
-    records = sna_client.get_interface_application_traffic(
-        session, base_url, domain_id,
-        exporter["device_id"], exporter["device_name"],
-        exporter["exporter_ip"], exporter["exporter_name"],
-        interface["interface_id"], interface["interface_name"],
-        hours,
-    )
-    bucketed = bucket_application_traffic(records, hours)
+    def _pull(hours: int) -> dict:
+        records = sna_client.get_interface_application_traffic(
+            session, base_url, domain_id,
+            exporter["device_id"], exporter["device_name"],
+            exporter["exporter_ip"], exporter["exporter_name"],
+            interface["interface_id"], interface["interface_name"],
+            hours,
+        )
+        return bucket_application_traffic(records, hours)
 
     return {
         "status": "ok",
         "node_name": exporter["exporter_name"],
         "interface_name": interface["interface_name"],
-        **bucketed,
+        "traffic_24h": _pull(24),
+        "traffic_7d": _pull(24 * 7),
     }
