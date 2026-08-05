@@ -127,27 +127,80 @@ def _headers(session: requests.Session, method: str = "GET") -> dict:
 
 
 def list_tenants(session: requests.Session, base_url: str, timeout: int) -> list[dict]:
-    _print_header("STEP 2 — List tenants (GET /sw-reporting/v1/tenants)")
-    url = f"{base_url}/sw-reporting/v1/tenants"
-    try:
-        resp = session.get(url, headers=_headers(session), timeout=timeout)
-    except requests.exceptions.RequestException as e:
-        print(f"Request failed: {e}")
-        return []
-    _print_response(resp)
-    if resp.status_code != 200:
-        print("\nNo v1 tenants endpoint response — this SMC may not expose "
-              "the modern v2 API surface, or the path differs on this version.")
-        return []
-    try:
-        data = resp.json()
-    except ValueError:
-        return []
-    tenants = data.get("data") if isinstance(data, dict) else data
-    return tenants if isinstance(tenants, list) else []
+    """Try a few path/Accept-header combinations for the tenants resource.
+
+    A 406 on the first attempt told us the server can't produce JSON at that
+    exact path — so we retry with the Accept header it asked for, and also
+    try the v2 path, before giving up.
+    """
+    _print_header("STEP 2 — List tenants")
+
+    attempts = [
+        ("/sw-reporting/v1/tenants", {"Accept": "application/json"}),
+        ("/sw-reporting/v1/tenants", {"Accept": "text/plain"}),
+        ("/sw-reporting/v1/tenants", {}),
+        ("/sw-reporting/v2/tenants", {"Accept": "application/json"}),
+    ]
+
+    for path, accept_override in attempts:
+        url = f"{base_url}{path}"
+        headers = _headers(session)
+        headers.update(accept_override)
+        print(f"\nTrying {path} with Accept={headers.get('Accept', '(none)')}...")
+        try:
+            resp = session.get(url, headers=headers, timeout=timeout)
+        except requests.exceptions.RequestException as e:
+            print(f"Request failed: {e}")
+            continue
+        _print_response(resp)
+
+        if resp.status_code != 200:
+            continue
+
+        try:
+            data = resp.json()
+            tenants = data.get("data") if isinstance(data, dict) else data
+            if isinstance(tenants, list) and tenants:
+                return tenants
+        except ValueError:
+            # 200 with a non-JSON body (e.g. text/plain) — print it raw so we
+            # can see if it's actually a tenant ID/list in disguise.
+            print(f"\n200 but not JSON — raw body was:\n{resp.text[:1000]}")
+
+    print("\nNo tenants endpoint returned a usable JSON list. Will fall back "
+          "to guessing common single-tenant IDs (0, 1) for the flow-query probe.")
+    return []
+
+
+def probe_api_docs(session: requests.Session, base_url: str, timeout: int):
+    """Opportunistic, harmless GETs at common Swagger/OpenAPI/help paths."""
+    _print_header("STEP 2b — Probing for API docs / Swagger")
+    candidates = [
+        "/sw-reporting/v2/api-docs",
+        "/sw-reporting/v2/swagger.json",
+        "/sw-reporting/v1/swagger.json",
+        "/swagger.json",
+        "/apidocs",
+        "/sw-reporting/",
+    ]
+    for path in candidates:
+        url = f"{base_url}{path}"
+        try:
+            resp = session.get(url, headers={"Accept": "application/json"}, timeout=timeout)
+        except requests.exceptions.RequestException as e:
+            print(f"{path}: request failed ({e})")
+            continue
+        if resp.status_code == 200:
+            print(f"{path}: HTTP 200 — this looks promising, dumping it:")
+            _print_response(resp, max_body=3000)
+        else:
+            print(f"{path}: HTTP {resp.status_code}")
 
 
 def probe_v2_flow_query(session: requests.Session, base_url: str, tenant_id, device: str, hours: int, timeout: int):
+    """POST creates a transient flow-search job (SNA's own query mechanism,
+    same as running a search in the SMC UI) — it never touches network config
+    or security policy. Kept read-only in effect despite the verb."""
     _print_header(f"STEP 3 — v2 Flow Queries API (tenant {tenant_id})")
 
     end_time = datetime.now(timezone.utc)
@@ -264,6 +317,7 @@ def main():
 
     session = login(base_url, username, password, domain, verify_ssl, timeout)
     tenants = list_tenants(session, base_url, timeout)
+    probe_api_docs(session, base_url, timeout)
 
     if tenants:
         print(f"\nFound {len(tenants)} tenant(s):")
@@ -272,6 +326,13 @@ def main():
         tenant_id = tenants[0].get("id") if isinstance(tenants[0], dict) else tenants[0]
         probe_v2_flow_query(session, base_url, tenant_id, device, hours, timeout)
     else:
+        # Many on-prem SNA/Stealthwatch deployments are single-tenant and use
+        # a fixed conventional tenant ID even though the discovery call above
+        # didn't resolve one — worth a couple of guesses before falling back
+        # to the legacy path entirely.
+        for guess in ("0", "1"):
+            print(f"\nNo discovered tenant ID — trying flow-query with a guessed tenant ID '{guess}'...")
+            probe_v2_flow_query(session, base_url, guess, device, hours, timeout)
         probe_legacy_smc(session, base_url, device, hours, timeout)
 
     print()
