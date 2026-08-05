@@ -119,13 +119,8 @@
 
           <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
             <strong class="small">Application Traffic</strong>
-            <span class="text-muted small">(Cisco Secure Network Analytics — top applications by byte volume)</span>
+            <span class="text-muted small">(Cisco Secure Network Analytics — top applications by traffic volume, for the same router/interface above)</span>
           </div>
-          <p class="text-muted small mb-2">
-            Raw flow search is slow — a live scan over NetFlow, not a pre-aggregated counter — so this can
-            take anywhere from under a minute to several minutes, especially for a 7-day window. Progress
-            below is SNA's own reported percent-complete.
-          </p>
           <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
             <div class="btn-group btn-group-sm" role="group">
               <input type="radio" class="btn-check" name="sna-range" id="sna-range-24h" value="24" checked>
@@ -134,24 +129,12 @@
               <label class="btn btn-outline btn-sm" for="sna-range-7d">Last 7 Days</label>
             </div>
             <button type="button" class="btn btn-primary btn-sm" id="sna-load-btn" onclick="loadApplicationTraffic()">
-              <i class="ph ph-play"></i> Load Application Traffic
+              <i class="ph ph-play"></i> <span id="sna-load-label">Load Application Traffic</span>
             </button>
           </div>
 
           <div id="sna-error" class="alert alert-danger py-2 small d-none" role="alert"></div>
-          <div id="sna-truncated" class="alert alert-warning py-2 small d-none" role="alert">
-            SNA's result cap was reached — this window may contain more traffic than shown below.
-          </div>
-
-          <div id="sna-progress" class="d-none mb-3">
-            <div class="d-flex justify-content-between small text-muted mb-1">
-              <span id="sna-progress-label">Starting…</span>
-              <span id="sna-progress-pct">0%</span>
-            </div>
-            <div class="progress" style="height: 6px;">
-              <div id="sna-progress-bar" class="progress-bar" role="progressbar" style="width: 0%"></div>
-            </div>
-          </div>
+          <div id="sna-candidates" class="d-none mb-3"></div>
 
           <div id="sna-chart-card" class="bw-chart-card d-none">
             <div class="d-flex justify-content-between align-items-center mb-2">
@@ -218,7 +201,6 @@
   const BW_AXIS = '#c3c2b7';
   const BW_SURFACE = '#ffffff';
   const BW_NS = 'http://www.w3.org/2000/svg';
-  let bwCurrentNodeIp = null;   // resolved by the In/Out lookup; feeds the SNA application-traffic query
 
   function svgEl(tag, attrs) {
     const el = document.createElementNS(BW_NS, tag);
@@ -325,7 +307,6 @@
   function renderBwResults(data) {
     document.getElementById('bw-candidates').classList.add('d-none');
     document.getElementById('bw-subtitle').textContent = data.node_name + ' — ' + data.interface_caption;
-    bwCurrentNodeIp = data.node_ip || null;
 
     const resultsBox = document.getElementById('bw-results');
     resultsBox.classList.remove('d-none');
@@ -600,10 +581,6 @@
     return v.toFixed(v < 10 ? 1 : 0);
   }
 
-  let snaPollTimer = null;
-  let snaPollCount = 0;
-  const SNA_MAX_POLLS = 400; // ~20 min at a 3s interval — safety net, not expected in normal use
-
   function snaColorFor(app, applications) {
     return app === 'Other' ? SNA_OTHER_COLOR : SNA_PALETTE[applications.indexOf(app) % SNA_PALETTE.length];
   }
@@ -626,138 +603,88 @@
   }
 
   function loadApplicationTraffic() {
-    if (snaPollTimer) { clearInterval(snaPollTimer); snaPollTimer = null; }
-
     const hours = parseInt(document.querySelector('input[name="sna-range"]:checked').value, 10);
     const errorBox = document.getElementById('sna-error');
-    const truncatedBox = document.getElementById('sna-truncated');
-    const progressBox = document.getElementById('sna-progress');
-    const progressBar = document.getElementById('sna-progress-bar');
-    const progressLabel = document.getElementById('sna-progress-label');
-    const progressPct = document.getElementById('sna-progress-pct');
+    const candidatesBox = document.getElementById('sna-candidates');
     const chartCard = document.getElementById('sna-chart-card');
+    const chartTitle = document.getElementById('sna-chart-title');
     const loadBtn = document.getElementById('sna-load-btn');
+    const loadLabel = document.getElementById('sna-load-label');
 
     errorBox.classList.add('d-none');
-    truncatedBox.classList.add('d-none');
+    candidatesBox.classList.add('d-none');
+    candidatesBox.textContent = '';
     chartCard.classList.add('d-none');
 
-    if (!bwCurrentNodeIp) {
-      errorBox.textContent = 'No resolved router IP yet — generate the In/Out chart above first.';
+    const routerName = document.getElementById('bw-router').value.trim();
+    const interfaceName = document.getElementById('bw-interface').value.trim() || 'Tunnel5000';
+
+    if (!routerName) {
+      errorBox.textContent = 'Router name is required.';
       errorBox.classList.remove('d-none');
       return;
     }
 
     const csrfToken = document.cookie.split('; ').find(row => row.startsWith('csrf_token='));
     loadBtn.disabled = true;
-    progressBox.classList.remove('d-none');
-    progressLabel.textContent = 'Starting SNA flow query…';
-    progressBar.style.width = '0%';
-    progressPct.textContent = '0%';
+    loadLabel.textContent = 'Querying SNA…';
 
     const formData = new FormData();
-    formData.set('ip_address', bwCurrentNodeIp);
+    formData.set('router', routerName);
+    formData.set('interface', interfaceName);
     formData.set('hours', hours);
 
-    fetch('/api/reports/bandwidth/application-traffic/start', {
+    fetch('/api/reports/bandwidth/application-traffic', {
       method: 'POST',
       body: formData,
       headers: { 'X-CSRF-Token': csrfToken ? csrfToken.split('=')[1] : '' },
     })
     .then(async response => {
       const data = await response.json().catch(() => null);
-      if (!response.ok) throw new Error((data && data.detail) || 'Failed to start SNA query');
+      if (!response.ok) throw new Error((data && data.detail) || 'SNA query failed');
       return data;
     })
     .then(data => {
-      snaPollCount = 0;
-      snaPollTimer = setInterval(() => pollApplicationTraffic(data.job_id, hours), 3000);
+      if (data.status === 'ambiguous') {
+        renderSnaCandidates(data);
+        return;
+      }
+      const periodLabel = hours === 24 ? 'Last 24 Hours' : 'Last 7 Days';
+      chartTitle.textContent = 'Application Traffic — ' + periodLabel + ' (' + data.node_name + ' / ' + data.interface_name + ')';
+      chartCard.classList.remove('d-none');
+      renderStackedBarChart('sna-chart', data, periodLabel);
+      renderSnaTable('sna-table', data);
     })
     .catch(err => {
-      progressBox.classList.add('d-none');
-      loadBtn.disabled = false;
       errorBox.textContent = err.message;
       errorBox.classList.remove('d-none');
+    })
+    .finally(() => {
+      loadBtn.disabled = false;
+      loadLabel.textContent = 'Load Application Traffic';
     });
   }
 
-  function pollApplicationTraffic(jobId, hours) {
-    const errorBox = document.getElementById('sna-error');
-    const progressBox = document.getElementById('sna-progress');
-    const progressBar = document.getElementById('sna-progress-bar');
-    const progressLabel = document.getElementById('sna-progress-label');
-    const progressPct = document.getElementById('sna-progress-pct');
-    const loadBtn = document.getElementById('sna-load-btn');
+  function renderSnaCandidates(data) {
+    const box = document.getElementById('sna-candidates');
+    box.textContent = '';
+    box.classList.remove('d-none');
 
-    snaPollCount += 1;
-    if (snaPollCount > SNA_MAX_POLLS) {
-      clearInterval(snaPollTimer); snaPollTimer = null;
-      progressLabel.textContent = 'Still running after 20 minutes — SNA may be under heavy load. Try again later.';
-      loadBtn.disabled = false;
-      return;
-    }
+    const intro = document.createElement('p');
+    intro.className = 'small text-muted mb-2';
+    intro.textContent = data.level === 'exporter'
+      ? `Multiple routers matched — refine the Router Name field (${data.candidates.length} found):`
+      : `Multiple interfaces matched — refine the Interface field (${data.candidates.length} found):`;
+    box.appendChild(intro);
 
-    fetch(`/api/reports/bandwidth/application-traffic/${jobId}/status`)
-      .then(async response => {
-        const data = await response.json().catch(() => null);
-        if (!response.ok) throw new Error((data && data.detail) || 'Status check failed');
-        return data;
-      })
-      .then(status => {
-        const pct = Math.max(0, Math.min(100, Math.round(status.percent_complete || 0)));
-        progressBar.style.width = pct + '%';
-        progressPct.textContent = pct + '%';
-
-        const inProgress = ['IN_PROGRESS', 'PENDING', 'RUNNING', 'QUEUED'].includes((status.status || '').toUpperCase());
-        if (!inProgress) {
-          progressLabel.textContent = 'Fetching results…';
-          clearInterval(snaPollTimer); snaPollTimer = null;
-          fetchApplicationTrafficResults(jobId, hours);
-        } else {
-          progressLabel.textContent = 'Querying SNA (' + status.status + ')…';
-        }
-      })
-      .catch(err => {
-        clearInterval(snaPollTimer); snaPollTimer = null;
-        progressBox.classList.add('d-none');
-        loadBtn.disabled = false;
-        errorBox.textContent = err.message;
-        errorBox.classList.remove('d-none');
-      });
-  }
-
-  function fetchApplicationTrafficResults(jobId, hours) {
-    const errorBox = document.getElementById('sna-error');
-    const truncatedBox = document.getElementById('sna-truncated');
-    const progressBox = document.getElementById('sna-progress');
-    const chartCard = document.getElementById('sna-chart-card');
-    const chartTitle = document.getElementById('sna-chart-title');
-    const loadBtn = document.getElementById('sna-load-btn');
-
-    fetch(`/api/reports/bandwidth/application-traffic/${jobId}/results`)
-      .then(async response => {
-        const data = await response.json().catch(() => null);
-        if (!response.ok) throw new Error((data && data.detail) || 'Fetching results failed');
-        return data;
-      })
-      .then(data => {
-        progressBox.classList.add('d-none');
-        loadBtn.disabled = false;
-
-        if (data.truncated) truncatedBox.classList.remove('d-none');
-
-        const periodLabel = hours === 24 ? 'Last 24 Hours' : 'Last 7 Days';
-        chartTitle.textContent = 'Application Traffic — ' + periodLabel + ' (' + data.flow_count + ' flows)';
-        chartCard.classList.remove('d-none');
-        renderStackedBarChart('sna-chart', data, periodLabel);
-        renderSnaTable('sna-table', data);
-      })
-      .catch(err => {
-        progressBox.classList.add('d-none');
-        loadBtn.disabled = false;
-        errorBox.textContent = err.message;
-        errorBox.classList.remove('d-none');
-      });
+    const list = document.createElement('ul');
+    list.className = 'small mb-0';
+    data.candidates.forEach(c => {
+      const item = document.createElement('li');
+      item.textContent = data.level === 'exporter' ? c.exporter_name : c.interface_name;
+      list.appendChild(item);
+    });
+    box.appendChild(list);
   }
 
   function renderStackedBarChart(containerId, data, periodLabel) {
@@ -766,7 +693,6 @@
 
     const buckets = data.buckets || [];
     const applications = data.applications || [];
-    const bucketMinutes = data.bucket_minutes || 60;
 
     if (buckets.length === 0 || applications.length === 0) {
       const empty = document.createElement('div');
@@ -776,8 +702,7 @@
       return;
     }
 
-    const bucketSeconds = bucketMinutes * 60;
-    const toMbps = (bytes) => (bytes * 8) / bucketSeconds / 1e6;
+    const toMbps = (bps) => bps / 1e6;
 
     const legend = document.createElement('div');
     legend.className = 'bw-legend d-flex flex-wrap gap-3 small mb-2';
@@ -901,8 +826,7 @@
       return;
     }
 
-    const bucketSeconds = (data.bucket_minutes || 60) * 60;
-    const toMbps = (bytes) => (bytes * 8) / bucketSeconds / 1e6;
+    const toMbps = (bps) => bps / 1e6;
 
     const wrap = document.createElement('div');
     wrap.className = 'table-responsive';

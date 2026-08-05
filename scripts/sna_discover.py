@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
 """scripts/sna_discover.py — Cisco Secure Network Analytics API discovery probe.
 
+NOTE: the auth/tenant-discovery findings below (steps 1-2) are still exactly
+what clients/sna.py uses. The v2 Flow Queries probing in step 3, however, is
+superseded — it only ever surfaces a queried host's own management-plane
+traffic (SNMP/syslog/SSH/NetFlow-export), never real transit/application
+traffic, because a router doesn't originate the traffic that passes through
+it. The app now uses the Report Builder API instead
+(/report-builder/api/v1/..., see clients/sna.py's module docstring), found by
+inspecting the SMC UI's own "Interface Application Traffic" report — scoped
+by interface, not host IP, which is what actually captures that traffic.
+
 Read-only reconnaissance for wiring SNA (formerly Stealthwatch) into the
 Bandwidth Utilization report's application-traffic stacked chart. We don't
 yet know which API generation the target SMC runs, so this script:

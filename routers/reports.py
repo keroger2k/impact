@@ -7,11 +7,12 @@
   (24h + 7d) for a router, returned as JSON — rendered client-side as an
   inline SVG chart, no PDF/PNG generated.
 - **Bandwidth Utilization — Application traffic**: per-application stacked
-  traffic for that same router's IP, sourced from Cisco Secure Network
-  Analytics (SNA). Unlike the other two, this is genuinely async — SNA flow
-  search is a slow scan over raw NetFlow (confirmed via scripts/sna_discover.py:
-  a 24h window was still ~52% done after 30 seconds), so the frontend starts
-  a job, polls its status, then fetches results once complete.
+  traffic for that same interface, sourced from Cisco Secure Network
+  Analytics (SNA) via its Report Builder API. Synchronous — a handful of
+  fast GETs to resolve the router/interface name to SNA's internal IDs, then
+  one POST for the report itself; no polling needed (see utils/sna_report.py
+  and clients/sna.py for why this replaced an earlier async flow-search
+  approach that only ever surfaced a router's own management-plane traffic).
 
 Nothing here is cached — a report is a point-in-time deliverable, not a
 dataset that benefits from staleness (see the "Live verify over local logic"
@@ -23,7 +24,6 @@ import asyncio
 import io
 import logging
 import os
-import re
 import zipfile
 from datetime import date, datetime, timedelta
 from typing import Optional
@@ -32,18 +32,14 @@ from fastapi import APIRouter, Depends, Form, HTTPException
 from fastapi.responses import Response
 
 import clients.sna as sna_client
-import utils.sna_jobs as sna_jobs
 from auth import SessionEntry, require_auth
 from logger_config import run_with_context
 from utils.bandwidth_report import DEFAULT_INTERFACE, InvalidNameError, generate_bandwidth_report
 from utils.cdrl49_report import REPORT_DEFS, generate_report, rows_to_csv
-from utils.sna_traffic import bucket_traffic
+from utils.sna_report import generate_application_traffic_report
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-SNA_RECORD_LIMIT = 5000
-_IP_RE = re.compile(r"^[0-9a-fA-F.:]{3,45}$")
 
 
 def _parse_report_date(value: Optional[str]) -> date:
@@ -131,9 +127,10 @@ async def generate_bandwidth(
     return result
 
 
-@router.post("/bandwidth/application-traffic/start")
-async def start_application_traffic(
-    ip_address: str = Form(...),
+@router.post("/bandwidth/application-traffic")
+async def get_application_traffic(
+    router: str = Form(...),
+    interface: str = Form(DEFAULT_INTERFACE),
     hours: int = Form(24),
     session: SessionEntry = Depends(require_auth),
 ):
@@ -142,63 +139,18 @@ async def start_application_traffic(
         raise HTTPException(503, "SNA_BASE_URL is not configured")
     if hours not in (24, 24 * 7):
         raise HTTPException(400, "hours must be 24 or 168")
-    if not _IP_RE.match(ip_address.strip()):
-        raise HTTPException(400, "ip_address is not a valid IP address")
 
     domain = os.getenv("SNA_DOMAIN", "")
-
-    def _start():
-        sna_session = sna_client.login(base_url, session.username, session.password, domain)
-        tenant_id = sna_client.get_tenant_id(sna_session, base_url)
-        query_id = sna_client.create_flow_query(sna_session, base_url, tenant_id, ip_address, hours, SNA_RECORD_LIMIT)
-        sna_jobs.register(query_id, sna_session, base_url, tenant_id, SNA_RECORD_LIMIT, hours)
-        return query_id
-
     loop = asyncio.get_event_loop()
     try:
-        job_id = await loop.run_in_executor(None, run_with_context(_start))
-    except sna_client.SNAError as e:
-        logger.error(f"SNA flow query failed to start: {e}", extra={"target": "SNA", "action": "SNA_START"})
-        raise HTTPException(502, f"SNA query failed to start: {e}")
-
-    return {"job_id": job_id, "hours": hours}
-
-
-@router.get("/bandwidth/application-traffic/{job_id}/status")
-async def application_traffic_status(job_id: str, session: SessionEntry = Depends(require_auth)):
-    job = sna_jobs.get(job_id)
-    if not job:
-        raise HTTPException(404, "Job not found or expired")
-
-    loop = asyncio.get_event_loop()
-    try:
-        status = await loop.run_in_executor(
-            None, run_with_context(sna_client.get_query_status),
-            job["session"], job["base_url"], job["tenant_id"], job_id,
+        result = await loop.run_in_executor(
+            None, run_with_context(generate_application_traffic_report),
+            base_url, domain, session.username, session.password, router, interface, hours,
         )
     except sna_client.SNAError as e:
-        raise HTTPException(502, str(e))
-    return status
+        logger.error(f"SNA application traffic query failed: {e}", extra={"target": "SNA", "action": "SNA_APP_TRAFFIC"})
+        raise HTTPException(502, f"SNA query failed: {e}")
+    except LookupError as e:
+        raise HTTPException(404, str(e))
 
-
-@router.get("/bandwidth/application-traffic/{job_id}/results")
-async def application_traffic_results(job_id: str, session: SessionEntry = Depends(require_auth)):
-    job = sna_jobs.get(job_id)
-    if not job:
-        raise HTTPException(404, "Job not found or expired")
-
-    loop = asyncio.get_event_loop()
-    try:
-        flows = await loop.run_in_executor(
-            None, run_with_context(sna_client.get_query_results),
-            job["session"], job["base_url"], job["tenant_id"], job_id,
-        )
-    except sna_client.SNAError as e:
-        raise HTTPException(502, str(e))
-
-    sna_jobs.discard(job_id)
-
-    data = bucket_traffic(flows, job["hours"])
-    data["truncated"] = len(flows) >= job["record_limit"]
-    data["flow_count"] = len(flows)
-    return data
+    return result
