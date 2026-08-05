@@ -751,9 +751,12 @@
     }
     svg.appendChild(svgEl('line', { x1: marginL, x2: W - marginR, y1: marginT + plotH, y2: marginT + plotH, stroke: BW_AXIS, 'stroke-width': 1 }));
 
+    // Wide, flush, square-edged columns (near-zero gap between bars, no gap
+    // between stacked segments) — matches the reference SNA Report Builder
+    // chart's blocky "skyline" look, at the user's request, overriding the
+    // dataviz skill's default thin-bar/2px-gap spec for this chart.
     const bandW = plotW / buckets.length;
-    const barW = Math.max(2, Math.min(24, bandW * 0.65));
-    const gapPx = 2;
+    const barW = Math.max(1, bandW - 1);
 
     const tooltip = document.createElement('div');
     tooltip.className = 'bw-tooltip';
@@ -764,17 +767,15 @@
       const bandX = marginL + bi * bandW;
       const barX = bandX + (bandW - barW) / 2;
 
-      stacks[bi].forEach((seg, si) => {
+      stacks[bi].forEach((seg) => {
         if (seg.value <= 0) return;
         const yTop = marginT + plotH - (seg.end / yMax) * plotH;
         const yBottom = marginT + plotH - (seg.start / yMax) * plotH;
         const h = yBottom - yTop;
         if (h <= 0) return;
-        const drawY = si === 0 ? yTop : yTop + gapPx / 2;
-        const drawH = si === 0 ? h : Math.max(0, h - gapPx / 2);
         svg.appendChild(svgEl('rect', {
-          x: barX, y: drawY, width: barW, height: drawH,
-          fill: snaColorFor(seg.app, applications), rx: 2, ry: 2,
+          x: barX, y: yTop, width: barW, height: h,
+          fill: snaColorFor(seg.app, applications),
         }));
       });
 
