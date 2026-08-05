@@ -136,6 +136,40 @@ def test_application_traffic_requires_base_url(auth_headers, monkeypatch):
     assert r.status_code == 503
 
 
+def test_application_traffic_invalid_router_name(auth_headers, monkeypatch):
+    monkeypatch.setenv("SNA_BASE_URL", "https://sna.example.com")
+
+    from utils.bandwidth_report import InvalidNameError
+
+    def fake_report(*args, **kwargs):
+        raise InvalidNameError("Router name contains unsupported characters")
+
+    monkeypatch.setattr("routers.reports.generate_application_traffic_report", fake_report)
+
+    r = client.post(
+        "/api/reports/bandwidth/application-traffic",
+        data={"router": "bad;name", "interface": "Tunnel5000", "hours": 24},
+        headers=auth_headers,
+    )
+    assert r.status_code == 400
+
+
+def test_application_traffic_solarwinds_failure(auth_headers, monkeypatch):
+    monkeypatch.setenv("SNA_BASE_URL", "https://sna.example.com")
+
+    def fake_report(*args, **kwargs):
+        raise RuntimeError("SolarWinds credentials are required")
+
+    monkeypatch.setattr("routers.reports.generate_application_traffic_report", fake_report)
+
+    r = client.post(
+        "/api/reports/bandwidth/application-traffic",
+        data={"router": "R-SITE-01", "interface": "Tunnel5000", "hours": 24},
+        headers=auth_headers,
+    )
+    assert r.status_code == 502
+
+
 def test_application_traffic_invalid_hours(auth_headers, monkeypatch):
     monkeypatch.setenv("SNA_BASE_URL", "https://sna.example.com")
 

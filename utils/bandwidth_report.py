@@ -74,6 +74,29 @@ ORDER BY n.Caption, i.Caption
     return solarwinds.query(swql, username, password)
 
 
+def find_node_ip(router_name: str, username: str, password: str) -> str | None:
+    """Resolve a router's SolarWinds-polled IP address by node Caption.
+
+    Used by the Application Traffic report (utils/sna_report.py) to match SNA's
+    Report Builder Exporters, which are keyed by IP rather than hostname
+    (confirmed against real production data — the hostname substring match
+    that works for everything else on this page came up empty against SNA).
+    """
+    name = _validate_name(router_name, "Router name")
+    lit = _escape_literal(name)
+    swql = f"""
+SELECT n.Caption AS NodeName, n.IPAddress AS NodeIpAddress
+FROM Orion.Nodes n
+WHERE n.Caption = '{lit}' OR n.Caption LIKE '%{lit}%'
+"""
+    rows = solarwinds.query(swql, username, password)
+    if not rows:
+        return None
+    exact = [r for r in rows if (r.get("NodeName") or "").strip().lower() == name.lower()]
+    match = exact[0] if exact else rows[0]
+    return match.get("NodeIpAddress")
+
+
 def get_interface_by_id(interface_id: int, username: str, password: str) -> dict | None:
     swql = f"""
 SELECT

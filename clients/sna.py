@@ -22,8 +22,12 @@ Interface, not Router → Interface as you might expect:
   - "Device" in this API means the **Flow Collector appliance** (there may
     be only one, as in this environment — `list_flow_collectors` returns
     whatever exists).
-  - Individual routers appear as **Exporters** underneath a Flow Collector,
-    identified by hostname + IP (`list_exporters`).
+  - Individual routers appear as **Exporters** underneath a Flow Collector
+    (`list_exporters`), keyed by **IP**, not hostname — confirmed against
+    real production data after a hostname-only substring match came up
+    empty for a router that resolved fine everywhere else on the Reports
+    page. `utils/sna_report.py` resolves the router name to its
+    SolarWinds-polled IP first and matches Exporters against that.
   - **Interfaces** hang off an Exporter, with friendly names when SNA has
     learned them (e.g. "Tunnel5000") or "ifIndex-N" as a fallback
     (`list_interfaces`).

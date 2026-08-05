@@ -150,7 +150,12 @@ async def get_application_traffic(
     except sna_client.SNAError as e:
         logger.error(f"SNA application traffic query failed: {e}", extra={"target": "SNA", "action": "SNA_APP_TRAFFIC"})
         raise HTTPException(502, f"SNA query failed: {e}")
+    except InvalidNameError as e:
+        raise HTTPException(400, str(e))
     except LookupError as e:
         raise HTTPException(404, str(e))
+    except Exception as e:
+        logger.error(f"Application traffic report failed: {e}", extra={"target": "SolarWinds", "action": "SNA_APP_TRAFFIC"})
+        raise HTTPException(502, f"SolarWinds lookup failed: {e}")
 
     return result
