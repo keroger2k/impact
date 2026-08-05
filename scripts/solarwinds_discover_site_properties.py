@@ -24,7 +24,14 @@ all — so this script asks SolarWinds directly rather than guessing:
      custom property values, to cross-reference against step 2's field names.
   4. Orion.NPM.InterfacesCustomProperties for that router's interfaces —
      circuit info (CarrierName/CircuitID/Bandwith_Utilization) lives here,
-     not on the node, since a circuit is naturally per-interface.
+     not on the node, since a circuit is naturally per-interface. NOTE:
+     confirmed against real data these are all null on the sampled router —
+     the actual circuit info was sitting as free text baked into the
+     Interface Caption instead (e.g. "GigabitEthernet0/0/3 · ATT AVPN 10MB |
+     BBEC651703..ATI | Terms: ..."), which isn't reliably machine-parseable
+     across sites. Circuit Size & Provider may end up needing to stay a
+     manual report field, or at best a copy-paste hint pulled from the
+     interface caption — re-run on a few more routers before concluding.
 
 This talks to the SWIS endpoint directly with raw requests (rather than
 clients.solarwinds.query(), which calls raise_for_status() and discards the
@@ -197,13 +204,17 @@ def probe_node_custom_property_values(node: str, username: str, password: str, v
     # from STEP 2's list that plausibly map to the report (dropped SLA*,
     # STIP, TAZ, DC15, FISMA, Imported_From_NCM, AssetTag, Application,
     # Country, CDRL118, device_description, FieldSite, Region, ServiceProvider
-    # as unlikely for this specific report).
+    # as unlikely for this specific report). Confirmed empirically:
+    # Orion.NodesCustomProperties doesn't expose Caption directly (unlike
+    # Orion.Nodes) — needs an explicit join on NodeID, same pattern STEP 4
+    # already uses successfully for InterfacesCustomProperties.
     swql = f"""
-SELECT NodeID, Caption, Address, Airport_Code, AirportCategory, Building,
-       Carrier, City, State, ZipCode, ContactName, Contract_Vehicle, Site,
-       TSADeviceCode, Comments
-FROM Orion.NodesCustomProperties
-WHERE Caption = '{node}' OR Caption LIKE '%{node}%'
+SELECT cp.NodeID, n.Caption, cp.Address, cp.Airport_Code, cp.AirportCategory,
+       cp.Building, cp.Carrier, cp.City, cp.State, cp.ZipCode, cp.ContactName,
+       cp.Contract_Vehicle, cp.Site, cp.TSADeviceCode, cp.Comments
+FROM Orion.NodesCustomProperties cp
+JOIN Orion.Nodes n ON cp.NodeID = n.NodeID
+WHERE n.Caption = '{node}' OR n.Caption LIKE '%{node}%'
 """
     rows = run_query(swql, username, password, verify_ssl, timeout)
     if rows is None:
