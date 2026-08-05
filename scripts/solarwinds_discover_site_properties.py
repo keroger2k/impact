@@ -11,18 +11,27 @@ dumping grounds for exactly this kind of text), or aren't in SolarWinds at
 all — so this script asks SolarWinds directly rather than guessing:
 
   1. SELECT of common standard Orion.Nodes columns for one sample router
-     (Location, Contact, Description, Vendor, MachineType, SysName, Comments)
-     — some of this site info may already be sitting in plain node fields.
+     (Location, Contact, Description) — some of this site info may already
+     be sitting in plain node fields. Kept to the handful of columns present
+     on every Orion install; a first pass tried more (Vendor, MachineType,
+     SysName, Comments) and got a 400 from one of them.
   2. Orion.CustomProperty — the metadata table listing every custom property
-     configured anywhere in this SolarWinds instance, filtered to ones
-     targeting Orion.Nodes. This is the authoritative "what custom fields
-     exist" answer, independent of whether the sample node has them filled in.
+     configured anywhere in this SolarWinds instance (no TargetEntity filter,
+     so we can see the *actual* TargetEntity strings this install uses rather
+     than assuming 'Orion.Nodes' is the right literal — and confirm whether
+     any node-targeted custom properties exist at all).
   3. Orion.NodesCustomProperties for the sample router — the actual custom
      property values on that node, to cross-reference against step 2's field
      names and confirm the values look like the report fields we're after.
 
-Nothing here writes anything — every query is a plain SWQL SELECT via the
-same read-only clients.solarwinds.query() the rest of the app uses. Run it
+This talks to the SWIS endpoint directly with raw requests (rather than
+clients.solarwinds.query(), which calls raise_for_status() and discards the
+response body) because SolarWinds' SWQL validation errors on a 400 usually
+name the exact invalid field/entity in the body — that's the fastest way to
+fix a bad query, same reasoning as scripts/sna_discover.py's raw-response
+printing.
+
+Nothing here writes anything — every query is a plain SWQL SELECT. Run it
 against your real SolarWinds and paste the output back; that's what nails
 down the real field names before any of this gets wired into the Bandwidth
 Utilization report.
@@ -34,12 +43,13 @@ Env vars (.env):
     SOLARWINDS_TIMEOUT          default 180
     SOLARWINDS_USERNAME         defaults to DOMAIN_USERNAME
     SOLARWINDS_PASSWORD         defaults to DOMAIN_PASSWORD
+    SOLARWINDS_VERIFY_SSL       default false (self-signed certs)
     SW_DISCOVER_NODE            required — a router Caption (or substring) to
                                  sample, e.g. a router you know has this site
                                  info filled in today
 
 Usage:
-    .venv/bin/python -m scripts.solarwinds_discover_site_properties
+    python -m scripts.solarwinds_discover_site_properties
 """
 from __future__ import annotations
 
@@ -52,11 +62,32 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import requests  # noqa: E402
 from dotenv import load_dotenv  # noqa: E402
+from requests.auth import HTTPBasicAuth  # noqa: E402
 
 load_dotenv()
 
-import clients.solarwinds as solarwinds  # noqa: E402
+
+def _bool_env(name: str, default: bool) -> bool:
+    val = os.getenv(name)
+    if val is None:
+        return default
+    return val.strip().lower() in ("true", "1", "yes", "y")
+
+
+def _base_url() -> str:
+    url = os.getenv("SOLARWINDS_URL", "").strip()
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    return url.rstrip("/")
+
+
+def _format_username(username: str) -> str:
+    if "\\" in username or "@" in username:
+        return username
+    domain = os.getenv("SOLARWINDS_DOMAIN", "network")
+    return f"{domain}\\{username}"
 
 
 def _print_header(title: str):
@@ -66,7 +97,7 @@ def _print_header(title: str):
     print("=" * 78)
 
 
-def _print_rows(rows: list[dict], max_rows: int = 20):
+def _print_rows(rows: list[dict], max_rows: int = 40):
     if not rows:
         print("(no rows returned)")
         return
@@ -75,62 +106,96 @@ def _print_rows(rows: list[dict], max_rows: int = 20):
         print(json.dumps(row, indent=2, default=str))
 
 
-def probe_standard_node_fields(node: str, username: str, password: str):
+def run_query(swql: str, username: str, password: str, verify_ssl: bool, timeout: int) -> list[dict] | None:
+    """POST a SWQL SELECT and return result rows, or None on failure — prints
+    the full response body either way, since a 400's body usually names the
+    exact invalid field/entity."""
+    port = os.getenv("SOLARWINDS_PORT", "17774")
+    endpoint = f"{_base_url()}:{port}/SolarWinds/InformationService/v3/Json/Query"
+    print(f"SWQL:\n{swql.strip()}\n")
+    try:
+        resp = requests.post(
+            endpoint,
+            json={"query": swql},
+            auth=HTTPBasicAuth(_format_username(username), password),
+            verify=verify_ssl,
+            timeout=timeout,
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+        )
+    except requests.exceptions.RequestException as e:
+        print(f"Request failed: {e}")
+        return None
+
+    print(f"← HTTP {resp.status_code}")
+    if resp.status_code != 200:
+        # SWIS validation errors are plain text or a small JSON envelope
+        # naming the bad field/entity — print it raw, don't swallow it.
+        print(resp.text[:3000])
+        return None
+
+    try:
+        return resp.json().get("results", [])
+    except ValueError:
+        print("200 but not JSON — raw body:")
+        print(resp.text[:2000])
+        return None
+
+
+def probe_standard_node_fields(node: str, username: str, password: str, verify_ssl: bool, timeout: int):
     _print_header(f"STEP 1 — Standard Orion.Nodes fields for '{node}'")
     swql = f"""
-SELECT NodeID, Caption, IPAddress, Location, Contact, Description,
-       Vendor, MachineType, SysName, Comments
+SELECT NodeID, Caption, IPAddress, Location, Contact, Description
 FROM Orion.Nodes
 WHERE Caption = '{node}' OR Caption LIKE '%{node}%'
 """
-    try:
-        rows = solarwinds.query(swql, username, password)
-    except Exception as e:
-        print(f"Query failed: {e}")
+    rows = run_query(swql, username, password, verify_ssl, timeout)
+    if rows is None:
         return
     _print_rows(rows)
     if rows:
         print(
-            "\nLook at Location/Contact/Description/Comments above — these are "
-            "free-text standard fields commonly (ab)used for exactly this kind "
-            "of site metadata, worth checking before assuming custom properties."
+            "\nLook at Location/Contact/Description above — these are free-text "
+            "standard fields commonly (ab)used for exactly this kind of site "
+            "metadata, worth checking before assuming custom properties."
         )
 
 
-def probe_custom_property_definitions(username: str, password: str):
-    _print_header("STEP 2 — Custom property definitions targeting Orion.Nodes")
+def probe_custom_property_definitions(username: str, password: str, verify_ssl: bool, timeout: int):
+    _print_header("STEP 2 — All custom property definitions (no entity filter)")
     swql = """
 SELECT Field, DataType, TargetEntity, Description
 FROM Orion.CustomProperty
-WHERE TargetEntity = 'Orion.Nodes'
-ORDER BY Field
+ORDER BY TargetEntity, Field
 """
-    try:
-        rows = solarwinds.query(swql, username, password)
-    except Exception as e:
-        print(f"Query failed: {e}")
+    rows = run_query(swql, username, password, verify_ssl, timeout)
+    if rows is None:
         return
-    _print_rows(rows, max_rows=100)
+    _print_rows(rows, max_rows=200)
     if rows:
+        entities = sorted({r.get("TargetEntity") for r in rows if r.get("TargetEntity")})
+        print(f"\nDistinct TargetEntity values seen: {entities}")
         print(
-            "\nThis is the authoritative list of every custom field configured "
-            "on nodes in this SolarWinds instance — match these Field names "
-            "against the report's fields (Site Code, Airport Code, Category, "
-            "Building, Type, Local POC, FRM, Circuit Size & Provider, etc.)."
+            "Match the Field names above (for whichever TargetEntity holds node "
+            "data — often 'Orion.Nodes' but confirm from the list) against the "
+            "report's fields (Site Code, Airport Code, Category, Building, "
+            "Type, Local POC, FRM, Circuit Size & Provider, etc.)."
         )
+    else:
+        print("\nNo custom properties are configured anywhere in this SolarWinds "
+              "instance — this site info isn't stored as a SolarWinds custom "
+              "property. Check STEP 1's standard fields, or it may not live in "
+              "SolarWinds at all.")
 
 
-def probe_node_custom_property_values(node: str, username: str, password: str):
+def probe_node_custom_property_values(node: str, username: str, password: str, verify_ssl: bool, timeout: int):
     _print_header(f"STEP 3 — Orion.NodesCustomProperties values for '{node}'")
     swql = f"""
 SELECT *
 FROM Orion.NodesCustomProperties
 WHERE Caption = '{node}' OR Caption LIKE '%{node}%'
 """
-    try:
-        rows = solarwinds.query(swql, username, password)
-    except Exception as e:
-        print(f"Query failed: {e}")
+    rows = run_query(swql, username, password, verify_ssl, timeout)
+    if rows is None:
         return
     _print_rows(rows)
 
@@ -139,6 +204,12 @@ def main():
     username = os.getenv("SOLARWINDS_USERNAME") or os.getenv("DOMAIN_USERNAME", "")
     password = os.getenv("SOLARWINDS_PASSWORD") or os.getenv("DOMAIN_PASSWORD", "")
     node = os.getenv("SW_DISCOVER_NODE", "").strip()
+    verify_ssl = _bool_env("SOLARWINDS_VERIFY_SSL", False)
+    timeout = int(os.getenv("SOLARWINDS_TIMEOUT", "180"))
+
+    if not verify_ssl:
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
     if not os.getenv("SOLARWINDS_URL"):
         print("ERROR: SOLARWINDS_URL must be set (see .env.template).")
@@ -152,9 +223,9 @@ def main():
               "(or substring) you know has this site info filled in today.")
         sys.exit(1)
 
-    probe_standard_node_fields(node, username, password)
-    probe_custom_property_definitions(username, password)
-    probe_node_custom_property_values(node, username, password)
+    probe_standard_node_fields(node, username, password, verify_ssl, timeout)
+    probe_custom_property_definitions(username, password, verify_ssl, timeout)
+    probe_node_custom_property_values(node, username, password, verify_ssl, timeout)
 
     print()
     print("=" * 78)
