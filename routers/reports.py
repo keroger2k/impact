@@ -57,7 +57,8 @@ async def generate_cdrl49(
     loop = asyncio.get_event_loop()
     try:
         pdf_bytes, rows_by_key = await loop.run_in_executor(
-            None, run_with_context(generate_report), day, keys, generated_at
+            None, run_with_context(generate_report),
+            day, keys, generated_at, session.username, session.password,
         )
     except Exception as e:
         logger.error(f"CDRL49 report generation failed: {e}", extra={"target": "SolarWinds", "action": "CDRL49_GENERATE"})
