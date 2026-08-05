@@ -172,36 +172,11 @@ def list_tenants(session: requests.Session, base_url: str, timeout: int) -> list
     return []
 
 
-def probe_api_docs(session: requests.Session, base_url: str, timeout: int):
-    """Opportunistic, harmless GETs at common Swagger/OpenAPI/help paths."""
-    _print_header("STEP 2b — Probing for API docs / Swagger")
-    candidates = [
-        "/sw-reporting/v2/api-docs",
-        "/sw-reporting/v2/swagger.json",
-        "/sw-reporting/v1/swagger.json",
-        "/swagger.json",
-        "/apidocs",
-        "/sw-reporting/",
-    ]
-    for path in candidates:
-        url = f"{base_url}{path}"
-        try:
-            resp = session.get(url, headers={"Accept": "application/json"}, timeout=timeout)
-        except requests.exceptions.RequestException as e:
-            print(f"{path}: request failed ({e})")
-            continue
-        if resp.status_code == 200:
-            print(f"{path}: HTTP 200 — this looks promising, dumping it:")
-            _print_response(resp, max_body=3000)
-        else:
-            print(f"{path}: HTTP {resp.status_code}")
-
-
-def probe_v2_flow_query(session: requests.Session, base_url: str, tenant_id, device: str, hours: int, timeout: int):
+def probe_v2_flow_query(session: requests.Session, base_url: str, tenant_id, device: str, hours: int, timeout: int, record_limit: int = 1000):
     """POST creates a transient flow-search job (SNA's own query mechanism,
     same as running a search in the SMC UI) — it never touches network config
     or security policy. Kept read-only in effect despite the verb."""
-    _print_header(f"STEP 3 — v2 Flow Queries API (tenant {tenant_id})")
+    _print_header(f"STEP 3 — v2 Flow Queries API (tenant {tenant_id}, {hours}h window, recordLimit={record_limit})")
 
     end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(hours=hours)
@@ -210,7 +185,7 @@ def probe_v2_flow_query(session: requests.Session, base_url: str, tenant_id, dev
     body = {
         "startDateTime": start_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "endDateTime": end_time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "recordLimit": 1000,
+        "recordLimit": record_limit,
         "subject": {
             "ipAddresses": {"includes": [device]},
         },
@@ -248,27 +223,66 @@ def probe_v2_flow_query(session: requests.Session, base_url: str, tenant_id, dev
 
     print(f"\nQuery created: id={query_id}. Polling for completion...")
     status_url = f"{query_url}/{query_id}"
-    for attempt in range(10):
+    for attempt in range(15):
         time.sleep(2)
         resp = session.get(status_url, headers=_headers(session), timeout=timeout)
-        print(f"  poll {attempt + 1}: HTTP {resp.status_code}")
         try:
             status_data = resp.json()
         except ValueError:
             status_data = {}
-        state = str(status_data).lower()
-        if "complet" in state or "done" in state:
-            print("  → looks complete, fetching results")
+        query_info = status_data.get("data", {}).get("query", {}) if isinstance(status_data.get("data"), dict) else {}
+        status = query_info.get("status", "")
+        pct = query_info.get("percentComplete", 0)
+        print(f"  poll {attempt + 1}: HTTP {resp.status_code} status={status!r} percentComplete={pct}")
+        if status and status.upper() not in ("IN_PROGRESS", "PENDING", "RUNNING", "QUEUED"):
+            print(f"  → status is terminal ({status!r}), fetching results")
+            break
+        if isinstance(pct, (int, float)) and pct >= 100:
+            print("  → percentComplete reached 100, fetching results")
             break
     else:
-        print("  gave up polling after 10 attempts — printing last status body:")
-
-    _print_response(resp)
+        print("  gave up polling after 15 attempts (30s) — fetching results anyway "
+              "to see what a still-running query returns:")
 
     results_url = f"{status_url}/results"
     print(f"\nFetching results: GET {results_url}")
     resp = session.get(results_url, headers=_headers(session), timeout=timeout)
-    _print_response(resp, max_body=4000)
+    print(f"  ← HTTP {resp.status_code}")
+    try:
+        results_data = resp.json()
+    except ValueError:
+        print("Non-JSON response:")
+        print(resp.text[:2000])
+        return
+
+    outer = results_data.get("data", {}) if isinstance(results_data, dict) else {}
+    print(f"Top-level keys in results['data']: {list(outer.keys())}")
+    flows = outer.get("flows", [])
+    print(f"flows returned: {len(flows)} (recordLimit was {body['recordLimit']})")
+    if len(flows) >= body["recordLimit"]:
+        print("  ⚠ flows count == recordLimit — results are almost certainly "
+              "TRUNCATED. Look for a paging/cursor/nextToken field above and "
+              "share it back so pagination can be added.")
+
+    if flows:
+        times = [f.get("statistics", {}).get("firstActiveTime") for f in flows if f.get("statistics")]
+        times = sorted(t for t in times if t)
+        if times:
+            print(f"Time coverage of returned flows: {times[0]} .. {times[-1]}")
+            print(f"(requested window was {body['startDateTime']} .. {body['endDateTime']})")
+
+        from collections import defaultdict
+        by_app = defaultdict(int)
+        for f in flows:
+            app = (f.get("nbarApp") or {}).get("name") or f"applicationId={f.get('applicationId')}"
+            by_app[app] += (f.get("statistics") or {}).get("byteCount", 0)
+        print("\nTop applications by byte count in this window:")
+        for app, total in sorted(by_app.items(), key=lambda kv: -kv[1])[:10]:
+            print(f"  {app}: {total} bytes")
+
+    print("\nFull first flow record (for field-name reference):")
+    if flows:
+        print(json.dumps(flows[0], indent=2))
 
 
 def probe_legacy_smc(session: requests.Session, base_url: str, device: str, hours: int, timeout: int):
@@ -312,19 +326,31 @@ def main():
               "DOMAIN_PASSWORD) must be set.")
         sys.exit(1)
     if not device:
-        print("ERROR: SNA_DEVICE is required (a device IP or name to scope the probe query to).")
+        print("ERROR: SNA_DEVICE is required — the flow query filters by IP "
+              "address, not device name (confirmed by the last run's error).")
+        sys.exit(1)
+    import re
+    if not re.match(r"^\d{1,3}(\.\d{1,3}){3}$", device) and ":" not in device:
+        print(f"ERROR: SNA_DEVICE='{device}' doesn't look like an IP address. "
+              "The v2 flow-query API rejects hostnames — use the router's "
+              "management IP (check this app's IP Lookup or Devices page).")
         sys.exit(1)
 
     session = login(base_url, username, password, domain, verify_ssl, timeout)
     tenants = list_tenants(session, base_url, timeout)
-    probe_api_docs(session, base_url, timeout)
 
     if tenants:
         print(f"\nFound {len(tenants)} tenant(s):")
         for t in tenants:
             print(f"  {t}")
         tenant_id = tenants[0].get("id") if isinstance(tenants[0], dict) else tenants[0]
-        probe_v2_flow_query(session, base_url, tenant_id, device, hours, timeout)
+
+        # 24h first (known-good from the last run), then a 7-day window at a
+        # higher recordLimit — this tells us whether raw flow search is even
+        # viable for the "Last 7 Days" view the In/Out chart already has, and
+        # whether results silently truncate at recordLimit.
+        probe_v2_flow_query(session, base_url, tenant_id, device, hours, timeout, record_limit=1000)
+        probe_v2_flow_query(session, base_url, tenant_id, device, 24 * 7, timeout, record_limit=5000)
     else:
         # Many on-prem SNA/Stealthwatch deployments are single-tenant and use
         # a fixed conventional tenant ID even though the discovery call above
