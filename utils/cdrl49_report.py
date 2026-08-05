@@ -13,6 +13,7 @@ import html
 import io
 import re
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 
 from reportlab.lib import colors
@@ -291,10 +292,15 @@ def generate_report(
     than a dedicated service account. Returns (pdf_bytes, rows_by_key) so the
     caller can also offer the underlying CSVs without re-querying.
     """
-    rows_by_key: dict[str, list[dict]] = {}
-    for key in keys:
+    def _fetch(key: str) -> list[dict]:
         raw = solarwinds.query(build_swql(key, day), username, password)
-        rows_by_key[key] = [normalize_result_row(r) for r in raw]
+        return [normalize_result_row(r) for r in raw]
+
+    # At most 2 keys (eis/soho) today, but they're independent SolarWinds
+    # queries — run whichever are selected concurrently rather than
+    # back-to-back, same reasoning as the Bandwidth report's 24h/7d split.
+    with ThreadPoolExecutor(max_workers=max(1, len(keys))) as pool:
+        rows_by_key = dict(zip(keys, pool.map(_fetch, keys)))
 
     pdf_bytes = build_pdf(rows_by_key, keys, generated_at)
     return pdf_bytes, rows_by_key

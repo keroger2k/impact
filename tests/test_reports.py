@@ -116,6 +116,83 @@ def test_bandwidth_generate_requires_router_or_interface_id(auth_headers):
     assert r.status_code == 400
 
 
+# ── DNAC-backed autofill datalists ────────────────────────────────────────────
+
+def test_router_options_filters_by_substring(auth_headers, monkeypatch):
+    def fake_stale(key):
+        if key == "devices":
+            return [
+                {"hostname": "R-SITE-01"}, {"hostname": "R-SITE-02"}, {"hostname": "SW-SITE-01"},
+            ]
+        return None
+
+    monkeypatch.setattr("routers.reports.cache.get_stale", fake_stale)
+
+    r = client.get("/api/reports/bandwidth/router-options", params={"router": "r-site"}, headers=auth_headers)
+    assert r.status_code == 200
+    assert "R-SITE-01" in r.text
+    assert "R-SITE-02" in r.text
+    assert "SW-SITE-01" not in r.text
+
+
+def test_router_options_empty_query_returns_full_list(auth_headers, monkeypatch):
+    monkeypatch.setattr("routers.reports.cache.get_stale", lambda key: [{"hostname": "R-SITE-01"}] if key == "devices" else None)
+
+    r = client.get("/api/reports/bandwidth/router-options", headers=auth_headers)
+    assert r.status_code == 200
+    assert "R-SITE-01" in r.text
+
+
+def test_router_options_no_cache_returns_empty(auth_headers, monkeypatch):
+    monkeypatch.setattr("routers.reports.cache.get_stale", lambda key: None)
+
+    r = client.get("/api/reports/bandwidth/router-options", params={"router": "r-"}, headers=auth_headers)
+    assert r.status_code == 200
+    assert r.text == ""
+
+
+def test_interface_options_requires_router(auth_headers, monkeypatch):
+    monkeypatch.setattr("routers.reports.cache.get_stale", lambda key: [{"deviceName": "R-SITE-01", "portName": "Tunnel5000"}])
+
+    r = client.get("/api/reports/bandwidth/interface-options", headers=auth_headers)
+    assert r.status_code == 200
+    assert r.text == ""
+
+
+def test_interface_options_exact_match_returns_all_interfaces(auth_headers, monkeypatch):
+    def fake_stale(key):
+        if key == "dnac_interfaces":
+            return [
+                {"deviceName": "R-SITE-01", "portName": "Tunnel5000"},
+                {"deviceName": "R-SITE-01", "portName": "Loopback0"},
+                {"deviceName": "R-SITE-01-OLD", "portName": "Tunnel9999"},
+            ]
+        return None
+
+    monkeypatch.setattr("routers.reports.cache.get_stale", fake_stale)
+
+    r = client.get("/api/reports/bandwidth/interface-options", params={"router": "R-SITE-01"}, headers=auth_headers)
+    assert r.status_code == 200
+    assert "Tunnel5000" in r.text
+    assert "Loopback0" in r.text
+    # Not returned unfiltered by the current Interface field text — but an
+    # exact router match must still exclude the near-duplicate "-OLD" device.
+    assert "Tunnel9999" not in r.text
+
+
+def test_interface_options_falls_back_to_substring_router_match(auth_headers, monkeypatch):
+    def fake_stale(key):
+        if key == "dnac_interfaces":
+            return [{"deviceName": "R-SITE-01-SUB", "portName": "Tunnel20"}]
+        return None
+
+    monkeypatch.setattr("routers.reports.cache.get_stale", fake_stale)
+
+    r = client.get("/api/reports/bandwidth/interface-options", params={"router": "R-SITE-01"}, headers=auth_headers)
+    assert r.status_code == 200
+    assert "Tunnel20" in r.text
+
+
 # ── Application traffic (SNA Report Builder) ─────────────────────────────────
 
 def test_application_traffic_ok(auth_headers, monkeypatch):

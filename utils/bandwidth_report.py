@@ -9,6 +9,7 @@ rendered client-side as inline SVG; nothing is written to disk here.
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 import clients.solarwinds as solarwinds
 
@@ -111,6 +112,7 @@ def find_node_ip(router_name: str, username: str, password: str) -> str | None:
 SELECT n.Caption AS NodeName, n.IPAddress AS NodeIpAddress
 FROM Orion.Nodes n
 WHERE n.Caption = '{lit}' OR n.Caption LIKE '%{lit}%'
+ORDER BY n.Caption
 """
     rows = solarwinds.query(swql, username, password)
     if not rows:
@@ -208,6 +210,19 @@ def generate_bandwidth_report(
         meta = matches[0]
 
     iface_id = meta.get("InterfaceID")
+
+    # The 24h and 7d windows are independent SolarWinds queries — run them
+    # concurrently rather than back-to-back. This function already executes
+    # inside its own worker thread (routers/reports.py's run_in_executor), so
+    # a small in-function pool just overlaps the two blocking HTTP calls
+    # instead of serializing them, which matters since the user is watching
+    # a spinner on this synchronous, uncached endpoint.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        fut_24h = pool.submit(get_traffic_series, iface_id, 24, username, password)
+        fut_7d = pool.submit(get_traffic_series, iface_id, 24 * 7, username, password)
+        series_24h = fut_24h.result()
+        series_7d = fut_7d.result()
+
     return {
         "status": "ok",
         "node_name": meta.get("NodeName"),
@@ -215,8 +230,8 @@ def generate_bandwidth_report(
         "interface_caption": meta.get("InterfaceCaption") or meta.get("InterfaceName"),
         "interface_id": iface_id,
         "site_info": _build_site_info(meta),
-        "series_24h": get_traffic_series(iface_id, 24, username, password),
-        "series_7d": get_traffic_series(iface_id, 24 * 7, username, password),
+        "series_24h": series_24h,
+        "series_7d": series_7d,
     }
 
 

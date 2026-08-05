@@ -24,11 +24,21 @@
           <form id="bw-form" class="row g-2 align-items-end mb-3">
             <div class="col-sm-4 col-lg-3">
               <label class="form-label small fw-bold uppercase letter-spacing-1">Router Name</label>
-              <input type="text" id="bw-router" class="form-control" placeholder="e.g. R-SITE-01">
+              <input type="text" id="bw-router" name="router" class="form-control" list="bw-router-options"
+                     placeholder="e.g. R-SITE-01" autocomplete="off"
+                     hx-get="/api/reports/bandwidth/router-options" hx-trigger="keyup changed delay:300ms, focus"
+                     hx-target="#bw-router-options" hx-swap="innerHTML">
+              <datalist id="bw-router-options"></datalist>
+              <div class="form-text">Suggestions from DNAC's device inventory — any SolarWinds name still works.</div>
             </div>
             <div class="col-sm-3 col-lg-2">
               <label class="form-label small fw-bold uppercase letter-spacing-1">Interface</label>
-              <input type="text" id="bw-interface" class="form-control" value="Tunnel5000">
+              <input type="text" id="bw-interface" name="interface" class="form-control" value="Tunnel5000"
+                     list="bw-interface-options" autocomplete="off"
+                     hx-get="/api/reports/bandwidth/interface-options" hx-include="#bw-router"
+                     hx-trigger="focus, change from:#bw-router"
+                     hx-target="#bw-interface-options" hx-swap="innerHTML">
+              <datalist id="bw-interface-options"></datalist>
             </div>
             <div class="col-sm-auto">
               <button type="button" class="btn btn-primary" id="bw-generate-btn" onclick="generateAll()">

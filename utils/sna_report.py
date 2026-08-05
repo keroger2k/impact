@@ -15,6 +15,8 @@ fallback for environments where an Exporter's name does carry the hostname.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 import clients.sna as sna_client
 from utils.bandwidth_report import find_node_ip
 
@@ -137,10 +139,20 @@ def generate_application_traffic_report(
         )
         return bucket_application_traffic(records, hours)
 
+    # Same reasoning as utils.bandwidth_report.generate_bandwidth_report: the
+    # 24h and 7d pulls are independent report POSTs against the same
+    # session, so run them concurrently instead of back-to-back — this
+    # function already runs inside its own worker thread.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        fut_24h = pool.submit(_pull, 24)
+        fut_7d = pool.submit(_pull, 24 * 7)
+        traffic_24h = fut_24h.result()
+        traffic_7d = fut_7d.result()
+
     return {
         "status": "ok",
         "node_name": exporter["exporter_name"],
         "interface_name": interface["interface_name"],
-        "traffic_24h": _pull(24),
-        "traffic_7d": _pull(24 * 7),
+        "traffic_24h": traffic_24h,
+        "traffic_7d": traffic_7d,
     }

@@ -41,6 +41,23 @@ def test_find_node_ip_rejects_bad_charset():
         find_node_ip("bad;name", "dev", "dev")
 
 
+def test_find_node_ip_like_fallback_is_deterministically_ordered():
+    """Without an ORDER BY, which row wins the LIKE fallback (when there's no
+    exact match) depends on DB-internal ordering, not any real property of
+    the data — assert the query now asks SolarWinds to sort by Caption, same
+    as find_interfaces() already does."""
+    captured = {}
+
+    def fake_query(swql, username, password):
+        captured["swql"] = swql
+        return []
+
+    with patch("clients.solarwinds.query", side_effect=fake_query):
+        find_node_ip("R-SITE-01", "dev", "dev")
+
+    assert "ORDER BY n.Caption" in captured["swql"]
+
+
 # ── _build_site_info ─────────────────────────────────────────────────────────
 
 def _fake_meta(**overrides):
@@ -110,3 +127,22 @@ def test_generate_bandwidth_report_includes_site_info():
     assert result["status"] == "ok"
     assert result["site_info"]["site_code"] == "S001"
     assert result["site_info"]["circuit_size_mbps"] == 10.0
+
+
+def test_generate_bandwidth_report_24h_and_7d_windows_land_correctly_when_run_concurrently():
+    """The 24h and 7d SolarWinds queries now run concurrently (ThreadPoolExecutor)
+    rather than back-to-back — key the fake response off the SWQL text (not call
+    order) to make sure results still land in the right window regardless of
+    which thread's request the mock happens to service first."""
+    def fake_query(swql, username, password):
+        if "ADDHOUR(-24," in swql:
+            return [{"DateTime": "2026-08-04T00:00:00Z", "InPercentUtil": "1.0", "OutPercentUtil": "2.0"}]
+        if "ADDHOUR(-168," in swql:
+            return [{"DateTime": "2026-07-29T00:00:00Z", "InPercentUtil": "3.0", "OutPercentUtil": "4.0"}]
+        return [_fake_meta()]
+
+    with patch("clients.solarwinds.query", side_effect=fake_query):
+        result = generate_bandwidth_report("R-SITE-01", "Tunnel5000", None, "dev", "dev")
+
+    assert result["series_24h"] == [{"t": "2026-08-04T00:00:00Z", "in": 1.0, "out": 2.0}]
+    assert result["series_7d"] == [{"t": "2026-07-29T00:00:00Z", "in": 3.0, "out": 4.0}]

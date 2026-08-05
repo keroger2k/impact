@@ -99,6 +99,34 @@ def test_generate_report_resolves_ip_before_matching_exporters():
     assert result["traffic_24h"]["applications"] == ["Teams"]
 
 
+def test_generate_report_24h_and_7d_pulls_land_correctly_when_run_concurrently():
+    """The 24h and 7d report pulls now run concurrently (ThreadPoolExecutor)
+    rather than back-to-back — key the fake response off the `hours` argument
+    (not call order) to make sure results still land in the right window
+    regardless of which thread's request the mock happens to service first."""
+    def fake_traffic(session, base_url, domain_id, device_id, device_name, exporter_ip, exporter_name,
+                      interface_id, interface_name, hours, timeout=60):
+        if hours == 24:
+            return [{"applicationName": "Teams", "time": "2026-08-04T00:00:00Z",
+                      "trafficInboundBps": 1000, "trafficOutboundBps": 0}]
+        return [{"applicationName": "Splunk", "time": "2026-07-29T00:00:00Z",
+                  "trafficInboundBps": 2000, "trafficOutboundBps": 0}]
+
+    with patch("utils.sna_report.find_node_ip", return_value="1.2.3.4"), \
+         patch("clients.sna.login", return_value="fake-session"), \
+         patch("clients.sna.get_tenant_id", return_value="999"), \
+         patch("clients.sna.list_flow_collectors", return_value=[{"id": 1, "name": "fc01"}]), \
+         patch("clients.sna.list_exporters", return_value=[{"id": "1.2.3.4", "name": ""}]), \
+         patch("clients.sna.list_interfaces", return_value=[{"id": 68, "name": "Tunnel5000"}]), \
+         patch("clients.sna.get_interface_application_traffic", side_effect=fake_traffic):
+        result = sna_report.generate_application_traffic_report(
+            "https://sna.example.com", "network", "dev", "dev", "R-SITE-01", "Tunnel5000",
+        )
+
+    assert result["traffic_24h"]["applications"] == ["Teams"]
+    assert result["traffic_7d"]["applications"] == ["Splunk"]
+
+
 def test_generate_report_no_exporter_match_raises_lookup_error_with_ip_hint():
     with patch("utils.sna_report.find_node_ip", return_value="1.2.3.4"), \
          patch("clients.sna.login", return_value="fake-session"), \

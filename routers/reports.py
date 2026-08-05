@@ -21,6 +21,7 @@ posture used elsewhere in the app).
 from __future__ import annotations
 
 import asyncio
+import html
 import io
 import logging
 import os
@@ -28,15 +29,21 @@ import zipfile
 from datetime import date, datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Form, HTTPException
-from fastapi.responses import Response
+from fastapi import APIRouter, Depends, Form, HTTPException, Query
+from fastapi.responses import HTMLResponse, Response
 
 import clients.sna as sna_client
 from auth import SessionEntry, require_auth
+from cache import cache
 from logger_config import run_with_context
 from utils.bandwidth_report import DEFAULT_INTERFACE, InvalidNameError, generate_bandwidth_report
 from utils.cdrl49_report import REPORT_DEFS, generate_report, rows_to_csv
 from utils.sna_report import generate_application_traffic_report
+
+# Cap on how many <option> fragments a datalist endpoint returns — these back
+# a live search-as-you-type field, not a full listing, so results stay small
+# and fast to render regardless of fleet size.
+_DATALIST_LIMIT = 40
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -125,6 +132,63 @@ async def generate_bandwidth(
         raise HTTPException(502, f"SolarWinds query failed: {e}")
 
     return result
+
+
+@router.get("/bandwidth/router-options", response_class=HTMLResponse)
+async def bandwidth_router_options(
+    router: str = Query("", max_length=100),
+    session: SessionEntry = Depends(require_auth),
+):
+    """Datalist <option> fragment of DNAC-known router hostnames.
+
+    Feeds the Router Name field's autofill on the Bandwidth Utilization
+    report. Pure cache read (stale OK — same pattern as
+    routers/firewall.py's `_zones_for_dg` datalist) against DNAC's `devices`
+    cache, which is already warmed at startup and background-refreshed
+    (datasets.py), so this costs nothing extra. Still feeds a free-text
+    input rather than a hard-enforced select: SolarWinds' own Node Caption
+    is what actually resolves the report, and it usually — but not always —
+    matches the DNAC hostname exactly.
+    """
+    devices = cache.get_stale("devices") or []
+    needle = router.strip().lower()
+    names = sorted(
+        {d["hostname"] for d in devices if d.get("hostname") and (not needle or needle in d["hostname"].lower())},
+        key=str.lower,
+    )
+    return HTMLResponse("".join(f'<option value="{html.escape(n, quote=True)}"></option>' for n in names[:_DATALIST_LIMIT]))
+
+
+@router.get("/bandwidth/interface-options", response_class=HTMLResponse)
+async def bandwidth_interface_options(
+    router: str = Query("", max_length=100),
+    session: SessionEntry = Depends(require_auth),
+):
+    """Datalist <option> fragment of every DNAC-known interface name on `router`.
+
+    Same cache-only approach as bandwidth_router_options, against the
+    `dnac_interfaces` cache. Exact hostname match preferred, falling back to
+    a substring match (mirrors utils.bandwidth_report.find_node_ip's
+    exact-then-LIKE pattern) since the Router Name field may still hold a
+    partially-typed value when this fires.
+
+    Unlike the router list, this isn't narrowed by the Interface field's own
+    text: a single device's interface count is small enough that the
+    browser's native datalist filtering handles that, and narrowing
+    server-side would go empty as soon as the field still held a value (e.g.
+    the Tunnel5000 default) left over from a previously-picked router that
+    doesn't happen to have that interface.
+    """
+    router_needle = router.strip().lower()
+    if not router_needle:
+        return HTMLResponse("")
+
+    interfaces = cache.get_stale("dnac_interfaces") or []
+    exact = [i for i in interfaces if (i.get("deviceName") or "").strip().lower() == router_needle]
+    pool = exact if exact else [i for i in interfaces if router_needle in (i.get("deviceName") or "").lower()]
+
+    names = sorted({i["portName"] for i in pool if i.get("portName")}, key=str.lower)
+    return HTMLResponse("".join(f'<option value="{html.escape(n, quote=True)}"></option>' for n in names[:_DATALIST_LIMIT]))
 
 
 @router.post("/bandwidth/application-traffic")
