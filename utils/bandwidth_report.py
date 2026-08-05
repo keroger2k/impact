@@ -51,6 +51,7 @@ def find_interfaces(router_name: str | None, interface_name: str, username: str,
 SELECT
     n.NodeID,
     n.Caption AS NodeName,
+    n.IPAddress AS NodeIpAddress,
     i.InterfaceID,
     i.Caption AS InterfaceCaption,
     i.Name AS InterfaceName,
@@ -78,6 +79,7 @@ def get_interface_by_id(interface_id: int, username: str, password: str) -> dict
 SELECT
     n.NodeID,
     n.Caption AS NodeName,
+    n.IPAddress AS NodeIpAddress,
     i.InterfaceID,
     i.Caption AS InterfaceCaption,
     i.Name AS InterfaceName,
@@ -159,6 +161,7 @@ def generate_bandwidth_report(
                     {
                         "interface_id": m.get("InterfaceID"),
                         "node_name": m.get("NodeName"),
+                        "node_ip": m.get("NodeIpAddress"),
                         "caption": m.get("InterfaceCaption"),
                         "name": m.get("InterfaceName"),
                         "alias": m.get("InterfaceAlias"),
@@ -173,6 +176,7 @@ def generate_bandwidth_report(
     return {
         "status": "ok",
         "node_name": meta.get("NodeName"),
+        "node_ip": meta.get("NodeIpAddress"),
         "interface_caption": meta.get("InterfaceCaption") or meta.get("InterfaceName"),
         "interface_id": iface_id,
         "series_24h": get_traffic_series(iface_id, 24, username, password),

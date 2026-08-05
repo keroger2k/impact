@@ -114,6 +114,55 @@
               </div>
             </div>
           </div>
+
+          <hr class="my-3">
+
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+            <strong class="small">Application Traffic</strong>
+            <span class="text-muted small">(Cisco Secure Network Analytics — top applications by byte volume)</span>
+          </div>
+          <p class="text-muted small mb-2">
+            Raw flow search is slow — a live scan over NetFlow, not a pre-aggregated counter — so this can
+            take anywhere from under a minute to several minutes, especially for a 7-day window. Progress
+            below is SNA's own reported percent-complete.
+          </p>
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+            <div class="btn-group btn-group-sm" role="group">
+              <input type="radio" class="btn-check" name="sna-range" id="sna-range-24h" value="24" checked>
+              <label class="btn btn-outline btn-sm" for="sna-range-24h">Last 24 Hours</label>
+              <input type="radio" class="btn-check" name="sna-range" id="sna-range-7d" value="168">
+              <label class="btn btn-outline btn-sm" for="sna-range-7d">Last 7 Days</label>
+            </div>
+            <button type="button" class="btn btn-primary btn-sm" id="sna-load-btn" onclick="loadApplicationTraffic()">
+              <i class="ph ph-play"></i> Load Application Traffic
+            </button>
+          </div>
+
+          <div id="sna-error" class="alert alert-danger py-2 small d-none" role="alert"></div>
+          <div id="sna-truncated" class="alert alert-warning py-2 small d-none" role="alert">
+            SNA's result cap was reached — this window may contain more traffic than shown below.
+          </div>
+
+          <div id="sna-progress" class="d-none mb-3">
+            <div class="d-flex justify-content-between small text-muted mb-1">
+              <span id="sna-progress-label">Starting…</span>
+              <span id="sna-progress-pct">0%</span>
+            </div>
+            <div class="progress" style="height: 6px;">
+              <div id="sna-progress-bar" class="progress-bar" role="progressbar" style="width: 0%"></div>
+            </div>
+          </div>
+
+          <div id="sna-chart-card" class="bw-chart-card d-none">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <strong class="small" id="sna-chart-title">Application Traffic</strong>
+              <button type="button" class="btn btn-outline btn-sm" onclick="bwToggleTable('sna')">
+                <i class="ph ph-table"></i> View as table
+              </button>
+            </div>
+            <div id="sna-chart"></div>
+            <div id="sna-table" class="d-none"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -154,6 +203,13 @@
 </style>
 
 <script>
+(function(){
+  /* IIFE-scoped: htmx re-executes inline <script> tags on every swap into
+     #main-content, and a bare top-level const/let would throw
+     "Identifier already declared" the second time this page is visited in
+     the same session (confirmed empirically — it silently broke every
+     function defined after it). Only the onclick-referenced entry points
+     get attached to window at the bottom. */
   const BW_COLOR_OUT = '#2a78d6';      /* categorical slot 1 — Outbound (Tx) */
   const BW_COLOR_IN  = '#eb6834';      /* categorical slot 2 — Inbound (Rx) */
   const BW_TEXT_SECONDARY = '#52514e';
@@ -162,6 +218,7 @@
   const BW_AXIS = '#c3c2b7';
   const BW_SURFACE = '#ffffff';
   const BW_NS = 'http://www.w3.org/2000/svg';
+  let bwCurrentNodeIp = null;   // resolved by the In/Out lookup; feeds the SNA application-traffic query
 
   function svgEl(tag, attrs) {
     const el = document.createElementNS(BW_NS, tag);
@@ -268,6 +325,7 @@
   function renderBwResults(data) {
     document.getElementById('bw-candidates').classList.add('d-none');
     document.getElementById('bw-subtitle').textContent = data.node_name + ' — ' + data.interface_caption;
+    bwCurrentNodeIp = data.node_ip || null;
 
     const resultsBox = document.getElementById('bw-results');
     resultsBox.classList.remove('d-none');
@@ -521,9 +579,379 @@
 
     if (window.ImpactDataTable) window.ImpactDataTable.init(container);
   }
+
+  /* Categorical slots 1-7 (blue, orange, aqua, yellow, magenta, green, violet)
+     assigned in rank order (biggest application first); "Other" always gets
+     a fixed muted gray rather than the 8th hue, since it's a residual fold,
+     not a real identity. */
+  const SNA_PALETTE = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7'];
+  const SNA_OTHER_COLOR = '#898781';
+
+  // Most of this router's own traffic (netflow/snmp/syslog housekeeping, not
+  // dataplane) sits well under 1 Mbps in practice (confirmed against real
+  // SNA data) — a fixed 2-decimal format would round meaningful values to
+  // "0.00", so scale precision to the magnitude instead.
+  function formatMbps(v) {
+    if (v === 0) return '0';
+    const abs = Math.abs(v);
+    if (abs < 0.001) return v.toFixed(4);
+    if (abs < 0.01) return v.toFixed(3);
+    if (abs < 1) return v.toFixed(2);
+    return v.toFixed(v < 10 ? 1 : 0);
+  }
+
+  let snaPollTimer = null;
+  let snaPollCount = 0;
+  const SNA_MAX_POLLS = 400; // ~20 min at a 3s interval — safety net, not expected in normal use
+
+  function snaColorFor(app, applications) {
+    return app === 'Other' ? SNA_OTHER_COLOR : SNA_PALETTE[applications.indexOf(app) % SNA_PALETTE.length];
+  }
+
+  function snaTooltipRow(color, appName, mbpsValue) {
+    const row = document.createElement('div');
+    row.className = 'bw-tooltip-row';
+    const key = document.createElement('span');
+    key.className = 'bw-tooltip-key';
+    key.style.background = color;
+    const val = document.createElement('strong');
+    val.textContent = formatMbps(mbpsValue) + ' Mbps';
+    const label = document.createElement('span');
+    label.className = 'text-muted ms-1';
+    label.textContent = appName;
+    row.appendChild(key);
+    row.appendChild(val);
+    row.appendChild(label);
+    return row;
+  }
+
+  function loadApplicationTraffic() {
+    if (snaPollTimer) { clearInterval(snaPollTimer); snaPollTimer = null; }
+
+    const hours = parseInt(document.querySelector('input[name="sna-range"]:checked').value, 10);
+    const errorBox = document.getElementById('sna-error');
+    const truncatedBox = document.getElementById('sna-truncated');
+    const progressBox = document.getElementById('sna-progress');
+    const progressBar = document.getElementById('sna-progress-bar');
+    const progressLabel = document.getElementById('sna-progress-label');
+    const progressPct = document.getElementById('sna-progress-pct');
+    const chartCard = document.getElementById('sna-chart-card');
+    const loadBtn = document.getElementById('sna-load-btn');
+
+    errorBox.classList.add('d-none');
+    truncatedBox.classList.add('d-none');
+    chartCard.classList.add('d-none');
+
+    if (!bwCurrentNodeIp) {
+      errorBox.textContent = 'No resolved router IP yet — generate the In/Out chart above first.';
+      errorBox.classList.remove('d-none');
+      return;
+    }
+
+    const csrfToken = document.cookie.split('; ').find(row => row.startsWith('csrf_token='));
+    loadBtn.disabled = true;
+    progressBox.classList.remove('d-none');
+    progressLabel.textContent = 'Starting SNA flow query…';
+    progressBar.style.width = '0%';
+    progressPct.textContent = '0%';
+
+    const formData = new FormData();
+    formData.set('ip_address', bwCurrentNodeIp);
+    formData.set('hours', hours);
+
+    fetch('/api/reports/bandwidth/application-traffic/start', {
+      method: 'POST',
+      body: formData,
+      headers: { 'X-CSRF-Token': csrfToken ? csrfToken.split('=')[1] : '' },
+    })
+    .then(async response => {
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error((data && data.detail) || 'Failed to start SNA query');
+      return data;
+    })
+    .then(data => {
+      snaPollCount = 0;
+      snaPollTimer = setInterval(() => pollApplicationTraffic(data.job_id, hours), 3000);
+    })
+    .catch(err => {
+      progressBox.classList.add('d-none');
+      loadBtn.disabled = false;
+      errorBox.textContent = err.message;
+      errorBox.classList.remove('d-none');
+    });
+  }
+
+  function pollApplicationTraffic(jobId, hours) {
+    const errorBox = document.getElementById('sna-error');
+    const progressBox = document.getElementById('sna-progress');
+    const progressBar = document.getElementById('sna-progress-bar');
+    const progressLabel = document.getElementById('sna-progress-label');
+    const progressPct = document.getElementById('sna-progress-pct');
+    const loadBtn = document.getElementById('sna-load-btn');
+
+    snaPollCount += 1;
+    if (snaPollCount > SNA_MAX_POLLS) {
+      clearInterval(snaPollTimer); snaPollTimer = null;
+      progressLabel.textContent = 'Still running after 20 minutes — SNA may be under heavy load. Try again later.';
+      loadBtn.disabled = false;
+      return;
+    }
+
+    fetch(`/api/reports/bandwidth/application-traffic/${jobId}/status`)
+      .then(async response => {
+        const data = await response.json().catch(() => null);
+        if (!response.ok) throw new Error((data && data.detail) || 'Status check failed');
+        return data;
+      })
+      .then(status => {
+        const pct = Math.max(0, Math.min(100, Math.round(status.percent_complete || 0)));
+        progressBar.style.width = pct + '%';
+        progressPct.textContent = pct + '%';
+
+        const inProgress = ['IN_PROGRESS', 'PENDING', 'RUNNING', 'QUEUED'].includes((status.status || '').toUpperCase());
+        if (!inProgress) {
+          progressLabel.textContent = 'Fetching results…';
+          clearInterval(snaPollTimer); snaPollTimer = null;
+          fetchApplicationTrafficResults(jobId, hours);
+        } else {
+          progressLabel.textContent = 'Querying SNA (' + status.status + ')…';
+        }
+      })
+      .catch(err => {
+        clearInterval(snaPollTimer); snaPollTimer = null;
+        progressBox.classList.add('d-none');
+        loadBtn.disabled = false;
+        errorBox.textContent = err.message;
+        errorBox.classList.remove('d-none');
+      });
+  }
+
+  function fetchApplicationTrafficResults(jobId, hours) {
+    const errorBox = document.getElementById('sna-error');
+    const truncatedBox = document.getElementById('sna-truncated');
+    const progressBox = document.getElementById('sna-progress');
+    const chartCard = document.getElementById('sna-chart-card');
+    const chartTitle = document.getElementById('sna-chart-title');
+    const loadBtn = document.getElementById('sna-load-btn');
+
+    fetch(`/api/reports/bandwidth/application-traffic/${jobId}/results`)
+      .then(async response => {
+        const data = await response.json().catch(() => null);
+        if (!response.ok) throw new Error((data && data.detail) || 'Fetching results failed');
+        return data;
+      })
+      .then(data => {
+        progressBox.classList.add('d-none');
+        loadBtn.disabled = false;
+
+        if (data.truncated) truncatedBox.classList.remove('d-none');
+
+        const periodLabel = hours === 24 ? 'Last 24 Hours' : 'Last 7 Days';
+        chartTitle.textContent = 'Application Traffic — ' + periodLabel + ' (' + data.flow_count + ' flows)';
+        chartCard.classList.remove('d-none');
+        renderStackedBarChart('sna-chart', data, periodLabel);
+        renderSnaTable('sna-table', data);
+      })
+      .catch(err => {
+        progressBox.classList.add('d-none');
+        loadBtn.disabled = false;
+        errorBox.textContent = err.message;
+        errorBox.classList.remove('d-none');
+      });
+  }
+
+  function renderStackedBarChart(containerId, data, periodLabel) {
+    const container = document.getElementById(containerId);
+    container.textContent = '';
+
+    const buckets = data.buckets || [];
+    const applications = data.applications || [];
+    const bucketMinutes = data.bucket_minutes || 60;
+
+    if (buckets.length === 0 || applications.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'text-muted small text-center py-5';
+      empty.textContent = 'No application traffic data available for this window.';
+      container.appendChild(empty);
+      return;
+    }
+
+    const bucketSeconds = bucketMinutes * 60;
+    const toMbps = (bytes) => (bytes * 8) / bucketSeconds / 1e6;
+
+    const legend = document.createElement('div');
+    legend.className = 'bw-legend d-flex flex-wrap gap-3 small mb-2';
+    applications.forEach(app => legend.appendChild(bwLegendSwatch(snaColorFor(app, applications), app)));
+    container.appendChild(legend);
+
+    const W = 640, H = 300;
+    const marginL = 40, marginR = 12, marginT = 10, marginB = 34;
+    const plotW = W - marginL - marginR;
+    const plotH = H - marginT - marginB;
+
+    const stacks = buckets.map((_, bi) => {
+      let cum = 0;
+      return applications.map(app => {
+        const v = toMbps((data.series[app] || [])[bi] || 0);
+        const start = cum;
+        cum += v;
+        return { app, start, end: cum, value: v };
+      });
+    });
+    const maxTotal = Math.max(0, ...stacks.map(s => (s.length ? s[s.length - 1].end : 0)));
+
+    function niceCeil(v) {
+      if (v <= 0) return 1;
+      const mag = Math.pow(10, Math.floor(Math.log10(v)));
+      const norm = v / mag;
+      const nice = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10;
+      return nice * mag;
+    }
+    const yMax = niceCeil(maxTotal);
+
+    const svg = svgEl('svg', {
+      viewBox: `0 0 ${W} ${H}`, width: '100%', style: 'display:block',
+      role: 'img', 'aria-label': periodLabel + ' application traffic stacked chart',
+    });
+
+    const ySteps = 5;
+    for (let i = 0; i <= ySteps; i++) {
+      const v = (yMax / ySteps) * i;
+      const y = marginT + plotH - (v / yMax) * plotH;
+      svg.appendChild(svgEl('line', { x1: marginL, x2: W - marginR, y1: y, y2: y, stroke: BW_GRID, 'stroke-width': 1 }));
+      const t = svgEl('text', { x: marginL - 6, y: y + 3, 'text-anchor': 'end', 'font-size': 9, fill: BW_TEXT_MUTED });
+      t.textContent = formatMbps(v);
+      svg.appendChild(t);
+    }
+    svg.appendChild(svgEl('line', { x1: marginL, x2: W - marginR, y1: marginT + plotH, y2: marginT + plotH, stroke: BW_AXIS, 'stroke-width': 1 }));
+
+    const bandW = plotW / buckets.length;
+    const barW = Math.max(2, Math.min(24, bandW * 0.65));
+    const gapPx = 2;
+
+    const tooltip = document.createElement('div');
+    tooltip.className = 'bw-tooltip';
+
+    const tickEvery = Math.max(1, Math.ceil(buckets.length / 8));
+
+    buckets.forEach((iso, bi) => {
+      const bandX = marginL + bi * bandW;
+      const barX = bandX + (bandW - barW) / 2;
+
+      stacks[bi].forEach((seg, si) => {
+        if (seg.value <= 0) return;
+        const yTop = marginT + plotH - (seg.end / yMax) * plotH;
+        const yBottom = marginT + plotH - (seg.start / yMax) * plotH;
+        const h = yBottom - yTop;
+        if (h <= 0) return;
+        const drawY = si === 0 ? yTop : yTop + gapPx / 2;
+        const drawH = si === 0 ? h : Math.max(0, h - gapPx / 2);
+        svg.appendChild(svgEl('rect', {
+          x: barX, y: drawY, width: barW, height: drawH,
+          fill: snaColorFor(seg.app, applications), rx: 2, ry: 2,
+        }));
+      });
+
+      if (bi % tickEvery === 0) {
+        const label = svgEl('text', { x: bandX + bandW / 2, y: H - 10, 'text-anchor': 'middle', 'font-size': 9, fill: BW_TEXT_MUTED });
+        label.textContent = bwFormatTick(new Date(iso), periodLabel);
+        svg.appendChild(label);
+      }
+
+      const hit = svgEl('rect', { x: bandX, y: marginT, width: bandW, height: plotH, fill: 'transparent' });
+      hit.addEventListener('pointerenter', () => {
+        tooltip.textContent = '';
+        const timeEl = document.createElement('div');
+        timeEl.className = 'bw-tooltip-time';
+        timeEl.textContent = bwFormatFull(new Date(iso));
+        tooltip.appendChild(timeEl);
+        [...stacks[bi]].sort((a, b) => b.value - a.value).forEach(seg => {
+          if (seg.value <= 0) return;
+          tooltip.appendChild(snaTooltipRow(snaColorFor(seg.app, applications), seg.app, seg.value));
+        });
+        tooltip.style.display = 'block';
+      });
+      hit.addEventListener('pointermove', (evt) => {
+        const containerRect = container.getBoundingClientRect();
+        let left = evt.clientX - containerRect.left + 12;
+        let top = evt.clientY - containerRect.top + 12;
+        if (left + 160 > containerRect.width) left = evt.clientX - containerRect.left - 160;
+        tooltip.style.left = left + 'px';
+        tooltip.style.top = top + 'px';
+      });
+      hit.addEventListener('pointerleave', () => { tooltip.style.display = 'none'; });
+      svg.appendChild(hit);
+    });
+
+    container.appendChild(svg);
+    container.appendChild(tooltip);
+  }
+
+  function renderSnaTable(containerId, data) {
+    const container = document.getElementById(containerId);
+    container.textContent = '';
+
+    const buckets = data.buckets || [];
+    const applications = data.applications || [];
+    if (buckets.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'text-muted small mb-0';
+      empty.textContent = 'No application traffic data available for this window.';
+      container.appendChild(empty);
+      return;
+    }
+
+    const bucketSeconds = (data.bucket_minutes || 60) * 60;
+    const toMbps = (bytes) => (bytes * 8) / bucketSeconds / 1e6;
+
+    const wrap = document.createElement('div');
+    wrap.className = 'table-responsive';
+    wrap.style.maxHeight = '320px';
+
+    const table = document.createElement('table');
+    table.className = 'table table-sm data-table mb-0';
+
+    const thead = document.createElement('thead');
+    const headRow = document.createElement('tr');
+    const th0 = document.createElement('th');
+    th0.textContent = 'Time';
+    headRow.appendChild(th0);
+    applications.forEach(app => {
+      const th = document.createElement('th');
+      th.textContent = app + ' (Mbps)';
+      headRow.appendChild(th);
+    });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    buckets.forEach((iso, bi) => {
+      const row = document.createElement('tr');
+      const tCell = document.createElement('td');
+      tCell.textContent = bwFormatFull(new Date(iso));
+      row.appendChild(tCell);
+      applications.forEach(app => {
+        const cell = document.createElement('td');
+        cell.textContent = formatMbps(toMbps((data.series[app] || [])[bi] || 0));
+        row.appendChild(cell);
+      });
+      tbody.appendChild(row);
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    container.appendChild(wrap);
+
+    if (window.ImpactDataTable) window.ImpactDataTable.init(container);
+  }
+
+  window.generateBandwidth = generateBandwidth;
+  window.bwToggleTable = bwToggleTable;
+  window.loadApplicationTraffic = loadApplicationTraffic;
+})();
 </script>
 
 <script>
+(function(){
   function generateCdrl49() {
     const btn = document.getElementById('cdrl49-generate-btn');
     const label = document.getElementById('cdrl49-generate-label');
@@ -585,4 +1013,7 @@
       label.textContent = 'Generate & Download';
     });
   }
+
+  window.generateCdrl49 = generateCdrl49;
+})();
 </script>
