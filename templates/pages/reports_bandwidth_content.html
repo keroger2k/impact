@@ -42,6 +42,34 @@
 
           <div id="bw-results" class="d-none">
             <div class="small text-muted mb-2" id="bw-subtitle"></div>
+
+            <div id="bw-site-info-card" class="bw-chart-card mb-3 d-none">
+              <strong class="small d-block mb-3">Site Information</strong>
+              <div class="row g-3" id="bw-site-info-fields"></div>
+              <hr class="my-3">
+              <p class="text-muted small mb-2">
+                Not tracked in SolarWinds — enter manually if needed for this report.
+              </p>
+              <div class="row g-2">
+                <div class="col-sm-6 col-lg-3">
+                  <label class="form-label small fw-bold uppercase letter-spacing-1">FRM</label>
+                  <input type="text" id="bw-site-frm" class="form-control form-control-sm">
+                </div>
+                <div class="col-sm-6 col-lg-3">
+                  <label class="form-label small fw-bold uppercase letter-spacing-1">Circuit Provider</label>
+                  <input type="text" id="bw-site-provider" class="form-control form-control-sm" placeholder="e.g. AT&amp;T">
+                </div>
+                <div class="col-sm-6 col-lg-3">
+                  <label class="form-label small fw-bold uppercase letter-spacing-1">Transitioned (if)</label>
+                  <input type="text" id="bw-site-transition" class="form-control form-control-sm" placeholder="e.g. 01/15/2026">
+                </div>
+                <div class="col-sm-6 col-lg-3">
+                  <label class="form-label small fw-bold uppercase letter-spacing-1">Report Author</label>
+                  <input type="text" id="bw-site-author" class="form-control form-control-sm" value="{{ username }}">
+                </div>
+              </div>
+            </div>
+
             <div class="row g-3">
               <div class="col-lg-6">
                 <div class="bw-chart-card">
@@ -312,10 +340,54 @@
     const resultsBox = document.getElementById('bw-results');
     resultsBox.classList.remove('d-none');
 
+    renderSiteInfo(data);
     renderBandwidthChart('bw-24h-chart', data.series_24h, 'Last 24 Hours');
     renderBandwidthChart('bw-7d-chart', data.series_7d, 'Last 7 Days');
     renderBwTable('bw-24h-table', data.series_24h);
     renderBwTable('bw-7d-table', data.series_7d);
+  }
+
+  function siteInfoField(label, value) {
+    const col = document.createElement('div');
+    col.className = 'col-6 col-md-3';
+    const labelEl = document.createElement('div');
+    labelEl.className = 'small text-muted fw-bold text-uppercase';
+    labelEl.style.fontSize = '10px';
+    labelEl.textContent = label;
+    const valueEl = document.createElement('div');
+    valueEl.className = 'fw-bold';
+    valueEl.textContent = value || '—';
+    col.appendChild(labelEl);
+    col.appendChild(valueEl);
+    return col;
+  }
+
+  // Site Code/Airport Code/Category/Building/City/State/Local POC/Circuit
+  // Size come from SolarWinds custom properties + the interface's own Speed
+  // field (confirmed against a real instance — see
+  // scripts/solarwinds_discover_site_properties.py). FRM, Circuit Provider,
+  // and Transitioned date aren't tracked in SolarWinds anywhere and stay
+  // manual inputs below this grid.
+  function renderSiteInfo(data) {
+    const card = document.getElementById('bw-site-info-card');
+    const fields = document.getElementById('bw-site-info-fields');
+    fields.textContent = '';
+
+    const info = data.site_info || {};
+    const cityState = [info.city, info.state].filter(Boolean).join(', ');
+    const circuit = (info.circuit_size_mbps !== null && info.circuit_size_mbps !== undefined)
+      ? `${info.circuit_size_mbps} Mb/s` : null;
+
+    fields.appendChild(siteInfoField('Router Name', data.node_name));
+    fields.appendChild(siteInfoField('Site Code', info.site_code));
+    fields.appendChild(siteInfoField('Airport Code', info.airport_code));
+    fields.appendChild(siteInfoField('Category', info.category));
+    fields.appendChild(siteInfoField('Building', info.building));
+    fields.appendChild(siteInfoField('City, ST', cityState));
+    fields.appendChild(siteInfoField('Local POC', info.local_poc));
+    fields.appendChild(siteInfoField('Circuit Size', circuit));
+
+    card.classList.remove('d-none');
   }
 
   function bwLegendSwatch(color, text) {

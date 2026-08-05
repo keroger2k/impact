@@ -24,7 +24,7 @@ def test_find_exporters_matches_by_ip():
     ]
     with patch("clients.sna.list_flow_collectors", return_value=flow_collectors), \
          patch("clients.sna.list_exporters", return_value=exporters):
-        matches = sna_report.find_exporters(None, "https://sna.example.com", "999", "RTRYL005AA001", "1.2.3.4")
+        matches = sna_report.find_exporters(None, "https://sna.example.com", "999", "R-SITE-01", "1.2.3.4")
 
     assert len(matches) == 1
     assert matches[0]["exporter_ip"] == "1.2.3.4"
@@ -34,22 +34,22 @@ def test_find_exporters_matches_by_ip():
 
 def test_find_exporters_falls_back_to_name_when_no_ip_match():
     flow_collectors = [{"id": 1, "name": "fc01"}]
-    exporters = [{"id": "9.9.9.9", "name": "RTRYL005AA001.network.ad.tsa.gov"}]
+    exporters = [{"id": "9.9.9.9", "name": "R-SITE-01.network.ad.tsa.gov"}]
     with patch("clients.sna.list_flow_collectors", return_value=flow_collectors), \
          patch("clients.sna.list_exporters", return_value=exporters):
         # IP resolved from SolarWinds doesn't match any exporter's id.
-        matches = sna_report.find_exporters(None, "https://sna.example.com", "999", "RTRYL005AA001", "1.2.3.4")
+        matches = sna_report.find_exporters(None, "https://sna.example.com", "999", "R-SITE-01", "1.2.3.4")
 
     assert len(matches) == 1
-    assert matches[0]["exporter_name"] == "RTRYL005AA001.network.ad.tsa.gov"
+    assert matches[0]["exporter_name"] == "R-SITE-01.network.ad.tsa.gov"
 
 
 def test_find_exporters_no_ip_resolved_uses_name_match():
     flow_collectors = [{"id": 1, "name": "fc01"}]
-    exporters = [{"id": "9.9.9.9", "name": "RTRYL005AA001"}]
+    exporters = [{"id": "9.9.9.9", "name": "R-SITE-01"}]
     with patch("clients.sna.list_flow_collectors", return_value=flow_collectors), \
          patch("clients.sna.list_exporters", return_value=exporters):
-        matches = sna_report.find_exporters(None, "https://sna.example.com", "999", "RTRYL005AA001", None)
+        matches = sna_report.find_exporters(None, "https://sna.example.com", "999", "R-SITE-01", None)
 
     assert len(matches) == 1
 
@@ -58,11 +58,11 @@ def test_find_exporters_ip_match_wins_over_name_match():
     flow_collectors = [{"id": 1, "name": "fc01"}]
     exporters = [
         {"id": "1.2.3.4", "name": "unrelated-name"},
-        {"id": "9.9.9.9", "name": "RTRYL005AA001"},
+        {"id": "9.9.9.9", "name": "R-SITE-01"},
     ]
     with patch("clients.sna.list_flow_collectors", return_value=flow_collectors), \
          patch("clients.sna.list_exporters", return_value=exporters):
-        matches = sna_report.find_exporters(None, "https://sna.example.com", "999", "RTRYL005AA001", "1.2.3.4")
+        matches = sna_report.find_exporters(None, "https://sna.example.com", "999", "R-SITE-01", "1.2.3.4")
 
     assert len(matches) == 1
     assert matches[0]["exporter_ip"] == "1.2.3.4"
@@ -71,7 +71,7 @@ def test_find_exporters_ip_match_wins_over_name_match():
 def test_find_exporters_no_match_at_all():
     with patch("clients.sna.list_flow_collectors", return_value=[{"id": 1, "name": "fc01"}]), \
          patch("clients.sna.list_exporters", return_value=[{"id": "9.9.9.9", "name": "nope"}]):
-        matches = sna_report.find_exporters(None, "https://sna.example.com", "999", "RTRYL005AA001", "1.2.3.4")
+        matches = sna_report.find_exporters(None, "https://sna.example.com", "999", "R-SITE-01", "1.2.3.4")
 
     assert matches == []
 
@@ -89,10 +89,10 @@ def test_generate_report_resolves_ip_before_matching_exporters():
              {"applicationName": "Teams", "time": "2026-08-04T00:00:00Z", "trafficInboundBps": 1000, "trafficOutboundBps": 500},
          ]):
         result = sna_report.generate_application_traffic_report(
-            "https://sna.example.com", "network", "dev", "dev", "RTRYL005AA001", "Tunnel5000",
+            "https://sna.example.com", "network", "dev", "dev", "R-SITE-01", "Tunnel5000",
         )
 
-    mock_find_ip.assert_called_once_with("RTRYL005AA001", "dev", "dev")
+    mock_find_ip.assert_called_once_with("R-SITE-01", "dev", "dev")
     assert result["status"] == "ok"
     assert result["interface_name"] == "Tunnel5000"
     assert "traffic_24h" in result and "traffic_7d" in result
@@ -107,7 +107,7 @@ def test_generate_report_no_exporter_match_raises_lookup_error_with_ip_hint():
          patch("clients.sna.list_exporters", return_value=[{"id": "9.9.9.9", "name": "nope"}]):
         with pytest.raises(LookupError, match="1.2.3.4"):
             sna_report.generate_application_traffic_report(
-                "https://sna.example.com", "network", "dev", "dev", "RTRYL005AA001", "Tunnel5000",
+                "https://sna.example.com", "network", "dev", "dev", "R-SITE-01", "Tunnel5000",
             )
 
 
@@ -115,7 +115,7 @@ def test_generate_report_propagates_solarwinds_failure():
     with patch("utils.sna_report.find_node_ip", side_effect=RuntimeError("SolarWinds credentials are required")):
         with pytest.raises(RuntimeError):
             sna_report.generate_application_traffic_report(
-                "https://sna.example.com", "network", "", "", "RTRYL005AA001", "Tunnel5000",
+                "https://sna.example.com", "network", "", "", "R-SITE-01", "Tunnel5000",
             )
 
 

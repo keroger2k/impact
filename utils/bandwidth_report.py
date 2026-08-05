@@ -37,6 +37,40 @@ def _escape_literal(value: str) -> str:
     return value.replace("'", "''")
 
 
+# Selected + joined once here and reused by both find_interfaces() and
+# get_interface_by_id() so the Site Information panel costs no extra round
+# trip — the interface lookup already touches every table it needs. Field
+# names confirmed against a real SolarWinds instance (see
+# scripts/solarwinds_discover_site_properties.py's docstring for the
+# discovery trail): Orion.NodesCustomProperties needs an explicit join on
+# NodeID (it doesn't expose Caption directly), exactly the pattern
+# utils/cdrl49_report.py's build_swql() already uses for Site/Building/State.
+_SITE_INFO_SELECT = """
+    n.NodeID,
+    n.Caption AS NodeName,
+    n.IPAddress AS NodeIpAddress,
+    n.Contact AS NodeContact,
+    i.InterfaceID,
+    i.Caption AS InterfaceCaption,
+    i.Name AS InterfaceName,
+    i.InterfaceAlias,
+    i.Status,
+    i.StatusDescription,
+    i.Speed AS InterfaceSpeed,
+    cp.Site,
+    cp.Building,
+    cp.City,
+    cp.State,
+    cp.Airport_Code,
+    cp.AirportCategory
+"""
+_SITE_INFO_JOIN = """
+FROM Orion.NPM.Interfaces i
+JOIN Orion.Nodes n ON i.NodeID = n.NodeID
+JOIN Orion.NodesCustomProperties cp ON cp.NodeID = n.NodeID
+"""
+
+
 def find_interfaces(router_name: str | None, interface_name: str, username: str, password: str) -> list[dict]:
     """Find interfaces matching `interface_name`, optionally scoped to a router."""
     interface_name = _validate_name(interface_name, "Interface name")
@@ -48,18 +82,7 @@ def find_interfaces(router_name: str | None, interface_name: str, username: str,
         where_router = f"n.Caption = '{_escape_literal(router_name)}'\n    AND "
 
     swql = f"""
-SELECT
-    n.NodeID,
-    n.Caption AS NodeName,
-    n.IPAddress AS NodeIpAddress,
-    i.InterfaceID,
-    i.Caption AS InterfaceCaption,
-    i.Name AS InterfaceName,
-    i.InterfaceAlias,
-    i.Status,
-    i.StatusDescription
-FROM Orion.NPM.Interfaces i
-JOIN Orion.Nodes n ON i.NodeID = n.NodeID
+SELECT{_SITE_INFO_SELECT}{_SITE_INFO_JOIN}
 WHERE
     {where_router}(
         i.Caption = '{iface_lit}'
@@ -99,18 +122,7 @@ WHERE n.Caption = '{lit}' OR n.Caption LIKE '%{lit}%'
 
 def get_interface_by_id(interface_id: int, username: str, password: str) -> dict | None:
     swql = f"""
-SELECT
-    n.NodeID,
-    n.Caption AS NodeName,
-    n.IPAddress AS NodeIpAddress,
-    i.InterfaceID,
-    i.Caption AS InterfaceCaption,
-    i.Name AS InterfaceName,
-    i.InterfaceAlias,
-    i.Status,
-    i.StatusDescription
-FROM Orion.NPM.Interfaces i
-JOIN Orion.Nodes n ON i.NodeID = n.NodeID
+SELECT{_SITE_INFO_SELECT}{_SITE_INFO_JOIN}
 WHERE i.InterfaceID = {int(interface_id)}
 """
     rows = solarwinds.query(swql, username, password)
@@ -202,6 +214,38 @@ def generate_bandwidth_report(
         "node_ip": meta.get("NodeIpAddress"),
         "interface_caption": meta.get("InterfaceCaption") or meta.get("InterfaceName"),
         "interface_id": iface_id,
+        "site_info": _build_site_info(meta),
         "series_24h": get_traffic_series(iface_id, 24, username, password),
         "series_7d": get_traffic_series(iface_id, 24 * 7, username, password),
+    }
+
+
+def _build_site_info(meta: dict) -> dict:
+    """Site Information panel fields confirmed against a real SolarWinds
+    instance (see scripts/solarwinds_discover_site_properties.py). Circuit
+    Provider, FRM, and Transition Date aren't tracked anywhere in SolarWinds
+    (checked all 43 configured custom properties plus every interface's
+    caption/carrier fields) — they're left out here and stay manual inputs
+    on the report itself.
+    """
+    speed = meta.get("InterfaceSpeed")
+    circuit_mbps = None
+    if speed not in (None, ""):
+        try:
+            circuit_mbps = round(float(speed) / 1_000_000, 1)
+        except (TypeError, ValueError):
+            circuit_mbps = None
+
+    def _clean(value):
+        return value.strip() if isinstance(value, str) and value.strip() else None
+
+    return {
+        "site_code": _clean(meta.get("Site")),
+        "airport_code": _clean(meta.get("Airport_Code")),
+        "category": _clean(meta.get("AirportCategory")),
+        "building": _clean(meta.get("Building")),
+        "city": _clean(meta.get("City")),
+        "state": _clean(meta.get("State")),
+        "local_poc": _clean(meta.get("NodeContact")),
+        "circuit_size_mbps": circuit_mbps,
     }

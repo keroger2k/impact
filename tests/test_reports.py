@@ -34,6 +34,88 @@ def auth_headers():
     }
 
 
+# ── Bandwidth generate (In/Out + Site Information) ───────────────────────────
+
+def test_bandwidth_generate_ok(auth_headers, monkeypatch):
+    def fake_report(router_name, interface_name, interface_id, username, password):
+        assert router_name == "R-SITE-01"
+        return {
+            "status": "ok",
+            "node_name": "R-SITE-01",
+            "node_ip": "1.2.3.4",
+            "interface_caption": "Tunnel5000",
+            "interface_id": 42,
+            "site_info": {
+                "site_code": "S001", "airport_code": "KFAK", "category": "II",
+                "building": "Fake Municipal Airport", "city": "Faketown", "state": "CA",
+                "local_poc": "Jane Doe @ 555-000-1234", "circuit_size_mbps": 10.0,
+            },
+            "series_24h": [{"t": "2026-08-04T00:00:00Z", "in": 5.0, "out": 3.0}],
+            "series_7d": [{"t": "2026-08-01T00:00:00Z", "in": 4.0, "out": 2.0}],
+        }
+
+    monkeypatch.setattr("routers.reports.generate_bandwidth_report", fake_report)
+
+    r = client.post(
+        "/api/reports/bandwidth/generate",
+        data={"router": "R-SITE-01", "interface": "Tunnel5000"},
+        headers=auth_headers,
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "ok"
+    assert data["site_info"]["site_code"] == "S001"
+    assert data["site_info"]["circuit_size_mbps"] == 10.0
+
+
+def test_bandwidth_generate_ambiguous(auth_headers, monkeypatch):
+    def fake_report(*args, **kwargs):
+        return {
+            "status": "ambiguous",
+            "candidates": [
+                {"interface_id": 1, "node_name": "R-SITE-01", "node_ip": "1.2.3.4",
+                 "caption": "Tunnel5000", "name": "Tunnel5000", "alias": None, "status": "Up"},
+                {"interface_id": 2, "node_name": "R-SITE-01", "node_ip": "1.2.3.4",
+                 "caption": "Tunnel5001", "name": "Tunnel5001", "alias": None, "status": "Up"},
+            ],
+        }
+
+    monkeypatch.setattr("routers.reports.generate_bandwidth_report", fake_report)
+
+    r = client.post(
+        "/api/reports/bandwidth/generate",
+        data={"router": "R-SITE-01", "interface": "Tunnel"},
+        headers=auth_headers,
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["status"] == "ambiguous"
+    assert len(data["candidates"]) == 2
+
+
+def test_bandwidth_generate_not_found(auth_headers, monkeypatch):
+    def fake_report(*args, **kwargs):
+        raise LookupError("No matching interface found")
+
+    monkeypatch.setattr("routers.reports.generate_bandwidth_report", fake_report)
+
+    r = client.post(
+        "/api/reports/bandwidth/generate",
+        data={"router": "nope", "interface": "Tunnel5000"},
+        headers=auth_headers,
+    )
+    assert r.status_code == 404
+
+
+def test_bandwidth_generate_requires_router_or_interface_id(auth_headers):
+    r = client.post(
+        "/api/reports/bandwidth/generate",
+        data={"interface": "Tunnel5000"},
+        headers=auth_headers,
+    )
+    assert r.status_code == 400
+
+
 # ── Application traffic (SNA Report Builder) ─────────────────────────────────
 
 def test_application_traffic_ok(auth_headers, monkeypatch):
