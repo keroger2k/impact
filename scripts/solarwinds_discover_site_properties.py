@@ -28,10 +28,17 @@ all — so this script asks SolarWinds directly rather than guessing:
      confirmed against real data these are all null on the sampled router —
      the actual circuit info was sitting as free text baked into the
      Interface Caption instead (e.g. "GigabitEthernet0/0/3 · ATT AVPN 10MB |
-     BBEC651703..ATI | Terms: ..."), which isn't reliably machine-parseable
-     across sites. Circuit Size & Provider may end up needing to stay a
-     manual report field, or at best a copy-paste hint pulled from the
-     interface caption — re-run on a few more routers before concluding.
+     BBEC651703..ATI | Terms: ..."). BUT the SolarWinds UI's own Interface
+     Details page shows a real structured "Interface Bandwidth: Receive
+     10.0 Mbps / Transmit 10.0 Mbps" value for that same interface — that's
+     not free text, it's a real column, so steps 5-6 chase that down instead
+     of the unreliable caption text.
+  5. Metadata.Property — SWIS's generic schema-introspection entity, asked
+     directly for every column on Orion.NPM.Interfaces whose name suggests
+     speed/bandwidth, rather than guessing.
+  6. A handful of best-guess bandwidth column names (InterfaceSpeed,
+     InBandwidth/OutBandwidth, Speed) queried as separate small requests so
+     one bad guess doesn't block the others — cross-check against step 5.
 
 This talks to the SWIS endpoint directly with raw requests (rather than
 clients.solarwinds.query(), which calls raise_for_status() and discards the
@@ -245,6 +252,61 @@ WHERE n.Caption = '{node}' OR n.Caption LIKE '%{node}%'
         )
 
 
+def probe_interface_schema(username: str, password: str, verify_ssl: bool, timeout: int):
+    _print_header("STEP 5 — Orion.NPM.Interfaces schema (bandwidth/speed columns)")
+    # SolarWinds UI showed a real structured "Interface Bandwidth: Receive
+    # 10.0 Mbps / Transmit 10.0 Mbps" value for the same interface whose
+    # circuit-carrier custom properties were null — that's a real column, not
+    # free text. Metadata.Property is SWIS's generic schema-introspection
+    # entity, so this asks it directly instead of guessing the column name.
+    swql = """
+SELECT Uri, FullName, Type
+FROM Metadata.Property
+WHERE Entity = 'Orion.NPM.Interfaces'
+ORDER BY FullName
+"""
+    rows = run_query(swql, username, password, verify_ssl, timeout)
+    if rows is None:
+        print("\nMetadata.Property query failed — fall back to STEP 6's guesses below.")
+        return
+    _print_rows(rows, max_rows=300)
+    if rows:
+        names = [r.get("FullName") or r.get("Uri") or "" for r in rows]
+        speed_like = [n for n in names if any(k in n.lower() for k in ("speed", "bandwidth", "bw"))]
+        print(f"\nColumns whose name suggests speed/bandwidth: {speed_like}")
+        print(
+            "Cross-reference against the '10.0 Mbps' shown in the SolarWinds "
+            "UI's Interface Details 'Interface Bandwidth' section — whichever "
+            "of these actually holds that value is what STEP 6 should query."
+        )
+
+
+def probe_interface_bandwidth_candidates(node: str, username: str, password: str, verify_ssl: bool, timeout: int):
+    _print_header(f"STEP 6 — Candidate bandwidth columns on '{node}''s interfaces")
+    print(
+        "Best-guess column names for the UI's 'Interface Bandwidth: Receive/"
+        "Transmit' value — tried as separate small queries so one bad guess "
+        "doesn't block the others. Cross-check against STEP 5's real schema "
+        "listing above; whichever of these actually works is the real answer."
+    )
+    candidates = [
+        ("InterfaceSpeed", "i.InterfaceID, i.Caption AS InterfaceCaption, i.InterfaceSpeed"),
+        ("InBandwidth / OutBandwidth", "i.InterfaceID, i.Caption AS InterfaceCaption, i.InBandwidth, i.OutBandwidth"),
+        ("Speed", "i.InterfaceID, i.Caption AS InterfaceCaption, i.Speed"),
+    ]
+    for label, select_list in candidates:
+        print(f"\n--- Trying: {label} ---")
+        swql = f"""
+SELECT {select_list}
+FROM Orion.NPM.Interfaces i
+JOIN Orion.Nodes n ON i.NodeID = n.NodeID
+WHERE n.Caption = '{node}' OR n.Caption LIKE '%{node}%'
+"""
+        rows = run_query(swql, username, password, verify_ssl, timeout)
+        if rows is not None:
+            _print_rows(rows)
+
+
 def main():
     username = os.getenv("SOLARWINDS_USERNAME") or os.getenv("DOMAIN_USERNAME", "")
     password = os.getenv("SOLARWINDS_PASSWORD") or os.getenv("DOMAIN_PASSWORD", "")
@@ -272,6 +334,8 @@ def main():
     probe_custom_property_definitions(username, password, verify_ssl, timeout)
     probe_node_custom_property_values(node, username, password, verify_ssl, timeout)
     probe_interface_custom_property_values(node, username, password, verify_ssl, timeout)
+    probe_interface_schema(username, password, verify_ssl, timeout)
+    probe_interface_bandwidth_candidates(node, username, password, verify_ssl, timeout)
 
     print()
     print("=" * 78)
