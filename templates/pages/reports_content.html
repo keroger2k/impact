@@ -562,9 +562,10 @@
   }
 
   /* Categorical slots 1-7 (blue, orange, aqua, yellow, magenta, green, violet)
-     assigned in rank order (biggest application first); "Other" always gets
-     a fixed muted gray rather than the 8th hue, since it's a residual fold,
-     not a real identity. */
+     assigned in rank order (biggest application first); "Other Apps" always
+     gets a fixed muted gray rather than the 8th hue, since it's a residual
+     fold, not a real identity. (Named "Other Apps" rather than "Other" so it
+     doesn't read as a duplicate of SNA's own literal "Others" application.) */
   const SNA_PALETTE = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7'];
   const SNA_OTHER_COLOR = '#898781';
 
@@ -582,7 +583,7 @@
   }
 
   function snaColorFor(app, applications) {
-    return app === 'Other' ? SNA_OTHER_COLOR : SNA_PALETTE[applications.indexOf(app) % SNA_PALETTE.length];
+    return app === 'Other Apps' ? SNA_OTHER_COLOR : SNA_PALETTE[applications.indexOf(app) % SNA_PALETTE.length];
   }
 
   function snaTooltipRow(color, appName, mbpsValue) {

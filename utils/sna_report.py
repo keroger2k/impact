@@ -135,7 +135,7 @@ def generate_application_traffic_report(
         interface["interface_id"], interface["interface_name"],
         hours,
     )
-    bucketed = bucket_application_traffic(records)
+    bucketed = bucket_application_traffic(records, hours)
 
     return {
         "status": "ok",
