@@ -79,13 +79,13 @@ def test_classify_empty_input():
 
 # ── Matching ─────────────────────────────────────────────────────────────────
 
-def test_matched_by_hostname():
+def test_matched_on_both_hostname_and_ip():
     report = compare_inventories([_dnac("R-SITE-01")], [_sw("R-SITE-01")])
 
     assert report["summary"]["matched"] == 1
     assert report["summary"]["dnac_only"] == 0
     assert report["summary"]["solarwinds_only"] == 0
-    assert report["matched"][0]["matched_by"] == "hostname"
+    assert report["matched"][0]["matched_by"] == "hostname+ip"
     assert report["matched"][0]["differences"] == []
 
 
@@ -94,6 +94,53 @@ def test_hostname_match_ignores_fqdn_and_case():
         [_dnac("R-SITE-01.network.ad.tsa.gov")], [_sw("r-site-01")],
     )
     assert report["summary"]["matched"] == 1
+
+
+def test_certain_pairs_are_settled_before_weaker_evidence():
+    """The mis-pairing a single greedy hostname pass produces: DEV-A matches
+    node-2 on hostname alone, but node-2 agrees with DEV-B on *both* keys.
+    Letting the hostname match win first would consume node-2 and strand
+    DEV-B, reporting two false gaps for one real difference."""
+    dnac = [
+        _dnac("SHARED-NAME", ip="1.1.1.1"),   # hostname-only match against node-2
+        _dnac("SHARED-NAME", ip="2.2.2.2"),   # exact hostname+ip match on node-2
+    ]
+    sw = [_sw("SHARED-NAME", ip="2.2.2.2")]
+
+    report = compare_inventories(dnac, sw)
+
+    assert report["summary"]["matched"] == 1
+    assert report["matched"][0]["matched_by"] == "hostname+ip"
+    assert report["matched"][0]["dnac"]["ip"] == "2.2.2.2"
+    # The other device is a genuine gap, not a mangled partial match.
+    assert [d["ip"] for d in report["dnac_only"]] == ["1.1.1.1"]
+
+
+def test_hostname_only_match_when_ip_differs():
+    report = compare_inventories(
+        [_dnac("R-SITE-01", ip="1.2.3.4")], [_sw("R-SITE-01", ip="5.6.7.8")],
+    )
+    assert report["matched"][0]["matched_by"] == "hostname"
+
+
+def test_device_missing_an_ip_still_matches_on_hostname():
+    report = compare_inventories(
+        [_dnac("R-SITE-01", ip=None)], [_sw("R-SITE-01", ip="1.2.3.4")],
+    )
+    assert report["summary"]["matched"] == 1
+    assert report["matched"][0]["matched_by"] == "hostname"
+
+
+def test_devices_missing_an_ip_do_not_all_collapse_together():
+    """An empty IP must never act as a join key, or every device lacking one
+    would match the first node lacking one."""
+    report = compare_inventories(
+        [_dnac("AAA-01", ip=""), _dnac("BBB-01", ip="")],
+        [_sw("ZZZ-01", ip=""), _sw("YYY-01", ip="")],
+    )
+    assert report["summary"]["matched"] == 0
+    assert report["summary"]["dnac_only"] == 2
+    assert report["summary"]["solarwinds_only"] == 2
 
 
 def test_matched_by_ip_flags_the_hostname_difference():
@@ -214,17 +261,48 @@ def test_excluded_devices_are_reported_with_reasons():
     assert sw_reasons["Nexus"]["count"] == 1
 
 
-def test_excluding_one_side_only_would_create_a_false_gap():
-    """Both sides are filtered symmetrically on purpose: a Nexus dropped from
-    only SolarWinds would resurface as a bogus 'in DNAC but unmonitored' row."""
-    report = compare_inventories(
-        [_dnac("N9K-SITE-01", model="N9K-C93180YC-EX", family="Switches and Hubs")],
-        [_sw("N9K-SITE-01", machine_type="Cisco Nexus 9000 C9336C-FX2")],
-    )
+@pytest.mark.parametrize("text,expected", [
+    ("Cisco Nexus 9000 C9336C-FX2", "Nexus"),
+    ("Cisco APIC-SERVER-M3", "ACI"),
+])
+def test_nexus_and_aci_are_a_solarwinds_only_concern(text, expected):
+    """Catalyst Center doesn't manage Nexus or ACI, so those devices only ever
+    appear on the SolarWinds side. Running the patterns against DNAC couldn't
+    remove a real Nexus — there aren't any — it could only misfire on a
+    switch whose model string happened to match, silently dropping it."""
+    assert classify_exclusion(text, system="solarwinds") == expected
+    assert classify_exclusion(text, system="dnac") is None
 
+
+def test_wireless_is_excluded_from_both_sides():
+    """Unlike Nexus/ACI, Catalyst Center *does* manage WLCs and APs, so
+    wireless genuinely exists in both inventories and must be filtered from
+    both — otherwise dropping it from SolarWinds alone would resurface every
+    AP as a bogus 'in DNAC but unmonitored' row."""
+    assert classify_exclusion("AIR-AP1815I-B-K9", system="solarwinds") == "Wireless"
+    assert classify_exclusion("AIR-AP1815I-B-K9", system="dnac") == "Wireless"
+
+    report = compare_inventories(
+        [_dnac("AP-SITE-01", model="AIR-AP1815I-B-K9", family="Unified AP")],
+        [_sw("AP-SITE-01", machine_type="Cisco Aironet 1815")],
+    )
     assert report["summary"]["dnac_only"] == 0
     assert report["summary"]["solarwinds_only"] == 0
     assert report["summary"]["matched"] == 0
+
+
+def test_nexus_in_solarwinds_does_not_become_a_false_dnac_gap():
+    """A Nexus monitored by SolarWinds but absent from DNAC is correct and
+    expected — it must not surface as 'SolarWinds only', which would read as
+    a Catalyst Center onboarding gap."""
+    report = compare_inventories(
+        [_dnac("R-SITE-01")],
+        [_sw("R-SITE-01"), _sw("N9K-SITE-01", machine_type="Cisco Nexus 9000 C9336C-FX2")],
+    )
+
+    assert report["summary"]["matched"] == 1
+    assert report["summary"]["solarwinds_only"] == 0
+    assert report["excluded"]["solarwinds"][0]["reason"] == "Nexus"
 
 
 def test_devices_without_a_hostname_are_skipped():

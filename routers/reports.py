@@ -303,9 +303,11 @@ async def generate_device_comparison(session: SessionEntry = Depends(require_aut
     """Reconcile DNAC's inventory against SolarWinds'.
 
     DNAC comes from the warmed `devices` cache; SolarWinds is queried live.
-    Nexus/ACI/wireless are filtered from both sides — see
-    utils/device_comparison_report.py for why that's symmetric, and note the
-    response carries an `excluded` breakdown so the filter's effect is
+    Devices are identified by hostname and management IP together. Nexus/ACI
+    are filtered from the SolarWinds side only (Catalyst Center never manages
+    them) while wireless is filtered from both — see
+    utils/device_comparison_report.py for why that asymmetry is deliberate.
+    The response carries an `excluded` breakdown so the filter's effect is
     visible rather than silent.
     """
     loop = asyncio.get_event_loop()

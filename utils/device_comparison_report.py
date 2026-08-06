@@ -8,16 +8,27 @@ versa?" by putting the two inventories side by side:
     `Vendor = 'Cisco'` — the same literal `utils/cdrl49_report.py` already
     uses successfully against the real instance.
 
-Scope, per the report's purpose: only device classes DNAC actually manages.
-Nexus, ACI, and **all** wireless gear are excluded from *both* sides. Filtering
-both sides symmetrically matters — dropping a Nexus from only the SolarWinds
-side would resurface it as a bogus "in DNAC but not monitored" row, which is
-exactly the signal this report exists to make trustworthy.
+Scope, per the report's purpose: only device classes Catalyst Center actually
+manages. The two exclusions are *not* symmetric, because the underlying facts
+aren't:
+
+  - **Nexus and ACI** are dropped from the SolarWinds side only. Catalyst
+    Center doesn't manage them at all, so they can never appear in the DNAC
+    inventory — running those patterns there couldn't remove a real Nexus,
+    only misfire on a switch whose model string happened to match, silently
+    dropping it from the comparison.
+  - **Wireless** is dropped from *both* sides, because Catalyst Center does
+    manage WLCs and APs. Excluding wireless from SolarWinds alone would
+    resurface every AP as a bogus "in DNAC but not monitored" row.
 
 Because that classification is heuristic (it reads vendor model strings), the
 report **returns what it excluded and why**, grouped with examples. A filter
 that's too aggressive shows up as a surprising exclusion count rather than as
 silently missing devices — the failure mode is visible instead of invisible.
+
+Devices are identified by hostname *and* management IP together, matched in
+three passes (both keys, then hostname alone, then IP alone) so certain pairs
+are settled before weaker evidence is considered — see compare_inventories.
 
 Nothing here is cached: a reconciliation is a point-in-time answer, same
 posture as the other reports.
@@ -32,13 +43,22 @@ import clients.solarwinds as solarwinds
 from cache import cache
 from utils.bandwidth_report import short_hostname
 
-# Matched against model/description strings from either system, lowercased.
-# Word-boundary anchored where a bare substring would over-match: "aci" would
-# otherwise hit "Cisco ACI" *and* innocuous words, and "ap" is far too short
-# to use unanchored.
-_EXCLUSION_RULES: list[tuple[str, re.Pattern]] = [
-    ("Nexus", re.compile(r"\bnexus\b|\bn[2357]k\b|\bn9k\b|\bnx-?os\b", re.I)),
-    ("ACI", re.compile(r"\bapic\b|\baci\b", re.I)),
+# Matched against model/description strings, lowercased. Word-boundary
+# anchored where a bare substring would over-match.
+#
+# Each rule declares which system it applies to, and that scoping is load
+# bearing rather than tidiness: Catalyst Center does not manage Nexus or ACI
+# at all, so those patterns can never legitimately fire on a DNAC device —
+# running them there could only ever produce a false positive that silently
+# drops a real switch from the comparison. Wireless is the opposite case:
+# Catalyst Center *does* manage WLCs and APs, so wireless genuinely exists on
+# both sides and has to be filtered from both.
+_SW = "solarwinds"
+_DNAC = "dnac"
+
+_EXCLUSION_RULES: list[tuple[str, re.Pattern, frozenset]] = [
+    ("Nexus", re.compile(r"\bnexus\b|\bn[2357]k\b|\bn9k\b|\bnx-?os\b", re.I), frozenset({_SW})),
+    ("ACI", re.compile(r"\bapic\b|\baci\b", re.I), frozenset({_SW})),
     # "ap" is never matched bare — far too short, and NodeDescription carries
     # a full sysDescr string where a two-letter token would fire constantly.
     # Catalyst wireless is model-ranged rather than named: 91xx are APs and
@@ -49,23 +69,23 @@ _EXCLUSION_RULES: list[tuple[str, re.Pattern]] = [
         r"|\baccess\s+point\b|\b(?:unified|lightweight|embedded)\s+ap\b"
         r"|\bap\d{3,4}[a-z]*\b|\bc?9800\b|\bc?91\d{2}[a-z]*\b",
         re.I,
-    )),
+    ), frozenset({_SW, _DNAC})),
 ]
 
 
-def classify_exclusion(*fields: str | None) -> str | None:
+def classify_exclusion(*fields: str | None, system: str = _SW) -> str | None:
     """Return the exclusion category for a device, or None to keep it.
 
-    Every provided field is checked (model, family, description) — a device is
-    excluded if *any* of them matches, since which field carries the useful
-    signal differs by system: DNAC's `family` says "Unified AP" outright while
+    `system` selects which rules apply — see _EXCLUSION_RULES. Every provided
+    field is checked (model, family, description) since which one carries the
+    useful signal differs: DNAC's `family` says "Unified AP" outright while
     SolarWinds only has a `MachineType`/`NodeDescription` string.
     """
     haystack = " ".join(f for f in fields if f)
     if not haystack.strip():
         return None
-    for label, pattern in _EXCLUSION_RULES:
-        if pattern.search(haystack):
+    for label, pattern, systems in _EXCLUSION_RULES:
+        if system in systems and pattern.search(haystack):
             return label
     return None
 
@@ -219,7 +239,9 @@ def compare_inventories(dnac_devices: list[dict], sw_nodes: list[dict]) -> dict:
     and classification rules are testable without either system."""
     dnac_kept, dnac_excluded = [], []
     for d in dnac_devices:
-        reason = classify_exclusion(d.get("platformId"), d.get("family"), d.get("type"))
+        reason = classify_exclusion(
+            d.get("platformId"), d.get("family"), d.get("type"), system=_DNAC,
+        )
         name = short_hostname(d.get("hostname"))
         if not name:
             continue
@@ -229,7 +251,9 @@ def compare_inventories(dnac_devices: list[dict], sw_nodes: list[dict]) -> dict:
 
     sw_kept, sw_excluded = [], []
     for n in sw_nodes:
-        reason = classify_exclusion(n.get("MachineType"), n.get("NodeDescription"))
+        reason = classify_exclusion(
+            n.get("MachineType"), n.get("NodeDescription"), system=_SW,
+        )
         name = short_hostname(n.get("NodeName"))
         if not name:
             continue
@@ -237,41 +261,36 @@ def compare_inventories(dnac_devices: list[dict], sw_nodes: list[dict]) -> dict:
             {"reason": reason, "name": name} if reason else n
         )
 
-    # Index SolarWinds by hostname and by IP. Hostname is the primary key;
-    # IP is the fallback that catches a device present in both systems under
-    # different names — which is itself a finding, not a clean match.
+    # A device's identity here is hostname *and* management IP together, so
+    # matching runs in three passes, strongest first:
+    #
+    #   1. both agree      — unambiguous, the device is the same by every key
+    #   2. hostname only   — renumbered / IP recorded differently
+    #   3. IP only         — renamed in one system but the same box
+    #
+    # Ordering matters: a single greedy hostname pass lets a partial match
+    # consume a node that was a perfect both-key match for a *different*
+    # device, which then reports as two false gaps. Settling every certain
+    # pair before considering weaker evidence removes that whole class of
+    # mis-pairing.
+    by_pair: dict[tuple[str, str], int] = {}
     by_name: dict[str, int] = {}
     by_ip: dict[str, int] = {}
     for idx, n in enumerate(sw_kept):
-        by_name.setdefault(_key(n.get("NodeName")), idx)
-        ip = (n.get("NodeIpAddress") or "").strip()
+        name, ip = _key(n.get("NodeName")), (n.get("NodeIpAddress") or "").strip()
+        if name and ip:
+            by_pair.setdefault((name, ip), idx)
+        if name:
+            by_name.setdefault(name, idx)
         if ip:
             by_ip.setdefault(ip, idx)
 
-    matched, dnac_only = [], []
+    matched: list[dict] = []
     consumed: set[int] = set()
 
-    for d in dnac_kept:
-        name = _key(d.get("hostname"))
-        ip = (d.get("managementIpAddress") or "").strip()
-
-        idx = by_name.get(name)
-        matched_by = "hostname"
-        if idx is None and ip:
-            idx = by_ip.get(ip)
-            matched_by = "ip"
-        # Guard against two DNAC devices claiming the same SolarWinds node
-        # (duplicate hostnames across sites); the second is a real gap, not a
-        # second match.
-        if idx is not None and idx in consumed:
-            idx = None
-
-        if idx is None:
-            dnac_only.append(_dnac_view(d))
-            continue
-
+    def _record(device: dict, idx: int, matched_by: str) -> None:
         consumed.add(idx)
-        dnac_view, sw_view = _dnac_view(d), _sw_view(sw_kept[idx])
+        dnac_view, sw_view = _dnac_view(device), _sw_view(sw_kept[idx])
         matched.append({
             "hostname": dnac_view["hostname"],
             "matched_by": matched_by,
@@ -280,6 +299,33 @@ def compare_inventories(dnac_devices: list[dict], sw_nodes: list[dict]) -> dict:
             "differences": _differences(dnac_view, sw_view, matched_by),
         })
 
+    def _lookup(index: dict, key) -> int | None:
+        # An incomplete key (missing hostname or IP) must never match — it
+        # would collapse every such device onto the same "" bucket.
+        parts = key if isinstance(key, tuple) else (key,)
+        if not all(parts):
+            return None
+        # A SolarWinds node can only satisfy one DNAC device — otherwise
+        # duplicate hostnames across sites would hide a genuine gap.
+        idx = index.get(key)
+        return None if idx is None or idx in consumed else idx
+
+    pending = list(dnac_kept)
+    for matched_by, key_of, index in (
+        ("hostname+ip", lambda d: (_key(d.get("hostname")), (d.get("managementIpAddress") or "").strip()), by_pair),
+        ("hostname", lambda d: _key(d.get("hostname")), by_name),
+        ("ip", lambda d: (d.get("managementIpAddress") or "").strip(), by_ip),
+    ):
+        still_pending = []
+        for d in pending:
+            idx = _lookup(index, key_of(d))
+            if idx is None:
+                still_pending.append(d)
+            else:
+                _record(d, idx, matched_by)
+        pending = still_pending
+
+    dnac_only = [_dnac_view(d) for d in pending]
     sw_only = [_sw_view(n) for idx, n in enumerate(sw_kept) if idx not in consumed]
 
     matched.sort(key=lambda m: (m["hostname"] or "").lower())
