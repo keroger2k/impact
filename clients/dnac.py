@@ -60,7 +60,20 @@ def _dictify(obj) -> dict:
         return {}
 
 
-def get_all_devices(dnac) -> list[dict]:
+def get_all_devices(dnac, strict: bool = False) -> list[dict]:
+    """Every device in DNAC's inventory, paginated.
+
+    `strict` controls what happens when a page after the first fails. The
+    default (False) keeps whatever was collected and returns a partial list —
+    the right trade for cache warming, where some inventory beats none.
+
+    Pass strict=True when a partial list would be *wrong* rather than merely
+    incomplete. The DNAC/SolarWinds comparison report is the case that forced
+    this: a silently-truncated device list turns every device on the missing
+    pages into a fabricated "in SolarWinds but not DNAC" row, and that report
+    offers a button to onboard those rows — so a dropped page could push
+    already-managed devices back through discovery.
+    """
     devices, limit, offset = [], 500, 1
     while True:
         start_time = time.time()
@@ -89,7 +102,7 @@ def get_all_devices(dnac) -> list[dict]:
                 "duration_ms": duration
             })
             # If first page failed, propagate so cache.get_or_set doesn't cache an empty list for 24h.
-            if not devices:
+            if not devices or strict:
                 raise
             break
     return devices

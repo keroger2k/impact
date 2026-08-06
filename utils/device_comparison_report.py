@@ -39,9 +39,11 @@ import re
 from collections import defaultdict
 from datetime import datetime, timezone
 
+import clients.dnac as dc
 import clients.solarwinds as solarwinds
 from cache import cache
 from utils.bandwidth_report import short_hostname
+from utils.report_pool import FANOUT_POOL
 
 # Matched against model/description strings, lowercased. Word-boundary
 # anchored where a bare substring would over-match.
@@ -136,11 +138,26 @@ ORDER BY n.Caption
     return solarwinds.query(swql, username, password, timeout=timeout)
 
 
-def _dnac_devices() -> list[dict]:
-    """DNAC inventory from the warmed cache (stale OK — this is a comparison
-    of recorded inventory, not live reachability, and `devices` is
-    background-refreshed on normal page visits)."""
-    return cache.get_stale("devices") or []
+def fetch_dnac_devices(dnac) -> list[dict]:
+    """DNAC's device inventory, fetched **live** on every report run.
+
+    Deliberately not the warmed `devices` cache. That cache carries a 7-day
+    TTL, and a stale entry here doesn't just age the report — it inverts it:
+    a device onboarded since the last refresh still reads as "in SolarWinds
+    but not DNAC", and this report offers a button to onboard exactly those
+    rows. Acting on stale data would push an already-managed device back
+    through discovery.
+
+    strict=True for the same reason (see clients.dnac.get_all_devices): a
+    partial page fetch would fabricate the same false gaps, so a failure
+    must surface as an error rather than a shorter list.
+
+    `dnac` of None means "no client available" — only DEV_MODE, where the
+    seeded cache stands in for a real controller.
+    """
+    if dnac is None:
+        return cache.get_stale("devices") or []
+    return dc.get_all_devices(dnac, strict=True)
 
 
 def _dnac_view(device: dict) -> dict:
@@ -384,16 +401,22 @@ def compare_inventories(dnac_devices: list[dict], sw_nodes: list[dict]) -> dict:
     }
 
 
-def generate_device_comparison_report(username: str, password: str) -> dict:
-    """Pull both inventories and reconcile them.
+def generate_device_comparison_report(dnac, username: str, password: str) -> dict:
+    """Pull both inventories live and reconcile them.
 
-    Raises whatever clients.solarwinds.query raises on a SolarWinds failure —
-    a partial report built from DNAC alone would read as "nothing is
-    monitored", which is worse than an error.
+    Either side failing raises rather than degrading to a one-sided report:
+    with no SolarWinds the answer reads as "nothing is monitored", with no
+    DNAC as "nothing is managed". Both are worse than an error, because both
+    look like findings.
+
+    The two fetches are independent, so they're overlapped on the shared
+    FANOUT_POOL — this function already runs in a worker thread, and pulling
+    a whole fleet from DNAC alongside a fleet-wide SWQL read is the slowest
+    thing on the Reports pages.
     """
-    dnac_devices = _dnac_devices()
-    sw_nodes = fetch_solarwinds_devices(username, password)
-    return compare_inventories(dnac_devices, sw_nodes)
+    fut_dnac = FANOUT_POOL.submit(fetch_dnac_devices, dnac)
+    fut_sw = FANOUT_POOL.submit(fetch_solarwinds_devices, username, password)
+    return compare_inventories(fut_dnac.result(), fut_sw.result())
 
 
 def to_csv(report: dict) -> str:

@@ -16,8 +16,9 @@
         <div class="card-body">
           <p class="text-muted small mb-3">
             Side-by-side reconciliation of Catalyst Center's device inventory against SolarWinds'.
-            DNAC comes from its cached inventory; SolarWinds is queried live for Cisco nodes.
-            Devices are matched on hostname and management IP together. Nexus and ACI are dropped
+            Both are queried live on every run — nothing here is cached, so the result reflects
+            the state of both systems right now. Devices are matched on hostname and management
+            IP together. Nexus and ACI are dropped
             from the SolarWinds side (Catalyst Center doesn't manage them, so they'd always read as
             gaps), and wireless is dropped from both — everything filtered is listed under
             <strong>Excluded</strong>.

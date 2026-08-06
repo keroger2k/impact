@@ -32,6 +32,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Form, HTTPException, Query
 from fastapi.responses import HTMLResponse, Response
 
+import auth as auth_module
 import clients.sna as sna_client
 from auth import SessionEntry, require_auth
 from cache import TTL_LIVE, cache
@@ -298,28 +299,44 @@ async def get_application_traffic(
     return result
 
 
+async def _build_device_comparison(session: SessionEntry) -> dict:
+    """Run the reconciliation with **both** inventories fetched live.
+
+    DNAC is pulled per request rather than read from the `devices` cache: a
+    stale entry there doesn't just age this report, it inverts it — a device
+    onboarded since the last cache refresh still reads as "in SolarWinds but
+    not DNAC", and this report offers a button to onboard exactly those rows.
+
+    DEV_MODE passes no client through, so the report falls back to the seeded
+    mock cache instead of trying to reach a controller that isn't there.
+    """
+    from dev import DEV_MODE
+
+    dnac = None if DEV_MODE else auth_module.get_dnac_for_session(session)
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        None, run_with_context(generate_device_comparison_report),
+        dnac, session.username, session.password,
+    )
+
+
 @router.post("/device-comparison/generate")
 async def generate_device_comparison(session: SessionEntry = Depends(require_auth)):
     """Reconcile DNAC's inventory against SolarWinds'.
 
-    DNAC comes from the warmed `devices` cache; SolarWinds is queried live.
-    Devices are identified by hostname and management IP together. Nexus/ACI
-    are filtered from the SolarWinds side only (Catalyst Center never manages
-    them) while wireless is filtered from both — see
-    utils/device_comparison_report.py for why that asymmetry is deliberate.
-    The response carries an `excluded` breakdown so the filter's effect is
-    visible rather than silent.
+    Both sides are queried live on every run. Devices are identified by
+    hostname and management IP together. Nexus/ACI are filtered from the
+    SolarWinds side only (Catalyst Center never manages them) while wireless
+    is filtered from both — see utils/device_comparison_report.py for why
+    that asymmetry is deliberate. The response carries an `excluded`
+    breakdown so the filter's effect is visible rather than silent.
     """
-    loop = asyncio.get_event_loop()
     try:
-        return await loop.run_in_executor(
-            None, run_with_context(generate_device_comparison_report),
-            session.username, session.password,
-        )
+        return await _build_device_comparison(session)
     except Exception as e:
         logger.error(
             f"Device comparison report failed: {e}",
-            extra={"target": "SolarWinds", "action": "DEVICE_COMPARISON"},
+            extra={"target": "DNAC/SolarWinds", "action": "DEVICE_COMPARISON"},
         )
         raise HTTPException(502, f"Device comparison failed: {e}")
 
@@ -338,12 +355,8 @@ async def export_device_comparison(session: SessionEntry = Depends(require_auth)
     X-CSRF-Token header, which a native form submit can't set, so a POST here
     would need a fetch+blob dance for no benefit.)
     """
-    loop = asyncio.get_event_loop()
     try:
-        report = await loop.run_in_executor(
-            None, run_with_context(generate_device_comparison_report),
-            session.username, session.password,
-        )
+        report = await _build_device_comparison(session)
     except Exception as e:
         logger.error(
             f"Device comparison export failed: {e}",

@@ -7,10 +7,13 @@ directions: the classes that must be dropped, and — just as important — the
 switches/routers that must survive, since an over-eager filter silently
 shrinks the very inventory this report exists to reconcile.
 """
+from unittest.mock import patch
+
 import pytest
 from utils.device_comparison_report import (
     classify_exclusion,
     compare_inventories,
+    generate_device_comparison_report,
     site_code_for,
     to_csv,
 )
@@ -378,3 +381,58 @@ def test_csv_includes_site_code_for_solarwinds_only_rows():
     csv_text = to_csv(report)
     assert "Site Code,Site Code Source" in csv_text
     assert "S689,solarwinds" in csv_text
+
+
+# ── Live DNAC fetch ──────────────────────────────────────────────────────────
+
+def test_dnac_side_is_fetched_live_not_from_cache():
+    """The cache carries a 7-day TTL. A device onboarded since the last
+    refresh would still read as 'in SolarWinds but not DNAC' — and this
+    report offers a button to onboard exactly those rows, so acting on stale
+    data would push an already-managed device back through discovery."""
+    live = [{"hostname": "R-SITE-01", "managementIpAddress": "1.2.3.4",
+             "platformId": "ISR4451-X/K9", "family": "Routers"}]
+
+    with patch("clients.dnac.get_all_devices", return_value=live) as mock_fetch, \
+         patch("utils.device_comparison_report.cache.get_stale") as mock_cache, \
+         patch("utils.device_comparison_report.fetch_solarwinds_devices", return_value=[]):
+        report = generate_device_comparison_report(object(), "dev", "dev")
+
+    mock_fetch.assert_called_once()
+    mock_cache.assert_not_called()
+    assert report["summary"]["dnac_total"] == 1
+
+
+def test_dnac_fetch_is_strict():
+    """A partial page fetch would fabricate the same false gaps a stale cache
+    would, so the report must ask for all-or-nothing."""
+    with patch("clients.dnac.get_all_devices", return_value=[]) as mock_fetch, \
+         patch("utils.device_comparison_report.fetch_solarwinds_devices", return_value=[]):
+        generate_device_comparison_report(object(), "dev", "dev")
+
+    assert mock_fetch.call_args.kwargs.get("strict") is True
+
+
+def test_dnac_failure_propagates_rather_than_reporting_everything_as_a_gap():
+    with patch("clients.dnac.get_all_devices", side_effect=RuntimeError("DNAC unreachable")), \
+         patch("utils.device_comparison_report.fetch_solarwinds_devices", return_value=[]):
+        with pytest.raises(RuntimeError, match="DNAC unreachable"):
+            generate_device_comparison_report(object(), "dev", "dev")
+
+
+def test_solarwinds_failure_propagates():
+    with patch("clients.dnac.get_all_devices", return_value=[]), \
+         patch("utils.device_comparison_report.fetch_solarwinds_devices",
+               side_effect=RuntimeError("SolarWinds query failed")):
+        with pytest.raises(RuntimeError, match="SolarWinds"):
+            generate_device_comparison_report(object(), "dev", "dev")
+
+
+def test_no_dnac_client_falls_back_to_cache_for_dev_mode():
+    with patch("utils.device_comparison_report.cache.get_stale", return_value=[]) as mock_cache, \
+         patch("clients.dnac.get_all_devices") as mock_fetch, \
+         patch("utils.device_comparison_report.fetch_solarwinds_devices", return_value=[]):
+        generate_device_comparison_report(None, "dev", "dev")
+
+    mock_cache.assert_called_once_with("devices")
+    mock_fetch.assert_not_called()

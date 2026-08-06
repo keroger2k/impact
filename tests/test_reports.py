@@ -515,7 +515,7 @@ _FAKE_COMPARISON = {
 def test_device_comparison_generate_ok(auth_headers, monkeypatch):
     monkeypatch.setattr(
         "routers.reports.generate_device_comparison_report",
-        lambda username, password: _FAKE_COMPARISON,
+        lambda dnac, username, password: _FAKE_COMPARISON,
     )
 
     r = client.post("/api/reports/device-comparison/generate", headers=auth_headers)
@@ -530,7 +530,7 @@ def test_device_comparison_generate_ok(auth_headers, monkeypatch):
 
 
 def test_device_comparison_solarwinds_failure(auth_headers, monkeypatch):
-    def boom(username, password):
+    def boom(dnac, username, password):
         raise RuntimeError("SolarWinds query failed (HTTP 400): Cannot resolve property IOSVersion")
 
     monkeypatch.setattr("routers.reports.generate_device_comparison_report", boom)
@@ -550,7 +550,7 @@ def test_device_comparison_requires_auth():
 def test_device_comparison_csv_export(auth_headers, monkeypatch):
     monkeypatch.setattr(
         "routers.reports.generate_device_comparison_report",
-        lambda username, password: _FAKE_COMPARISON,
+        lambda dnac, username, password: _FAKE_COMPARISON,
     )
 
     r = client.get("/api/reports/device-comparison/export.csv", headers=auth_headers)
