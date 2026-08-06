@@ -60,5 +60,13 @@ def query(swql: str, username: str, password: str, timeout: int | None = None) -
         timeout=timeout,
         headers={"Accept": "application/json", "Content-Type": "application/json"},
     )
-    resp.raise_for_status()
+    if resp.status_code >= 400:
+        # raise_for_status() alone drops the response body, which is where
+        # Orion puts the actual SWQL error ("Cannot resolve property X",
+        # "no viable alternative at input '*'"). Losing that turns a
+        # one-line schema typo into a blind guessing exercise — it's why
+        # scripts/solarwinds_discover_site_properties.py had to bypass this
+        # function entirely. Keep the detail.
+        detail = resp.text.strip()[:500]
+        raise RuntimeError(f"SolarWinds query failed (HTTP {resp.status_code}): {detail}")
     return resp.json().get("results", [])

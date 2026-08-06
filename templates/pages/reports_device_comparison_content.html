@@ -1,0 +1,283 @@
+<div class="d-flex flex-column gap-3 animate-fade-in">
+  <div>
+    <a href="/reports" hx-get="/reports" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML"
+       class="text-muted small text-decoration-none">
+      <i class="ph ph-arrow-left"></i> Back to Reports
+    </a>
+  </div>
+
+  <div class="row g-4">
+    <div class="col-12">
+      <div class="card shadow-sm border-0">
+        <div class="card-header bg-navy text-white d-flex align-items-center gap-2">
+          <i class="ph ph-git-diff"></i>
+          <span class="fw-bold">Device Inventory Comparison</span>
+        </div>
+        <div class="card-body">
+          <p class="text-muted small mb-3">
+            Side-by-side reconciliation of Catalyst Center's device inventory against SolarWinds'.
+            DNAC comes from its cached inventory; SolarWinds is queried live for Cisco nodes.
+            Nexus, ACI, and wireless are filtered from <em>both</em> sides so a device excluded on
+            one side can't show up as a false gap on the other — what was filtered is listed at the
+            bottom.
+          </p>
+
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+            <button type="button" class="btn btn-primary" id="dc-generate-btn" onclick="dcGenerate()">
+              <i class="ph ph-git-diff me-1"></i> <span id="dc-generate-label">Compare Inventories</span>
+            </button>
+            <button type="button" class="btn btn-outline d-none" id="dc-export-btn" onclick="dcExport()">
+              <i class="ph ph-download-simple me-1"></i> Export CSV
+            </button>
+            <span class="text-muted small" id="dc-generated-at"></span>
+          </div>
+
+          <div id="dc-error" class="alert alert-danger py-2 small d-none" role="alert"></div>
+
+          <div id="dc-results" class="d-none">
+            <div class="row g-2 mb-3" id="dc-summary"></div>
+
+            <ul class="nav nav-tabs mb-3" role="tablist">
+              <li class="nav-item" role="presentation">
+                <button class="nav-link active" type="button" data-bs-toggle="tab"
+                        data-bs-target="#dc-tab-diff" role="tab">
+                  Differences <span class="badge bg-warning text-dark ms-1" id="dc-count-diff">0</span>
+                </button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link" type="button" data-bs-toggle="tab"
+                        data-bs-target="#dc-tab-dnac" role="tab">
+                  DNAC only <span class="badge bg-danger ms-1" id="dc-count-dnac">0</span>
+                </button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link" type="button" data-bs-toggle="tab"
+                        data-bs-target="#dc-tab-sw" role="tab">
+                  SolarWinds only <span class="badge bg-danger ms-1" id="dc-count-sw">0</span>
+                </button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link" type="button" data-bs-toggle="tab"
+                        data-bs-target="#dc-tab-sync" role="tab">
+                  In sync <span class="badge bg-success ms-1" id="dc-count-sync">0</span>
+                </button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link" type="button" data-bs-toggle="tab"
+                        data-bs-target="#dc-tab-excluded" role="tab">
+                  Excluded <span class="badge bg-secondary ms-1" id="dc-count-excluded">0</span>
+                </button>
+              </li>
+            </ul>
+
+            <div class="tab-content">
+              <div class="tab-pane fade show active" id="dc-tab-diff" role="tabpanel"></div>
+              <div class="tab-pane fade" id="dc-tab-dnac" role="tabpanel"></div>
+              <div class="tab-pane fade" id="dc-tab-sw" role="tabpanel"></div>
+              <div class="tab-pane fade" id="dc-tab-sync" role="tabpanel"></div>
+              <div class="tab-pane fade" id="dc-tab-excluded" role="tabpanel"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  .dc-kpi {
+    border: 1px solid var(--border-subtle, #E2E8F0);
+    border-radius: 8px;
+    padding: 10px 12px;
+    background: #fff;
+    height: 100%;
+  }
+  .dc-kpi-value { font-size: 22px; font-weight: 700; line-height: 1.1; }
+  .dc-kpi-label { font-size: 10px; letter-spacing: .04em; text-transform: uppercase; }
+  .dc-diff-old { color: #b4232c; }
+  .dc-diff-new { color: #1b6ec2; }
+  .dc-empty { padding: 32px 0; text-align: center; }
+</style>
+
+<script>
+(function(){
+  /* IIFE-scoped: htmx re-executes inline <script> tags on every swap into
+     #main-content, so bare top-level declarations would collide on a second
+     visit. Only the onclick entry points are attached to window. */
+
+  function csrfHeaders() {
+    const token = document.cookie.split('; ').find(row => row.startsWith('csrf_token='));
+    return { 'X-CSRF-Token': token ? token.split('=')[1] : '' };
+  }
+
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined && text !== null) node.textContent = text;
+    return node;
+  }
+
+  function emptyNote(text) {
+    return el('p', 'text-muted small dc-empty', text);
+  }
+
+  function kpi(label, value, tone) {
+    const col = el('div', 'col-6 col-md-4 col-lg-2');
+    const box = el('div', 'dc-kpi');
+    const v = el('div', 'dc-kpi-value' + (tone ? ' text-' + tone : ''), value);
+    const l = el('div', 'dc-kpi-label text-muted', label);
+    box.appendChild(v);
+    box.appendChild(l);
+    col.appendChild(box);
+    return col;
+  }
+
+  function table(headers, rows) {
+    const wrap = el('div', 'table-responsive');
+    const t = el('table', 'table table-sm data-table mb-0');
+    const thead = el('thead');
+    const hr = el('tr');
+    headers.forEach(h => hr.appendChild(el('th', null, h)));
+    thead.appendChild(hr);
+    t.appendChild(thead);
+
+    const tbody = el('tbody');
+    rows.forEach(cells => {
+      const tr = el('tr');
+      cells.forEach(c => {
+        const td = el('td');
+        if (c instanceof Node) td.appendChild(c);
+        else td.textContent = (c === null || c === undefined || c === '') ? '—' : c;
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    t.appendChild(tbody);
+    wrap.appendChild(t);
+    return wrap;
+  }
+
+  function renderInto(paneId, node) {
+    const pane = document.getElementById(paneId);
+    pane.textContent = '';
+    pane.appendChild(node);
+    if (window.ImpactDataTable) window.ImpactDataTable.init(pane);
+  }
+
+  // Each difference renders as "dnac value -> solarwinds value" so the two
+  // systems' claims stay visually attached to the field they disagree on.
+  function diffCell(differences) {
+    const box = el('div');
+    differences.forEach(d => {
+      const line = el('div', 'small');
+      line.appendChild(el('strong', null, d.field + ': '));
+      line.appendChild(el('span', 'dc-diff-old', d.dnac || '—'));
+      line.appendChild(el('span', 'text-muted', '  →  '));
+      line.appendChild(el('span', 'dc-diff-new', d.solarwinds || '—'));
+      box.appendChild(line);
+    });
+    return box;
+  }
+
+  function render(data) {
+    const s = data.summary;
+
+    const summary = document.getElementById('dc-summary');
+    summary.textContent = '';
+    summary.appendChild(kpi('DNAC devices', s.dnac_total));
+    summary.appendChild(kpi('SolarWinds nodes', s.solarwinds_total));
+    summary.appendChild(kpi('Matched', s.matched, 'success'));
+    summary.appendChild(kpi('With differences', s.with_differences, s.with_differences ? 'warning' : null));
+    summary.appendChild(kpi('DNAC only', s.dnac_only, s.dnac_only ? 'danger' : null));
+    summary.appendChild(kpi('SolarWinds only', s.solarwinds_only, s.solarwinds_only ? 'danger' : null));
+
+    const differing = data.matched.filter(m => m.differences.length);
+    const inSync = data.matched.filter(m => !m.differences.length);
+
+    document.getElementById('dc-count-diff').textContent = differing.length;
+    document.getElementById('dc-count-dnac').textContent = data.dnac_only.length;
+    document.getElementById('dc-count-sw').textContent = data.solarwinds_only.length;
+    document.getElementById('dc-count-sync').textContent = inSync.length;
+
+    renderInto('dc-tab-diff', differing.length
+      ? table(['Hostname', 'Matched by', 'Differences'],
+              differing.map(m => [m.hostname, m.matched_by, diffCell(m.differences)]))
+      : emptyNote('Every matched device agrees across both systems.'));
+
+    renderInto('dc-tab-dnac', data.dnac_only.length
+      ? table(['Hostname', 'IP', 'Model', 'Version', 'Family', 'Serial'],
+              data.dnac_only.map(d => [d.hostname, d.ip, d.model, d.version, d.family, d.serial]))
+      : emptyNote('Every DNAC device is present in SolarWinds.'));
+
+    renderInto('dc-tab-sw', data.solarwinds_only.length
+      ? table(['Hostname', 'IP', 'Model', 'Version'],
+              data.solarwinds_only.map(n => [n.hostname, n.ip, n.model, n.version]))
+      : emptyNote('Every SolarWinds node is present in DNAC.'));
+
+    renderInto('dc-tab-sync', inSync.length
+      ? table(['Hostname', 'IP', 'Model', 'Version'],
+              inSync.map(m => [m.hostname, m.dnac.ip, m.dnac.model, m.dnac.version]))
+      : emptyNote('No devices matched.'));
+
+    // Exclusions are shown rather than silently applied — an over-eager
+    // filter should be visible as a surprising count here.
+    const excluded = [];
+    (data.excluded.dnac || []).forEach(e => excluded.push(['DNAC', e.reason, e.count, (e.examples || []).join(', ')]));
+    (data.excluded.solarwinds || []).forEach(e => excluded.push(['SolarWinds', e.reason, e.count, (e.examples || []).join(', ')]));
+    document.getElementById('dc-count-excluded').textContent =
+      excluded.reduce((sum, row) => sum + row[2], 0);
+
+    const excludedPane = el('div');
+    excludedPane.appendChild(el('p', 'text-muted small',
+      'Out of scope for this comparison because Catalyst Center does not manage them. ' +
+      'Shown so the filter can be checked — if something here should be in the report, the ' +
+      'classification rules need adjusting.'));
+    excludedPane.appendChild(excluded.length
+      ? table(['System', 'Reason', 'Count', 'Examples'], excluded)
+      : emptyNote('Nothing was excluded.'));
+    renderInto('dc-tab-excluded', excludedPane);
+
+    const when = new Date(data.generated_at);
+    document.getElementById('dc-generated-at').textContent =
+      'Generated ' + when.toLocaleString();
+    document.getElementById('dc-export-btn').classList.remove('d-none');
+    document.getElementById('dc-results').classList.remove('d-none');
+  }
+
+  function dcGenerate() {
+    const btn = document.getElementById('dc-generate-btn');
+    const label = document.getElementById('dc-generate-label');
+    const errorBox = document.getElementById('dc-error');
+
+    errorBox.classList.add('d-none');
+    btn.disabled = true;
+    label.textContent = 'Comparing…';
+
+    fetch('/api/reports/device-comparison/generate', { method: 'POST', headers: csrfHeaders() })
+      .then(async response => {
+        const data = await response.json().catch(() => null);
+        if (!response.ok) throw new Error((data && data.detail) || 'Comparison failed');
+        return data;
+      })
+      .then(render)
+      .catch(err => {
+        errorBox.textContent = err.message;
+        errorBox.classList.remove('d-none');
+      })
+      .finally(() => {
+        btn.disabled = false;
+        label.textContent = 'Compare Inventories';
+      });
+  }
+
+  // Plain navigation to a GET endpoint — the browser handles the download
+  // from Content-Disposition, no fetch+blob needed. The export re-runs the
+  // comparison server-side rather than serialising what's on screen.
+  function dcExport() {
+    window.location.assign('/api/reports/device-comparison/export.csv');
+  }
+
+  window.dcGenerate = dcGenerate;
+  window.dcExport = dcExport;
+})();
+</script>

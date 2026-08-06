@@ -483,3 +483,81 @@ def test_application_traffic_solarwinds_failure(auth_headers, monkeypatch):
         headers=auth_headers,
     )
     assert r.status_code == 502
+
+
+# ── Device inventory comparison ──────────────────────────────────────────────
+
+_FAKE_COMPARISON = {
+    "generated_at": "2026-08-06T00:00:00Z",
+    "summary": {"dnac_total": 2, "solarwinds_total": 2, "matched": 1,
+                "with_differences": 1, "dnac_only": 1, "solarwinds_only": 1},
+    "matched": [{
+        "hostname": "R-SITE-01", "matched_by": "hostname",
+        "dnac": {"hostname": "R-SITE-01", "ip": "1.2.3.4", "model": "ISR4451-X/K9",
+                 "version": "17.6.5", "serial": "FCW1234A1B", "family": "Routers",
+                 "role": "BORDER ROUTER", "reachability": "Reachable"},
+        "solarwinds": {"hostname": "R-SITE-01", "ip": "5.6.7.8", "model": "Cisco ISR 4451",
+                       "version": "17.6.5", "description": "Cisco IOS XE", "status": 1},
+        "differences": [{"field": "IP Address", "dnac": "1.2.3.4", "solarwinds": "5.6.7.8"}],
+    }],
+    "dnac_only": [{"hostname": "R-SITE-02", "ip": "1.1.1.1", "model": "ISR4331/K9",
+                   "version": "17.6.5", "serial": "FCW9999Z9Z", "family": "Routers",
+                   "role": "ACCESS", "reachability": "Reachable"}],
+    "solarwinds_only": [{"hostname": "R-SITE-03", "ip": "2.2.2.2", "model": "Cisco ISR 4321",
+                         "version": "16.9.4", "description": "Cisco IOS", "status": 2}],
+    "excluded": {
+        "dnac": [{"reason": "Wireless", "count": 1, "examples": ["AP-SITE-01"]}],
+        "solarwinds": [{"reason": "Nexus", "count": 1, "examples": ["N9K-SITE-01"]}],
+    },
+}
+
+
+def test_device_comparison_generate_ok(auth_headers, monkeypatch):
+    monkeypatch.setattr(
+        "routers.reports.generate_device_comparison_report",
+        lambda username, password: _FAKE_COMPARISON,
+    )
+
+    r = client.post("/api/reports/device-comparison/generate", headers=auth_headers)
+    assert r.status_code == 200
+    data = r.json()
+    assert data["summary"]["matched"] == 1
+    assert data["dnac_only"][0]["hostname"] == "R-SITE-02"
+    assert data["solarwinds_only"][0]["hostname"] == "R-SITE-03"
+    # The exclusion breakdown must reach the client — it's what makes an
+    # over-eager filter visible instead of silent.
+    assert data["excluded"]["solarwinds"][0]["reason"] == "Nexus"
+
+
+def test_device_comparison_solarwinds_failure(auth_headers, monkeypatch):
+    def boom(username, password):
+        raise RuntimeError("SolarWinds query failed (HTTP 400): Cannot resolve property IOSVersion")
+
+    monkeypatch.setattr("routers.reports.generate_device_comparison_report", boom)
+
+    r = client.post("/api/reports/device-comparison/generate", headers=auth_headers)
+    assert r.status_code == 502
+    # Orion's own error text has to survive to the client — it's the whole
+    # reason clients.solarwinds.query stopped discarding the response body.
+    assert "Cannot resolve property IOSVersion" in r.json()["detail"]
+
+
+def test_device_comparison_requires_auth():
+    r = client.post("/api/reports/device-comparison/generate")
+    assert r.status_code in (401, 403)
+
+
+def test_device_comparison_csv_export(auth_headers, monkeypatch):
+    monkeypatch.setattr(
+        "routers.reports.generate_device_comparison_report",
+        lambda username, password: _FAKE_COMPARISON,
+    )
+
+    r = client.get("/api/reports/device-comparison/export.csv", headers=auth_headers)
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/csv")
+    assert "attachment; filename=device_comparison_" in r.headers["content-disposition"]
+
+    body = r.text
+    assert "R-SITE-01" in body and "R-SITE-02" in body and "R-SITE-03" in body
+    assert "DNAC only" in body and "SolarWinds only" in body

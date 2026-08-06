@@ -45,6 +45,8 @@ from utils.bandwidth_report import (
     short_hostname,
 )
 from utils.cdrl49_report import REPORT_DEFS, generate_report, rows_to_csv
+from utils.device_comparison_report import generate_device_comparison_report
+from utils.device_comparison_report import to_csv as device_comparison_csv
 from utils.sna_report import generate_application_traffic_report
 
 # Cap on how many <option> fragments a datalist endpoint returns — these back
@@ -294,3 +296,62 @@ async def get_application_traffic(
         raise HTTPException(502, f"Application traffic report failed: {e}")
 
     return result
+
+
+@router.post("/device-comparison/generate")
+async def generate_device_comparison(session: SessionEntry = Depends(require_auth)):
+    """Reconcile DNAC's inventory against SolarWinds'.
+
+    DNAC comes from the warmed `devices` cache; SolarWinds is queried live.
+    Nexus/ACI/wireless are filtered from both sides — see
+    utils/device_comparison_report.py for why that's symmetric, and note the
+    response carries an `excluded` breakdown so the filter's effect is
+    visible rather than silent.
+    """
+    loop = asyncio.get_event_loop()
+    try:
+        return await loop.run_in_executor(
+            None, run_with_context(generate_device_comparison_report),
+            session.username, session.password,
+        )
+    except Exception as e:
+        logger.error(
+            f"Device comparison report failed: {e}",
+            extra={"target": "SolarWinds", "action": "DEVICE_COMPARISON"},
+        )
+        raise HTTPException(502, f"Device comparison failed: {e}")
+
+
+@router.get("/device-comparison/export.csv")
+async def export_device_comparison(session: SessionEntry = Depends(require_auth)):
+    """Same reconciliation as /generate, flattened to CSV.
+
+    Re-runs the comparison rather than accepting the client's copy back: the
+    report is uncached and cheap enough to rebuild, and round-tripping it
+    through the browser would let anything sent back be written into the
+    download as though it came from SolarWinds.
+
+    GET, not POST — it takes no parameters and only reads, so the browser can
+    fetch it directly as a download. (utils.csrf only honours the
+    X-CSRF-Token header, which a native form submit can't set, so a POST here
+    would need a fetch+blob dance for no benefit.)
+    """
+    loop = asyncio.get_event_loop()
+    try:
+        report = await loop.run_in_executor(
+            None, run_with_context(generate_device_comparison_report),
+            session.username, session.password,
+        )
+    except Exception as e:
+        logger.error(
+            f"Device comparison export failed: {e}",
+            extra={"target": "SolarWinds", "action": "DEVICE_COMPARISON_CSV"},
+        )
+        raise HTTPException(502, f"Device comparison failed: {e}")
+
+    stamp = datetime.now().strftime("%Y%m%d")
+    return Response(
+        device_comparison_csv(report),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=device_comparison_{stamp}.csv"},
+    )
