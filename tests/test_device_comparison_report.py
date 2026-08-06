@@ -13,7 +13,9 @@ import pytest
 from utils.device_comparison_report import (
     classify_exclusion,
     compare_inventories,
+    fetch_solarwinds_devices,
     generate_device_comparison_report,
+    maintenance_state,
     site_code_for,
     to_csv,
 )
@@ -436,3 +438,92 @@ def test_no_dnac_client_falls_back_to_cache_for_dev_mode():
 
     mock_cache.assert_called_once_with("devices")
     mock_fetch.assert_not_called()
+
+
+# ── Maintenance mode (SolarWinds "unmanaged") ────────────────────────────────
+
+@pytest.mark.parametrize("node,expected", [
+    ({"Unmanaged": True}, True),
+    ({"Unmanaged": 1}, True),
+    ({"Unmanaged": "True"}, True),        # SWQL booleans arrive in several shapes
+    ({"Unmanaged": "true"}, True),
+    ({"Unmanaged": False}, False),
+    ({"Unmanaged": 0}, False),
+    ({"Unmanaged": "False"}, False),
+    ({"Unmanaged": None}, False),
+    ({}, False),
+])
+def test_maintenance_detected_from_the_unmanaged_flag(node, expected):
+    assert maintenance_state(node)[0] is expected
+
+
+def test_maintenance_falls_back_to_node_status_code():
+    """The Unmanaged column may have been dropped from the query, so status 9
+    — which comes from the proven base column set — is the second signal."""
+    assert maintenance_state({"Status": 9})[0] is True
+    assert maintenance_state({"Status": 1})[0] is False
+    assert maintenance_state({"Status": "9"})[0] is True
+    assert maintenance_state({"Status": None})[0] is False
+    assert maintenance_state({"Status": "not-a-number"})[0] is False
+
+
+def test_maintenance_until_is_reported():
+    assert maintenance_state(
+        {"Unmanaged": True, "UnManageUntil": "2026-08-12T00:00:00"},
+    ) == (True, "2026-08-12T00:00:00")
+
+
+def test_maintenance_until_ignored_when_node_is_managed():
+    """Orion leaves stale values in UnManageUntil after a window ends —
+    reading it unconditionally would report live devices as in maintenance."""
+    assert maintenance_state(
+        {"Unmanaged": False, "Status": 1, "UnManageUntil": "2020-01-01T00:00:00"},
+    ) == (False, None)
+
+
+def test_maintenance_devices_are_kept_not_dropped():
+    """The whole point: a device in maintenance stays in the report, flagged,
+    so the gap is visible but known to need verifying first."""
+    report = compare_inventories([], [
+        {"NodeName": "R-SITE-01", "NodeIpAddress": "1.2.3.4", "MachineType": "Cisco ISR 4451",
+         "Unmanaged": True, "UnManageUntil": "2026-08-12T00:00:00"},
+        {"NodeName": "R-SITE-02", "NodeIpAddress": "5.6.7.8", "MachineType": "Cisco ISR 4331",
+         "Status": 1},
+    ])
+
+    assert report["summary"]["solarwinds_only"] == 2
+    assert report["summary"]["solarwinds_only_in_maintenance"] == 1
+
+    rows = {r["hostname"]: r for r in report["solarwinds_only"]}
+    assert rows["R-SITE-01"]["in_maintenance"] is True
+    assert rows["R-SITE-01"]["maintenance_until"] == "2026-08-12T00:00:00"
+    assert rows["R-SITE-02"]["in_maintenance"] is False
+
+
+def test_maintenance_columns_are_dropped_if_solarwinds_rejects_them():
+    """SWQL is all-or-nothing, and these columns are the one unconfirmed part
+    of the query — an unresolvable one must not take down a working report."""
+    attempts = []
+
+    def fake_query(swql, username, password, timeout=None):
+        attempts.append(swql)
+        if "UnManageUntil" in swql:
+            raise RuntimeError("SolarWinds query failed (HTTP 400): Cannot resolve property Unmanaged")
+        return [{"NodeName": "R-SITE-01", "NodeIpAddress": "1.2.3.4"}]
+
+    with patch("clients.solarwinds.query", side_effect=fake_query):
+        rows = fetch_solarwinds_devices("dev", "dev")
+
+    assert len(attempts) == 2
+    assert "UnManageUntil" not in attempts[1]
+    assert rows[0]["NodeName"] == "R-SITE-01"
+
+
+def test_csv_reports_maintenance_state():
+    report = compare_inventories([], [
+        {"NodeName": "R-SITE-01", "NodeIpAddress": "1.2.3.4", "MachineType": "Cisco ISR 4451",
+         "Unmanaged": True, "UnManageUntil": "2026-08-12T00:00:00"},
+    ])
+    csv_text = to_csv(report)
+    assert "Maintenance Mode,Maintenance Until" in csv_text
+    assert "Yes,2026-08-12T00:00:00" in csv_text

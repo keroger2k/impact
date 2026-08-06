@@ -103,6 +103,7 @@
           This starts a discovery against the device and, if it responds, assigns it to the site
           below. It changes Catalyst Center.
         </p>
+        <div class="alert alert-warning py-2 small d-none" id="dc-add-maintenance" role="alert"></div>
         <div class="row g-3 mb-3">
           <div class="col-sm-4">
             <label class="form-label small fw-bold uppercase letter-spacing-1">Hostname</label>
@@ -239,6 +240,42 @@
     return box;
   }
 
+  // A node in maintenance mode ("unmanaged" in Orion) isn't being polled, so
+  // its data is frozen and it may already be off the network. Flag it rather
+  // than dropping it — absence from DNAC is then something to verify, not to
+  // act on blindly.
+  function stateCell(node) {
+    if (!node.in_maintenance) return el('span', 'text-muted', '—');
+    const badge = el('span', 'badge bg-warning text-dark', 'Maintenance');
+    badge.title = node.maintenance_until
+      ? 'Unmanaged in SolarWinds until ' + node.maintenance_until +
+        '. Not being polled — it may no longer be on the network.'
+      : 'Unmanaged in SolarWinds — not being polled, so it may no longer be on the network.';
+    return badge;
+  }
+
+  function swOnlyPane(data) {
+    const pane = el('div');
+    const inMaint = data.summary.solarwinds_only_in_maintenance || 0;
+
+    if (inMaint) {
+      const note = el('div', 'alert alert-warning py-2 small');
+      note.textContent =
+        `${inMaint} of these ${inMaint === 1 ? 'is' : 'are'} in maintenance mode in SolarWinds. ` +
+        'Polling is suspended for those, so they may no longer be on the network — confirm before ' +
+        'adding them to Catalyst Center.';
+      pane.appendChild(note);
+    }
+
+    pane.appendChild(table(
+      ['Hostname', 'IP', 'Model', 'Version', 'Site Code', 'State', ''],
+      data.solarwinds_only.map(n => [
+        n.hostname, n.ip, n.model, n.version, siteCodeCell(n), stateCell(n), addButton(n),
+      ]),
+    ));
+    return pane;
+  }
+
   function addButton(node) {
     const btn = el('button', 'btn btn-sm btn-primary text-nowrap');
     btn.type = 'button';
@@ -283,10 +320,7 @@
       : emptyNote('Every DNAC device is present in SolarWinds.'));
 
     renderInto('dc-tab-sw', data.solarwinds_only.length
-      ? table(['Hostname', 'IP', 'Model', 'Version', 'Site Code', ''],
-              data.solarwinds_only.map(n => [
-                n.hostname, n.ip, n.model, n.version, siteCodeCell(n), addButton(n),
-              ]))
+      ? swOnlyPane(data)
       : emptyNote('Every SolarWinds node is present in DNAC.'));
 
     renderInto('dc-tab-sync', inSync.length
@@ -371,6 +405,21 @@
       node.site_code_source === 'hostname'
         ? 'Not recorded in SolarWinds — derived from the hostname. Check before adding.'
         : "From this node's Site property in SolarWinds.";
+
+    // Maintenance mode is precisely when this action is most likely to fail —
+    // the device isn't being polled and may already be gone — so say so at the
+    // point of confirming rather than only in the table behind the modal.
+    const maint = document.getElementById('dc-add-maintenance');
+    if (node.in_maintenance) {
+      maint.textContent =
+        'This device is in maintenance mode in SolarWinds' +
+        (node.maintenance_until ? ' until ' + node.maintenance_until : '') +
+        '. SolarWinds has stopped polling it, so it may no longer be on the network and discovery ' +
+        'may fail. Confirm it is reachable before adding it.';
+      maint.classList.remove('d-none');
+    } else {
+      maint.classList.add('d-none');
+    }
 
     const log = document.getElementById('dc-add-log');
     log.textContent = '';

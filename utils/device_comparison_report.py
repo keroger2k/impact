@@ -3,10 +3,18 @@
 Answers "is everything Catalyst Center manages also being monitored, and vice
 versa?" by putting the two inventories side by side:
 
-  - **DNAC** side comes from the warmed `devices` cache (no extra API call).
+  - **DNAC** side is a live, all-or-nothing pull of the device inventory.
   - **SolarWinds** side is a live SWQL read of `Orion.Nodes`, narrowed to
     `Vendor = 'Cisco'` — the same literal `utils/cdrl49_report.py` already
     uses successfully against the real instance.
+
+Neither side is cached; see fetch_dnac_devices for why a stale DNAC list
+would invert this report rather than merely age it.
+
+SolarWinds nodes in **maintenance mode** ("unmanaged" in Orion terms) are
+kept in the results and flagged rather than dropped — polling is suspended
+for those, so they may already be off the network, which makes "missing from
+DNAC" something to verify rather than act on. See maintenance_state.
 
 Scope, per the report's purpose: only device classes Catalyst Center actually
 manages. The two exclusions are *not* symmetric, because the underlying facts
@@ -35,6 +43,7 @@ posture as the other reports.
 """
 from __future__ import annotations
 
+import logging
 import re
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -44,6 +53,8 @@ import clients.solarwinds as solarwinds
 from cache import cache
 from utils.bandwidth_report import short_hostname
 from utils.report_pool import FANOUT_POOL
+
+logger = logging.getLogger(__name__)
 
 # Matched against model/description strings, lowercased. Word-boundary
 # anchored where a bare substring would over-match.
@@ -102,6 +113,73 @@ def _key(hostname: str | None) -> str:
     return short_hostname(hostname or "").lower()
 
 
+# Orion's node status code for a node taken out of monitoring. Used as a
+# second signal alongside the `Unmanaged` flag so maintenance is still
+# detected when the maintenance columns had to be dropped (see
+# fetch_solarwinds_devices) — `Status` is part of the proven base query.
+_STATUS_UNMANAGED = 9
+
+_MAINTENANCE_COLUMNS = """,
+    n.Unmanaged,
+    n.UnManageFrom,
+    n.UnManageUntil"""
+
+
+def _node_swql(extra_columns: str) -> str:
+    return f"""
+SELECT
+    n.NodeID,
+    n.Caption AS NodeName,
+    n.IPAddress AS NodeIpAddress,
+    n.MachineType,
+    n.IOSVersion,
+    n.NodeDescription,
+    n.Status,
+    cp.Site{extra_columns}
+FROM Orion.Nodes n
+LEFT JOIN Orion.NodesCustomProperties cp ON cp.NodeID = n.NodeID
+WHERE n.Vendor = 'Cisco'
+ORDER BY n.Caption
+"""
+
+
+def _is_true(value) -> bool:
+    """SWQL booleans arrive as bool, 0/1, or a string depending on the column
+    and serialiser, so normalise rather than trusting one shape."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value or "").strip().lower() in {"true", "yes", "y", "1"}
+
+
+def maintenance_state(node: dict) -> tuple[bool, str | None]:
+    """Is this node in maintenance mode, and until when?
+
+    SolarWinds calls it "unmanaged": polling is suspended, so the node's data
+    is frozen at whatever it was when maintenance began. That matters here
+    because such a device may already be off the network — it would still
+    appear as a gap this report suggests onboarding.
+
+    Two signals, because the `Unmanaged` column may have been dropped from
+    the query: the flag itself, falling back to the node status code, which
+    comes from the proven base column set.
+
+    `UnManageUntil` is only read when the node is actually unmanaged — Orion
+    leaves stale values in that column after a maintenance window ends.
+    """
+    unmanaged = _is_true(node.get("Unmanaged"))
+    if not unmanaged:
+        try:
+            unmanaged = int(node.get("Status")) == _STATUS_UNMANAGED
+        except (TypeError, ValueError):
+            unmanaged = False
+    if not unmanaged:
+        return False, None
+    until = node.get("UnManageUntil")
+    return True, (until.strip() if isinstance(until, str) and until.strip() else None)
+
+
 def fetch_solarwinds_devices(username: str, password: str, timeout: int | None = None) -> list[dict]:
     """Cisco nodes from SolarWinds.
 
@@ -119,23 +197,25 @@ def fetch_solarwinds_devices(username: str, password: str, timeout: int | None =
     this report exists to *find* gaps. An inner join would silently drop any
     node missing a custom-properties row — hiding exactly the unmonitored or
     unmanaged device the report was run to surface.
+
+    The maintenance-mode columns are requested first and dropped on failure
+    (see _MAINTENANCE_COLUMNS). They're the one part of this query never
+    confirmed against the real instance, and SWQL is all-or-nothing — an
+    unresolvable column would take down a report that currently works, to add
+    a supplementary flag. Degrading to "maintenance unknown" is the better
+    trade; the fallback logs loudly.
     """
-    swql = """
-SELECT
-    n.NodeID,
-    n.Caption AS NodeName,
-    n.IPAddress AS NodeIpAddress,
-    n.MachineType,
-    n.IOSVersion,
-    n.NodeDescription,
-    n.Status,
-    cp.Site
-FROM Orion.Nodes n
-LEFT JOIN Orion.NodesCustomProperties cp ON cp.NodeID = n.NodeID
-WHERE n.Vendor = 'Cisco'
-ORDER BY n.Caption
-"""
-    return solarwinds.query(swql, username, password, timeout=timeout)
+    try:
+        return solarwinds.query(
+            _node_swql(_MAINTENANCE_COLUMNS), username, password, timeout=timeout,
+        )
+    except Exception as e:
+        logger.warning(
+            "SolarWinds maintenance-mode columns unavailable, retrying without them "
+            f"(devices will show as maintenance-unknown): {e}",
+            extra={"target": "SolarWinds", "action": "DEVICE_COMPARISON"},
+        )
+        return solarwinds.query(_node_swql(""), username, password, timeout=timeout)
 
 
 def fetch_dnac_devices(dnac) -> list[dict]:
@@ -194,6 +274,7 @@ def site_code_for(hostname: str | None, site: str | None) -> tuple[str, str]:
 def _sw_view(node: dict) -> dict:
     hostname = short_hostname(node.get("NodeName"))
     code, code_source = site_code_for(hostname, node.get("Site"))
+    in_maintenance, until = maintenance_state(node)
     return {
         "hostname": hostname,
         "ip": node.get("NodeIpAddress"),
@@ -203,6 +284,8 @@ def _sw_view(node: dict) -> dict:
         "status": node.get("Status"),
         "site_code": code,
         "site_code_source": code_source,
+        "in_maintenance": in_maintenance,
+        "maintenance_until": until,
     }
 
 
@@ -390,6 +473,10 @@ def compare_inventories(dnac_devices: list[dict], sw_nodes: list[dict]) -> dict:
             "with_differences": sum(1 for m in matched if m["differences"]),
             "dnac_only": len(dnac_only),
             "solarwinds_only": len(sw_only),
+            # Of the gaps, how many are unmanaged in SolarWinds — those
+            # may already be off the network, so "missing from DNAC" is
+            # not necessarily something to act on.
+            "solarwinds_only_in_maintenance": sum(1 for s in sw_only if s["in_maintenance"]),
         },
         "matched": matched,
         "dnac_only": dnac_only,
@@ -430,7 +517,7 @@ def to_csv(report: dict) -> str:
         "Status", "Hostname", "Matched By", "Differences",
         "DNAC IP", "SolarWinds IP", "DNAC Model", "SolarWinds Model",
         "DNAC Version", "SolarWinds Version", "DNAC Serial", "DNAC Family",
-        "Site Code", "Site Code Source",
+        "Site Code", "Site Code Source", "Maintenance Mode", "Maintenance Until",
     ])
 
     for m in report["matched"]:
@@ -442,6 +529,7 @@ def to_csv(report: dict) -> str:
             d.get("ip") or "", s.get("ip") or "", d.get("model") or "", s.get("model") or "",
             d.get("version") or "", s.get("version") or "", d.get("serial") or "", d.get("family") or "",
             s.get("site_code") or "", s.get("site_code_source") or "",
+            "Yes" if s.get("in_maintenance") else "", s.get("maintenance_until") or "",
         ])
 
     for d in report["dnac_only"]:
@@ -449,7 +537,7 @@ def to_csv(report: dict) -> str:
             "DNAC only", d.get("hostname") or "", "", "",
             d.get("ip") or "", "", d.get("model") or "", "",
             d.get("version") or "", "", d.get("serial") or "", d.get("family") or "",
-            "", "",
+            "", "", "", "",
         ])
 
     for s in report["solarwinds_only"]:
@@ -458,6 +546,7 @@ def to_csv(report: dict) -> str:
             "", s.get("ip") or "", "", s.get("model") or "",
             "", s.get("version") or "", "", "",
             s.get("site_code") or "", s.get("site_code_source") or "",
+            "Yes" if s.get("in_maintenance") else "", s.get("maintenance_until") or "",
         ])
 
     return buf.getvalue()
