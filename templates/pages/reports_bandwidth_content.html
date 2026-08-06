@@ -21,7 +21,7 @@
             click generates every chart below. Charts only; nothing is written to a file.
           </p>
 
-          <form id="bw-form" class="row g-2 align-items-end mb-3">
+          <form id="bw-form" class="row g-2 align-items-end">
             <div class="col-sm-4 col-lg-3">
               <label class="form-label small fw-bold uppercase letter-spacing-1">Router Name</label>
               <input type="text" id="bw-router" name="router" class="form-control" list="bw-router-options"
@@ -29,7 +29,6 @@
                      hx-get="/api/reports/bandwidth/router-options" hx-trigger="keyup changed delay:300ms, focus"
                      hx-target="#bw-router-options" hx-swap="innerHTML">
               <datalist id="bw-router-options"></datalist>
-              <div class="form-text">Suggestions from DNAC's device inventory — any SolarWinds name still works.</div>
             </div>
             <div class="col-sm-3 col-lg-2">
               <label class="form-label small fw-bold uppercase letter-spacing-1">Interface</label>
@@ -46,6 +45,13 @@
               </button>
             </div>
           </form>
+          <!-- Kept outside the row's flex layout on purpose: a helper-text
+               line under just one column made that column taller than its
+               siblings, and align-items-end (needed so Router Name/Interface/
+               Generate stay bottom-aligned regardless of label wrapping)
+               pushed the shorter columns down to match — the staggered
+               offset a user flagged from a live screenshot. -->
+          <div class="form-text mb-3">Suggestions from DNAC's device inventory — any SolarWinds name still works.</div>
 
           <div id="bw-error" class="alert alert-danger py-2 small d-none" role="alert"></div>
           <div id="bw-candidates" class="d-none mb-3"></div>
