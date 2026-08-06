@@ -167,36 +167,49 @@ async def bandwidth_router_options(
     return HTMLResponse("".join(f'<option value="{html.escape(n, quote=True)}"></option>' for n in names[:_DATALIST_LIMIT]))
 
 
-@router.get("/bandwidth/interface-options", response_class=HTMLResponse)
-async def bandwidth_interface_options(
+@router.get("/bandwidth/interfaces", response_class=HTMLResponse)
+async def bandwidth_interfaces(
     router: str = Query("", max_length=100),
     session: SessionEntry = Depends(require_auth),
 ):
-    """Datalist <option> fragment of every DNAC-known interface name on `router`.
+    """<option> fragment listing every DNAC-known interface on `router`,
+    populating the Interface field's dropdown with real options instead of a
+    hardcoded "Tunnel5000" guess — which interface a site actually uses
+    varies (another tunnel number, or a physical WAN interface).
 
-    Same cache-only approach as bandwidth_router_options, against the
-    `dnac_interfaces` cache. Exact hostname match preferred, falling back to
-    a substring match (mirrors utils.bandwidth_report.find_node_ip's
-    exact-then-LIKE pattern) since the Router Name field may still hold a
-    partially-typed value when this fires.
-
-    Unlike the router list, this isn't narrowed by the Interface field's own
-    text: a single device's interface count is small enough that the
-    browser's native datalist filtering handles that, and narrowing
-    server-side would go empty as soon as the field still held a value (e.g.
-    the Tunnel5000 default) left over from a previously-picked router that
-    doesn't happen to have that interface.
+    Same cache-only approach as bandwidth_router_options (pure `dnac_interfaces`
+    cache read, stale OK, no extra round trip) rather than a live SolarWinds
+    query: SolarWinds queries default to a 180s timeout (SOLARWINDS_TIMEOUT),
+    far too slow to fire on every Router Name keystroke. The actual
+    live-verified resolution still happens in generate_bandwidth_report's
+    SWQL lookup when Generate is clicked — this dropdown only narrows what
+    gets typed into that field, exactly like the Router Name field already
+    does for hostnames.
     """
     router_needle = short_hostname(router).lower()
     if not router_needle:
-        return HTMLResponse("")
+        return HTMLResponse('<option value="">Select a router first</option>')
 
     interfaces = cache.get_stale("dnac_interfaces") or []
     exact = [i for i in interfaces if short_hostname(i.get("deviceName") or "").lower() == router_needle]
     pool = exact if exact else [i for i in interfaces if router_needle in short_hostname(i.get("deviceName") or "").lower()]
 
-    names = sorted({i["portName"] for i in pool if i.get("portName")}, key=str.lower)
-    return HTMLResponse("".join(f'<option value="{html.escape(n, quote=True)}"></option>' for n in names[:_DATALIST_LIMIT]))
+    if not pool:
+        return HTMLResponse('<option value="">No interfaces found for this router</option>')
+
+    by_name = {}
+    for i in pool:
+        name = i.get("portName")
+        if name and name not in by_name:
+            by_name[name] = i
+
+    options = ['<option value="">Select interface…</option>']
+    for name in sorted(by_name, key=str.lower):
+        status = by_name[name].get("status") or by_name[name].get("adminStatus") or ""
+        label = f"{name} — {status}" if status else name
+        selected = " selected" if name == DEFAULT_INTERFACE else ""
+        options.append(f'<option value="{html.escape(name, quote=True)}"{selected}>{html.escape(label)}</option>')
+    return HTMLResponse("".join(options))
 
 
 @router.post("/bandwidth/application-traffic")

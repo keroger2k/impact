@@ -32,12 +32,12 @@
             </div>
             <div class="col-sm-3 col-lg-2">
               <label class="form-label small fw-bold uppercase letter-spacing-1">Interface</label>
-              <input type="text" id="bw-interface" name="interface" class="form-control" value="Tunnel5000"
-                     list="bw-interface-options" autocomplete="off"
-                     hx-get="/api/reports/bandwidth/interface-options" hx-include="#bw-router"
-                     hx-trigger="focus, change from:#bw-router"
-                     hx-target="#bw-interface-options" hx-swap="innerHTML">
-              <datalist id="bw-interface-options"></datalist>
+              <select id="bw-interface" name="interface" class="form-select"
+                      hx-get="/api/reports/bandwidth/interfaces" hx-include="#bw-router"
+                      hx-trigger="focus, change from:#bw-router, keyup changed delay:600ms from:#bw-router"
+                      hx-target="this" hx-swap="innerHTML">
+                <option value="">Select a router first</option>
+              </select>
             </div>
             <div class="col-sm-auto">
               <button type="button" class="btn btn-primary" id="bw-generate-btn" onclick="generateAll()">
@@ -241,10 +241,15 @@
     snaResultsBox.classList.add('d-none');
 
     const router = document.getElementById('bw-router').value.trim();
-    const iface = document.getElementById('bw-interface').value.trim() || 'Tunnel5000';
+    const iface = document.getElementById('bw-interface').value.trim();
 
     if (!interfaceId && !router) {
       errorBox.textContent = 'Router name is required.';
+      errorBox.classList.remove('d-none');
+      return;
+    }
+    if (!interfaceId && !iface) {
+      errorBox.textContent = 'Select an interface.';
       errorBox.classList.remove('d-none');
       return;
     }
@@ -287,7 +292,7 @@
     // click produces every chart on this page instead of a second click.
     const snaFormData = new FormData();
     snaFormData.set('router', router || '');
-    snaFormData.set('interface', iface);
+    snaFormData.set('interface', iface || 'Tunnel5000');
 
     const snaPromise = router ? fetch('/api/reports/bandwidth/application-traffic', {
       method: 'POST', body: snaFormData, headers: csrfHeaders(),

@@ -151,36 +151,46 @@ def test_router_options_no_cache_returns_empty(auth_headers, monkeypatch):
     assert r.text == ""
 
 
-def test_interface_options_requires_router(auth_headers, monkeypatch):
+def test_interfaces_requires_router(auth_headers, monkeypatch):
     monkeypatch.setattr("routers.reports.cache.get_stale", lambda key: [{"deviceName": "R-SITE-01", "portName": "Tunnel5000"}])
 
-    r = client.get("/api/reports/bandwidth/interface-options", headers=auth_headers)
+    r = client.get("/api/reports/bandwidth/interfaces", headers=auth_headers)
     assert r.status_code == 200
-    assert r.text == ""
+    assert "Select a router first" in r.text
 
 
-def test_interface_options_exact_match_returns_all_interfaces(auth_headers, monkeypatch):
+def test_interfaces_no_match_returns_placeholder(auth_headers, monkeypatch):
+    monkeypatch.setattr("routers.reports.cache.get_stale", lambda key: [] if key == "dnac_interfaces" else None)
+
+    r = client.get("/api/reports/bandwidth/interfaces", params={"router": "R-SITE-01"}, headers=auth_headers)
+    assert r.status_code == 200
+    assert "No interfaces found" in r.text
+
+
+def test_interfaces_exact_match_returns_all_interfaces(auth_headers, monkeypatch):
     def fake_stale(key):
         if key == "dnac_interfaces":
             return [
-                {"deviceName": "R-SITE-01", "portName": "Tunnel5000"},
-                {"deviceName": "R-SITE-01", "portName": "Loopback0"},
-                {"deviceName": "R-SITE-01-OLD", "portName": "Tunnel9999"},
+                {"deviceName": "R-SITE-01", "portName": "Tunnel5000", "status": "up"},
+                {"deviceName": "R-SITE-01", "portName": "Loopback0", "status": "up"},
+                {"deviceName": "R-SITE-01-OLD", "portName": "Tunnel9999", "status": "up"},
             ]
         return None
 
     monkeypatch.setattr("routers.reports.cache.get_stale", fake_stale)
 
-    r = client.get("/api/reports/bandwidth/interface-options", params={"router": "R-SITE-01"}, headers=auth_headers)
+    r = client.get("/api/reports/bandwidth/interfaces", params={"router": "R-SITE-01"}, headers=auth_headers)
     assert r.status_code == 200
     assert "Tunnel5000" in r.text
     assert "Loopback0" in r.text
     # Not returned unfiltered by the current Interface field text — but an
     # exact router match must still exclude the near-duplicate "-OLD" device.
     assert "Tunnel9999" not in r.text
+    # DEFAULT_INTERFACE is pre-selected when the router actually has it.
+    assert '<option value="Tunnel5000"' in r.text and 'selected' in r.text
 
 
-def test_interface_options_falls_back_to_substring_router_match(auth_headers, monkeypatch):
+def test_interfaces_falls_back_to_substring_router_match(auth_headers, monkeypatch):
     def fake_stale(key):
         if key == "dnac_interfaces":
             return [{"deviceName": "R-SITE-01-SUB", "portName": "Tunnel20"}]
@@ -188,7 +198,7 @@ def test_interface_options_falls_back_to_substring_router_match(auth_headers, mo
 
     monkeypatch.setattr("routers.reports.cache.get_stale", fake_stale)
 
-    r = client.get("/api/reports/bandwidth/interface-options", params={"router": "R-SITE-01"}, headers=auth_headers)
+    r = client.get("/api/reports/bandwidth/interfaces", params={"router": "R-SITE-01"}, headers=auth_headers)
     assert r.status_code == 200
     assert "Tunnel20" in r.text
 
@@ -208,7 +218,7 @@ def test_router_options_strips_fqdn_to_short_hostname(auth_headers, monkeypatch)
     assert "tsa.gov" not in r.text
 
 
-def test_interface_options_matches_router_despite_fqdn_device_name(auth_headers, monkeypatch):
+def test_interfaces_matches_router_despite_fqdn_device_name(auth_headers, monkeypatch):
     """dnac_interfaces' `deviceName` can also carry an FQDN — the (now
     short-form) Router Name field must still resolve against it."""
     monkeypatch.setattr(
@@ -217,7 +227,7 @@ def test_interface_options_matches_router_despite_fqdn_device_name(auth_headers,
         if key == "dnac_interfaces" else None,
     )
 
-    r = client.get("/api/reports/bandwidth/interface-options", params={"router": "R-SITE-01"}, headers=auth_headers)
+    r = client.get("/api/reports/bandwidth/interfaces", params={"router": "R-SITE-01"}, headers=auth_headers)
     assert r.status_code == 200
     assert "Tunnel5000" in r.text
 
