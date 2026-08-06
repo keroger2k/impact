@@ -15,6 +15,7 @@ fallback for environments where an Exporter's name does carry the hostname.
 """
 from __future__ import annotations
 
+import re
 from concurrent.futures import ThreadPoolExecutor
 
 import clients.sna as sna_client
@@ -50,21 +51,49 @@ def find_exporters(
     return ip_matches or name_matches
 
 
+# Leading identifier-ish run of a SolarWinds interface Caption — stops at the
+# first space, "·", "|" or similar decoration.
+_LEADING_IFNAME_RE = re.compile(r"[A-Za-z0-9/._:-]+")
+
+
+def _interface_name_candidates(interface_name: str) -> list[str]:
+    """Progressively less specific forms of an interface name to match on.
+
+    SolarWinds interface Captions carry free-text circuit decoration — real
+    example shape: "Tunnel5000 · DMVPN Tunnel for TSA (ATT)" — and that
+    Caption is what the Bandwidth report's Interface dropdown posts. SNA's
+    interface names are bare identifiers ("Tunnel5000", or an "ifIndex-N"
+    fallback), so the decorated string matches nothing: it's longer than the
+    stored name, and a longer string can never be found inside a shorter one
+    (same failure class as the FQDN router-name bug — see
+    utils.bandwidth_report.short_hostname). Try the full string first, so an
+    environment whose SNA names *do* carry decoration still wins on the exact
+    match, then fall back to the leading identifier.
+    """
+    full = interface_name.strip()
+    candidates = [full]
+    lead = _LEADING_IFNAME_RE.match(full)
+    if lead and lead.group(0) != full:
+        candidates.append(lead.group(0))
+    return [c for c in candidates if c]
+
+
 def find_interfaces(
     session, base_url: str, domain_id: str, device_id, exporter_ip: str, interface_name: str,
 ) -> list[dict]:
-    """Exact (case-insensitive) match first, falling back to substring.
+    """Exact (case-insensitive) match first, falling back to substring, over
+    each candidate form of the name (see _interface_name_candidates).
     Returns candidates: [{"interface_id", "interface_name"}]."""
-    needle = interface_name.strip().lower()
     interfaces = sna_client.list_interfaces(session, base_url, domain_id, device_id, exporter_ip)
 
-    exact = [i for i in interfaces if (i.get("name") or "").strip().lower() == needle]
-    if exact:
-        pool = exact
-    else:
-        pool = [i for i in interfaces if needle in (i.get("name") or "").lower()]
+    for candidate in _interface_name_candidates(interface_name):
+        needle = candidate.lower()
+        exact = [i for i in interfaces if (i.get("name") or "").strip().lower() == needle]
+        pool = exact or [i for i in interfaces if needle in (i.get("name") or "").lower()]
+        if pool:
+            return [{"interface_id": i.get("id"), "interface_name": i.get("name")} for i in pool]
 
-    return [{"interface_id": i.get("id"), "interface_name": i.get("name")} for i in pool]
+    return []
 
 
 def generate_application_traffic_report(
@@ -125,7 +154,26 @@ def generate_application_traffic_report(
         session, base_url, domain_id, exporter["device_id"], exporter["exporter_ip"], interface_name,
     )
     if not interfaces:
-        raise LookupError(f"No interface matching '{interface_name}' found on {exporter['exporter_name']}")
+        # Name-matching between SolarWinds and SNA has been the recurring
+        # failure here (decorated Captions, FQDNs, ifIndex fallbacks), so say
+        # what SNA actually has rather than only what didn't match — the
+        # difference is usually obvious on sight. One extra cheap GET, error
+        # path only.
+        available = [
+            (i.get("name") or "").strip()
+            for i in sna_client.list_interfaces(
+                session, base_url, domain_id, exporter["device_id"], exporter["exporter_ip"],
+            )
+        ]
+        available = [n for n in available if n]
+        hint = ""
+        if available:
+            shown = ", ".join(available[:12])
+            more = f" (+{len(available) - 12} more)" if len(available) > 12 else ""
+            hint = f". SNA reports these interfaces on it: {shown}{more}"
+        raise LookupError(
+            f"No interface matching '{interface_name}' found on {exporter['exporter_name']}{hint}"
+        )
     if len(interfaces) > 1:
         return {
             "status": "ambiguous",

@@ -76,6 +76,75 @@ def test_find_exporters_no_match_at_all():
     assert matches == []
 
 
+# ── find_interfaces (SolarWinds Caption -> SNA interface name) ───────────────
+
+def test_find_interfaces_matches_bare_name():
+    with patch("clients.sna.list_interfaces", return_value=[{"id": 68, "name": "Tunnel5000"}]):
+        matches = sna_report.find_interfaces(None, "https://sna.example.com", "999", 1, "1.2.3.4", "Tunnel5000")
+
+    assert matches == [{"interface_id": 68, "interface_name": "Tunnel5000"}]
+
+
+def test_find_interfaces_strips_solarwinds_caption_decoration():
+    """The real production bug: the Interface dropdown posts SolarWinds'
+    Caption, which carries free-text circuit decoration after the interface
+    name. SNA stores a bare identifier, so the decorated string is longer
+    than what's stored and can never substring-match it."""
+    with patch("clients.sna.list_interfaces", return_value=[
+        {"id": 68, "name": "Tunnel5000"},
+        {"id": 69, "name": "GigabitEthernet0/0/0"},
+    ]):
+        matches = sna_report.find_interfaces(
+            None, "https://sna.example.com", "999", 1, "1.2.3.4",
+            "Tunnel5000 · DMVPN Tunnel for TSA (ATT)",
+        )
+
+    assert matches == [{"interface_id": 68, "interface_name": "Tunnel5000"}]
+
+
+def test_find_interfaces_strips_decoration_on_physical_interface():
+    with patch("clients.sna.list_interfaces", return_value=[{"id": 70, "name": "GigabitEthernet0/0/3"}]):
+        matches = sna_report.find_interfaces(
+            None, "https://sna.example.com", "999", 1, "1.2.3.4",
+            "GigabitEthernet0/0/3 · ATT AVPN 10MB | Terms: 36mo",
+        )
+
+    assert matches == [{"interface_id": 70, "interface_name": "GigabitEthernet0/0/3"}]
+
+
+def test_find_interfaces_prefers_full_string_over_leading_token():
+    """An SNA whose own names carry decoration must still win on the exact
+    match rather than being narrowed to the bare leading identifier."""
+    with patch("clients.sna.list_interfaces", return_value=[
+        {"id": 1, "name": "Tunnel5000 · DMVPN"},
+        {"id": 2, "name": "Tunnel5000"},
+    ]):
+        matches = sna_report.find_interfaces(
+            None, "https://sna.example.com", "999", 1, "1.2.3.4", "Tunnel5000 · DMVPN",
+        )
+
+    assert matches == [{"interface_id": 1, "interface_name": "Tunnel5000 · DMVPN"}]
+
+
+def test_find_interfaces_no_match_returns_empty():
+    with patch("clients.sna.list_interfaces", return_value=[{"id": 1, "name": "Tunnel99"}]):
+        matches = sna_report.find_interfaces(
+            None, "https://sna.example.com", "999", 1, "1.2.3.4", "Tunnel5000 · DMVPN",
+        )
+
+    assert matches == []
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("Tunnel5000 · DMVPN Tunnel for TSA (ATT)", ["Tunnel5000 · DMVPN Tunnel for TSA (ATT)", "Tunnel5000"]),
+    ("Tunnel5000", ["Tunnel5000"]),
+    ("ifIndex-68", ["ifIndex-68"]),
+    ("GigabitEthernet0/0/3 (WAN)", ["GigabitEthernet0/0/3 (WAN)", "GigabitEthernet0/0/3"]),
+])
+def test_interface_name_candidates(raw, expected):
+    assert sna_report._interface_name_candidates(raw) == expected
+
+
 # ── generate_application_traffic_report (wiring) ─────────────────────────────
 
 def test_generate_report_resolves_ip_before_matching_exporters():
@@ -151,6 +220,27 @@ def test_generate_report_normalizes_fqdn_router_name_for_sna_match():
     mock_find_ip.assert_called_once_with("R-SITE-01", "dev", "dev")
     assert result["status"] == "ok"
     assert result["node_name"] == "R-SITE-01"
+
+
+def test_generate_report_no_interface_match_lists_what_sna_has():
+    """Name-matching between SolarWinds and SNA is the recurring failure mode
+    here, so the error must name SNA's actual interfaces — that's what makes
+    the mismatch diagnosable without another round trip through the user."""
+    with patch("utils.sna_report.find_node_ip", return_value="1.2.3.4"), \
+         patch("clients.sna.login", return_value="fake-session"), \
+         patch("clients.sna.get_tenant_id", return_value="999"), \
+         patch("clients.sna.list_flow_collectors", return_value=[{"id": 1, "name": "fc01"}]), \
+         patch("clients.sna.list_exporters", return_value=[{"id": "1.2.3.4", "name": "R-SITE-01"}]), \
+         patch("clients.sna.list_interfaces", return_value=[
+             {"id": 1, "name": "ifIndex-7"}, {"id": 2, "name": "ifIndex-9"},
+         ]):
+        with pytest.raises(LookupError) as excinfo:
+            sna_report.generate_application_traffic_report(
+                "https://sna.example.com", "network", "dev", "dev", "R-SITE-01", "Tunnel5000",
+            )
+
+    message = str(excinfo.value)
+    assert "ifIndex-7" in message and "ifIndex-9" in message
 
 
 def test_generate_report_no_exporter_match_raises_lookup_error_with_ip_hint():
