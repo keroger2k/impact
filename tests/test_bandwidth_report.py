@@ -15,6 +15,7 @@ from utils.bandwidth_report import (
     _build_site_info,
     find_node_ip,
     generate_bandwidth_report,
+    list_interfaces_for_router,
     short_hostname,
 )
 
@@ -75,6 +76,56 @@ def test_find_node_ip_like_fallback_is_deterministically_ordered():
         find_node_ip("R-SITE-01", "dev", "dev")
 
     assert "ORDER BY n.Caption" in captured["swql"]
+
+
+# ── list_interfaces_for_router (Interface dropdown source) ───────────────────
+
+def test_list_interfaces_prefers_exact_node_match():
+    """A LIKE match pulls in near-duplicate node names (e.g. "-OLD" spares).
+    When the exact node exists, only its interfaces may be offered — otherwise
+    the dropdown lists another device's interfaces under this router's name."""
+    rows = [
+        {"NodeName": "R-SITE-01-OLD", "InterfaceID": 1, "InterfaceCaption": "Tunnel9999"},
+        {"NodeName": "R-SITE-01", "InterfaceID": 2, "InterfaceCaption": "Tunnel100"},
+    ]
+    with patch("clients.solarwinds.query", return_value=rows):
+        result = list_interfaces_for_router("R-SITE-01", "dev", "dev")
+
+    assert [r["InterfaceCaption"] for r in result] == ["Tunnel100"]
+
+
+def test_list_interfaces_falls_back_to_like_matches():
+    rows = [{"NodeName": "R-SITE-01-SUB", "InterfaceID": 1, "InterfaceCaption": "Tunnel20"}]
+    with patch("clients.solarwinds.query", return_value=rows):
+        result = list_interfaces_for_router("R-SITE-01", "dev", "dev")
+
+    assert len(result) == 1
+
+
+def test_list_interfaces_no_rows_returns_empty():
+    with patch("clients.solarwinds.query", return_value=[]):
+        assert list_interfaces_for_router("nonexistent", "dev", "dev") == []
+
+
+def test_list_interfaces_rejects_bad_charset():
+    with pytest.raises(InvalidNameError):
+        list_interfaces_for_router("bad;name", "dev", "dev")
+
+
+def test_list_interfaces_uses_short_timeout():
+    """This backs an interactive dropdown, not a report build — it must not
+    inherit SOLARWINDS_TIMEOUT's 180s default, or an unreachable Orion hangs
+    the control the user is waiting on."""
+    captured = {}
+
+    def fake_query(swql, username, password, timeout=None):
+        captured["timeout"] = timeout
+        return []
+
+    with patch("clients.solarwinds.query", side_effect=fake_query):
+        list_interfaces_for_router("R-SITE-01", "dev", "dev")
+
+    assert captured["timeout"] is not None and captured["timeout"] <= 30
 
 
 # ── _build_site_info ─────────────────────────────────────────────────────────

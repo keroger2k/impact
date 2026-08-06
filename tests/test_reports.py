@@ -151,56 +151,82 @@ def test_router_options_no_cache_returns_empty(auth_headers, monkeypatch):
     assert r.text == ""
 
 
-def test_interfaces_requires_router(auth_headers, monkeypatch):
-    monkeypatch.setattr("routers.reports.cache.get_stale", lambda key: [{"deviceName": "R-SITE-01", "portName": "Tunnel5000"}])
-
+def test_interfaces_requires_router(auth_headers):
     r = client.get("/api/reports/bandwidth/interfaces", headers=auth_headers)
     assert r.status_code == 200
     assert "Select a router first" in r.text
 
 
 def test_interfaces_no_match_returns_placeholder(auth_headers, monkeypatch):
-    monkeypatch.setattr("routers.reports.cache.get_stale", lambda key: [] if key == "dnac_interfaces" else None)
+    monkeypatch.setattr("routers.reports.list_interfaces_for_router", lambda *a, **k: [])
 
     r = client.get("/api/reports/bandwidth/interfaces", params={"router": "R-SITE-01"}, headers=auth_headers)
     assert r.status_code == 200
-    assert "No interfaces found" in r.text
+    assert "No router matching this name" in r.text
 
 
-def test_interfaces_exact_match_returns_all_interfaces(auth_headers, monkeypatch):
-    def fake_stale(key):
-        if key == "dnac_interfaces":
-            return [
-                {"deviceName": "R-SITE-01", "portName": "Tunnel5000", "status": "up"},
-                {"deviceName": "R-SITE-01", "portName": "Loopback0", "status": "up"},
-                {"deviceName": "R-SITE-01-OLD", "portName": "Tunnel9999", "status": "up"},
-            ]
-        return None
+def test_interfaces_lists_solarwinds_interfaces_with_ids(auth_headers, monkeypatch):
+    """Every option must carry its SolarWinds InterfaceID — that's what lets
+    Generate post interface_id and bypass the name-based lookup entirely."""
+    def fake_list(router_name, username, password):
+        assert router_name == "R-SITE-01"
+        return [
+            {"NodeName": "R-SITE-01", "InterfaceID": 11, "InterfaceCaption": "GigabitEthernet0/0/0",
+             "InterfaceName": "Gi0/0/0", "StatusDescription": "Up"},
+            {"NodeName": "R-SITE-01", "InterfaceID": 12, "InterfaceCaption": "Tunnel100",
+             "InterfaceName": "Tu100", "StatusDescription": "Up"},
+        ]
 
-    monkeypatch.setattr("routers.reports.cache.get_stale", fake_stale)
-
-    r = client.get("/api/reports/bandwidth/interfaces", params={"router": "R-SITE-01"}, headers=auth_headers)
-    assert r.status_code == 200
-    assert "Tunnel5000" in r.text
-    assert "Loopback0" in r.text
-    # Not returned unfiltered by the current Interface field text — but an
-    # exact router match must still exclude the near-duplicate "-OLD" device.
-    assert "Tunnel9999" not in r.text
-    # DEFAULT_INTERFACE is pre-selected when the router actually has it.
-    assert '<option value="Tunnel5000"' in r.text and 'selected' in r.text
-
-
-def test_interfaces_falls_back_to_substring_router_match(auth_headers, monkeypatch):
-    def fake_stale(key):
-        if key == "dnac_interfaces":
-            return [{"deviceName": "R-SITE-01-SUB", "portName": "Tunnel20"}]
-        return None
-
-    monkeypatch.setattr("routers.reports.cache.get_stale", fake_stale)
+    monkeypatch.setattr("routers.reports.list_interfaces_for_router", fake_list)
 
     r = client.get("/api/reports/bandwidth/interfaces", params={"router": "R-SITE-01"}, headers=auth_headers)
     assert r.status_code == 200
-    assert "Tunnel20" in r.text
+    assert 'data-interface-id="11"' in r.text
+    assert "GigabitEthernet0/0/0 — Up" in r.text
+    assert 'data-interface-id="12"' in r.text
+    # This router has no Tunnel5000 — nothing may be pre-selected, which is
+    # the whole point: a hardcoded default silently mismatching was the bug.
+    assert "selected" not in r.text
+
+
+def test_interfaces_preselects_default_only_when_present(auth_headers, monkeypatch):
+    monkeypatch.setattr(
+        "routers.reports.list_interfaces_for_router",
+        lambda *a, **k: [
+            {"NodeName": "R-SITE-01", "InterfaceID": 1, "InterfaceCaption": "Tunnel5000", "StatusDescription": "Up"},
+            {"NodeName": "R-SITE-01", "InterfaceID": 2, "InterfaceCaption": "Loopback0", "StatusDescription": "Up"},
+        ],
+    )
+
+    r = client.get("/api/reports/bandwidth/interfaces", params={"router": "R-SITE-01"}, headers=auth_headers)
+    assert r.status_code == 200
+    assert '<option value="Tunnel5000" data-interface-id="1" selected>' in r.text
+
+
+def test_interfaces_solarwinds_failure_degrades_to_placeholder(auth_headers, monkeypatch):
+    """A live query backing an autocomplete must never 500 the fragment —
+    it degrades to an inline message the user can act on."""
+    def boom(*a, **k):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr("routers.reports.list_interfaces_for_router", boom)
+
+    r = client.get("/api/reports/bandwidth/interfaces", params={"router": "R-SITE-01"}, headers=auth_headers)
+    assert r.status_code == 200
+    assert "Could not reach SolarWinds" in r.text
+
+
+def test_interfaces_invalid_name_degrades_to_placeholder(auth_headers, monkeypatch):
+    from utils.bandwidth_report import InvalidNameError
+
+    def boom(*a, **k):
+        raise InvalidNameError("Router name contains unsupported characters")
+
+    monkeypatch.setattr("routers.reports.list_interfaces_for_router", boom)
+
+    r = client.get("/api/reports/bandwidth/interfaces", params={"router": "bad;name"}, headers=auth_headers)
+    assert r.status_code == 200
+    assert "Invalid router name" in r.text
 
 
 def test_router_options_strips_fqdn_to_short_hostname(auth_headers, monkeypatch):
@@ -218,18 +244,16 @@ def test_router_options_strips_fqdn_to_short_hostname(auth_headers, monkeypatch)
     assert "tsa.gov" not in r.text
 
 
-def test_interfaces_matches_router_despite_fqdn_device_name(auth_headers, monkeypatch):
-    """dnac_interfaces' `deviceName` can also carry an FQDN — the (now
-    short-form) Router Name field must still resolve against it."""
+def test_interfaces_falls_back_to_interface_name_when_no_caption(auth_headers, monkeypatch):
     monkeypatch.setattr(
-        "routers.reports.cache.get_stale",
-        lambda key: [{"deviceName": "R-SITE-01.network.ad.tsa.gov", "portName": "Tunnel5000"}]
-        if key == "dnac_interfaces" else None,
+        "routers.reports.list_interfaces_for_router",
+        lambda *a, **k: [{"NodeName": "R-SITE-01", "InterfaceID": 3, "InterfaceCaption": None,
+                          "InterfaceName": "Gi0/0/1", "StatusDescription": None}],
     )
 
     r = client.get("/api/reports/bandwidth/interfaces", params={"router": "R-SITE-01"}, headers=auth_headers)
     assert r.status_code == 200
-    assert "Tunnel5000" in r.text
+    assert '<option value="Gi0/0/1" data-interface-id="3">Gi0/0/1</option>' in r.text
 
 
 # ── Application traffic (SNA Report Builder) ─────────────────────────────────

@@ -15,10 +15,11 @@
         </div>
         <div class="card-body">
           <p class="text-muted small mb-3">
-            Percent-utilization history (In/Out) and per-application traffic for a router interface,
-            defaulting to Tunnel5000 (the standard DMVPN hub-facing interface) — last 24 hours and
-            last 7 days, queried live from SolarWinds and Cisco Secure Network Analytics. One
-            click generates every chart below. Charts only; nothing is written to a file.
+            Percent-utilization history (In/Out) and per-application traffic for a router interface —
+            last 24 hours and last 7 days, queried live from SolarWinds and Cisco Secure Network
+            Analytics. Enter a router name and the Interface list fills in with what SolarWinds is
+            actually polling on it. One click generates every chart below; charts only, nothing is
+            written to a file.
           </p>
 
           <form id="bw-form" class="row g-2 align-items-end">
@@ -30,12 +31,21 @@
                      hx-target="#bw-router-options" hx-swap="innerHTML">
               <datalist id="bw-router-options"></datalist>
             </div>
-            <div class="col-sm-3 col-lg-2">
-              <label class="form-label small fw-bold uppercase letter-spacing-1">Interface</label>
+            <div class="col-sm-4 col-lg-3">
+              <label class="form-label small fw-bold uppercase letter-spacing-1">
+                Interface
+                <span id="bw-iface-loading" class="htmx-indicator spinner-border spinner-border-sm ms-1"
+                      role="status" aria-label="Loading interfaces"></span>
+              </label>
+              <!-- Live SolarWinds query, so this fires on commit (blur or a
+                   datalist pick) rather than per-keystroke. hx-sync drops any
+                   in-flight lookup when the router changes again, so a slow
+                   response for an old name can't overwrite a newer one. -->
               <select id="bw-interface" name="interface" class="form-select"
                       hx-get="/api/reports/bandwidth/interfaces" hx-include="#bw-router"
-                      hx-trigger="focus, change from:#bw-router, keyup changed delay:600ms from:#bw-router"
-                      hx-target="this" hx-swap="innerHTML">
+                      hx-trigger="change from:#bw-router"
+                      hx-target="this" hx-swap="innerHTML"
+                      hx-sync="this:replace" hx-indicator="#bw-iface-loading">
                 <option value="">Select a router first</option>
               </select>
             </div>
@@ -51,7 +61,10 @@
                Generate stay bottom-aligned regardless of label wrapping)
                pushed the shorter columns down to match — the staggered
                offset a user flagged from a live screenshot. -->
-          <div class="form-text mb-3">Suggestions from DNAC's device inventory — any SolarWinds name still works.</div>
+          <div class="form-text mb-3">
+            Router suggestions come from DNAC's device inventory, which doesn't cover every WAN
+            router — type any SolarWinds node name. Interfaces are read live from SolarWinds.
+          </div>
 
           <div id="bw-error" class="alert alert-danger py-2 small d-none" role="alert"></div>
           <div id="bw-candidates" class="d-none mb-3"></div>
@@ -241,7 +254,10 @@
     snaResultsBox.classList.add('d-none');
 
     const router = document.getElementById('bw-router').value.trim();
-    const iface = document.getElementById('bw-interface').value.trim();
+    const ifaceSelect = document.getElementById('bw-interface');
+    const iface = ifaceSelect.value.trim();
+    const picked = ifaceSelect.selectedOptions[0];
+    const pickedId = picked ? picked.dataset.interfaceId : '';
 
     if (!interfaceId && !router) {
       errorBox.textContent = 'Router name is required.';
@@ -259,9 +275,14 @@
     resultsBox.classList.add('d-none');
     snaSection.classList.remove('d-none');
 
+    // Prefer an exact InterfaceID — either from a clicked ambiguity candidate
+    // or straight off the dropdown option, which SolarWinds itself supplied.
+    // That skips generate_bandwidth_report's name-based lookup, so a picked
+    // interface can never come back "No matching interface found".
+    const resolvedId = interfaceId || pickedId;
     const bwFormData = new FormData();
-    if (interfaceId) {
-      bwFormData.set('interface_id', interfaceId);
+    if (resolvedId) {
+      bwFormData.set('interface_id', resolvedId);
     } else {
       bwFormData.set('router', router);
       bwFormData.set('interface', iface);

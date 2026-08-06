@@ -138,6 +138,49 @@ ORDER BY n.Caption
     return match.get("NodeIpAddress")
 
 
+# Short timeout for the interactive interface dropdown — see
+# clients.solarwinds.query's `timeout` docstring. This backs a control the
+# user is actively waiting on, not a report build.
+_DROPDOWN_TIMEOUT = 20
+
+
+def list_interfaces_for_router(router_name: str, username: str, password: str) -> list[dict]:
+    """Every interface SolarWinds is polling on `router_name`.
+
+    Backs the Bandwidth Utilization report's Interface dropdown. Sourced from
+    SolarWinds — *not* DNAC's cached interface inventory — because SolarWinds
+    is what generate_bandwidth_report() actually resolves against: DNAC
+    doesn't carry every WAN router in this fleet (confirmed against real
+    production data — a router the report works for returned nothing from the
+    DNAC interface cache), and even where it does, an interface DNAC knows
+    about but Orion isn't polling would be offered as a valid pick and then
+    fail the report's own lookup.
+
+    Exact node match preferred, falling back to LIKE (same pattern as
+    find_node_ip) since the Router Name field is free text.
+    """
+    name = _validate_name(router_name, "Router name")
+    lit = _escape_literal(name)
+    swql = f"""
+SELECT
+    n.Caption AS NodeName,
+    i.InterfaceID,
+    i.Caption AS InterfaceCaption,
+    i.Name AS InterfaceName,
+    i.InterfaceAlias,
+    i.StatusDescription
+FROM Orion.NPM.Interfaces i
+JOIN Orion.Nodes n ON i.NodeID = n.NodeID
+WHERE n.Caption = '{lit}' OR n.Caption LIKE '%{lit}%'
+ORDER BY n.Caption, i.Caption
+"""
+    rows = solarwinds.query(swql, username, password, timeout=_DROPDOWN_TIMEOUT)
+    if not rows:
+        return []
+    exact = [r for r in rows if (r.get("NodeName") or "").strip().lower() == name.lower()]
+    return exact if exact else rows
+
+
 def get_interface_by_id(interface_id: int, username: str, password: str) -> dict | None:
     swql = f"""
 SELECT{_SITE_INFO_SELECT}{_SITE_INFO_JOIN}

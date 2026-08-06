@@ -35,13 +35,21 @@ def _format_username(username: str) -> str:
     return f"{domain}\\{username}"
 
 
-def query(swql: str, username: str, password: str) -> list[dict]:
-    """Run a SWQL SELECT against Orion and return the result rows."""
+def query(swql: str, username: str, password: str, timeout: int | None = None) -> list[dict]:
+    """Run a SWQL SELECT against Orion and return the result rows.
+
+    `timeout` overrides SOLARWINDS_TIMEOUT (default 180s) for this call. That
+    default is sized for the CDRL49 report's heavy fleet-wide queries; a
+    caller backing an interactive control (e.g. the Bandwidth report's
+    interface dropdown) should pass something short so a slow/unreachable
+    Orion surfaces as a quick inline message instead of a hung UI element.
+    """
     if not username or not password:
         raise RuntimeError("SolarWinds credentials are required")
 
     port = os.getenv("SOLARWINDS_PORT", "17774")
-    timeout = int(os.getenv("SOLARWINDS_TIMEOUT", "180"))
+    if timeout is None:
+        timeout = int(os.getenv("SOLARWINDS_TIMEOUT", "180"))
     endpoint = f"{_base_url()}:{port}/SolarWinds/InformationService/v3/Json/Query"
 
     resp = requests.post(

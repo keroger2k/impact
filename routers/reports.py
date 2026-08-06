@@ -36,7 +36,13 @@ import clients.sna as sna_client
 from auth import SessionEntry, require_auth
 from cache import cache
 from logger_config import run_with_context
-from utils.bandwidth_report import DEFAULT_INTERFACE, InvalidNameError, generate_bandwidth_report, short_hostname
+from utils.bandwidth_report import (
+    DEFAULT_INTERFACE,
+    InvalidNameError,
+    generate_bandwidth_report,
+    list_interfaces_for_router,
+    short_hostname,
+)
 from utils.cdrl49_report import REPORT_DEFS, generate_report, rows_to_csv
 from utils.sna_report import generate_application_traffic_report
 
@@ -172,43 +178,60 @@ async def bandwidth_interfaces(
     router: str = Query("", max_length=100),
     session: SessionEntry = Depends(require_auth),
 ):
-    """<option> fragment listing every DNAC-known interface on `router`,
-    populating the Interface field's dropdown with real options instead of a
-    hardcoded "Tunnel5000" guess — which interface a site actually uses
-    varies (another tunnel number, or a physical WAN interface).
+    """<option> fragment listing every interface SolarWinds is polling on
+    `router`, populating the Interface field's dropdown with real options
+    instead of a hardcoded "Tunnel5000" guess — which interface a site
+    actually uses varies (another tunnel number, or a physical WAN interface).
 
-    Same cache-only approach as bandwidth_router_options (pure `dnac_interfaces`
-    cache read, stale OK, no extra round trip) rather than a live SolarWinds
-    query: SolarWinds queries default to a 180s timeout (SOLARWINDS_TIMEOUT),
-    far too slow to fire on every Router Name keystroke. The actual
-    live-verified resolution still happens in generate_bandwidth_report's
-    SWQL lookup when Generate is clicked — this dropdown only narrows what
-    gets typed into that field, exactly like the Router Name field already
-    does for hostnames.
+    Sourced from SolarWinds, not DNAC's `dnac_interfaces` cache: DNAC doesn't
+    carry every WAN router in this fleet (confirmed against real production
+    data — a router the report itself works for came back empty from that
+    cache), and SolarWinds is what generate_bandwidth_report() resolves
+    against anyway, so anything offered here is guaranteed to be something
+    the report can actually find. Each option carries its `InterfaceID`, so
+    Generate posts `interface_id` directly and skips the name-based lookup
+    (and its ambiguity round-trip) entirely.
+
+    Live queries can genuinely fail, and this fires automatically as the user
+    moves through the form — failures degrade to an inline placeholder option
+    rather than an HTTP error, so a lightweight dropdown never dumps a stack
+    trace into the page. The query runs with a short timeout
+    (`_DROPDOWN_TIMEOUT`) rather than SOLARWINDS_TIMEOUT's 180s default.
     """
-    router_needle = short_hostname(router).lower()
-    if not router_needle:
+    router = router.strip()
+    if not router:
         return HTMLResponse('<option value="">Select a router first</option>')
 
-    interfaces = cache.get_stale("dnac_interfaces") or []
-    exact = [i for i in interfaces if short_hostname(i.get("deviceName") or "").lower() == router_needle]
-    pool = exact if exact else [i for i in interfaces if router_needle in short_hostname(i.get("deviceName") or "").lower()]
+    loop = asyncio.get_event_loop()
+    try:
+        rows = await loop.run_in_executor(
+            None, run_with_context(list_interfaces_for_router),
+            router, session.username, session.password,
+        )
+    except InvalidNameError:
+        return HTMLResponse('<option value="">Invalid router name</option>')
+    except Exception as e:
+        logger.error(f"Interface list lookup failed: {e}", extra={"target": "SolarWinds", "action": "BANDWIDTH_INTERFACES"})
+        return HTMLResponse('<option value="">Could not reach SolarWinds — try again</option>')
 
-    if not pool:
-        return HTMLResponse('<option value="">No interfaces found for this router</option>')
+    if not rows:
+        return HTMLResponse('<option value="">No router matching this name in SolarWinds</option>')
 
-    by_name = {}
-    for i in pool:
-        name = i.get("portName")
-        if name and name not in by_name:
-            by_name[name] = i
-
+    seen = set()
     options = ['<option value="">Select interface…</option>']
-    for name in sorted(by_name, key=str.lower):
-        status = by_name[name].get("status") or by_name[name].get("adminStatus") or ""
+    for row in rows:
+        name = row.get("InterfaceCaption") or row.get("InterfaceName")
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        status = row.get("StatusDescription") or ""
         label = f"{name} — {status}" if status else name
         selected = " selected" if name == DEFAULT_INTERFACE else ""
-        options.append(f'<option value="{html.escape(name, quote=True)}"{selected}>{html.escape(label)}</option>')
+        options.append(
+            f'<option value="{html.escape(name, quote=True)}"'
+            f' data-interface-id="{html.escape(str(row.get("InterfaceID") or ""), quote=True)}"{selected}>'
+            f'{html.escape(label)}</option>'
+        )
     return HTMLResponse("".join(options))
 
 
