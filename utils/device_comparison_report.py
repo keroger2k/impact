@@ -104,11 +104,19 @@ def fetch_solarwinds_devices(username: str, password: str, timeout: int | None =
     """Cisco nodes from SolarWinds.
 
     `Vendor = 'Cisco'` and `MachineType` are both confirmed working against the
-    real instance (see utils/cdrl49_report.build_swql). `IOSVersion`,
-    `NodeDescription` and `Status` are standard Orion.Nodes columns but are not
-    independently confirmed here — if this query ever 400s, they're the first
-    suspects, and clients.solarwinds.query now surfaces Orion's actual
-    "Cannot resolve property ..." text.
+    real instance (see utils/cdrl49_report.build_swql), as is the
+    `Orion.NodesCustomProperties` join and its `Site` field (see
+    utils/bandwidth_report._SITE_INFO_JOIN). `IOSVersion`, `NodeDescription`
+    and `Status` are standard Orion.Nodes columns but are not independently
+    confirmed here — if this query ever 400s, they're the first suspects, and
+    clients.solarwinds.query now surfaces Orion's actual "Cannot resolve
+    property ..." text.
+
+    The custom-properties join is a LEFT JOIN, unlike the other reports':
+    those want site metadata for a node already known to have it, whereas
+    this report exists to *find* gaps. An inner join would silently drop any
+    node missing a custom-properties row — hiding exactly the unmonitored or
+    unmanaged device the report was run to surface.
     """
     swql = """
 SELECT
@@ -118,8 +126,10 @@ SELECT
     n.MachineType,
     n.IOSVersion,
     n.NodeDescription,
-    n.Status
+    n.Status,
+    cp.Site
 FROM Orion.Nodes n
+LEFT JOIN Orion.NodesCustomProperties cp ON cp.NodeID = n.NodeID
 WHERE n.Vendor = 'Cisco'
 ORDER BY n.Caption
 """
@@ -146,14 +156,36 @@ def _dnac_view(device: dict) -> dict:
     }
 
 
+def site_code_for(hostname: str | None, site: str | None) -> tuple[str, str]:
+    """Site code for a SolarWinds node, and where it came from.
+
+    Prefers the node's `Site` custom property. Falls back to the first four
+    characters of the hostname — the same convention `routers/f5.py::_site_of`
+    already uses to derive a site from a hostname.
+
+    The source is returned alongside the value because this feeds the "Add to
+    DNAC" action, which assigns the device to a site in production. A derived
+    code is a guess, and the operator confirming that action should be able to
+    see that it's a guess rather than a recorded fact.
+    """
+    recorded = (site or "").strip()
+    if recorded:
+        return recorded, "solarwinds"
+    return short_hostname(hostname)[:4].upper(), "hostname"
+
+
 def _sw_view(node: dict) -> dict:
+    hostname = short_hostname(node.get("NodeName"))
+    code, code_source = site_code_for(hostname, node.get("Site"))
     return {
-        "hostname": short_hostname(node.get("NodeName")),
+        "hostname": hostname,
         "ip": node.get("NodeIpAddress"),
         "model": node.get("MachineType"),
         "version": node.get("IOSVersion"),
         "description": node.get("NodeDescription"),
         "status": node.get("Status"),
+        "site_code": code,
+        "site_code_source": code_source,
     }
 
 
@@ -375,6 +407,7 @@ def to_csv(report: dict) -> str:
         "Status", "Hostname", "Matched By", "Differences",
         "DNAC IP", "SolarWinds IP", "DNAC Model", "SolarWinds Model",
         "DNAC Version", "SolarWinds Version", "DNAC Serial", "DNAC Family",
+        "Site Code", "Site Code Source",
     ])
 
     for m in report["matched"]:
@@ -385,6 +418,7 @@ def to_csv(report: dict) -> str:
             "; ".join(f'{x["field"]}: {x["dnac"]} vs {x["solarwinds"]}' for x in m["differences"]),
             d.get("ip") or "", s.get("ip") or "", d.get("model") or "", s.get("model") or "",
             d.get("version") or "", s.get("version") or "", d.get("serial") or "", d.get("family") or "",
+            s.get("site_code") or "", s.get("site_code_source") or "",
         ])
 
     for d in report["dnac_only"]:
@@ -392,6 +426,7 @@ def to_csv(report: dict) -> str:
             "DNAC only", d.get("hostname") or "", "", "",
             d.get("ip") or "", "", d.get("model") or "", "",
             d.get("version") or "", "", d.get("serial") or "", d.get("family") or "",
+            "", "",
         ])
 
     for s in report["solarwinds_only"]:
@@ -399,6 +434,7 @@ def to_csv(report: dict) -> str:
             "SolarWinds only", s.get("hostname") or "", "", "",
             "", s.get("ip") or "", "", s.get("model") or "",
             "", s.get("version") or "", "", "",
+            s.get("site_code") or "", s.get("site_code_source") or "",
         ])
 
     return buf.getvalue()

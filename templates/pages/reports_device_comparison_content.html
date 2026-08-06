@@ -85,6 +85,50 @@
   </div>
 </div>
 
+<!-- Add-to-DNAC confirmation. This is the one mutating action on the page —
+     it runs a real discovery against the device and assigns it to a site in
+     Catalyst Center — so it always goes through an explicit confirm showing
+     exactly what will be submitted, and flags a site code that was derived
+     from the hostname rather than read from SolarWinds. -->
+<div class="modal fade" id="dc-add-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="ph ph-plus-circle me-1"></i> Add device to Catalyst Center</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small">
+          This starts a discovery against the device and, if it responds, assigns it to the site
+          below. It changes Catalyst Center.
+        </p>
+        <div class="row g-3 mb-3">
+          <div class="col-sm-4">
+            <label class="form-label small fw-bold uppercase letter-spacing-1">Hostname</label>
+            <div class="fw-bold" id="dc-add-hostname">—</div>
+          </div>
+          <div class="col-sm-4">
+            <label class="form-label small fw-bold uppercase letter-spacing-1">IP Address</label>
+            <div class="fw-bold" id="dc-add-ip">—</div>
+          </div>
+          <div class="col-sm-4">
+            <label for="dc-add-site" class="form-label small fw-bold uppercase letter-spacing-1">Site Code</label>
+            <input type="text" class="form-control form-control-sm" id="dc-add-site">
+            <div class="form-text" id="dc-add-site-source"></div>
+          </div>
+        </div>
+        <div id="dc-add-log" class="d-none" style="max-height:240px;overflow-y:auto;font-family:var(--font-mono,monospace);font-size:12px;background:#0b0b0b;color:#e5e5e5;padding:10px;border-radius:6px;"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" data-bs-dismiss="modal" id="dc-add-cancel">Cancel</button>
+        <button type="button" class="btn btn-primary" id="dc-add-confirm">
+          <i class="ph ph-plus-circle me-1"></i> <span id="dc-add-confirm-label">Add to DNAC</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <style>
   .dc-kpi {
     border: 1px solid var(--border-subtle, #E2E8F0);
@@ -180,6 +224,33 @@
     return box;
   }
 
+  // A derived code is a guess at where the device belongs, so it's marked as
+  // such here and again in the confirm dialog — the operator is about to
+  // assign a real device to that site.
+  function siteCodeCell(node) {
+    const box = el('span');
+    box.appendChild(el('span', 'fw-bold', node.site_code || '—'));
+    if (node.site_code_source === 'hostname') {
+      const tag = el('span', 'badge bg-secondary ms-1', 'from hostname');
+      tag.title = 'Not recorded in SolarWinds — derived from the first 4 characters of the hostname.';
+      box.appendChild(tag);
+    }
+    return box;
+  }
+
+  function addButton(node) {
+    const btn = el('button', 'btn btn-sm btn-primary text-nowrap');
+    btn.type = 'button';
+    btn.innerHTML = '<i class="ph ph-plus-circle me-1"></i>Add to DNAC';
+    if (!node.ip) {
+      btn.disabled = true;
+      btn.title = 'No management IP in SolarWinds — nothing to discover.';
+      return btn;
+    }
+    btn.addEventListener('click', () => openAddModal(node, btn));
+    return btn;
+  }
+
   function render(data) {
     const s = data.summary;
 
@@ -211,8 +282,10 @@
       : emptyNote('Every DNAC device is present in SolarWinds.'));
 
     renderInto('dc-tab-sw', data.solarwinds_only.length
-      ? table(['Hostname', 'IP', 'Model', 'Version'],
-              data.solarwinds_only.map(n => [n.hostname, n.ip, n.model, n.version]))
+      ? table(['Hostname', 'IP', 'Model', 'Version', 'Site Code', ''],
+              data.solarwinds_only.map(n => [
+                n.hostname, n.ip, n.model, n.version, siteCodeCell(n), addButton(n),
+              ]))
       : emptyNote('Every SolarWinds node is present in DNAC.'));
 
     renderInto('dc-tab-sync', inSync.length
@@ -277,6 +350,125 @@
   function dcExport() {
     window.location.assign('/api/reports/device-comparison/export.csv');
   }
+
+  // ── Add to DNAC ────────────────────────────────────────────────────────────
+  // Reuses the existing bulk-import endpoint with a single entry, so this
+  // shares one code path (credentials, site matching, already-in-inventory
+  // skip) with the Device Import page rather than reimplementing discovery.
+
+  let addTarget = null;   // { node, rowButton }
+
+  function openAddModal(node, rowButton) {
+    addTarget = { node, rowButton };
+
+    document.getElementById('dc-add-hostname').textContent = node.hostname || '—';
+    document.getElementById('dc-add-ip').textContent = node.ip || '—';
+
+    const siteInput = document.getElementById('dc-add-site');
+    siteInput.value = node.site_code || '';
+    document.getElementById('dc-add-site-source').textContent =
+      node.site_code_source === 'hostname'
+        ? 'Not recorded in SolarWinds — derived from the hostname. Check before adding.'
+        : "From this node's Site property in SolarWinds.";
+
+    const log = document.getElementById('dc-add-log');
+    log.textContent = '';
+    log.classList.add('d-none');
+
+    const confirm = document.getElementById('dc-add-confirm');
+    confirm.disabled = false;
+    document.getElementById('dc-add-confirm-label').textContent = 'Add to DNAC';
+
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('dc-add-modal')).show();
+  }
+
+  function appendLog(message, level) {
+    const log = document.getElementById('dc-add-log');
+    log.classList.remove('d-none');
+    const colors = { error: '#ff7b72', success: '#7ee787', warn: '#e3b341' };
+    const line = el('div', null, `[${(level || 'info').toUpperCase()}] ${message}`);
+    line.style.color = colors[level] || '#e5e5e5';
+    log.appendChild(line);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function runAdd() {
+    if (!addTarget) return;
+    const site = document.getElementById('dc-add-site').value.trim();
+    if (!site) {
+      appendLog('A site code is required.', 'error');
+      return;
+    }
+
+    const confirm = document.getElementById('dc-add-confirm');
+    confirm.disabled = true;
+    document.getElementById('dc-add-confirm-label').textContent = 'Adding…';
+    document.getElementById('dc-add-log').textContent = '';
+
+    const payload = { entries: [{ site_code: site, ip: addTarget.node.ip }] };
+
+    // SSE over POST, so EventSource is out — read the stream directly, the
+    // same way the Device Import page consumes this endpoint.
+    fetch('/api/import/run', {
+      method: 'POST',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, csrfHeaders()),
+      body: JSON.stringify(payload),
+    }).then(response => {
+      if (!response.ok) throw new Error('Import request failed (HTTP ' + response.status + ')');
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffered = '';
+      let succeeded = false;
+
+      function process({ done, value }) {
+        if (done) return finish(succeeded);
+        // Chunks don't necessarily land on event boundaries — buffer and only
+        // consume complete "data: ...\n\n" records.
+        buffered += decoder.decode(value, { stream: true });
+        const parts = buffered.split('\n\n');
+        buffered = parts.pop();
+        parts.forEach(part => {
+          part.split('\n').forEach(line => {
+            if (!line.startsWith('data: ')) return;
+            let data;
+            try { data = JSON.parse(line.substring(6)); } catch (e) { return; }
+            if (data.type === 'log') {
+              appendLog(data.message, data.level);
+            } else if (data.type === 'error') {
+              appendLog(data.message, 'error');
+            } else if (data.type === 'complete') {
+              succeeded = (data.discovered || 0) > 0;
+              appendLog(
+                `Complete — discovered ${data.discovered || 0}, skipped ${data.skipped || 0}, failed ${data.failed || 0}`,
+                succeeded ? 'success' : 'warn',
+              );
+            }
+          });
+        });
+        return reader.read().then(process);
+      }
+      return reader.read().then(process);
+    }).catch(err => {
+      appendLog(err.message, 'error');
+      finish(false);
+    });
+
+    function finish(ok) {
+      confirm.disabled = false;
+      document.getElementById('dc-add-confirm-label').textContent = ok ? 'Added' : 'Retry';
+      if (ok && addTarget && addTarget.rowButton) {
+        // Don't silently drop the row — the report is a point-in-time
+        // snapshot, and re-running it is what proves the device landed.
+        const btn = addTarget.rowButton;
+        btn.disabled = true;
+        btn.className = 'btn btn-sm btn-outline-success text-nowrap';
+        btn.innerHTML = '<i class="ph ph-check me-1"></i>Added';
+        btn.title = 'Re-run the comparison to confirm.';
+      }
+    }
+  }
+
+  document.getElementById('dc-add-confirm').addEventListener('click', runAdd);
 
   window.dcGenerate = dcGenerate;
   window.dcExport = dcExport;

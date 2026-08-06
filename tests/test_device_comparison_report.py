@@ -11,6 +11,7 @@ import pytest
 from utils.device_comparison_report import (
     classify_exclusion,
     compare_inventories,
+    site_code_for,
     to_csv,
 )
 
@@ -324,3 +325,56 @@ def test_csv_covers_all_three_categories():
     assert "DNAC only" in csv_text
     assert "SolarWinds only" in csv_text
     assert csv_text.startswith("Status,Hostname")
+
+
+# ── Site code (feeds the "Add to DNAC" action) ───────────────────────────────
+
+def test_site_code_prefers_the_solarwinds_custom_property():
+    assert site_code_for("RTFAK086AA001", "S689") == ("S689", "solarwinds")
+
+
+@pytest.mark.parametrize("site", [None, "", "   "])
+def test_site_code_falls_back_to_first_four_hostname_chars(site):
+    assert site_code_for("RTFAK086AA001", site) == ("RTFA", "hostname")
+
+
+def test_site_code_fallback_is_uppercased():
+    """Matches routers/f5.py::_site_of, the convention already used elsewhere
+    for deriving a site from a hostname."""
+    assert site_code_for("rtfak086aa001", None) == ("RTFA", "hostname")
+
+
+def test_site_code_fallback_ignores_the_domain():
+    assert site_code_for("RTFAK086AA001.network.ad.tsa.gov", None) == ("RTFA", "hostname")
+
+
+def test_site_code_short_hostname_is_not_padded():
+    assert site_code_for("AB", None) == ("AB", "hostname")
+
+
+def test_solarwinds_only_rows_carry_site_code_and_its_source():
+    """The Add-to-DNAC button needs both: the code to assign, and whether it
+    was recorded or guessed, so the operator can see which they're confirming."""
+    report = compare_inventories([], [
+        _sw("R-SITE-01", ip="1.2.3.4"),
+        {"NodeID": 2, "NodeName": "RTFAK086AA001", "NodeIpAddress": "5.6.7.8",
+         "MachineType": "Cisco ISR 4331", "IOSVersion": "17.6.5",
+         "NodeDescription": "Cisco IOS XE", "Status": 1, "Site": "S689"},
+    ])
+
+    rows = {r["hostname"]: r for r in report["solarwinds_only"]}
+    assert rows["RTFAK086AA001"]["site_code"] == "S689"
+    assert rows["RTFAK086AA001"]["site_code_source"] == "solarwinds"
+    # No Site custom property on this one — derived from the hostname.
+    assert rows["R-SITE-01"]["site_code"] == "R-SI"
+    assert rows["R-SITE-01"]["site_code_source"] == "hostname"
+
+
+def test_csv_includes_site_code_for_solarwinds_only_rows():
+    report = compare_inventories([], [
+        {"NodeID": 1, "NodeName": "RTFAK086AA001", "NodeIpAddress": "5.6.7.8",
+         "MachineType": "Cisco ISR 4331", "Site": "S689"},
+    ])
+    csv_text = to_csv(report)
+    assert "Site Code,Site Code Source" in csv_text
+    assert "S689,solarwinds" in csv_text
