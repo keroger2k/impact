@@ -36,7 +36,7 @@ import clients.sna as sna_client
 from auth import SessionEntry, require_auth
 from cache import cache
 from logger_config import run_with_context
-from utils.bandwidth_report import DEFAULT_INTERFACE, InvalidNameError, generate_bandwidth_report
+from utils.bandwidth_report import DEFAULT_INTERFACE, InvalidNameError, generate_bandwidth_report, short_hostname
 from utils.cdrl49_report import REPORT_DEFS, generate_report, rows_to_csv
 from utils.sna_report import generate_application_traffic_report
 
@@ -149,11 +149,19 @@ async def bandwidth_router_options(
     input rather than a hard-enforced select: SolarWinds' own Node Caption
     is what actually resolves the report, and it usually — but not always —
     matches the DNAC hostname exactly.
+
+    DNAC's `hostname` field is sometimes a full FQDN — reduced to
+    short_hostname() before it ever reaches this datalist, since both
+    SolarWinds' Caption and SNA's Exporter name downstream are short-form
+    (see short_hostname()'s docstring).
     """
     devices = cache.get_stale("devices") or []
     needle = router.strip().lower()
     names = sorted(
-        {d["hostname"] for d in devices if d.get("hostname") and (not needle or needle in d["hostname"].lower())},
+        {
+            short_hostname(d["hostname"]) for d in devices
+            if d.get("hostname") and (not needle or needle in short_hostname(d["hostname"]).lower())
+        },
         key=str.lower,
     )
     return HTMLResponse("".join(f'<option value="{html.escape(n, quote=True)}"></option>' for n in names[:_DATALIST_LIMIT]))
@@ -179,13 +187,13 @@ async def bandwidth_interface_options(
     the Tunnel5000 default) left over from a previously-picked router that
     doesn't happen to have that interface.
     """
-    router_needle = router.strip().lower()
+    router_needle = short_hostname(router).lower()
     if not router_needle:
         return HTMLResponse("")
 
     interfaces = cache.get_stale("dnac_interfaces") or []
-    exact = [i for i in interfaces if (i.get("deviceName") or "").strip().lower() == router_needle]
-    pool = exact if exact else [i for i in interfaces if router_needle in (i.get("deviceName") or "").lower()]
+    exact = [i for i in interfaces if short_hostname(i.get("deviceName") or "").lower() == router_needle]
+    pool = exact if exact else [i for i in interfaces if router_needle in short_hostname(i.get("deviceName") or "").lower()]
 
     names = sorted({i["portName"] for i in pool if i.get("portName")}, key=str.lower)
     return HTMLResponse("".join(f'<option value="{html.escape(n, quote=True)}"></option>' for n in names[:_DATALIST_LIMIT]))

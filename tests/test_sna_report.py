@@ -127,6 +127,32 @@ def test_generate_report_24h_and_7d_pulls_land_correctly_when_run_concurrently()
     assert result["traffic_7d"]["applications"] == ["Splunk"]
 
 
+def test_generate_report_normalizes_fqdn_router_name_for_sna_match():
+    """The real bug this guards against: DNAC's device inventory (which now
+    feeds the Router Name autofill datalist) sometimes carries a device's
+    FQDN as its hostname. Passed through unchanged, that FQDN is longer than
+    both SolarWinds' short Node Caption (breaks find_node_ip's exact/LIKE
+    match) and SNA's short Exporter name (breaks find_exporters' substring
+    fallback) — a longer string can never be found inside a shorter one.
+    generate_application_traffic_report must reduce it to short_hostname()
+    before either lookup runs."""
+    with patch("utils.sna_report.find_node_ip", return_value=None) as mock_find_ip, \
+         patch("clients.sna.login", return_value="fake-session"), \
+         patch("clients.sna.get_tenant_id", return_value="999"), \
+         patch("clients.sna.list_flow_collectors", return_value=[{"id": 1, "name": "fc01"}]), \
+         patch("clients.sna.list_exporters", return_value=[{"id": "9.9.9.9", "name": "R-SITE-01"}]), \
+         patch("clients.sna.list_interfaces", return_value=[{"id": 68, "name": "Tunnel5000"}]), \
+         patch("clients.sna.get_interface_application_traffic", return_value=[]):
+        result = sna_report.generate_application_traffic_report(
+            "https://sna.example.com", "network", "dev", "dev",
+            "R-SITE-01.network.ad.tsa.gov", "Tunnel5000",
+        )
+
+    mock_find_ip.assert_called_once_with("R-SITE-01", "dev", "dev")
+    assert result["status"] == "ok"
+    assert result["node_name"] == "R-SITE-01"
+
+
 def test_generate_report_no_exporter_match_raises_lookup_error_with_ip_hint():
     with patch("utils.sna_report.find_node_ip", return_value="1.2.3.4"), \
          patch("clients.sna.login", return_value="fake-session"), \

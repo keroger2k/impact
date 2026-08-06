@@ -193,6 +193,35 @@ def test_interface_options_falls_back_to_substring_router_match(auth_headers, mo
     assert "Tunnel20" in r.text
 
 
+def test_router_options_strips_fqdn_to_short_hostname(auth_headers, monkeypatch):
+    """DNAC's `devices` cache sometimes carries a device's FQDN as its
+    hostname — the datalist must never suggest that form, since neither
+    SolarWinds' Node Caption nor SNA's Exporter name downstream are FQDNs."""
+    monkeypatch.setattr(
+        "routers.reports.cache.get_stale",
+        lambda key: [{"hostname": "R-SITE-01.network.ad.tsa.gov"}] if key == "devices" else None,
+    )
+
+    r = client.get("/api/reports/bandwidth/router-options", params={"router": "r-site"}, headers=auth_headers)
+    assert r.status_code == 200
+    assert r.text == '<option value="R-SITE-01"></option>'
+    assert "tsa.gov" not in r.text
+
+
+def test_interface_options_matches_router_despite_fqdn_device_name(auth_headers, monkeypatch):
+    """dnac_interfaces' `deviceName` can also carry an FQDN — the (now
+    short-form) Router Name field must still resolve against it."""
+    monkeypatch.setattr(
+        "routers.reports.cache.get_stale",
+        lambda key: [{"deviceName": "R-SITE-01.network.ad.tsa.gov", "portName": "Tunnel5000"}]
+        if key == "dnac_interfaces" else None,
+    )
+
+    r = client.get("/api/reports/bandwidth/interface-options", params={"router": "R-SITE-01"}, headers=auth_headers)
+    assert r.status_code == 200
+    assert "Tunnel5000" in r.text
+
+
 # ── Application traffic (SNA Report Builder) ─────────────────────────────────
 
 def test_application_traffic_ok(auth_headers, monkeypatch):

@@ -10,7 +10,26 @@ absent from _build_site_info's output.
 from unittest.mock import patch
 
 import pytest
-from utils.bandwidth_report import InvalidNameError, _build_site_info, find_node_ip, generate_bandwidth_report
+from utils.bandwidth_report import (
+    InvalidNameError,
+    _build_site_info,
+    find_node_ip,
+    generate_bandwidth_report,
+    short_hostname,
+)
+
+
+# ── short_hostname ────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("raw,expected", [
+    ("R-SITE-01.network.ad.tsa.gov", "R-SITE-01"),
+    ("R-SITE-01", "R-SITE-01"),
+    ("  R-SITE-01.network.ad.tsa.gov  ", "R-SITE-01"),
+    ("", ""),
+    (None, ""),
+])
+def test_short_hostname(raw, expected):
+    assert short_hostname(raw) == expected
 
 
 def test_find_node_ip_exact_match_preferred():

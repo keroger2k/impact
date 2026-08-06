@@ -18,7 +18,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 
 import clients.sna as sna_client
-from utils.bandwidth_report import find_node_ip
+from utils.bandwidth_report import find_node_ip, short_hostname
 
 
 def find_exporters(
@@ -93,6 +93,14 @@ def generate_application_traffic_report(
     it would surface a misleading "no exporter found" instead of the real
     cause).
     """
+    # Both the SolarWinds IP lookup (find_node_ip, an exact-then-LIKE match
+    # on Node Caption) and SNA's own exporter name-fallback match
+    # (find_exporters, a substring check) need the short form — an FQDN
+    # (DNAC's `devices` cache occasionally carries one) is longer than
+    # either stored name and can't satisfy either comparison. Normalize
+    # once here so every downstream use — including the routers/reports.py
+    # datalist this usually arrives from — sees the same short name.
+    router_name = short_hostname(router_name)
     router_ip = find_node_ip(router_name, username, password)
 
     session = sna_client.login(base_url, username, password, domain)

@@ -38,6 +38,22 @@ def _escape_literal(value: str) -> str:
     return value.replace("'", "''")
 
 
+def short_hostname(name: str) -> str:
+    """Reduce a possibly-FQDN hostname down to just its first label.
+
+    DNAC's device inventory sometimes carries a device's FQDN as its
+    `hostname` (e.g. "R-SITE-01.network.ad.tsa.gov"), but SolarWinds' Node
+    Caption and SNA's Exporter name are both the short form — an FQDN
+    passed through unchanged silently fails both: SolarWinds' router lookup
+    is an exact match (find_interfaces), and SNA's name-fallback match
+    (utils.sna_report.find_exporters) is a substring check that a longer
+    FQDN can never satisfy against a shorter stored name. Confirmed real:
+    DNAC-sourced router names feed both queries via the Bandwidth report's
+    autofill datalist (routers/reports.py).
+    """
+    return (name or "").strip().split(".", 1)[0]
+
+
 # Selected + joined once here and reused by both find_interfaces() and
 # get_interface_by_id() so the Site Information panel costs no extra round
 # trip — the interface lookup already touches every table it needs. Field
