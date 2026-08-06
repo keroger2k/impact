@@ -18,10 +18,10 @@
             Side-by-side reconciliation of Catalyst Center's device inventory against SolarWinds'.
             Both are queried live on every run — nothing here is cached, so the result reflects
             the state of both systems right now. Devices are matched on hostname and management
-            IP together. Nexus and ACI are dropped
-            from the SolarWinds side (Catalyst Center doesn't manage them, so they'd always read as
-            gaps), and wireless is dropped from both — everything filtered is listed under
-            <strong>Excluded</strong>.
+            IP together. Nexus, ACI and Unified Communications
+            are dropped from the SolarWinds side (Catalyst Center doesn't manage them, so they'd
+            always read as gaps), and wireless is dropped from both — everything filtered is listed
+            under <strong>Excluded</strong>.
           </p>
 
           <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
@@ -338,9 +338,10 @@
 
     const excludedPane = el('div');
     excludedPane.appendChild(el('p', 'text-muted small',
-      'Out of scope because Catalyst Center does not manage them. Nexus and ACI are filtered ' +
-      'from SolarWinds only; wireless is filtered from both. Shown so the filter can be checked — ' +
-      'if something here belongs in the report, the classification rules need adjusting.'));
+      'Out of scope because Catalyst Center does not manage them. Nexus, ACI and Unified ' +
+      'Communications are filtered from SolarWinds only; wireless is filtered from both. Shown ' +
+      'so the filter can be checked — if something here belongs in the report, or something ' +
+      'missing from the report belongs here, the classification rules need adjusting.'));
     excludedPane.appendChild(excluded.length
       ? table(['System', 'Reason', 'Count', 'Examples'], excluded)
       : emptyNote('Nothing was excluded.'));

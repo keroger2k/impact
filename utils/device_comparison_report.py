@@ -20,11 +20,11 @@ Scope, per the report's purpose: only device classes Catalyst Center actually
 manages. The two exclusions are *not* symmetric, because the underlying facts
 aren't:
 
-  - **Nexus and ACI** are dropped from the SolarWinds side only. Catalyst
-    Center doesn't manage them at all, so they can never appear in the DNAC
-    inventory — running those patterns there couldn't remove a real Nexus,
-    only misfire on a switch whose model string happened to match, silently
-    dropping it from the comparison.
+  - **Nexus, ACI and Unified Communications** (CUCM) are dropped from the
+    SolarWinds side only. Catalyst Center doesn't manage any of them, so they
+    can never appear in the DNAC inventory — running those patterns there
+    couldn't remove a real Nexus, only misfire on a switch whose model string
+    happened to match, silently dropping it from the comparison.
   - **Wireless** is dropped from *both* sides, because Catalyst Center does
     manage WLCs and APs. Excluding wireless from SolarWinds alone would
     resurface every AP as a bogus "in DNAC but not monitored" row.
@@ -60,9 +60,9 @@ logger = logging.getLogger(__name__)
 # anchored where a bare substring would over-match.
 #
 # Each rule declares which system it applies to, and that scoping is load
-# bearing rather than tidiness: Catalyst Center does not manage Nexus or ACI
-# at all, so those patterns can never legitimately fire on a DNAC device —
-# running them there could only ever produce a false positive that silently
+# bearing rather than tidiness: Catalyst Center does not manage Nexus, ACI or
+# CUCM at all, so those patterns can never legitimately fire on a DNAC device
+# — running them there could only ever produce a false positive that silently
 # drops a real switch from the comparison. Wireless is the opposite case:
 # Catalyst Center *does* manage WLCs and APs, so wireless genuinely exists on
 # both sides and has to be filtered from both.
@@ -72,6 +72,14 @@ _DNAC = "dnac"
 _EXCLUSION_RULES: list[tuple[str, re.Pattern, frozenset]] = [
     ("Nexus", re.compile(r"\bnexus\b|\bn[2357]k\b|\bn9k\b|\bnx-?os\b", re.I), frozenset({_SW})),
     ("ACI", re.compile(r"\bapic\b|\baci\b", re.I), frozenset({_SW})),
+    # Voice/collaboration servers. CUCM often reports server hardware as its
+    # MachineType, so the identifying string usually turns up in
+    # NodeDescription (sysDescr) instead — both fields are checked. "Call
+    # Manager" is CUCM's pre-2006 name and still appears in older sysDescrs.
+    ("Unified Communications", re.compile(
+        r"\bcucm\b|\bunified\s+communications?\s+manager\b|\bunified\s+cm\b|\bcall\s*manager\b",
+        re.I,
+    ), frozenset({_SW})),
     # "ap" is never matched bare — far too short, and NodeDescription carries
     # a full sysDescr string where a two-letter token would fire constantly.
     # Catalyst wireless is model-ranged rather than named: 91xx are APs and

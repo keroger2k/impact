@@ -527,3 +527,58 @@ def test_csv_reports_maintenance_state():
     csv_text = to_csv(report)
     assert "Maintenance Mode,Maintenance Until" in csv_text
     assert "Yes,2026-08-12T00:00:00" in csv_text
+
+
+# ── Unified Communications (CUCM) ────────────────────────────────────────────
+
+@pytest.mark.parametrize("text", [
+    "Cisco Unified Communications Manager",
+    "Cisco Unified Communication Manager",       # singular, seen in some sysDescrs
+    "CUCM",
+    "Cisco Unified CM 14.0",
+    "Cisco CallManager",                          # CUCM's pre-2006 name
+    "Cisco Call Manager 8.6",
+])
+def test_unified_communications_is_excluded(text):
+    assert classify_exclusion(text, system="solarwinds") == "Unified Communications"
+
+
+def test_cucm_is_a_solarwinds_only_concern():
+    """Same reasoning as Nexus/ACI: Catalyst Center doesn't manage CUCM, so a
+    DNAC-side match could only ever be a false positive."""
+    assert classify_exclusion("Cisco Unified Communications Manager", system="dnac") is None
+
+
+def test_cucm_identified_from_the_node_description():
+    """CUCM commonly reports its server hardware as MachineType, so the
+    identifying string shows up in sysDescr instead."""
+    assert classify_exclusion(
+        "Cisco UCS C240 M5", "Cisco Unified Communications Manager 14.0", system="solarwinds",
+    ) == "Unified Communications"
+
+
+def test_unified_ap_still_classifies_as_wireless_not_uc():
+    """Both rules match on 'unified' — ordering and anchoring must keep them
+    apart, or APs would be filed under the wrong reason (and, worse, would
+    stop being excluded from the DNAC side)."""
+    assert classify_exclusion("Unified AP", system="solarwinds") == "Wireless"
+    assert classify_exclusion("Unified AP", system="dnac") == "Wireless"
+
+
+def test_cucm_does_not_shadow_ordinary_devices():
+    for text in ["ISR4451-X/K9", "Cisco Catalyst 9300-48P", "Cisco ASR 1001-X"]:
+        assert classify_exclusion(text, system="solarwinds") is None
+
+
+def test_cucm_is_reported_as_an_exclusion_not_a_gap():
+    report = compare_inventories([], [
+        {"NodeName": "CUCM-PUB-01", "NodeIpAddress": "1.2.3.4",
+         "MachineType": "Cisco UCS C240 M5",
+         "NodeDescription": "Cisco Unified Communications Manager 14.0"},
+        {"NodeName": "R-SITE-01", "NodeIpAddress": "5.6.7.8", "MachineType": "Cisco ISR 4451"},
+    ])
+
+    assert [n["hostname"] for n in report["solarwinds_only"]] == ["R-SITE-01"]
+    reasons = {e["reason"]: e for e in report["excluded"]["solarwinds"]}
+    assert reasons["Unified Communications"]["count"] == 1
+    assert "CUCM-PUB-01" in reasons["Unified Communications"]["examples"]
