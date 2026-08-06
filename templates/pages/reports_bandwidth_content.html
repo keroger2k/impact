@@ -814,12 +814,19 @@
     }
     svg.appendChild(svgEl('line', { x1: marginL, x2: W - marginR, y1: marginT + plotH, y2: marginT + plotH, stroke: BW_AXIS, 'stroke-width': 1 }));
 
-    // Wide, flush, square-edged columns (near-zero gap between bars, no gap
-    // between stacked segments) — matches the reference SNA Report Builder
-    // chart's blocky "skyline" look, at the user's request, overriding the
-    // dataviz skill's default thin-bar/2px-gap spec for this chart.
+    // Wide, flush, square-edged columns (no gap between stacked segments) —
+    // matches the reference SNA Report Builder chart's blocky "skyline" look,
+    // at the user's request, overriding the dataviz skill's default
+    // thin-bar/2px-gap spec for this chart.
+    //
+    // Exception for sparse views: the 7d chart has only ~8 daily bands, and
+    // flush bars there merge adjacent days into one indistinguishable block,
+    // so you can't tell a solid week from a single wide bar. Leave a
+    // proportional gap once bands get wide; dense hourly views stay flush.
     const bandW = plotW / buckets.length;
-    const barW = Math.max(1, bandW - 1);
+    const barW = buckets.length <= 12
+      ? Math.max(1, bandW * 0.6)
+      : Math.max(1, bandW - 1);
 
     const tooltip = document.createElement('div');
     tooltip.className = 'bw-tooltip';

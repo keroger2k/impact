@@ -20,7 +20,7 @@ Two aggregation passes, in order:
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 # 7 named applications + "Other Apps" = 8 — the categorical palette's slot
 # ceiling (see the dataviz skill's series-count ladder: past ~7-8, fold the tail).
@@ -49,13 +49,37 @@ def _bucket_start(dt: datetime, bucket_seconds: int) -> datetime:
     return datetime.fromtimestamp(floored, tz=timezone.utc)
 
 
-def bucket_application_traffic(records: list[dict], hours: int) -> dict:
+def _bucket_range(start: datetime, end: datetime, bucket_seconds: int) -> list[datetime]:
+    """Every bucket start from `start` through `end`, inclusive."""
+    step = timedelta(seconds=bucket_seconds)
+    current = _bucket_start(start, bucket_seconds)
+    last = _bucket_start(end, bucket_seconds)
+    out = []
+    while current <= last:
+        out.append(current)
+        current += step
+    return out
+
+
+def bucket_application_traffic(
+    records: list[dict], hours: int, window_end: datetime | None = None,
+) -> dict:
     """records: [{"applicationName", "time" (ISO8601 UTC str), "trafficInboundBps",
     "trafficOutboundBps"}, ...] — SNA's native per-minute-ish samples.
 
     `hours` picks the output bucket width: hourly for a <=24h window, daily
     otherwise (mirrors the 24h/7d toggle already on the Bandwidth Utilization
-    report).
+    report). `window_end` anchors the output range (defaults to now, UTC) and
+    exists mainly so tests can pin it.
+
+    The returned buckets span the **whole requested window**, not just the
+    span the data happens to cover — buckets SNA returned nothing for come
+    back as 0.0. Without that padding a single returned day rendered as one
+    bar stretched across the entire chart, which reads as "steady traffic all
+    week" when it actually means the opposite: six days with no data at all.
+    SNA's own Report Builder chart keeps the full time axis for exactly this
+    reason. Any observed bucket outside the nominal window is still kept, so
+    padding can never drop real data.
 
     Returns {"buckets": [iso8601 bucket-start, ...], "applications": [...],
     "series": {app: [avg bps, ...]}}.
@@ -108,11 +132,16 @@ def bucket_application_traffic(records: list[dict], hours: int) -> dict:
             bucket_sums[bucket_key][app] += value
             bucket_counts[bucket_key][app] += 1
 
-    bucket_dts = sorted(bucket_sums.keys())
+    # Pad out to the full requested window so gaps stay visible as gaps.
+    window_end = window_end or datetime.now(timezone.utc)
+    expected = _bucket_range(window_end - timedelta(hours=hours), window_end, bucket_seconds)
+
+    bucket_dts = sorted(set(bucket_sums) | set(expected))
     bucket_keys = [dt.isoformat().replace("+00:00", "Z") for dt in bucket_dts]
     series = {
         app: [
-            (bucket_sums[dt][app] / bucket_counts[dt][app]) if bucket_counts[dt].get(app) else 0.0
+            (bucket_sums[dt][app] / bucket_counts[dt][app])
+            if bucket_counts.get(dt, {}).get(app) else 0.0
             for dt in bucket_dts
         ]
         for app in applications
