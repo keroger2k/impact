@@ -34,11 +34,12 @@ from fastapi.responses import HTMLResponse, Response
 
 import clients.sna as sna_client
 from auth import SessionEntry, require_auth
-from cache import cache
+from cache import TTL_LIVE, cache
 from logger_config import run_with_context
 from utils.bandwidth_report import (
     DEFAULT_INTERFACE,
     InvalidNameError,
+    bare_interface_name,
     generate_bandwidth_report,
     list_interfaces_for_router,
     short_hostname,
@@ -192,27 +193,51 @@ async def bandwidth_interfaces(
     Generate posts `interface_id` directly and skips the name-based lookup
     (and its ambiguity round-trip) entirely.
 
+    Each option's **value is the bare interface name**, not the Caption shown
+    as its label: Captions carry free-text circuit decoration
+    ("Tunnel5000 · DMVPN Tunnel for TSA (ATT)") that fails the SWQL charset
+    check and can't match SNA's bare names either — see
+    utils.bandwidth_report.bare_interface_name. The label keeps the full
+    Caption, since the circuit detail in it is genuinely useful when picking.
+
+    Cached briefly (TTL_LIVE) per router: this is autocomplete, not report
+    data, so the no-cache rule that governs the reports themselves doesn't
+    apply — and without it every pass through the form re-queries Orion. Same
+    posture as `dnac_config_search_result:*`.
+
     Live queries can genuinely fail, and this fires automatically as the user
     moves through the form — failures degrade to an inline placeholder option
     rather than an HTTP error, so a lightweight dropdown never dumps a stack
     trace into the page. The query runs with a short timeout
     (`_DROPDOWN_TIMEOUT`) rather than SOLARWINDS_TIMEOUT's 180s default.
     """
-    router = router.strip()
+    router = short_hostname(router)
     if not router:
         return HTMLResponse('<option value="">Select a router first</option>')
 
-    loop = asyncio.get_event_loop()
-    try:
-        rows = await loop.run_in_executor(
-            None, run_with_context(list_interfaces_for_router),
-            router, session.username, session.password,
-        )
-    except InvalidNameError:
-        return HTMLResponse('<option value="">Invalid router name</option>')
-    except Exception as e:
-        logger.error(f"Interface list lookup failed: {e}", extra={"target": "SolarWinds", "action": "BANDWIDTH_INTERFACES"})
-        return HTMLResponse('<option value="">Could not reach SolarWinds — try again</option>')
+    # Cached explicitly rather than via cache.get_or_set: that helper swallows
+    # loader exceptions and returns None, which would collapse "Orion is
+    # unreachable" and "that name is invalid" into the same misleading
+    # "no router matching this name" message. Errors have to stay
+    # distinguishable here — they're the user's only diagnostic.
+    cache_key = f"sw_interfaces:{router.lower()}"
+    rows = cache.get(cache_key)
+
+    if rows is None:
+        loop = asyncio.get_event_loop()
+        try:
+            rows = await loop.run_in_executor(
+                None, run_with_context(list_interfaces_for_router),
+                router, session.username, session.password,
+            )
+        except InvalidNameError:
+            return HTMLResponse('<option value="">Invalid router name</option>')
+        except Exception as e:
+            logger.error(f"Interface list lookup failed: {e}", extra={"target": "SolarWinds", "action": "BANDWIDTH_INTERFACES"})
+            return HTMLResponse('<option value="">Could not reach SolarWinds — try again</option>')
+        # A confirmed-empty result is cached too — a typo'd name shouldn't
+        # re-query Orion on every keystroke that follows it.
+        cache.set(cache_key, rows, TTL_LIVE)
 
     if not rows:
         return HTMLResponse('<option value="">No router matching this name in SolarWinds</option>')
@@ -220,12 +245,13 @@ async def bandwidth_interfaces(
     seen = set()
     options = ['<option value="">Select interface…</option>']
     for row in rows:
-        name = row.get("InterfaceCaption") or row.get("InterfaceName")
+        caption = row.get("InterfaceCaption") or row.get("InterfaceName") or ""
+        name = bare_interface_name(caption) or row.get("InterfaceName") or ""
         if not name or name in seen:
             continue
         seen.add(name)
         status = row.get("StatusDescription") or ""
-        label = f"{name} — {status}" if status else name
+        label = f"{caption} — {status}" if status else caption
         selected = " selected" if name == DEFAULT_INTERFACE else ""
         options.append(
             f'<option value="{html.escape(name, quote=True)}"'
@@ -260,7 +286,11 @@ async def get_application_traffic(
     except LookupError as e:
         raise HTTPException(404, str(e))
     except Exception as e:
-        logger.error(f"Application traffic report failed: {e}", extra={"target": "SolarWinds", "action": "SNA_APP_TRAFFIC"})
-        raise HTTPException(502, f"SolarWinds lookup failed: {e}")
+        # Deliberately unattributed: this path spans a SolarWinds IP lookup
+        # *and* every SNA call, so naming either system would be a guess.
+        # The old "SolarWinds lookup failed" text misreported SNA-side
+        # failures, and error text is the main diagnostic here.
+        logger.error(f"Application traffic report failed: {e}", extra={"target": "SNA", "action": "SNA_APP_TRAFFIC"})
+        raise HTTPException(502, f"Application traffic report failed: {e}")
 
     return result

@@ -77,6 +77,28 @@ def login(base_url: str, username: str, password: str, domain: str, timeout: int
     return session
 
 
+def logout(session: requests.Session, base_url: str, timeout: int = 10) -> None:
+    """Best-effort session teardown: drop the SMC-side token, then close the
+    connection pool.
+
+    Every report run authenticates fresh, so without this each one leaves a
+    live session on the SMC until it ages out. `DELETE /token` is SNA's
+    documented logout, but this deliberately swallows every failure — it runs
+    in a `finally`, and an unreachable/changed logout endpoint must never mask
+    a successful report or replace a real error with a teardown one. The
+    `session.close()` still happens either way.
+    """
+    try:
+        session.delete(f"{base_url}/token", timeout=timeout)
+    except Exception:  # noqa: BLE001 — teardown must not raise, see docstring
+        pass
+    finally:
+        try:
+            session.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def _headers(session: requests.Session, method: str = "GET") -> dict:
     headers = {"Accept": "application/json"}
     if method.upper() not in ("GET", "HEAD", "OPTIONS"):

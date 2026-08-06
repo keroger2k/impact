@@ -263,6 +263,54 @@ def test_generate_report_propagates_solarwinds_failure():
             )
 
 
+# ── Session teardown ─────────────────────────────────────────────────────────
+
+def test_generate_report_logs_out_on_success():
+    """Every run authenticates fresh, so a missing logout leaks an SMC
+    session per Generate click."""
+    with patch("utils.sna_report.find_node_ip", return_value="1.2.3.4"), \
+         patch("clients.sna.login", return_value="fake-session"), \
+         patch("clients.sna.logout") as mock_logout, \
+         patch("clients.sna.get_tenant_id", return_value="999"), \
+         patch("clients.sna.list_flow_collectors", return_value=[{"id": 1, "name": "fc01"}]), \
+         patch("clients.sna.list_exporters", return_value=[{"id": "1.2.3.4", "name": ""}]), \
+         patch("clients.sna.list_interfaces", return_value=[{"id": 68, "name": "Tunnel5000"}]), \
+         patch("clients.sna.get_interface_application_traffic", return_value=[]):
+        sna_report.generate_application_traffic_report(
+            "https://sna.example.com", "network", "dev", "dev", "R-SITE-01", "Tunnel5000",
+        )
+
+    mock_logout.assert_called_once_with("fake-session", "https://sna.example.com")
+
+
+def test_generate_report_logs_out_even_when_the_report_fails():
+    with patch("utils.sna_report.find_node_ip", return_value="1.2.3.4"), \
+         patch("clients.sna.login", return_value="fake-session"), \
+         patch("clients.sna.logout") as mock_logout, \
+         patch("clients.sna.get_tenant_id", return_value="999"), \
+         patch("clients.sna.list_flow_collectors", return_value=[{"id": 1, "name": "fc01"}]), \
+         patch("clients.sna.list_exporters", return_value=[{"id": "9.9.9.9", "name": "nope"}]):
+        with pytest.raises(LookupError):
+            sna_report.generate_application_traffic_report(
+                "https://sna.example.com", "network", "dev", "dev", "R-SITE-01", "Tunnel5000",
+            )
+
+    mock_logout.assert_called_once()
+
+
+def test_logout_never_raises():
+    """It runs in a finally — a teardown failure must not replace a real
+    error, or mask a successful report."""
+    class ExplodingSession:
+        def delete(self, *a, **k):
+            raise ConnectionError("SMC unreachable")
+
+        def close(self):
+            raise RuntimeError("already closed")
+
+    sna_client.logout(ExplodingSession(), "https://sna.example.com")
+
+
 def test_generate_report_invalid_router_name():
     with pytest.raises(InvalidNameError):
         sna_report.generate_application_traffic_report(

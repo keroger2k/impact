@@ -26,6 +26,19 @@ def setup_dev_session():
         _sessions[DEV_TOKEN] = entry
 
 
+@pytest.fixture(autouse=True)
+def clear_interface_cache():
+    """The interface dropdown caches per router (TTL_LIVE). Without this,
+    whichever test ran first would serve its result to every later test using
+    the same router name — and the cache is a real on-disk singleton, so it
+    would also leak between whole test runs."""
+    from cache import cache
+
+    cache.invalidate_prefix("sw_interfaces:")
+    yield
+    cache.invalidate_prefix("sw_interfaces:")
+
+
 @pytest.fixture
 def auth_headers():
     return {
@@ -189,6 +202,64 @@ def test_interfaces_lists_solarwinds_interfaces_with_ids(auth_headers, monkeypat
     assert "selected" not in r.text
 
 
+def test_interfaces_option_value_is_the_bare_name_not_the_caption(auth_headers, monkeypatch):
+    """The posted value has to survive _SWQL_NAME_RE and match SNA's bare
+    interface names; the decorated Caption does neither. It stays as the
+    visible label, where the circuit detail is useful."""
+    monkeypatch.setattr(
+        "routers.reports.list_interfaces_for_router",
+        lambda *a, **k: [{
+            "NodeName": "R-SITE-01", "InterfaceID": 42,
+            "InterfaceCaption": "Tunnel5000 · DMVPN Tunnel for TSA (ATT)",
+            "InterfaceName": "Tu5000", "StatusDescription": "Up",
+        }],
+    )
+
+    r = client.get("/api/reports/bandwidth/interfaces", params={"router": "R-SITE-01"}, headers=auth_headers)
+    assert r.status_code == 200
+    assert 'value="Tunnel5000"' in r.text
+    # Full caption still shown to the user.
+    assert "DMVPN Tunnel for TSA (ATT)" in r.text
+    # And the bare name means DEFAULT_INTERFACE pre-selection works even
+    # though the caption itself is nothing like "Tunnel5000".
+    assert "selected" in r.text
+
+
+def test_interfaces_result_is_cached_per_router(auth_headers, monkeypatch):
+    calls = []
+
+    def fake_list(router_name, username, password):
+        calls.append(router_name)
+        return [{"NodeName": router_name, "InterfaceID": 1,
+                 "InterfaceCaption": "Tunnel5000", "StatusDescription": "Up"}]
+
+    monkeypatch.setattr("routers.reports.list_interfaces_for_router", fake_list)
+
+    for _ in range(3):
+        client.get("/api/reports/bandwidth/interfaces", params={"router": "R-SITE-01"}, headers=auth_headers)
+    client.get("/api/reports/bandwidth/interfaces", params={"router": "R-SITE-02"}, headers=auth_headers)
+
+    assert calls == ["R-SITE-01", "R-SITE-02"]
+
+
+def test_interfaces_normalizes_fqdn_before_lookup_and_caching(auth_headers, monkeypatch):
+    calls = []
+
+    def fake_list(router_name, username, password):
+        calls.append(router_name)
+        return [{"NodeName": router_name, "InterfaceID": 1,
+                 "InterfaceCaption": "Tunnel5000", "StatusDescription": "Up"}]
+
+    monkeypatch.setattr("routers.reports.list_interfaces_for_router", fake_list)
+
+    client.get("/api/reports/bandwidth/interfaces",
+               params={"router": "R-SITE-01.network.ad.tsa.gov"}, headers=auth_headers)
+    client.get("/api/reports/bandwidth/interfaces", params={"router": "R-SITE-01"}, headers=auth_headers)
+
+    # Same device either way — one lookup, one cache entry.
+    assert calls == ["R-SITE-01"]
+
+
 def test_interfaces_preselects_default_only_when_present(auth_headers, monkeypatch):
     monkeypatch.setattr(
         "routers.reports.list_interfaces_for_router",
@@ -254,6 +325,21 @@ def test_interfaces_falls_back_to_interface_name_when_no_caption(auth_headers, m
     r = client.get("/api/reports/bandwidth/interfaces", params={"router": "R-SITE-01"}, headers=auth_headers)
     assert r.status_code == 200
     assert '<option value="Gi0/0/1" data-interface-id="3">Gi0/0/1</option>' in r.text
+
+
+def test_interfaces_keeps_subinterface_dots(auth_headers, monkeypatch):
+    """bare_interface_name must not reuse short_hostname's dot-splitting —
+    a dot is part of a subinterface's name, not a domain separator."""
+    monkeypatch.setattr(
+        "routers.reports.list_interfaces_for_router",
+        lambda *a, **k: [{"NodeName": "R-SITE-01", "InterfaceID": 4,
+                          "InterfaceCaption": "GigabitEthernet0/0/0.100 · Site VLAN",
+                          "InterfaceName": "Gi0/0/0.100", "StatusDescription": "Up"}],
+    )
+
+    r = client.get("/api/reports/bandwidth/interfaces", params={"router": "R-SITE-01"}, headers=auth_headers)
+    assert r.status_code == 200
+    assert 'value="GigabitEthernet0/0/0.100"' in r.text
 
 
 # ── Application traffic (SNA Report Builder) ─────────────────────────────────

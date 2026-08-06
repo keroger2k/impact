@@ -15,11 +15,9 @@ fallback for environments where an Exporter's name does carry the hostname.
 """
 from __future__ import annotations
 
-import re
-from concurrent.futures import ThreadPoolExecutor
-
 import clients.sna as sna_client
-from utils.bandwidth_report import find_node_ip, short_hostname
+from utils.bandwidth_report import bare_interface_name, find_node_ip, short_hostname
+from utils.report_pool import FANOUT_POOL
 
 
 def find_exporters(
@@ -51,30 +49,24 @@ def find_exporters(
     return ip_matches or name_matches
 
 
-# Leading identifier-ish run of a SolarWinds interface Caption — stops at the
-# first space, "·", "|" or similar decoration.
-_LEADING_IFNAME_RE = re.compile(r"[A-Za-z0-9/._:-]+")
-
-
 def _interface_name_candidates(interface_name: str) -> list[str]:
     """Progressively less specific forms of an interface name to match on.
 
-    SolarWinds interface Captions carry free-text circuit decoration — real
-    example shape: "Tunnel5000 · DMVPN Tunnel for TSA (ATT)" — and that
-    Caption is what the Bandwidth report's Interface dropdown posts. SNA's
-    interface names are bare identifiers ("Tunnel5000", or an "ifIndex-N"
-    fallback), so the decorated string matches nothing: it's longer than the
-    stored name, and a longer string can never be found inside a shorter one
-    (same failure class as the FQDN router-name bug — see
-    utils.bandwidth_report.short_hostname). Try the full string first, so an
-    environment whose SNA names *do* carry decoration still wins on the exact
-    match, then fall back to the leading identifier.
+    The dropdown now posts a bare interface name, so the first candidate
+    normally hits. This kept as a safety net for values that still arrive
+    decorated — a SolarWinds Caption pasted by hand, or an older client:
+    SNA's interface names are bare identifiers ("Tunnel5000", or an
+    "ifIndex-N" fallback), and a decorated string is longer than the stored
+    name, which a longer string can never substring-match (same failure class
+    as the FQDN router-name bug — see utils.bandwidth_report.short_hostname).
+    Full string first, so an environment whose SNA names *do* carry
+    decoration still wins on the exact match.
     """
     full = interface_name.strip()
     candidates = [full]
-    lead = _LEADING_IFNAME_RE.match(full)
-    if lead and lead.group(0) != full:
-        candidates.append(lead.group(0))
+    bare = bare_interface_name(full)
+    if bare and bare != full:
+        candidates.append(bare)
     return [c for c in candidates if c]
 
 
@@ -133,6 +125,18 @@ def generate_application_traffic_report(
     router_ip = find_node_ip(router_name, username, password)
 
     session = sna_client.login(base_url, username, password, domain)
+    try:
+        return _report_with_session(session, base_url, router_name, router_ip, interface_name)
+    finally:
+        # Every Generate click mints a new SMC session; without this they'd
+        # accumulate server-side until they age out. Best-effort — a failed
+        # logout must not mask a successful report (or a real error).
+        sna_client.logout(session, base_url)
+
+
+def _report_with_session(
+    session, base_url: str, router_name: str, router_ip: str | None, interface_name: str,
+) -> dict:
     domain_id = sna_client.get_tenant_id(session, base_url)
 
     exporters = find_exporters(session, base_url, domain_id, router_name, router_ip)
@@ -196,14 +200,13 @@ def generate_application_traffic_report(
         return bucket_application_traffic(records, hours)
 
     # Same reasoning as utils.bandwidth_report.generate_bandwidth_report: the
-    # 24h and 7d pulls are independent report POSTs against the same
-    # session, so run them concurrently instead of back-to-back — this
-    # function already runs inside its own worker thread.
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        fut_24h = pool.submit(_pull, 24)
-        fut_7d = pool.submit(_pull, 24 * 7)
-        traffic_24h = fut_24h.result()
-        traffic_7d = fut_7d.result()
+    # 24h and 7d pulls are independent report POSTs against the same session,
+    # so overlap them instead of running back-to-back. Shared FANOUT_POOL
+    # (utils/report_pool.py) rather than a per-request pool.
+    fut_24h = FANOUT_POOL.submit(_pull, 24)
+    fut_7d = FANOUT_POOL.submit(_pull, 24 * 7)
+    traffic_24h = fut_24h.result()
+    traffic_7d = fut_7d.result()
 
     return {
         "status": "ok",

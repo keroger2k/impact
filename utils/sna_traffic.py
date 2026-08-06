@@ -82,7 +82,12 @@ def bucket_application_traffic(
     padding can never drop real data.
 
     Returns {"buckets": [iso8601 bucket-start, ...], "applications": [...],
-    "series": {app: [avg bps, ...]}}.
+    "series": {app: [avg bps, ...]}, "buckets_with_data": int}.
+
+    `buckets_with_data` exists because padding makes "SNA has no data for
+    most of this window" and "traffic was genuinely low" render identically
+    as empty space — the caller surfaces the count so an outage reads as an
+    outage rather than something the viewer has to infer from whitespace.
     """
     bucket_seconds = HOURLY_BUCKET_SECONDS if hours <= 24 else DAILY_BUCKET_SECONDS
 
@@ -99,7 +104,7 @@ def bucket_application_traffic(
         parsed.append({"t": t, "application": str(app), "bps": value})
 
     if not parsed:
-        return {"buckets": [], "applications": [], "series": {}}
+        return {"buckets": [], "applications": [], "series": {}, "buckets_with_data": 0}
 
     totals: dict[str, float] = defaultdict(float)
     for r in parsed:
@@ -147,4 +152,9 @@ def bucket_application_traffic(
         for app in applications
     }
 
-    return {"buckets": bucket_keys, "applications": applications, "series": series}
+    return {
+        "buckets": bucket_keys,
+        "applications": applications,
+        "series": series,
+        "buckets_with_data": sum(1 for dt in bucket_dts if dt in bucket_sums),
+    }

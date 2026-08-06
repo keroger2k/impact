@@ -9,9 +9,9 @@ rendered client-side as inline SVG; nothing is written to disk here.
 from __future__ import annotations
 
 import re
-from concurrent.futures import ThreadPoolExecutor
 
 import clients.solarwinds as solarwinds
+from utils.report_pool import FANOUT_POOL
 
 # Conservative charset for names interpolated into SWQL — mirrors
 # routers/firewall.py's _CLI_NAME_RE for the same reason (untrusted web input
@@ -52,6 +52,30 @@ def short_hostname(name: str) -> str:
     autofill datalist (routers/reports.py).
     """
     return (name or "").strip().split(".", 1)[0]
+
+
+# Leading identifier-ish run of a SolarWinds interface Caption — stops at the
+# first space, "·", "|" or other decoration. Deliberately includes "." so
+# subinterfaces ("GigabitEthernet0/0/0.100") survive intact.
+_LEADING_IFNAME_RE = re.compile(r"[A-Za-z0-9/._:-]+")
+
+
+def bare_interface_name(caption: str) -> str:
+    """Reduce a SolarWinds interface Caption to just the interface name.
+
+    Captions carry free-text circuit decoration after the name — real
+    examples: "Tunnel5000 · DMVPN Tunnel for TSA (ATT)",
+    "GigabitEthernet0/0/3 · ATT AVPN 10MB | BBEC651703..ATI | Terms: ...".
+    The decorated form is unusable downstream: it fails _SWQL_NAME_RE (both
+    the charset — "·", parentheses — and the 63-char cap), and it can never
+    substring-match SNA's bare interface names (see
+    utils.sna_report._interface_name_candidates for that failure class).
+
+    Note this is *not* short_hostname's dot-splitting logic: dots are part of
+    a subinterface name and must be kept.
+    """
+    match = _LEADING_IFNAME_RE.match((caption or "").strip())
+    return match.group(0) if match else ""
 
 
 # Selected + joined once here and reused by both find_interfaces() and
@@ -95,7 +119,9 @@ def find_interfaces(router_name: str | None, interface_name: str, username: str,
 
     where_router = ""
     if router_name:
-        router_name = _validate_name(router_name, "Router name")
+        # Router names only — never the interface name, whose dots are
+        # meaningful (subinterfaces). See short_hostname's docstring.
+        router_name = _validate_name(short_hostname(router_name), "Router name")
         where_router = f"n.Caption = '{_escape_literal(router_name)}'\n    AND "
 
     swql = f"""
@@ -122,7 +148,7 @@ def find_node_ip(router_name: str, username: str, password: str) -> str | None:
     (confirmed against real production data — the hostname substring match
     that works for everything else on this page came up empty against SNA).
     """
-    name = _validate_name(router_name, "Router name")
+    name = _validate_name(short_hostname(router_name), "Router name")
     lit = _escape_literal(name)
     swql = f"""
 SELECT n.Caption AS NodeName, n.IPAddress AS NodeIpAddress
@@ -159,7 +185,7 @@ def list_interfaces_for_router(router_name: str, username: str, password: str) -
     Exact node match preferred, falling back to LIKE (same pattern as
     find_node_ip) since the Router Name field is free text.
     """
-    name = _validate_name(router_name, "Router name")
+    name = _validate_name(short_hostname(router_name), "Router name")
     lit = _escape_literal(name)
     swql = f"""
 SELECT
@@ -270,17 +296,15 @@ def generate_bandwidth_report(
 
     iface_id = meta.get("InterfaceID")
 
-    # The 24h and 7d windows are independent SolarWinds queries — run them
-    # concurrently rather than back-to-back. This function already executes
-    # inside its own worker thread (routers/reports.py's run_in_executor), so
-    # a small in-function pool just overlaps the two blocking HTTP calls
-    # instead of serializing them, which matters since the user is watching
-    # a spinner on this synchronous, uncached endpoint.
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        fut_24h = pool.submit(get_traffic_series, iface_id, 24, username, password)
-        fut_7d = pool.submit(get_traffic_series, iface_id, 24 * 7, username, password)
-        series_24h = fut_24h.result()
-        series_7d = fut_7d.result()
+    # The 24h and 7d windows are independent SolarWinds queries — overlap them
+    # rather than running back-to-back, since the user is watching a spinner
+    # on this synchronous, uncached endpoint. Submitted to the shared
+    # FANOUT_POOL (see utils/report_pool.py) rather than a per-request pool so
+    # concurrent requests can't multiply threads without bound.
+    fut_24h = FANOUT_POOL.submit(get_traffic_series, iface_id, 24, username, password)
+    fut_7d = FANOUT_POOL.submit(get_traffic_series, iface_id, 24 * 7, username, password)
+    series_24h = fut_24h.result()
+    series_7d = fut_7d.result()
 
     return {
         "status": "ok",

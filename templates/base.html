@@ -204,6 +204,9 @@
 <script src="/static/bootstrap/js/bootstrap.bundle.min.js"></script>
 <script src="/static/js/debug-console.js"></script>
 <script src="/static/js/data-table.js"></script>
+<!-- Loaded here rather than in the Reports page partial so htmx doesn't
+     re-execute it on every swap into #main-content. -->
+<script src="/static/js/report-charts.js"></script>
 <script>
   function toggleSidebar() {
     const sidebar = document.getElementById('sidebar');

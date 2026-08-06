@@ -104,7 +104,7 @@ def test_hours_168_uses_daily_buckets():
 
 def test_empty_records():
     result = bucket_application_traffic([], hours=24, window_end=WINDOW_END)
-    assert result == {"buckets": [], "applications": [], "series": {}}
+    assert result == {"buckets": [], "applications": [], "series": {}, "buckets_with_data": 0}
 
 
 def test_malformed_rows_are_skipped():

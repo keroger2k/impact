@@ -13,6 +13,7 @@ import pytest
 from utils.bandwidth_report import (
     InvalidNameError,
     _build_site_info,
+    bare_interface_name,
     find_node_ip,
     generate_bandwidth_report,
     list_interfaces_for_router,
@@ -31,6 +32,89 @@ from utils.bandwidth_report import (
 ])
 def test_short_hostname(raw, expected):
     assert short_hostname(raw) == expected
+
+
+# ── bare_interface_name ──────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("caption,expected", [
+    ("Tunnel5000 · DMVPN Tunnel for TSA (ATT)", "Tunnel5000"),
+    ("GigabitEthernet0/0/3 · ATT AVPN 10MB | BBEC651703..ATI | Terms: 36mo", "GigabitEthernet0/0/3"),
+    ("Tunnel5000", "Tunnel5000"),
+    ("ifIndex-68", "ifIndex-68"),
+    # A dot is part of a subinterface name — this must NOT behave like
+    # short_hostname, which splits on the first dot.
+    ("GigabitEthernet0/0/0.100 · Site VLAN", "GigabitEthernet0/0/0.100"),
+    ("  Tunnel10  ", "Tunnel10"),
+    ("", ""),
+    (None, ""),
+])
+def test_bare_interface_name(caption, expected):
+    assert bare_interface_name(caption) == expected
+
+
+def test_bare_interface_name_output_passes_swql_validation():
+    """The whole point: the decorated caption fails the charset/length check
+    that every SWQL-bound name must pass, and the bare form doesn't."""
+    from utils.bandwidth_report import _validate_name
+
+    decorated = "GigabitEthernet0/0/3 · ATT AVPN 10MB | BBEC651703..ATI | Terms: 36mo"
+    with pytest.raises(InvalidNameError):
+        _validate_name(decorated, "Interface name")
+
+    assert _validate_name(bare_interface_name(decorated), "Interface name") == "GigabitEthernet0/0/3"
+
+
+# ── FQDN normalization across every router-name entry point ──────────────────
+
+def _capture_swql():
+    captured = {}
+
+    def fake_query(swql, username, password, timeout=None):
+        captured["swql"] = swql
+        return []
+
+    return captured, fake_query
+
+
+def test_find_interfaces_normalizes_fqdn_router_name():
+    from utils.bandwidth_report import find_interfaces
+
+    captured, fake_query = _capture_swql()
+    with patch("clients.solarwinds.query", side_effect=fake_query):
+        find_interfaces("R-SITE-01.network.ad.tsa.gov", "Tunnel5000", "dev", "dev")
+
+    assert "n.Caption = 'R-SITE-01'" in captured["swql"]
+    assert "tsa.gov" not in captured["swql"]
+
+
+def test_find_node_ip_normalizes_fqdn_router_name():
+    captured, fake_query = _capture_swql()
+    with patch("clients.solarwinds.query", side_effect=fake_query):
+        find_node_ip("R-SITE-01.network.ad.tsa.gov", "dev", "dev")
+
+    assert "tsa.gov" not in captured["swql"]
+
+
+def test_list_interfaces_for_router_normalizes_fqdn_router_name():
+    captured, fake_query = _capture_swql()
+    with patch("clients.solarwinds.query", side_effect=fake_query):
+        list_interfaces_for_router("R-SITE-01.network.ad.tsa.gov", "dev", "dev")
+
+    assert "tsa.gov" not in captured["swql"]
+
+
+def test_generate_bandwidth_report_accepts_fqdn_router_name():
+    """Application Traffic already normalized FQDNs while the In/Out chart
+    didn't — the same typed name resolved on one half of the page and came
+    back empty on the other."""
+    with patch("clients.solarwinds.query") as mock_query:
+        mock_query.side_effect = [[_fake_meta()], [], []]
+        result = generate_bandwidth_report(
+            "R-SITE-01.network.ad.tsa.gov", "Tunnel5000", None, "dev", "dev",
+        )
+
+    assert result["status"] == "ok"
+    assert "n.Caption = 'R-SITE-01'" in mock_query.call_args_list[0][0][0]
 
 
 def test_find_node_ip_exact_match_preferred():
