@@ -58,8 +58,15 @@ def main():
     # future-starting windows, not ones already active (SuppressFrom in the
     # past, SuppressUntil still ahead) — filtering "until >= now" in Python
     # below catches both without a second WHERE clause to get right.
+    # Orion.AlertSuppression has no Reason column (confirmed via Metadata.
+    # Property during the original investigation — Description, DisplayName,
+    # EntityUri, ID, InstanceSiteId, InstanceType, OrionSite, SuppressFrom,
+    # SuppressUntil, Uri is the full list) — a real 400 on this instance
+    # confirmed it too. clients.solarwinds.suppress_alerts() never sets
+    # Description either (SuppressAlerts's signature has no slot for it), so
+    # it reads back empty for anything created by this app.
     swql = """
-SELECT n.Caption, n.IPAddress, n.DetailsUrl, a.SuppressFrom, a.SuppressUntil, a.Description, a.Reason
+SELECT n.Caption, n.IPAddress, n.DetailsUrl, a.SuppressFrom, a.SuppressUntil, a.Description
 FROM Orion.AlertSuppression a
 JOIN Orion.Nodes n ON a.EntityUri = n.Uri
 ORDER BY a.SuppressFrom
@@ -92,12 +99,12 @@ ORDER BY a.SuppressFrom
         return
 
     print(f"{len(rows)} suppressed node(s):\n")
-    print(f"{'Node':<20} {'IP':<16} {'Suppressed From':<26} {'Suppressed Until':<26} Reason")
+    print(f"{'Node':<20} {'IP':<16} {'Suppressed From':<26} {'Suppressed Until':<26} Description")
     print("-" * 110)
     for r in rows:
         print(f"{(r.get('Caption') or ''):<20} {(r.get('IPAddress') or ''):<16} "
               f"{(r.get('SuppressFrom') or ''):<26} {(r.get('SuppressUntil') or ''):<26} "
-              f"{r.get('Reason') or r.get('Description') or ''}")
+              f"{r.get('Description') or ''}")
         # Relative path off the Orion web console (not SOLARWINDS_URL — that's
         # the SWIS host, a different one on this instance) — printed as-is
         # rather than guessed into a full clickable URL.
