@@ -148,13 +148,23 @@ def main():
     end = start + timedelta(minutes=args.minutes)
     name = args.name or f"IMPACT II Test {start.strftime('%Y%m%d_%H%M%S')}"
 
+    # Create binds properties straight to typed SQL columns via an older
+    # ADO.NET path (confirmed from a real 400: "Conversion failed when
+    # converting date and/or time from character string", System.Data.
+    # SqlClient.SqlException) — unlike Invoke, which accepted isoformat()'s
+    # "+00:00"-suffixed string fine for Unmanage. Strip to a plain
+    # "YYYY-MM-DDTHH:MM:SS" (no offset, no fractional seconds) since these
+    # columns are UTC-implied throughout SolarWinds already.
+    def _sql_datetime(dt: datetime) -> str:
+        return dt.strftime("%Y-%m-%dT%H:%M:%S")
+
     plan_props = {
         "Name": name,
         "Reason": args.reason,
         "Enabled": True,
         "KeepPolling": True,  # always mute-alerts-only, per requirement
-        "UnmanageDate": start.isoformat(),
-        "RemanageDate": end.isoformat(),
+        "UnmanageDate": _sql_datetime(start),
+        "RemanageDate": _sql_datetime(end),
     }
 
     print("\n" + "=" * 78)
