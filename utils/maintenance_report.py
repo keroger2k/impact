@@ -126,3 +126,8 @@ def resolve_node_uris(names: list[str], username: str, password: str) -> dict[st
 def schedule_one(uri: str, start: datetime, stop: datetime, username: str, password: str) -> None:
     """Mute alerts for one already-resolved node."""
     solarwinds.suppress_alerts(uri, start, stop, username, password)
+
+
+def cancel_one(uri: str, username: str, password: str) -> None:
+    """Cancel an active/pending mute for one node, before its window ends."""
+    solarwinds.resume_alerts(uri, username, password)

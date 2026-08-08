@@ -1,25 +1,27 @@
 """clients/solarwinds.py — SolarWinds Orion SWIS (SWQL) client.
 
-Thin wrapper over the Orion Information Service's JSON endpoints. Two
+Thin wrapper over the Orion Information Service's JSON endpoints. Three
 operations are exposed:
 
   - `query()` — POSTs a SWQL SELECT and returns the result rows. Backs every
     report on the `/reports` pages.
-  - `suppress_alerts()` — the app's **one** deliberate write verb, invoking
-    `Orion.AlertSuppression/SuppressAlerts` to mute alerts for an entity.
-    Backs the Maintenance Mode Scheduler report, gated behind
-    `SOLARWINDS_WRITES_ENABLED` at the router layer (see routers/reports.py).
-    See its docstring for why this verb specifically, and not the classic
-    `Orion.Nodes/Unmanage` verb this was originally built against — short
-    version: Unmanage doesn't show up in SolarWinds' own "Manage Maintenance
-    Schedules" screen either, and getting an entry to appear there requires
-    a cookie-session web API this app doesn't have a login flow for.
+  - `suppress_alerts()` / `resume_alerts()` — the app's deliberate write
+    verbs, both on `Orion.AlertSuppression`: the first mutes alerts for an
+    entity, the second cancels an active/pending mute early. Together they
+    back the Maintenance Mode Scheduler report's schedule + cancel actions,
+    gated behind `SOLARWINDS_WRITES_ENABLED` at the router layer (see
+    routers/reports.py). See `suppress_alerts()`'s docstring for why this
+    entity specifically, and not the classic `Orion.Nodes/Unmanage` verb
+    this was originally built against — short version: Unmanage doesn't
+    show up in SolarWinds' own "Manage Maintenance Schedules" screen
+    either, and getting an entry to appear there requires a cookie-session
+    web API this app doesn't have a login flow for.
 
 There is no generic "invoke any entity/verb" passthrough — the write surface
-is exactly this one hardcoded call, kept as structurally narrow and
+is exactly these two hardcoded calls, kept as structurally narrow and
 grep-able as the F5 client's GET-only guarantee is (`clients/f5.py`), just
-inverted: instead of zero mutating verbs, there is exactly one, explicit and
-named, rather than a parameterized function that could reach any verb.
+inverted: instead of zero mutating verbs, there is a small, fixed, explicitly
+named set, rather than a parameterized function that could reach any verb.
 
 Auth: like F5 (`clients/f5.py`), this uses the logged-in user's own AD
 credentials via HTTP Basic Auth rather than a dedicated service account —
@@ -157,3 +159,35 @@ def suppress_alerts(
         headers={"Accept": "application/json", "Content-Type": "application/json"},
     )
     _raise_for_error(resp, "suppress alerts")
+
+
+def resume_alerts(uri: str, username: str, password: str, timeout: int | None = None) -> None:
+    """Cancel an active or pending alert suppression for one entity early.
+
+    Invokes `Orion.AlertSuppression/ResumeAlerts` — confirmed to exist via a
+    real `Metadata.Verb` query (`SuppressAlerts`/`ResumeAlerts`/
+    `GetAlertSuppressionState` are the only three verbs on this entity), but
+    the single-argument shape here (`[[uri]]`, no start/end) is inferred by
+    symmetry with `SuppressAlerts` and with how `Remanage` relates to
+    `Unmanage` on the classic verb — not yet exercised with a real call. A
+    first-run signature mismatch should surface via the HTTP error detail
+    below rather than fail silently.
+
+    `uri` is the same entity Uri passed to the original `suppress_alerts()`
+    call.
+    """
+    if not username or not password:
+        raise RuntimeError("SolarWinds credentials are required")
+
+    if timeout is None:
+        timeout = int(os.getenv("SOLARWINDS_TIMEOUT", "180"))
+
+    resp = requests.post(
+        _endpoint("Invoke/Orion.AlertSuppression/ResumeAlerts"),
+        json=[[uri]],
+        auth=HTTPBasicAuth(_format_username(username), password),
+        verify=verify_ssl(),
+        timeout=timeout,
+        headers={"Accept": "application/json", "Content-Type": "application/json"},
+    )
+    _raise_for_error(resp, "resume alerts")

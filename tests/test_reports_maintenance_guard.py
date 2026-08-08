@@ -42,3 +42,25 @@ async def test_schedule_returns_streaming_response_when_enabled(monkeypatch):
     monkeypatch.setenv("SOLARWINDS_WRITES_ENABLED", "true")
     result = await r.schedule_maintenance(_req(), session=_SESSION)
     assert result.media_type == "text/event-stream"
+
+
+def _cancel_req():
+    return r.MaintenanceCancelRequest(uri="swis://host/Orion/Orion.Nodes/NodeID=1")
+
+
+@pytest.mark.asyncio
+async def test_cancel_disabled_by_default(monkeypatch):
+    monkeypatch.delenv("SOLARWINDS_WRITES_ENABLED", raising=False)
+    with pytest.raises(HTTPException) as e:
+        await r.cancel_maintenance(_cancel_req(), session=_SESSION)
+    assert e.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_cancel_succeeds_when_enabled(monkeypatch):
+    from unittest.mock import patch
+    monkeypatch.setenv("SOLARWINDS_WRITES_ENABLED", "true")
+    with patch("routers.reports.cancel_one") as mock_cancel:
+        result = await r.cancel_maintenance(_cancel_req(), session=_SESSION)
+    assert result == {"status": "ok"}
+    mock_cancel.assert_called_once_with(_cancel_req().uri, "u", "p")

@@ -31,11 +31,14 @@ def _solarwinds_url(monkeypatch):
 
 def test_write_surface_is_narrow_and_explicit():
     """No generic invoke(entity, verb, *args)-style passthrough exists — the
-    only Invoke/ call in the module is the hardcoded
-    Orion.AlertSuppression/SuppressAlerts literal used by suppress_alerts()."""
+    only Invoke/ calls in the module are the two hardcoded
+    Orion.AlertSuppression literals used by suppress_alerts()/resume_alerts()."""
     src = _SRC.read_text(encoding="utf-8")
     invoke_literals = re.findall(r"Invoke/[\w.]+/\w+", src)
-    assert invoke_literals == ["Invoke/Orion.AlertSuppression/SuppressAlerts"], invoke_literals
+    assert invoke_literals == [
+        "Invoke/Orion.AlertSuppression/SuppressAlerts",
+        "Invoke/Orion.AlertSuppression/ResumeAlerts",
+    ], invoke_literals
     assert "def invoke(" not in src
 
 
@@ -109,3 +112,27 @@ def test_suppress_alerts_requires_credentials():
     stop = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
     with pytest.raises(RuntimeError):
         sw.suppress_alerts(_URI, start, stop, "", "")
+
+
+# ── resume_alerts() ───────────────────────────────────────────────────────────
+
+def test_resume_alerts_posts_expected_invoke_body():
+    resp = _fake_response(200, text="")
+    with patch("requests.post", return_value=resp) as mock_post:
+        sw.resume_alerts(_URI, "dev", "dev")
+
+    args, kwargs = mock_post.call_args
+    assert args[0].endswith("/SolarWinds/InformationService/v3/Json/Invoke/Orion.AlertSuppression/ResumeAlerts")
+    assert kwargs["json"] == [[_URI]]
+
+
+def test_resume_alerts_raises_with_response_detail_on_error():
+    resp = _fake_response(400, text='{"Message":"No active suppression for this entity."}')
+    with patch("requests.post", return_value=resp):
+        with pytest.raises(RuntimeError, match="No active suppression for this entity"):
+            sw.resume_alerts(_URI, "dev", "dev")
+
+
+def test_resume_alerts_requires_credentials():
+    with pytest.raises(RuntimeError):
+        sw.resume_alerts(_URI, "", "")

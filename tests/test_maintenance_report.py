@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from utils.maintenance_report import parse_rows, resolve_node_uris, schedule_one
+from utils.maintenance_report import cancel_one, parse_rows, resolve_node_uris, schedule_one
 
 
 # ── parse_rows ────────────────────────────────────────────────────────────────
@@ -122,3 +122,11 @@ def test_schedule_one_calls_suppress_alerts():
     with patch("clients.solarwinds.suppress_alerts") as mock_suppress:
         schedule_one(_URI, start, stop, "dev", "dev")
     mock_suppress.assert_called_once_with(_URI, start, stop, "dev", "dev")
+
+
+# ── cancel_one ────────────────────────────────────────────────────────────────
+
+def test_cancel_one_calls_resume_alerts():
+    with patch("clients.solarwinds.resume_alerts") as mock_resume:
+        cancel_one(_URI, "dev", "dev")
+    mock_resume.assert_called_once_with(_URI, "dev", "dev")

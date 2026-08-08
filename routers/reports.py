@@ -50,7 +50,7 @@ from utils.bandwidth_report import (
 from utils.cdrl49_report import REPORT_DEFS, generate_report, rows_to_csv
 from utils.device_comparison_report import generate_device_comparison_report
 from utils.device_comparison_report import to_csv as device_comparison_csv
-from utils.maintenance_report import parse_rows, resolve_node_uris, schedule_one
+from utils.maintenance_report import cancel_one, parse_rows, resolve_node_uris, schedule_one
 from utils.sna_report import generate_application_traffic_report
 
 # Cap on how many <option> fragments a datalist endpoint returns — these back
@@ -513,3 +513,29 @@ async def schedule_maintenance(req: MaintenanceScheduleRequest, session: Session
                     "muted": muted, "failed": len(results) - muted, "results": results})
 
     return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+class MaintenanceCancelRequest(BaseModel):
+    uri: str
+
+
+@router.post("/maintenance-mode/cancel")
+async def cancel_maintenance(req: MaintenanceCancelRequest, session: SessionEntry = Depends(require_auth)):
+    """Cancel one alert mute created via /maintenance-mode/schedule, before
+    its window ends. A single fast Invoke call — unlike /schedule, this
+    isn't a bulk operation, so a plain JSON response is enough; no SSE.
+    """
+    if not _solarwinds_writes_enabled():
+        raise HTTPException(403, "SolarWinds maintenance-mode scheduling is disabled")
+
+    loop = asyncio.get_event_loop()
+    try:
+        await loop.run_in_executor(
+            None, run_with_context(cancel_one),
+            req.uri, session.username, session.password,
+        )
+    except Exception as e:
+        logger.error(f"Maintenance-mode cancel failed: {e}",
+                     extra={"target": "SolarWinds", "action": "MAINTENANCE_CANCEL"})
+        raise HTTPException(502, f"SolarWinds cancel failed: {e}")
+    return {"status": "ok"}
