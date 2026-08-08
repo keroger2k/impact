@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from utils.maintenance_report import parse_rows, resolve_node_ids, schedule_one
+from utils.maintenance_report import parse_rows, resolve_node_uris, schedule_one
 
 
 # ── parse_rows ────────────────────────────────────────────────────────────────
@@ -69,53 +69,56 @@ def test_parse_rows_isolates_bad_rows_from_good_ones():
     assert errors[0]["node"] == "R-SITE02-01"
 
 
-# ── resolve_node_ids ──────────────────────────────────────────────────────────
+# ── resolve_node_uris ─────────────────────────────────────────────────────────
 
-def test_resolve_node_ids_unique_match():
-    fake_rows = [{"NodeID": 42, "Caption": "R-SITE01-01"}]
+_URI = "swis://host/Orion/Orion.Nodes/NodeID=42"
+
+
+def test_resolve_node_uris_unique_match():
+    fake_rows = [{"Uri": _URI, "Caption": "R-SITE01-01"}]
     with patch("clients.solarwinds.query", return_value=fake_rows) as mock_query:
-        result = resolve_node_ids(["R-SITE01-01"], "dev", "dev")
-    assert result["r-site01-01"] == {"node_id": 42}
+        result = resolve_node_uris(["R-SITE01-01"], "dev", "dev")
+    assert result["r-site01-01"] == {"uri": _URI}
     swql = mock_query.call_args[0][0]
     assert "Caption = 'R-SITE01-01'" in swql
 
 
-def test_resolve_node_ids_not_found():
+def test_resolve_node_uris_not_found():
     with patch("clients.solarwinds.query", return_value=[]):
-        result = resolve_node_ids(["R-SITE01-01"], "dev", "dev")
+        result = resolve_node_uris(["R-SITE01-01"], "dev", "dev")
     assert result["r-site01-01"] == {"error": "not found in SolarWinds"}
 
 
-def test_resolve_node_ids_ambiguous():
+def test_resolve_node_uris_ambiguous():
     fake_rows = [
-        {"NodeID": 1, "Caption": "R-SITE01-01"},
-        {"NodeID": 2, "Caption": "R-SITE01-01"},
+        {"Uri": _URI, "Caption": "R-SITE01-01"},
+        {"Uri": "swis://host/Orion/Orion.Nodes/NodeID=43", "Caption": "R-SITE01-01"},
     ]
     with patch("clients.solarwinds.query", return_value=fake_rows):
-        result = resolve_node_ids(["R-SITE01-01"], "dev", "dev")
+        result = resolve_node_uris(["R-SITE01-01"], "dev", "dev")
     assert "error" in result["r-site01-01"]
     assert "ambiguous" in result["r-site01-01"]["error"]
 
 
-def test_resolve_node_ids_queries_once_for_multiple_distinct_names():
+def test_resolve_node_uris_queries_once_for_multiple_distinct_names():
     with patch("clients.solarwinds.query", return_value=[]) as mock_query:
-        resolve_node_ids(["R-SITE01-01", "R-SITE02-01", "r-site01-01"], "dev", "dev")
+        resolve_node_uris(["R-SITE01-01", "R-SITE02-01", "r-site01-01"], "dev", "dev")
     assert mock_query.call_count == 1
 
 
-def test_resolve_node_ids_empty_input_skips_query():
+def test_resolve_node_uris_empty_input_skips_query():
     with patch("clients.solarwinds.query") as mock_query:
-        result = resolve_node_ids([], "dev", "dev")
+        result = resolve_node_uris([], "dev", "dev")
     assert result == {}
     mock_query.assert_not_called()
 
 
 # ── schedule_one ──────────────────────────────────────────────────────────────
 
-def test_schedule_one_calls_unmanage_node():
+def test_schedule_one_calls_suppress_alerts():
     from datetime import datetime, timezone
     start = datetime(2026, 8, 10, 8, 0, tzinfo=timezone.utc)
     stop = datetime(2026, 8, 10, 9, 0, tzinfo=timezone.utc)
-    with patch("clients.solarwinds.unmanage_node") as mock_unmanage:
-        schedule_one(42, start, stop, "dev", "dev")
-    mock_unmanage.assert_called_once_with(42, start, stop, "dev", "dev")
+    with patch("clients.solarwinds.suppress_alerts") as mock_suppress:
+        schedule_one(_URI, start, stop, "dev", "dev")
+    mock_suppress.assert_called_once_with(_URI, start, stop, "dev", "dev")

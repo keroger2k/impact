@@ -5,10 +5,15 @@ operations are exposed:
 
   - `query()` — POSTs a SWQL SELECT and returns the result rows. Backs every
     report on the `/reports` pages.
-  - `unmanage_node()` — the app's **one** deliberate write verb, invoking
-    Orion's `Orion.Nodes/Unmanage` to schedule maintenance mode for a node.
+  - `suppress_alerts()` — the app's **one** deliberate write verb, invoking
+    `Orion.AlertSuppression/SuppressAlerts` to mute alerts for an entity.
     Backs the Maintenance Mode Scheduler report, gated behind
     `SOLARWINDS_WRITES_ENABLED` at the router layer (see routers/reports.py).
+    See its docstring for why this verb specifically, and not the classic
+    `Orion.Nodes/Unmanage` verb this was originally built against — short
+    version: Unmanage doesn't show up in SolarWinds' own "Manage Maintenance
+    Schedules" screen either, and getting an entry to appear there requires
+    a cookie-session web API this app doesn't have a login flow for.
 
 There is no generic "invoke any entity/verb" passthrough — the write surface
 is exactly this one hardcoded call, kept as structurally narrow and
@@ -92,26 +97,47 @@ def query(swql: str, username: str, password: str, timeout: int | None = None) -
     return resp.json().get("results", [])
 
 
-def unmanage_node(
-    node_id: int, start: datetime, end: datetime,
+def suppress_alerts(
+    uri: str, start: datetime, end: datetime,
     username: str, password: str, timeout: int | None = None,
 ) -> None:
-    """Schedule Orion maintenance mode for one node between `start` and `end`.
+    """Mute alerts for one entity between `start` and `end`.
 
     The app's one write verb — see the module docstring for why it's kept
-    this narrow. Invokes `Orion.Nodes/Unmanage` with the exact positional
-    argument shape SolarWinds' own reference client uses (confirmed against
-    `solarwinds/orionsdk-python`'s `samples/unmanage_node.py` and
-    `SwisClient.invoke`, not guessed): `[netObjectId, start, end,
-    isRelative]`, where `netObjectId` is `"N:<NodeID>"` and `isRelative` is
-    `False` so `start`/`end` are treated as absolute times rather than a
-    duration.
+    this narrow. Invokes `Orion.AlertSuppression/SuppressAlerts`, confirmed
+    against a real instance rather than guessed: `Metadata.Verb` lists
+    SuppressAlerts/ResumeAlerts/GetAlertSuppressionState on
+    `Orion.AlertSuppression`, and a live test call with this exact argument
+    shape — `[[uri], start.isoformat(), end.isoformat()]` — actually
+    suppressed alerts (confirmed via a follow-up GetAlertSuppressionState
+    read and SolarWinds' own audit log, which recorded "scheduled muting
+    alerts on <node> ... because 'Unknown' reason").
+
+    `uri` is the target entity's own SWIS Uri (e.g. from `SELECT Uri FROM
+    Orion.Nodes WHERE ...`) — NOT a NodeID. This verb is keyed by Uri, unlike
+    the classic `Orion.Nodes/Unmanage` verb (which used a `"N:<id>"`
+    netObjectId string and was this function's original implementation).
+
+    This mutes alerts only ("Mute alerts on this object" in Orion's own
+    Scheduled Maintenance dialog) — it does not stop polling, and critically,
+    it does **not** create an entry visible in Settings > All Settings >
+    Manage Maintenance Schedules. That screen is backed by a separate
+    mechanism: SolarWinds' own audit log shows its entries as "assigned new
+    entity to '<name>' schedule" (a named, persistent object), while
+    AlertSuppression calls are logged generically with no schedule name — a
+    real `Orion.MaintenancePlan` + `Orion.MaintenancePlanAssignment` SWIS
+    Create was also tried and tested working at the database level (real
+    IDs returned, no errors) but produced *zero* audit trail and never
+    appeared on that screen either, meaning direct SWIS writes bypass
+    whatever service actually wires a plan into that UI. Getting an entry to
+    actually appear there requires the Orion Web Console's own internal
+    REST API (`/api2/schedules/createOneTime`), which needs a cookie+XSRF
+    web session (confirmed: plain Basic Auth gets a 401) this app doesn't
+    have a login flow for — a deliberate scope decision, not an oversight.
 
     `start`/`end` must be timezone-aware — callers should pass UTC
     datetimes (see utils/maintenance_report.py, which converts the UTC ISO
-    strings the browser submits). This hasn't yet been exercised against
-    this org's specific Orion version, so a first-run signature mismatch
-    should surface via the HTTP error detail below rather than fail silently.
+    strings the browser submits).
     """
     if not username or not password:
         raise RuntimeError("SolarWinds credentials are required")
@@ -121,13 +147,13 @@ def unmanage_node(
     if timeout is None:
         timeout = int(os.getenv("SOLARWINDS_TIMEOUT", "180"))
 
-    args = [f"N:{node_id}", start.isoformat(), end.isoformat(), False]
+    args = [[uri], start.isoformat(), end.isoformat()]
     resp = requests.post(
-        _endpoint("Invoke/Orion.Nodes/Unmanage"),
+        _endpoint("Invoke/Orion.AlertSuppression/SuppressAlerts"),
         json=args,
         auth=HTTPBasicAuth(_format_username(username), password),
         verify=verify_ssl(),
         timeout=timeout,
         headers={"Accept": "application/json", "Content-Type": "application/json"},
     )
-    _raise_for_error(resp, "unmanage")
+    _raise_for_error(resp, "suppress alerts")

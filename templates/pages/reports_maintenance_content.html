@@ -15,11 +15,14 @@
         </div>
         <div class="card-body">
           <p class="text-muted small mb-3">
-            Paste one node per line as <code>hostname,start,stop</code> and schedule SolarWinds
-            maintenance mode (Orion "Unmanage") for each — polling is suspended for that node
-            between the two times, then resumes automatically. Start and stop are read in
-            <strong>your browser's local time</strong> and converted to UTC before anything is
-            sent. Use ISO-style timestamps with no timezone offset, e.g.:
+            Paste one node per line as <code>hostname,start,stop</code> and mute SolarWinds alerts
+            (Orion "AlertSuppression") for each — alerts are suppressed for that node between the
+            two times, then resume automatically. This mutes alerts only; it does not stop polling,
+            and it does not create an entry in SolarWinds' own <strong>Manage Maintenance
+            Schedules</strong> screen (that requires a web-session API this app doesn't use — see
+            CLAUDE.md for why). Start and stop are read in <strong>your browser's local time</strong>
+            and converted to UTC before anything is sent. Use ISO-style timestamps with no timezone
+            offset, e.g.:
           </p>
           <pre class="small bg-light p-2 rounded mb-3" style="white-space:pre-wrap;">R-SITE01-01,2026-08-10T08:00,2026-08-10T12:00
 R-SITE02-01,2026-08-10T22:00,2026-08-11T02:00</pre>
@@ -31,7 +34,7 @@ R-SITE02-01,2026-08-10T22:00,2026-08-11T02:00</pre>
 
           <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
             <button type="button" class="btn btn-primary" id="mm-preview-btn" onclick="mmOpenPreview()">
-              <i class="ph ph-wrench me-1"></i> Schedule Maintenance
+              <i class="ph ph-wrench me-1"></i> Mute Alerts
             </button>
             <span class="text-muted small" id="mm-last-run"></span>
           </div>
@@ -49,20 +52,20 @@ R-SITE02-01,2026-08-10T22:00,2026-08-11T02:00</pre>
 </div>
 
 <!-- Confirm dialog. This is the one mutating action on this page — it
-     suspends SolarWinds polling for every listed node during its window —
-     so it always shows exactly what will be submitted before it runs. -->
+     mutes SolarWinds alerts for every listed node during its window — so it
+     always shows exactly what will be submitted before it runs. -->
 <div class="modal fade" id="mm-modal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-centered">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title"><i class="ph ph-wrench me-1"></i> Schedule Maintenance Mode</h5>
+        <h5 class="modal-title"><i class="ph ph-wrench me-1"></i> Mute Alerts</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
         <div class="alert alert-warning py-2 small">
-          SolarWinds stops polling every node listed below for its window — it may report as
-          "unmonitored" elsewhere in this app (see the Device Comparison report) until the window
-          ends or the node is remanaged directly in Orion.
+          SolarWinds mutes alerts for every node listed below during its window — data collection
+          keeps running as normal, only alerting is suppressed. This resumes automatically at the
+          stop time and does not appear in SolarWinds' own Manage Maintenance Schedules screen.
         </div>
         <div id="mm-modal-parse-errors" class="alert alert-secondary py-2 small d-none" role="alert"></div>
         <div id="mm-modal-preview" style="max-height:280px;overflow-y:auto;"></div>
@@ -71,7 +74,7 @@ R-SITE02-01,2026-08-10T22:00,2026-08-11T02:00</pre>
       <div class="modal-footer">
         <button type="button" class="btn btn-outline" data-bs-dismiss="modal" id="mm-cancel">Cancel</button>
         <button type="button" class="btn btn-primary" id="mm-confirm">
-          <i class="ph ph-wrench me-1"></i> <span id="mm-confirm-label">Schedule</span>
+          <i class="ph ph-wrench me-1"></i> <span id="mm-confirm-label">Mute Alerts</span>
         </button>
       </div>
     </div>
@@ -206,7 +209,7 @@ R-SITE02-01,2026-08-10T22:00,2026-08-11T02:00</pre>
 
     const confirm = document.getElementById('mm-confirm');
     confirm.disabled = false;
-    document.getElementById('mm-confirm-label').textContent = `Schedule ${valid.length} Node${valid.length === 1 ? '' : 's'}`;
+    document.getElementById('mm-confirm-label').textContent = `Mute ${valid.length} Node${valid.length === 1 ? '' : 's'}`;
 
     bootstrap.Modal.getOrCreateInstance(document.getElementById('mm-modal')).show();
   }
@@ -226,10 +229,10 @@ R-SITE02-01,2026-08-10T22:00,2026-08-11T02:00</pre>
     const target = document.getElementById('mm-results-table');
     target.textContent = '';
     target.appendChild(table(
-      ['Node', 'Node ID', 'Start (local)', 'Stop (local)', 'Status', 'Message'],
+      ['Node', 'SolarWinds URI', 'Start (local)', 'Stop (local)', 'Status', 'Message'],
       results.map(r => [
         r.node,
-        r.node_id,
+        r.uri,
         r.start_utc ? new Date(r.start_utc).toLocaleString() : '—',
         r.stop_utc ? new Date(r.stop_utc).toLocaleString() : '—',
         statusBadge(r.status),
@@ -241,7 +244,7 @@ R-SITE02-01,2026-08-10T22:00,2026-08-11T02:00</pre>
   }
 
   function statusBadge(status) {
-    const tone = status === 'scheduled' ? 'success' : (status === 'invalid' ? 'secondary' : 'danger');
+    const tone = status === 'muted' ? 'success' : (status === 'invalid' ? 'secondary' : 'danger');
     return el('span', `badge bg-${tone}`, status);
   }
 
@@ -250,7 +253,7 @@ R-SITE02-01,2026-08-10T22:00,2026-08-11T02:00</pre>
 
     const confirm = document.getElementById('mm-confirm');
     confirm.disabled = true;
-    document.getElementById('mm-confirm-label').textContent = 'Scheduling…';
+    document.getElementById('mm-confirm-label').textContent = 'Muting…';
     document.getElementById('mm-modal-log').textContent = '';
 
     const payload = { rows: pendingRows.map(r => ({ node: r.node, start_utc: r.start_utc, stop_utc: r.stop_utc })) };
@@ -284,7 +287,7 @@ R-SITE02-01,2026-08-10T22:00,2026-08-11T02:00</pre>
               appendLog(data.message, 'error');
             } else if (data.type === 'complete') {
               appendLog(
-                `Complete — scheduled ${data.scheduled || 0}, failed ${data.failed || 0}`,
+                `Complete — muted ${data.muted || 0}, failed ${data.failed || 0}`,
                 (data.failed || 0) === 0 ? 'success' : 'warn',
               );
               renderResults(data.results || []);

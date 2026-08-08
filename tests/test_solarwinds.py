@@ -3,8 +3,8 @@
 The most important test here is `test_write_surface_is_narrow_and_explicit`
 — the F5-style structural guarantee for this client's *one* mutating call:
 it fails the build if a generic entity/verb "invoke anything" passthrough is
-ever introduced, or if `unmanage_node` stops posting to the exact Orion verb
-it's documented to call.
+ever introduced, or if `suppress_alerts` stops posting to the exact Orion
+verb it's documented to call.
 """
 from __future__ import annotations
 
@@ -31,11 +31,11 @@ def _solarwinds_url(monkeypatch):
 
 def test_write_surface_is_narrow_and_explicit():
     """No generic invoke(entity, verb, *args)-style passthrough exists — the
-    only Invoke/ call in the module is the hardcoded Orion.Nodes/Unmanage
-    literal used by unmanage_node()."""
+    only Invoke/ call in the module is the hardcoded
+    Orion.AlertSuppression/SuppressAlerts literal used by suppress_alerts()."""
     src = _SRC.read_text(encoding="utf-8")
     invoke_literals = re.findall(r"Invoke/[\w.]+/\w+", src)
-    assert invoke_literals == ["Invoke/Orion.Nodes/Unmanage"], invoke_literals
+    assert invoke_literals == ["Invoke/Orion.AlertSuppression/SuppressAlerts"], invoke_literals
     assert "def invoke(" not in src
 
 
@@ -71,38 +71,41 @@ def test_query_requires_credentials():
         sw.query("SELECT 1", "", "")
 
 
-# ── unmanage_node() ───────────────────────────────────────────────────────────
+# ── suppress_alerts() ─────────────────────────────────────────────────────────
 
-def test_unmanage_node_posts_expected_invoke_body():
+_URI = "swis://host/Orion/Orion.Nodes/NodeID=123"
+
+
+def test_suppress_alerts_posts_expected_invoke_body():
     resp = _fake_response(200, text="")
     start = datetime(2026, 8, 10, 8, 0, tzinfo=timezone.utc)
     stop = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
     with patch("requests.post", return_value=resp) as mock_post:
-        sw.unmanage_node(123, start, stop, "dev", "dev")
+        sw.suppress_alerts(_URI, start, stop, "dev", "dev")
 
     args, kwargs = mock_post.call_args
-    assert args[0].endswith("/SolarWinds/InformationService/v3/Json/Invoke/Orion.Nodes/Unmanage")
-    assert kwargs["json"] == ["N:123", start.isoformat(), stop.isoformat(), False]
+    assert args[0].endswith("/SolarWinds/InformationService/v3/Json/Invoke/Orion.AlertSuppression/SuppressAlerts")
+    assert kwargs["json"] == [[_URI], start.isoformat(), stop.isoformat()]
 
 
-def test_unmanage_node_requires_timezone_aware_datetimes():
+def test_suppress_alerts_requires_timezone_aware_datetimes():
     naive = datetime(2026, 8, 10, 8, 0)
     aware = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
     with pytest.raises(ValueError):
-        sw.unmanage_node(1, naive, aware, "dev", "dev")
+        sw.suppress_alerts(_URI, naive, aware, "dev", "dev")
 
 
-def test_unmanage_node_raises_with_response_detail_on_error():
-    resp = _fake_response(403, text='{"Message":"Access to Orion.Nodes.Unmanage verb denied."}')
+def test_suppress_alerts_raises_with_response_detail_on_error():
+    resp = _fake_response(403, text='{"Message":"Access to Orion.AlertSuppression.SuppressAlerts verb denied."}')
     start = datetime(2026, 8, 10, 8, 0, tzinfo=timezone.utc)
     stop = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
     with patch("requests.post", return_value=resp):
-        with pytest.raises(RuntimeError, match="Access to Orion.Nodes.Unmanage verb denied"):
-            sw.unmanage_node(1, start, stop, "dev", "dev")
+        with pytest.raises(RuntimeError, match="Access to Orion.AlertSuppression.SuppressAlerts verb denied"):
+            sw.suppress_alerts(_URI, start, stop, "dev", "dev")
 
 
-def test_unmanage_node_requires_credentials():
+def test_suppress_alerts_requires_credentials():
     start = datetime(2026, 8, 10, 8, 0, tzinfo=timezone.utc)
     stop = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
     with pytest.raises(RuntimeError):
-        sw.unmanage_node(1, start, stop, "", "")
+        sw.suppress_alerts(_URI, start, stop, "", "")
