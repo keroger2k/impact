@@ -96,10 +96,13 @@ def _caller(username: str, password: str, verify_ssl: bool, timeout: int):
     return call
 
 
-def resolve_uris(call, nodes: list[str]) -> dict[str, str]:
+def resolve_uris(call, nodes: list[str]) -> dict[str, dict]:
+    """Returns {node: {"uri":..., "node_id":...}} — MaintenancePlanAssignments
+    needs both EntityID (bare NodeID) and EntityUri (confirmed via a real 400:
+    EntityID is NOT NULL too, same as AccountID on the parent Plan)."""
     resolved = {}
     for node in nodes:
-        resp = call("POST", "Query", {"query": f"SELECT Uri, Caption FROM Orion.Nodes WHERE Caption = '{node}' OR Caption LIKE '%{node}%'"})
+        resp = call("POST", "Query", {"query": f"SELECT NodeID, Uri, Caption FROM Orion.Nodes WHERE Caption = '{node}' OR Caption LIKE '%{node}%'"})
         if resp.status_code != 200:
             continue
         rows = resp.json().get("results", [])
@@ -108,8 +111,8 @@ def resolve_uris(call, nodes: list[str]) -> dict[str, str]:
             continue
         exact = [r for r in rows if (r.get("Caption") or "").lower() == node.lower()]
         match = exact[0] if exact else rows[0]
-        print(f"\nResolved '{node}' -> {match.get('Caption')} ({match.get('Uri')})")
-        resolved[node] = match.get("Uri")
+        print(f"\nResolved '{node}' -> {match.get('Caption')} (NodeID={match.get('NodeID')}, {match.get('Uri')})")
+        resolved[node] = {"uri": match.get("Uri"), "node_id": match.get("NodeID")}
     return resolved
 
 
@@ -200,7 +203,7 @@ def main():
 
     print("\n" + "=" * 78)
     print(f"Would create Orion.MaintenancePlan: {json.dumps(plan_props, indent=2)}")
-    print(f"Then Orion.MaintenancePlanAssignment for each of {len(uris)} node(s): {list(uris.values())}")
+    print(f"Then Orion.MaintenancePlanAssignment for each of {len(uris)} node(s): {[(v['node_id'], v['uri']) for v in uris.values()]}")
     print("=" * 78)
 
     if not args.apply:
@@ -231,11 +234,13 @@ def main():
               "inspect it manually before wiring assignments to a real ID.")
         sys.exit(1)
 
-    for node, uri in uris.items():
+    for node, info in uris.items():
         print(f"\n--- Creating Orion.MaintenancePlanAssignment for {node} ---")
         call("POST", "Create/Orion.MaintenancePlanAssignment", {
             "MaintenancePlanID": int(plan_id),
-            "EntityUri": uri,
+            "EntityID": info["node_id"],
+            "EntityUri": info["uri"],
+            "EntityType": "Orion.Nodes",
             "Enabled": True,
         })
 
