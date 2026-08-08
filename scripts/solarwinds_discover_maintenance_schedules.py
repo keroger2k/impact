@@ -154,15 +154,22 @@ def run_query(swql: str, username: str, password: str, verify_ssl: bool, timeout
 
 def probe_candidate_entities(username: str, password: str, verify_ssl: bool, timeout: int) -> list[str]:
     _print_header("STEP 1 — Entities whose name suggests Schedule/Maintenance/Suppress")
-    where = " OR ".join(f"EntityName LIKE '%{p}%'" for p in _NAME_PATTERNS)
-    swql = f"SELECT EntityName FROM Metadata.Entity WHERE {where} ORDER BY EntityName"
+    # Metadata.Entity's own name column is just "Name" (it's self-referential,
+    # no foreign key needed) — unlike Metadata.Verb/Metadata.Property, which
+    # both use "EntityName" to point at the entity they describe. Confirmed
+    # against a real run that "EntityName" here 400s ("Cannot resolve
+    # property EntityName") while Metadata.Verb's own EntityName column
+    # worked fine in the same run — that asymmetry is exactly why STEP 1
+    # failed the first time.
+    where = " OR ".join(f"Name LIKE '%{p}%'" for p in _NAME_PATTERNS)
+    swql = f"SELECT Name FROM Metadata.Entity WHERE {where} ORDER BY Name"
     rows = run_query(swql, username, password, verify_ssl, timeout)
     if rows is None:
         print("\nMetadata.Entity query failed — can't enumerate candidates; "
               "the rest of this script will fall back to Orion.AlertSuppression alone.")
         return ["Orion.AlertSuppression"]
     _print_rows(rows, max_rows=200)
-    names = sorted({r.get("EntityName") for r in rows if r.get("EntityName")})
+    names = sorted({r.get("Name") for r in rows if r.get("Name")})
     if "Orion.AlertSuppression" not in names:
         names.append("Orion.AlertSuppression")
     print(f"\nCandidate entities to probe further: {names}")
@@ -196,18 +203,15 @@ def probe_verbs(entity: str, username: str, password: str, verify_ssl: bool, tim
 
 def probe_properties(entity: str, username: str, password: str, verify_ssl: bool, timeout: int) -> list[str]:
     _print_header(f"STEP 3 — Columns on {entity}")
-    swql = f"SELECT Uri, FullName, Type FROM Metadata.Property WHERE Entity = '{entity}' ORDER BY FullName"
+    # Same EntityName-vs-Name correction as STEP 1: Metadata.Property points
+    # at its owning entity via "EntityName" (matching Metadata.Verb, which
+    # already worked), and its own bare column name is "Name", not "FullName".
+    swql = f"SELECT Uri, Name, Type FROM Metadata.Property WHERE EntityName = '{entity}' ORDER BY Name"
     rows = run_query(swql, username, password, verify_ssl, timeout)
     if rows is None:
         return []
     _print_rows(rows, max_rows=200)
-    # FullName typically looks like "Orion.AlertSuppression.SuppressionID" —
-    # SELECTs need the bare trailing property name.
-    cols = []
-    for r in rows:
-        full = r.get("FullName") or ""
-        cols.append(full.rsplit(".", 1)[-1] if full else "")
-    return [c for c in cols if c]
+    return [r.get("Name") for r in rows if r.get("Name")]
 
 
 def probe_rows(entity: str, columns: list[str], username: str, password: str, verify_ssl: bool, timeout: int):
