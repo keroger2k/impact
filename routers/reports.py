@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import html
 import io
+import json
 import logging
 import os
 import zipfile
@@ -30,7 +31,8 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
+from pydantic import BaseModel
 
 import auth as auth_module
 import clients.sna as sna_client
@@ -48,6 +50,7 @@ from utils.bandwidth_report import (
 from utils.cdrl49_report import REPORT_DEFS, generate_report, rows_to_csv
 from utils.device_comparison_report import generate_device_comparison_report
 from utils.device_comparison_report import to_csv as device_comparison_csv
+from utils.maintenance_report import parse_rows, resolve_node_ids, schedule_one
 from utils.sna_report import generate_application_traffic_report
 
 # Cap on how many <option> fragments a datalist endpoint returns — these back
@@ -370,3 +373,134 @@ async def export_device_comparison(session: SessionEntry = Depends(require_auth)
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename=device_comparison_{stamp}.csv"},
     )
+
+
+# ── Maintenance Mode Scheduler ──────────────────────────────────────────────
+# The one write path against SolarWinds in this app (clients.solarwinds's
+# only mutating verb, unmanage_node). Gated behind SOLARWINDS_WRITES_ENABLED
+# so it's off by default, same posture as COMMANDS_ENABLED/CONFIG_CHANGES_ENABLED
+# for the app's other mutating surfaces.
+
+class MaintenanceRow(BaseModel):
+    node: str
+    start_utc: str
+    stop_utc: str
+
+
+class MaintenanceScheduleRequest(BaseModel):
+    rows: list[MaintenanceRow]
+
+
+def _solarwinds_writes_enabled() -> bool:
+    return os.getenv("SOLARWINDS_WRITES_ENABLED", "false").lower() == "true"
+
+
+@router.post("/maintenance-mode/schedule")
+async def schedule_maintenance(req: MaintenanceScheduleRequest, session: SessionEntry = Depends(require_auth)):
+    """Bulk-schedule SolarWinds maintenance mode (Unmanage) for pasted rows.
+
+    `start_utc`/`stop_utc` arrive already converted from the browser's local
+    time to UTC (see templates/pages/reports_maintenance_content.html) — the
+    server never guesses a timezone. SSE, one event stream per submission:
+    a bad row (parse failure, unresolvable node name) logs and moves on
+    rather than aborting the batch, and node resolution happens once for
+    every distinct name in the paste rather than per row — see
+    utils/maintenance_report.py. The actual schedule calls run with bounded
+    concurrency (asyncio.Semaphore(5), same cap as routers/import_.py) via a
+    queue-drained pattern, since an async generator's per-row messages can't
+    be asyncio.gather'd directly.
+    """
+    if not _solarwinds_writes_enabled():
+        raise HTTPException(403, "SolarWinds maintenance-mode scheduling is disabled")
+
+    async def generate():
+        loop = asyncio.get_event_loop()
+
+        def emit(data: dict) -> str:
+            return f"data: {json.dumps(data)}\n\n"
+
+        raw_rows = [r.model_dump() for r in req.rows]
+        valid, parse_errors = parse_rows(raw_rows)
+
+        results = [
+            {"node": e["node"], "node_id": None, "start_utc": None, "stop_utc": None,
+             "status": "invalid", "message": e["message"]}
+            for e in parse_errors
+        ]
+        for err in parse_errors:
+            yield emit({"type": "log", "level": "error",
+                        "message": f"{err['node'] or '(blank)'}: {err['message']}"})
+
+        if not valid:
+            yield emit({"type": "complete", "total": len(results),
+                        "scheduled": 0, "failed": len(results), "results": results})
+            return
+
+        try:
+            node_map = await loop.run_in_executor(
+                None, run_with_context(resolve_node_ids),
+                [row["node"] for row in valid], session.username, session.password,
+            )
+        except Exception as e:
+            logger.error(f"Maintenance-mode node resolution failed: {e}",
+                         extra={"target": "SolarWinds", "action": "MAINTENANCE_RESOLVE"})
+            yield emit({"type": "error", "message": f"SolarWinds lookup failed: {e}"})
+            return
+
+        total = len(valid)
+        sem = asyncio.Semaphore(5)
+        queue: asyncio.Queue = asyncio.Queue()
+        sentinel = object()
+
+        async def process_row(idx: int, row: dict):
+            async with sem:
+                progress_pct = round((idx / total) * 100)
+                entry = {
+                    "node": row["node"],
+                    "node_id": None,
+                    "start_utc": row["start"].isoformat(),
+                    "stop_utc": row["stop"].isoformat(),
+                    "status": "error",
+                    "message": "",
+                }
+                lookup = node_map.get(row["node"].lower(), {"error": "not found in SolarWinds"})
+                if "error" in lookup:
+                    entry["message"] = lookup["error"]
+                else:
+                    entry["node_id"] = lookup["node_id"]
+                    try:
+                        await loop.run_in_executor(
+                            None, run_with_context(schedule_one),
+                            lookup["node_id"], row["start"], row["stop"],
+                            session.username, session.password,
+                        )
+                        entry["status"] = "scheduled"
+                        entry["message"] = "Scheduled"
+                    except Exception as e:
+                        entry["message"] = str(e)[:200]
+
+                if entry["status"] == "scheduled":
+                    detail = f"scheduled {entry['start_utc']} → {entry['stop_utc']}"
+                else:
+                    detail = entry["message"]
+                await queue.put(emit({"type": "log",
+                                      "level": "success" if entry["status"] == "scheduled" else "error",
+                                      "message": f"{row['node']}: {detail}"}))
+                await queue.put(emit({"type": "progress", "done": idx + 1, "total": total, "pct": progress_pct}))
+                results.append(entry)
+                await queue.put(sentinel)
+
+        tasks = [asyncio.create_task(process_row(i, row)) for i, row in enumerate(valid)]
+        finished = 0
+        while finished < len(tasks):
+            msg = await queue.get()
+            if msg is sentinel:
+                finished += 1
+            else:
+                yield msg
+
+        scheduled = sum(1 for r in results if r["status"] == "scheduled")
+        yield emit({"type": "complete", "total": len(results),
+                    "scheduled": scheduled, "failed": len(results) - scheduled, "results": results})
+
+    return StreamingResponse(generate(), media_type="text/event-stream")

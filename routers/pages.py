@@ -392,6 +392,7 @@ async def reports_page(request: Request, user: SessionEntry = Depends(get_curren
     context = {
         "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
         "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
+        "solarwinds_writes_enabled": os.getenv("SOLARWINDS_WRITES_ENABLED", "false").lower() == "true",
         "active_page": "reports",
         "username": user.username,
     }
@@ -444,6 +445,24 @@ async def reports_device_comparison_page(request: Request, response: Response, u
     if request.headers.get("HX-Request"):
         return templates.TemplateResponse(request, "pages/reports_device_comparison_content.html", context)
     return templates.TemplateResponse(request, "reports_device_comparison.html", context)
+
+@router.get("/reports/maintenance-mode", response_class=HTMLResponse)
+async def reports_maintenance_page(request: Request, response: Response, user: SessionEntry = Depends(get_current_user_from_cookie)):
+    if not user: return RedirectResponse(url="/login")
+    if os.getenv("SOLARWINDS_WRITES_ENABLED", "false").lower() != "true":
+        raise HTTPException(403, "SolarWinds maintenance-mode scheduling is disabled")
+    from utils.csrf import set_csrf_cookie
+    set_csrf_cookie(response)
+    context = {
+        "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
+        "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
+        "solarwinds_writes_enabled": True,
+        "active_page": "reports",
+        "username": user.username,
+    }
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse(request, "pages/reports_maintenance_content.html", context)
+    return templates.TemplateResponse(request, "reports_maintenance.html", context)
 
 @router.get("/cache-mgmt", response_class=HTMLResponse)
 async def cache_mgmt_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):

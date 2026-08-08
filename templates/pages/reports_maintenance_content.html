@@ -1,0 +1,312 @@
+<div class="d-flex flex-column gap-3 animate-fade-in">
+  <div>
+    <a href="/reports" hx-get="/reports" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML"
+       class="text-muted small text-decoration-none">
+      <i class="ph ph-arrow-left"></i> Back to Reports
+    </a>
+  </div>
+
+  <div class="row g-4">
+    <div class="col-12">
+      <div class="card shadow-sm border-0">
+        <div class="card-header bg-navy text-white d-flex align-items-center gap-2">
+          <i class="ph ph-wrench"></i>
+          <span class="fw-bold">Maintenance Mode Scheduler</span>
+        </div>
+        <div class="card-body">
+          <p class="text-muted small mb-3">
+            Paste one node per line as <code>hostname,start,stop</code> and schedule SolarWinds
+            maintenance mode (Orion "Unmanage") for each — polling is suspended for that node
+            between the two times, then resumes automatically. Start and stop are read in
+            <strong>your browser's local time</strong> and converted to UTC before anything is
+            sent. Use ISO-style timestamps with no timezone offset, e.g.:
+          </p>
+          <pre class="small bg-light p-2 rounded mb-3" style="white-space:pre-wrap;">R-SITE01-01,2026-08-10T08:00,2026-08-10T12:00
+R-SITE02-01,2026-08-10T22:00,2026-08-11T02:00</pre>
+
+          <div class="mb-3">
+            <textarea class="form-control font-mono" id="mm-input" rows="8"
+                      placeholder="hostname,2026-08-10T08:00,2026-08-10T12:00"></textarea>
+          </div>
+
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+            <button type="button" class="btn btn-primary" id="mm-preview-btn" onclick="mmOpenPreview()">
+              <i class="ph ph-wrench me-1"></i> Schedule Maintenance
+            </button>
+            <span class="text-muted small" id="mm-last-run"></span>
+          </div>
+
+          <div id="mm-error" class="alert alert-danger py-2 small d-none" role="alert"></div>
+
+          <div id="mm-results" class="d-none">
+            <h6 class="small fw-bold uppercase letter-spacing-1 text-muted mb-2">Last Run Results</h6>
+            <div id="mm-results-table"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Confirm dialog. This is the one mutating action on this page — it
+     suspends SolarWinds polling for every listed node during its window —
+     so it always shows exactly what will be submitted before it runs. -->
+<div class="modal fade" id="mm-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="ph ph-wrench me-1"></i> Schedule Maintenance Mode</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-warning py-2 small">
+          SolarWinds stops polling every node listed below for its window — it may report as
+          "unmonitored" elsewhere in this app (see the Device Comparison report) until the window
+          ends or the node is remanaged directly in Orion.
+        </div>
+        <div id="mm-modal-parse-errors" class="alert alert-secondary py-2 small d-none" role="alert"></div>
+        <div id="mm-modal-preview" style="max-height:280px;overflow-y:auto;"></div>
+        <div id="mm-modal-log" class="d-none mt-3" style="max-height:200px;overflow-y:auto;font-family:var(--font-mono,monospace);font-size:12px;background:#0b0b0b;color:#e5e5e5;padding:10px;border-radius:6px;"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" data-bs-dismiss="modal" id="mm-cancel">Cancel</button>
+        <button type="button" class="btn btn-primary" id="mm-confirm">
+          <i class="ph ph-wrench me-1"></i> <span id="mm-confirm-label">Schedule</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  /* IIFE-scoped: htmx re-executes inline <script> tags on every swap into
+     #main-content, so bare top-level declarations would collide on a second
+     visit. Only the onclick entry point is attached to window. */
+
+  function csrfHeaders() {
+    const token = document.cookie.split('; ').find(row => row.startsWith('csrf_token='));
+    return { 'X-CSRF-Token': token ? token.split('=')[1] : '' };
+  }
+
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined && text !== null) node.textContent = text;
+    return node;
+  }
+
+  function table(headers, rows) {
+    const wrap = el('div', 'table-responsive');
+    const t = el('table', 'table table-sm mb-0');
+    const thead = el('thead');
+    const hr = el('tr');
+    headers.forEach(h => hr.appendChild(el('th', null, h)));
+    thead.appendChild(hr);
+    t.appendChild(thead);
+    const tbody = el('tbody');
+    rows.forEach(cells => {
+      const tr = el('tr');
+      cells.forEach(c => {
+        const td = el('td');
+        if (c instanceof Node) td.appendChild(c);
+        else td.textContent = (c === null || c === undefined || c === '') ? '—' : c;
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    t.appendChild(tbody);
+    wrap.appendChild(t);
+    return wrap;
+  }
+
+  // Parsed entirely client-side: the browser's own Date parser already knows
+  // the viewer's local timezone, so a "T"-separated timestamp with no offset
+  // (e.g. "2026-08-10T08:00") is spec-guaranteed to be interpreted as local
+  // time — converting here means the server only ever sees UTC and never has
+  // to guess a timezone.
+  function parseTextarea(raw) {
+    const valid = [];
+    const errors = [];
+    raw.split('\n').forEach((line, idx) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      const parts = trimmed.split(',');
+      if (parts.length !== 3) {
+        errors.push({ line: idx + 1, text: trimmed, message: 'expected exactly 3 comma-separated fields' });
+        return;
+      }
+      const node = parts[0].trim();
+      const startRaw = parts[1].trim();
+      const stopRaw = parts[2].trim();
+      if (!node) {
+        errors.push({ line: idx + 1, text: trimmed, message: 'missing node name' });
+        return;
+      }
+      const start = new Date(startRaw);
+      const stop = new Date(stopRaw);
+      if (isNaN(start.getTime())) {
+        errors.push({ line: idx + 1, text: trimmed, message: `unparseable start time "${startRaw}"` });
+        return;
+      }
+      if (isNaN(stop.getTime())) {
+        errors.push({ line: idx + 1, text: trimmed, message: `unparseable stop time "${stopRaw}"` });
+        return;
+      }
+      if (stop <= start) {
+        errors.push({ line: idx + 1, text: trimmed, message: 'stop time must be after start time' });
+        return;
+      }
+      valid.push({
+        node, start_utc: start.toISOString(), stop_utc: stop.toISOString(),
+        start_local: start.toLocaleString(), stop_local: stop.toLocaleString(),
+      });
+    });
+    return { valid, errors };
+  }
+
+  let pendingRows = [];
+
+  function mmOpenPreview() {
+    const errorBox = document.getElementById('mm-error');
+    errorBox.classList.add('d-none');
+
+    const raw = document.getElementById('mm-input').value;
+    const { valid, errors } = parseTextarea(raw);
+
+    if (!valid.length) {
+      errorBox.textContent = errors.length
+        ? 'No valid rows to schedule — fix the errors and try again.'
+        : 'Paste at least one row before scheduling.';
+      errorBox.classList.remove('d-none');
+      return;
+    }
+    pendingRows = valid;
+
+    const parseErrBox = document.getElementById('mm-modal-parse-errors');
+    if (errors.length) {
+      parseErrBox.textContent =
+        `${errors.length} row(s) will be skipped: ` +
+        errors.map(e => `line ${e.line} (${e.message})`).join('; ');
+      parseErrBox.classList.remove('d-none');
+    } else {
+      parseErrBox.classList.add('d-none');
+    }
+
+    const preview = document.getElementById('mm-modal-preview');
+    preview.textContent = '';
+    preview.appendChild(table(
+      ['Node', 'Start (local)', 'Stop (local)'],
+      valid.map(r => [r.node, r.start_local, r.stop_local]),
+    ));
+
+    const log = document.getElementById('mm-modal-log');
+    log.textContent = '';
+    log.classList.add('d-none');
+
+    const confirm = document.getElementById('mm-confirm');
+    confirm.disabled = false;
+    document.getElementById('mm-confirm-label').textContent = `Schedule ${valid.length} Node${valid.length === 1 ? '' : 's'}`;
+
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('mm-modal')).show();
+  }
+
+  function appendLog(message, level) {
+    const log = document.getElementById('mm-modal-log');
+    log.classList.remove('d-none');
+    const colors = { error: '#ff7b72', success: '#7ee787', warn: '#e3b341' };
+    const line = el('div', null, `[${(level || 'info').toUpperCase()}] ${message}`);
+    line.style.color = colors[level] || '#e5e5e5';
+    log.appendChild(line);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function renderResults(results) {
+    const section = document.getElementById('mm-results');
+    const target = document.getElementById('mm-results-table');
+    target.textContent = '';
+    target.appendChild(table(
+      ['Node', 'Node ID', 'Start (local)', 'Stop (local)', 'Status', 'Message'],
+      results.map(r => [
+        r.node,
+        r.node_id,
+        r.start_utc ? new Date(r.start_utc).toLocaleString() : '—',
+        r.stop_utc ? new Date(r.stop_utc).toLocaleString() : '—',
+        statusBadge(r.status),
+        r.message,
+      ]),
+    ));
+    section.classList.remove('d-none');
+    document.getElementById('mm-last-run').textContent = 'Last run ' + new Date().toLocaleString();
+  }
+
+  function statusBadge(status) {
+    const tone = status === 'scheduled' ? 'success' : (status === 'invalid' ? 'secondary' : 'danger');
+    return el('span', `badge bg-${tone}`, status);
+  }
+
+  function runSchedule() {
+    if (!pendingRows.length) return;
+
+    const confirm = document.getElementById('mm-confirm');
+    confirm.disabled = true;
+    document.getElementById('mm-confirm-label').textContent = 'Scheduling…';
+    document.getElementById('mm-modal-log').textContent = '';
+
+    const payload = { rows: pendingRows.map(r => ({ node: r.node, start_utc: r.start_utc, stop_utc: r.stop_utc })) };
+
+    // SSE over POST, so EventSource is out — read the stream directly, same
+    // buffered chunk-parsing pattern as the Device Comparison report's
+    // Add-to-DNAC flow (chunks don't reliably land on "\n\n" boundaries).
+    fetch('/api/reports/maintenance-mode/schedule', {
+      method: 'POST',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, csrfHeaders()),
+      body: JSON.stringify(payload),
+    }).then(response => {
+      if (!response.ok) throw new Error('Request failed (HTTP ' + response.status + ')');
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffered = '';
+
+      function process({ done, value }) {
+        if (done) return finish();
+        buffered += decoder.decode(value, { stream: true });
+        const parts = buffered.split('\n\n');
+        buffered = parts.pop();
+        parts.forEach(part => {
+          part.split('\n').forEach(line => {
+            if (!line.startsWith('data: ')) return;
+            let data;
+            try { data = JSON.parse(line.substring(6)); } catch (e) { return; }
+            if (data.type === 'log') {
+              appendLog(data.message, data.level);
+            } else if (data.type === 'error') {
+              appendLog(data.message, 'error');
+            } else if (data.type === 'complete') {
+              appendLog(
+                `Complete — scheduled ${data.scheduled || 0}, failed ${data.failed || 0}`,
+                (data.failed || 0) === 0 ? 'success' : 'warn',
+              );
+              renderResults(data.results || []);
+            }
+          });
+        });
+        return reader.read().then(process);
+      }
+      return reader.read().then(process);
+    }).catch(err => {
+      appendLog(err.message, 'error');
+      finish();
+    });
+
+    function finish() {
+      confirm.disabled = true;
+      document.getElementById('mm-confirm-label').textContent = 'Done';
+    }
+  }
+
+  document.getElementById('mm-confirm').addEventListener('click', runSchedule);
+
+  window.mmOpenPreview = mmOpenPreview;
+})();
+</script>
