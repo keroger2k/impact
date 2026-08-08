@@ -113,12 +113,40 @@ def resolve_uris(call, nodes: list[str]) -> dict[str, str]:
     return resolved
 
 
+def resolve_account_id(call, formatted_username: str, override: str | None) -> str:
+    """MaintenancePlans.AccountID is NOT NULL (confirmed via a real 400) — look
+    up the real stored value from Orion.Accounts rather than guessing the
+    format (DOMAIN\\user vs bare user vs something else)."""
+    if override:
+        print(f"\nUsing --account-id override: {override!r}")
+        return override
+
+    bare = formatted_username.split("\\", 1)[-1]
+    resp = call("POST", "Query", {"query": f"SELECT AccountID FROM Orion.Accounts WHERE AccountID LIKE '%{bare}%'"})
+    if resp.status_code == 200:
+        rows = resp.json().get("results", [])
+        if len(rows) == 1:
+            found = rows[0]["AccountID"]
+            print(f"\nResolved AccountID from Orion.Accounts: {found!r}")
+            return found
+        if len(rows) > 1:
+            print(f"\nMultiple Orion.Accounts rows matched {bare!r}: {[r['AccountID'] for r in rows]}")
+            print(f"Falling back to the Basic Auth username as-is: {formatted_username!r} — "
+                  f"override with --account-id if this is wrong.")
+            return formatted_username
+
+    print(f"\nNo Orion.Accounts match for {bare!r} — falling back to the Basic Auth "
+          f"username as-is: {formatted_username!r}. Override with --account-id if this fails too.")
+    return formatted_username
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--node", action="append", required=True, help="Node Caption (repeatable for multiple nodes)")
     ap.add_argument("--minutes", type=int, default=5, help="Plan window length (default 5)")
     ap.add_argument("--name", default=None, help="Plan name (default: auto-generated)")
     ap.add_argument("--reason", default="IMPACT II test", help="Plan reason")
+    ap.add_argument("--account-id", default=None, help="Override MaintenancePlans.AccountID (default: auto-resolved from Orion.Accounts)")
     ap.add_argument("--apply", action="store_true", help="Actually create the plan/assignments (default: dry-run)")
     args = ap.parse_args()
 
@@ -144,6 +172,8 @@ def main():
         print("\nNo nodes resolved — nothing to do.")
         sys.exit(1)
 
+    account_id = resolve_account_id(call, _format_username(username), args.account_id)
+
     start = datetime.now(timezone.utc)
     end = start + timedelta(minutes=args.minutes)
     name = args.name or f"IMPACT II Test {start.strftime('%Y%m%d_%H%M%S')}"
@@ -160,6 +190,7 @@ def main():
 
     plan_props = {
         "Name": name,
+        "AccountID": account_id,
         "Reason": args.reason,
         "Enabled": True,
         "KeepPolling": True,  # always mute-alerts-only, per requirement
