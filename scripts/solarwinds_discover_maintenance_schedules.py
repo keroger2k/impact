@@ -169,10 +169,19 @@ def probe_candidate_entities(username: str, password: str, verify_ssl: bool, tim
               "the rest of this script will fall back to Orion.AlertSuppression alone.")
         return ["Orion.AlertSuppression"]
     _print_rows(rows, max_rows=200)
-    names = sorted({r.get("Name") for r in rows if r.get("Name")})
+    # Metadata.Entity.Name comes back bare ("MaintenancePlan"), but
+    # Metadata.Verb/Metadata.Property need the fully-qualified name
+    # ("Orion.MaintenancePlan") — confirmed against a real run where every
+    # bare candidate 0-rowed (no error, just empty) while the one candidate
+    # manually hardcoded with the "Orion." prefix (AlertSuppression) worked.
+    # Silent 0-rows made that look like "these entities have no verbs" when
+    # it was actually just the missing prefix.
+    bare_names = sorted({r.get("Name") for r in rows if r.get("Name")})
+    names = sorted({n if "." in n else f"Orion.{n}" for n in bare_names})
     if "Orion.AlertSuppression" not in names:
         names.append("Orion.AlertSuppression")
-    print(f"\nCandidate entities to probe further: {names}")
+    print(f"\nBare names found: {bare_names}")
+    print(f"Candidate entities to probe further (Orion.-qualified): {names}")
     print(
         "If a name here looks like the real 'Schedules' bookkeeping table "
         "(e.g. something containing 'Schedule' that ISN'T AlertSuppression "
