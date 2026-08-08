@@ -53,12 +53,13 @@ def main():
         print("ERROR: SOLARWINDS_USERNAME/SOLARWINDS_PASSWORD (or DOMAIN_USERNAME/DOMAIN_PASSWORD) must be set.")
         sys.exit(1)
 
-    # No WHERE-clause date filter — SWQL's function surface isn't confirmed
-    # against this instance (learned the hard way elsewhere in this project
-    # not to guess SWQL syntax), and filtering a handful of rows in Python
-    # is just as easy and guaranteed correct.
+    # No WHERE-clause date filter — GETUTCDATE() is confirmed valid SWQL on
+    # this instance, but "SuppressFrom > GETUTCDATE()" alone only catches
+    # future-starting windows, not ones already active (SuppressFrom in the
+    # past, SuppressUntil still ahead) — filtering "until >= now" in Python
+    # below catches both without a second WHERE clause to get right.
     swql = """
-SELECT n.Caption, n.IPAddress, a.SuppressFrom, a.SuppressUntil, a.Description, a.Reason
+SELECT n.Caption, n.IPAddress, n.DetailsUrl, a.SuppressFrom, a.SuppressUntil, a.Description, a.Reason
 FROM Orion.AlertSuppression a
 JOIN Orion.Nodes n ON a.EntityUri = n.Uri
 ORDER BY a.SuppressFrom
@@ -97,6 +98,12 @@ ORDER BY a.SuppressFrom
         print(f"{(r.get('Caption') or ''):<20} {(r.get('IPAddress') or ''):<16} "
               f"{(r.get('SuppressFrom') or ''):<26} {(r.get('SuppressUntil') or ''):<26} "
               f"{r.get('Reason') or r.get('Description') or ''}")
+        # Relative path off the Orion web console (not SOLARWINDS_URL — that's
+        # the SWIS host, a different one on this instance) — printed as-is
+        # rather than guessed into a full clickable URL.
+        details = r.get("DetailsUrl")
+        if details:
+            print(f"{'':<20} {details}")
 
 
 if __name__ == "__main__":
