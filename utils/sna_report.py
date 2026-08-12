@@ -178,25 +178,48 @@ def _report_with_session(
         raise LookupError(
             f"No interface matching '{interface_name}' found on {exporter['exporter_name']}{hint}"
         )
-    if len(interfaces) > 1:
+    # SNA hands out a new internal interface ID whenever the exporter's SNMP
+    # ifIndex for this name changes (a router reload/reconfig is enough) but
+    # keeps the old ID's record around with its historical data — so the same
+    # physical interface can show up as two "Tunnel5000" entries, one that
+    # stopped getting flow data whenever the rotation happened and one that's
+    # picked it up since. Confirmed against real production data: a fleet
+    # router with a Tunnel5000 rotation showed exactly this split, one ID
+    # covering the trailing month and the other covering the month before.
+    # Text refinement can never resolve this — the two candidates' names are
+    # byte-identical — so a true ambiguity (different names both loosely
+    # matching the search term) still gets the candidate picker, but an
+    # all-same-name split is treated as one logical interface and every ID's
+    # traffic is pulled and merged, which also naturally covers a rotation
+    # that lands inside the 7-day window instead of arbitrarily picking one
+    # ID's data over the other's.
+    distinct_names = {(i["interface_name"] or "").strip().lower() for i in interfaces}
+    if len(interfaces) > 1 and len(distinct_names) > 1:
         return {
             "status": "ambiguous",
             "level": "interface",
             "candidates": interfaces,
             "exporter": exporter,
         }
-    interface = interfaces[0]
+    resolved_interface_name = interfaces[0]["interface_name"]
 
     from utils.sna_traffic import bucket_application_traffic
 
     def _pull(hours: int) -> dict:
-        records = sna_client.get_interface_application_traffic(
-            session, base_url, domain_id,
-            exporter["device_id"], exporter["device_name"],
-            exporter["exporter_ip"], exporter["exporter_name"],
-            interface["interface_id"], interface["interface_name"],
-            hours,
-        )
+        # Sequential, not fanned out to FANOUT_POOL: this already runs inside
+        # a FANOUT_POOL worker (below), and that pool is bounded — submitting
+        # more work to the same pool from inside it is the deadlock this
+        # pool's own docstring warns about (utils/report_pool.py). At most
+        # two interface IDs in practice, so a plain loop is cheap enough.
+        records = []
+        for iface in interfaces:
+            records.extend(sna_client.get_interface_application_traffic(
+                session, base_url, domain_id,
+                exporter["device_id"], exporter["device_name"],
+                exporter["exporter_ip"], exporter["exporter_name"],
+                iface["interface_id"], iface["interface_name"],
+                hours,
+            ))
         return bucket_application_traffic(records, hours)
 
     # Same reasoning as utils.bandwidth_report.generate_bandwidth_report: the
@@ -211,7 +234,7 @@ def _report_with_session(
     return {
         "status": "ok",
         "node_name": exporter["exporter_name"],
-        "interface_name": interface["interface_name"],
+        "interface_name": resolved_interface_name,
         "traffic_24h": traffic_24h,
         "traffic_7d": traffic_7d,
     }

@@ -222,6 +222,65 @@ def test_generate_report_normalizes_fqdn_router_name_for_sna_match():
     assert result["node_name"] == "R-SITE-01"
 
 
+def test_generate_report_merges_duplicate_named_interfaces():
+    """Real production bug found 2026-08-12: SNA hands out a new internal
+    interface ID whenever an exporter's SNMP ifIndex for a name changes (a
+    router reload is enough) but keeps the old ID's record around, so the
+    same physical Tunnel5000 shows up twice with the byte-identical name —
+    one ID covering the trailing window, the other covering an older one.
+    Since the names are identical, the frontend's "refine the Interface
+    field" recovery path can never disambiguate them, so both IDs' traffic
+    must be pulled and merged into one report rather than surfaced as an
+    unresolvable ambiguity."""
+    def fake_traffic(session, base_url, domain_id, device_id, device_name, exporter_ip, exporter_name,
+                      interface_id, interface_name, hours, timeout=60):
+        if interface_id == 68:
+            return [{"applicationName": "Teams", "time": "2026-08-04T00:00:00Z",
+                      "trafficInboundBps": 1000, "trafficOutboundBps": 0}]
+        return [{"applicationName": "Splunk", "time": "2026-07-01T00:00:00Z",
+                  "trafficInboundBps": 2000, "trafficOutboundBps": 0}]
+
+    with patch("utils.sna_report.find_node_ip", return_value="1.2.3.4"), \
+         patch("clients.sna.login", return_value="fake-session"), \
+         patch("clients.sna.get_tenant_id", return_value="999"), \
+         patch("clients.sna.list_flow_collectors", return_value=[{"id": 1, "name": "fc01"}]), \
+         patch("clients.sna.list_exporters", return_value=[{"id": "1.2.3.4", "name": ""}]), \
+         patch("clients.sna.list_interfaces", return_value=[
+             {"id": 68, "name": "Tunnel5000"}, {"id": 70, "name": "Tunnel5000"},
+         ]), \
+         patch("clients.sna.get_interface_application_traffic", side_effect=fake_traffic) as mock_traffic:
+        result = sna_report.generate_application_traffic_report(
+            "https://sna.example.com", "network", "dev", "dev", "R-SITE-01", "Tunnel5000",
+        )
+
+    assert result["status"] == "ok"
+    assert result["interface_name"] == "Tunnel5000"
+    assert set(result["traffic_24h"]["applications"]) == {"Teams", "Splunk"}
+    # One call per interface ID per window (24h + 7d) — never fanned out to
+    # FANOUT_POOL from inside a FANOUT_POOL worker.
+    assert mock_traffic.call_count == 4
+
+
+def test_generate_report_still_ambiguous_when_interface_names_differ():
+    """Genuinely different names that both loosely match the search term stay
+    ambiguous — only a byte-identical name split is safe to auto-merge."""
+    with patch("utils.sna_report.find_node_ip", return_value="1.2.3.4"), \
+         patch("clients.sna.login", return_value="fake-session"), \
+         patch("clients.sna.get_tenant_id", return_value="999"), \
+         patch("clients.sna.list_flow_collectors", return_value=[{"id": 1, "name": "fc01"}]), \
+         patch("clients.sna.list_exporters", return_value=[{"id": "1.2.3.4", "name": ""}]), \
+         patch("clients.sna.list_interfaces", return_value=[
+             {"id": 68, "name": "Tunnel5000-Primary"}, {"id": 70, "name": "Tunnel5000-Secondary"},
+         ]):
+        result = sna_report.generate_application_traffic_report(
+            "https://sna.example.com", "network", "dev", "dev", "R-SITE-01", "Tunnel5000",
+        )
+
+    assert result["status"] == "ambiguous"
+    assert result["level"] == "interface"
+    assert len(result["candidates"]) == 2
+
+
 def test_generate_report_no_interface_match_lists_what_sna_has():
     """Name-matching between SolarWinds and SNA is the recurring failure mode
     here, so the error must name SNA's actual interfaces — that's what makes
