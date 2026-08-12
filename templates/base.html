@@ -167,6 +167,15 @@
        <div class="health-item text-muted"><i class="ph ph-circle-notch ph-spin"></i> Initializing System Health...</div>
     </div>
 
+    <!-- Loaded here, before #main-content, rather than at the bottom of the
+         body or in the Reports page partial: htmx swaps only replace
+         #main-content so this still loads exactly once per full page load,
+         but a direct/full page load of a Reports page (not a sidebar-driven
+         htmx nav) parses #main-content's inline <script> synchronously as
+         part of the same document, and that script reads
+         window.ImpactReportCharts at parse time — it must already exist. -->
+    <script src="/static/js/report-charts.js"></script>
+
     <div id="content">
       <div id="main-content">
         {% block content %}{% endblock %}
@@ -204,9 +213,6 @@
 <script src="/static/bootstrap/js/bootstrap.bundle.min.js"></script>
 <script src="/static/js/debug-console.js"></script>
 <script src="/static/js/data-table.js"></script>
-<!-- Loaded here rather than in the Reports page partial so htmx doesn't
-     re-execute it on every swap into #main-content. -->
-<script src="/static/js/report-charts.js"></script>
 <script>
   function toggleSidebar() {
     const sidebar = document.getElementById('sidebar');
