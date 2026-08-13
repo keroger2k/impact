@@ -19,7 +19,7 @@ from utils.csrf import CSRFMiddleware
 import auth as auth_module
 from auth import require_auth, SessionEntry
 from clients import verify_ssl
-from routers import dnac, ise, firewall, aci, commands, import_, auth as auth_router, pages, routing, nexus, cache_mgmt, ipam, tunnels, ipv6_registry, ip_registry, site, f5, reports
+from routers import dnac, ise, firewall, aci, commands, import_, auth as auth_router, pages, routing, nexus, cache_mgmt, ipam, tunnels, ipv6_registry, ip_registry, site, f5, reports, swim
 from logger_config import setup_logging, set_correlation_id, run_with_context
 
 setup_logging()
@@ -43,6 +43,11 @@ async def lifespan(app: FastAPI):
     from clients import ipv6_registry, ip_registry
     ipv6_registry.init_schema()
     ip_registry.init_schema()
+
+    # SWIM job registry: same reasoning — schema must exist before any
+    # /api/swim/jobs request lands.
+    from clients import swim_jobs
+    swim_jobs.init_schema()
 
     if DEV_MODE:
         seed_cache(cache)
@@ -82,7 +87,8 @@ SSE_LIMITED_PATHS = {"/api/warm", "/api/ipam/refresh", "/api/commands/run",
                      "/api/commands/config-run", "/api/import/run",
                      "/api/tunnels/refresh-stream", "/api/registry/audit/stream",
                      "/api/nexus/refresh", "/api/f5/refresh",
-                     "/api/reports/maintenance-mode/schedule"}
+                     "/api/reports/maintenance-mode/schedule",
+                     "/api/swim/jobs/start"}
 
 @app.middleware("http")
 async def sse_rate_limit(request: Request, call_next):
@@ -157,6 +163,7 @@ app.include_router(ipv6_registry.router, prefix="/api/ipv6", tags=["IPv6Registry
 app.include_router(ip_registry.router, prefix="/api/registry", tags=["Registry"], **_auth_dep)
 app.include_router(site.router, prefix="/api/site", tags=["Site"], **_auth_dep)
 app.include_router(reports.router, prefix="/api/reports", tags=["Reports"], **_auth_dep)
+app.include_router(swim.router, prefix="/api/swim", tags=["SWIM"], **_auth_dep)
 app.include_router(pages.router)
 
 # C2: Consolidate SSE warm

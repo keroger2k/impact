@@ -1,0 +1,333 @@
+<div class="d-flex flex-column gap-3 animate-fade-in" data-job-type="{{ job_type }}" data-job-id="{{ job_id }}">
+  <div>
+    <a href="/software/{{ job_type }}" hx-get="/software/{{ job_type }}" hx-target="#main-content"
+       hx-push-url="true" hx-swap="innerHTML" class="text-muted small text-decoration-none">
+      <i class="ph ph-arrow-left"></i> Back to {{ 'Activation' if job_type == 'activation' else 'Distribution' }} Jobs
+    </a>
+  </div>
+
+  <div class="row g-4">
+    <div class="col-12">
+      <div class="card shadow-sm border-0">
+        <div class="card-header {{ 'bg-danger' if job_type == 'activation' else 'bg-navy' }} text-white d-flex align-items-center gap-2">
+          <i class="ph {{ 'ph-warning' if job_type == 'activation' else 'ph-broadcast' }}"></i>
+          <span class="fw-bold" id="jd-title">Job #{{ job_id }}</span>
+          <span class="badge bg-light text-dark ms-2" id="jd-status-badge"></span>
+        </div>
+        <div class="card-body">
+          <div id="jd-meta" class="text-muted small mb-3"></div>
+
+          <div class="row g-3 mb-3" id="jd-stat-tiles"></div>
+
+          <div class="d-flex flex-wrap gap-2 mb-3">
+            <button class="btn {{ 'btn-danger' if job_type == 'activation' else 'btn-primary' }} btn-sm" type="button" id="jd-start-btn">
+              <i class="ph ph-play"></i> <span id="jd-start-label">Start</span>
+            </button>
+            <button class="btn btn-outline-danger btn-sm" type="button" id="jd-cancel-btn" disabled>
+              <i class="ph ph-x"></i> Cancel Queued Devices (<span id="jd-cancel-count">0</span>)
+            </button>
+          </div>
+
+          <div id="jd-error" class="alert alert-danger py-2 small d-none" role="alert"></div>
+
+          <div id="jd-log" class="d-none mb-3" style="max-height:220px;overflow-y:auto;font-family:var(--font-mono,monospace);font-size:12px;background:#0b0b0b;color:#e5e5e5;padding:10px;border-radius:6px;"></div>
+
+          <h6 class="small fw-bold text-uppercase text-muted mb-2" style="letter-spacing:.05em">Devices</h6>
+          <div class="table-responsive">
+            <table class="table table-sm data-table mb-0">
+              <thead>
+                <tr>
+                  <th>Hostname</th>
+                  <th>IP</th>
+                  <th>Site</th>
+                  <th>Status</th>
+                  <th>Detail</th>
+                </tr>
+              </thead>
+              <tbody id="jd-devices-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Confirm modal — required once per job, on the first Start only. -->
+<div class="modal fade" id="jd-confirm-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header {{ 'bg-danger text-white' if job_type == 'activation' else '' }}">
+        <h5 class="modal-title">
+          {% if job_type == 'activation' %}
+          <i class="ph ph-warning me-1"></i> Confirm Activation
+          {% else %}
+          <i class="ph ph-broadcast me-1"></i> Confirm Distribution
+          {% endif %}
+        </h5>
+        <button type="button" class="btn-close {{ 'btn-close-white' if job_type == 'activation' else '' }}" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        {% if job_type == 'activation' %}
+        <div class="alert alert-danger py-2 small">
+          This reboots every targeted device that isn't already cancelled. Already-submitted
+          devices cannot be stopped once this starts.
+        </div>
+        {% else %}
+        <div class="alert alert-warning py-2 small">
+          This begins pushing the image to devices, throttled per site. Already-submitted devices
+          cannot be stopped once this starts.
+        </div>
+        {% endif %}
+        <p class="small mb-1">Type <strong id="jd-confirm-phrase-label"></strong> to continue:</p>
+        <input type="text" class="form-control" id="jd-confirm-input" autocomplete="off">
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn {{ 'btn-danger' if job_type == 'activation' else 'btn-primary' }}" id="jd-confirm-submit" disabled>
+          {{ 'Activate' if job_type == 'activation' else 'Distribute' }}
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const root = document.querySelector('[data-job-id]');
+  const jobType = root.dataset.jobType;
+  const jobId = parseInt(root.dataset.jobId, 10);
+
+  function csrfHeaders() {
+    const token = document.cookie.split('; ').find(row => row.startsWith('csrf_token='));
+    return { 'X-CSRF-Token': token ? token.split('=')[1] : '' };
+  }
+
+  function showError(msg) {
+    const box = document.getElementById('jd-error');
+    box.textContent = msg;
+    box.classList.remove('d-none');
+  }
+
+  function appendLog(message, level) {
+    const log = document.getElementById('jd-log');
+    log.classList.remove('d-none');
+    const colors = { error: '#ff7b72', success: '#7ee787', warn: '#e3b341' };
+    const line = document.createElement('div');
+    line.textContent = '[' + (level || 'info').toUpperCase() + '] ' + message;
+    line.style.color = colors[level] || '#e5e5e5';
+    log.appendChild(line);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  let currentJob = null;
+
+  function statTile(label, value, colorClass) {
+    const col = document.createElement('div');
+    col.className = 'col-6 col-md-2';
+    const box = document.createElement('div');
+    box.className = 'border rounded p-2 text-center';
+    const num = document.createElement('div');
+    num.className = 'fw-bold ' + (colorClass || '');
+    num.style.fontSize = '20px';
+    num.textContent = value;
+    const lbl = document.createElement('div');
+    lbl.className = 'text-muted small';
+    lbl.textContent = label;
+    box.appendChild(num);
+    box.appendChild(lbl);
+    col.appendChild(box);
+    return col;
+  }
+
+  function renderTiles(counts) {
+    const cancellable = counts.queued || 0;
+    const inFlight = (counts.submitting || 0) + (counts.in_progress || 0);
+    const wrap = document.getElementById('jd-stat-tiles');
+    wrap.innerHTML = '';
+    wrap.appendChild(statTile('Queued (cancellable)', cancellable, 'text-secondary'));
+    wrap.appendChild(statTile('Submitted / in progress', inFlight, 'text-primary'));
+    wrap.appendChild(statTile('Success', counts.success || 0, 'text-success'));
+    wrap.appendChild(statTile('Failed', counts.failed || 0, 'text-danger'));
+    wrap.appendChild(statTile('Cancelled', counts.cancelled || 0, 'text-muted'));
+
+    document.getElementById('jd-cancel-count').textContent = cancellable;
+    document.getElementById('jd-cancel-btn').disabled = cancellable === 0;
+  }
+
+  function statusBadgeTone(status) {
+    return { draft: 'secondary', running: 'primary', paused: 'warning',
+             completed: 'success', completed_with_errors: 'warning', cancelled: 'secondary' }[status] || 'secondary';
+  }
+
+  function deviceStatusBadge(status) {
+    const tone = { queued: 'secondary', submitting: 'info', in_progress: 'primary',
+                   success: 'success', failed: 'danger', cancelled: 'secondary' }[status] || 'secondary';
+    const span = document.createElement('span');
+    span.className = 'badge bg-' + tone;
+    span.textContent = status;
+    return span;
+  }
+
+  function renderDevices(rows) {
+    const body = document.getElementById('jd-devices-body');
+    body.innerHTML = '';
+    if (!rows.length) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = 5;
+      td.className = 'text-muted small';
+      td.textContent = 'No devices.';
+      tr.appendChild(td);
+      body.appendChild(tr);
+      return;
+    }
+    rows.forEach(d => {
+      const tr = document.createElement('tr');
+      [d.hostname, d.management_ip, d.site_code].forEach(v => {
+        const td = document.createElement('td');
+        td.textContent = v || '—';
+        tr.appendChild(td);
+      });
+      const statusTd = document.createElement('td');
+      statusTd.appendChild(deviceStatusBadge(d.status));
+      tr.appendChild(statusTd);
+      const detailTd = document.createElement('td');
+      detailTd.className = 'text-muted small';
+      detailTd.textContent = d.error_message || '';
+      tr.appendChild(detailTd);
+      body.appendChild(tr);
+    });
+    if (window.ImpactDataTable) window.ImpactDataTable.init(document.getElementById('jd-devices-body').closest('table').parentElement);
+  }
+
+  function loadDevices() {
+    fetch('/api/swim/jobs/' + jobId + '/devices?page_size=500')
+      .then(r => r.json())
+      .then(data => renderDevices(data.rows || []))
+      .catch(() => {});
+  }
+
+  function loadJob() {
+    return fetch('/api/swim/jobs/' + jobId)
+      .then(async r => {
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.detail || 'Failed to load job');
+        currentJob = data;
+        document.getElementById('jd-title').textContent = data.name || ('Job #' + data.id);
+        const badge = document.getElementById('jd-status-badge');
+        badge.className = 'badge bg-light text-dark ms-2';
+        badge.textContent = data.status;
+        document.getElementById('jd-meta').textContent =
+          'Image: ' + (data.image_name || data.image_version || data.image_uuid) +
+          ' · Devices: ' + data.total_devices +
+          ' · Site concurrency: ' + data.site_concurrency +
+          ' · Created by ' + data.created_by + ' at ' + (data.created_at || '').replace('T', ' ').slice(0, 16);
+        renderTiles(data.device_counts || {});
+        document.getElementById('jd-start-label').textContent = data.confirmed_at ? 'Resume' : 'Start';
+        return data;
+      });
+  }
+
+  function activeDeviceCount(counts) {
+    return Object.entries(counts || {}).filter(([k]) => k !== 'cancelled').reduce((a, [, v]) => a + v, 0);
+  }
+
+  function runStart(confirmPhrase) {
+    document.getElementById('jd-error').classList.add('d-none');
+    document.getElementById('jd-start-btn').disabled = true;
+
+    fetch('/api/swim/jobs/start', {
+      method: 'POST',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, csrfHeaders()),
+      body: JSON.stringify({ job_id: jobId, confirm: confirmPhrase || '' }),
+    }).then(response => {
+      if (!response.ok) {
+        return response.json().then(d => { throw new Error(d.detail || ('Request failed (HTTP ' + response.status + ')')); });
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffered = '';
+
+      function process({ done, value }) {
+        if (done) return finish();
+        buffered += decoder.decode(value, { stream: true });
+        const parts = buffered.split('\n\n');
+        buffered = parts.pop();
+        parts.forEach(part => {
+          part.split('\n').forEach(line => {
+            if (!line.startsWith('data: ')) return;
+            let data;
+            try { data = JSON.parse(line.substring(6)); } catch (e) { return; }
+            if (data.type === 'log') {
+              appendLog(data.message, data.level);
+            } else if (data.type === 'device_update') {
+              appendLog((data.hostname || data.device_id) + ': ' + data.status + ' — ' + (data.message || ''),
+                         data.status === 'failed' ? 'error' : (data.status === 'success' ? 'success' : 'info'));
+              // Keep the stat tiles and device table live during a run, not
+              // just at the end — each event is a cheap indexed-count read.
+              loadJob();
+              loadDevices();
+            } else if (data.type === 'error') {
+              appendLog(data.message, 'error');
+            } else if (data.type === 'complete') {
+              appendLog('Run finished — job status: ' + data.status, 'success');
+              loadJob();
+              loadDevices();
+            }
+          });
+        });
+        return reader.read().then(process);
+      }
+      return reader.read().then(process);
+    }).catch(err => {
+      appendLog(err.message, 'error');
+      showError(err.message);
+    }).finally(finish);
+
+    function finish() {
+      document.getElementById('jd-start-btn').disabled = false;
+      loadJob();
+      loadDevices();
+    }
+  }
+
+  document.getElementById('jd-start-btn').addEventListener('click', () => {
+    if (!currentJob) return;
+    if (currentJob.confirmed_at) {
+      runStart('');
+      return;
+    }
+    const n = activeDeviceCount(currentJob.device_counts);
+    const expected = jobType === 'activation' ? ('ACTIVATE ' + n + ' DEVICES') : 'DISTRIBUTE';
+    document.getElementById('jd-confirm-phrase-label').textContent = expected;
+    const input = document.getElementById('jd-confirm-input');
+    input.value = '';
+    const submitBtn = document.getElementById('jd-confirm-submit');
+    submitBtn.disabled = true;
+    input.oninput = () => { submitBtn.disabled = input.value !== expected; };
+    submitBtn.onclick = () => {
+      bootstrap.Modal.getOrCreateInstance(document.getElementById('jd-confirm-modal')).hide();
+      runStart(expected);
+    };
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('jd-confirm-modal')).show();
+  });
+
+  document.getElementById('jd-cancel-btn').addEventListener('click', () => {
+    if (!confirm('Cancel every still-queued (not yet submitted) device on this job? Devices already submitted to DNAC will keep running and cannot be stopped.')) return;
+    fetch('/api/swim/jobs/' + jobId + '/cancel-queued', {
+      method: 'POST',
+      headers: csrfHeaders(),
+    }).then(async r => {
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.detail || 'Cancel failed');
+      if (window.showToast) window.showToast('Cancelled ' + data.cancelled_count + ' queued device(s).', 'success');
+      loadJob();
+      loadDevices();
+    }).catch(err => showError(err.message));
+  });
+
+  loadJob();
+  loadDevices();
+})();
+</script>

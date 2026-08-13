@@ -70,6 +70,10 @@
          hx-get="/reports" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
         <span class="nav-icon"><i class="ph ph-file-pdf"></i></span> <span class="nav-text">Reports</span>
       </a>
+      <a class="nav-item {% if active_page and active_page.startswith('software') %}active{% endif %}"
+         hx-get="/software" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+        <span class="nav-icon"><i class="ph ph-cube"></i></span> <span class="nav-text">Software Management</span>
+      </a>
 
       <!-- Security & Compliance -->
       <div class="sidebar-section-label">Security & Compliance</div>

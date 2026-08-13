@@ -1,4 +1,6 @@
-/* static/js/report-charts.js — inline-SVG chart renderers for the Reports pages.
+/* static/js/report-charts.js — inline-SVG chart renderers shared across
+ * report-style pages (originally the Reports pages only; now also the
+ * Software Management compliance dashboard).
  *
  * Extracted from templates/pages/reports_bandwidth_content.html, which had
  * grown ~700 lines of inline chart code. Page-specific glue (form handling,
@@ -7,9 +9,11 @@
  * Exposed as window.ImpactReportCharts. Loaded from base.html rather than the
  * page partial so it isn't re-fetched on every htmx swap into #main-content.
  *
- * Two chart types:
- *   renderBandwidthChart  — dual line chart, percent utilization (SolarWinds)
- *   renderStackedBarChart — stacked bars, per-application bps (SNA)
+ * Chart types:
+ *   renderBandwidthChart      — dual line chart, percent utilization (SolarWinds)
+ *   renderStackedBarChart     — stacked bars, per-application bps (SNA)
+ *   renderComplianceOverview  — headline stacked progress bar (SWIM compliance)
+ *   renderComplianceBarChart  — per-category stacked bars (SWIM compliance)
  *
  * TIMEZONES: the two sources differ, and conflating them mislabels data.
  * SolarWinds returns real sample instants, so rendering those in the viewer's
@@ -41,6 +45,16 @@
      doesn't read as a duplicate of SNA's own literal "Others" application.) */
   const SNA_PALETTE = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7'];
   const SNA_OTHER_COLOR = '#898781';
+
+  /* Compliance three-way bucket colors — colorblind-distinguishable (blue/
+     amber pair rather than red/green) since compliant/non-compliant is the
+     one distinction here that most needs to survive a colorblind viewer;
+     "unknown" (no golden image on record) stays neutral gray, matching how
+     SNA_OTHER_COLOR marks a residual/non-primary bucket elsewhere in this
+     file. */
+  const COMPLIANCE_COMPLIANT_COLOR = '#1baf7a';
+  const COMPLIANCE_NONCOMPLIANT_COLOR = '#eda100';
+  const COMPLIANCE_UNKNOWN_COLOR = '#898781';
 
   function svgEl(tag, attrs) {
     const el = document.createElementNS(BW_NS, tag);
@@ -563,6 +577,197 @@
     if (window.ImpactDataTable) window.ImpactDataTable.init(container);
   }
 
+  // ── Golden-image compliance (Software Management) ──────────────────────────
+
+  function compliancePct(counts) {
+    const total = (counts.compliant || 0) + (counts.non_compliant || 0) + (counts.unknown || 0);
+    return total === 0 ? 0 : Math.round(((counts.compliant || 0) / total) * 100);
+  }
+
+  /* Headline stacked progress bar — plain DOM/CSS, not SVG. A single summary
+     bar doesn't need SVG's per-point interactivity, and a flexbox bar is
+     simpler to keep crisp at any container width. */
+  function renderComplianceOverview(containerId, counts) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.textContent = '';
+
+    const compliant = counts.compliant || 0;
+    const nonCompliant = counts.non_compliant || 0;
+    const unknown = counts.unknown || 0;
+    const total = compliant + nonCompliant + unknown;
+
+    if (total === 0) {
+      emptyState(container, 'No devices to evaluate.');
+      return;
+    }
+
+    const stats = document.createElement('div');
+    stats.className = 'd-flex flex-wrap gap-4 mb-2';
+    [
+      ['Compliant', compliant, COMPLIANCE_COMPLIANT_COLOR],
+      ['Non-compliant', nonCompliant, COMPLIANCE_NONCOMPLIANT_COLOR],
+      ['Unknown', unknown, COMPLIANCE_UNKNOWN_COLOR],
+    ].forEach(([label, count, color]) => {
+      const stat = document.createElement('div');
+      const pct = total === 0 ? 0 : Math.round((count / total) * 100);
+      const num = document.createElement('div');
+      num.style.color = color;
+      num.style.fontSize = '22px';
+      num.style.fontWeight = '700';
+      num.textContent = count.toLocaleString() + ' (' + pct + '%)';
+      const lbl = document.createElement('div');
+      lbl.className = 'text-muted small';
+      lbl.textContent = label;
+      stat.appendChild(num);
+      stat.appendChild(lbl);
+      stats.appendChild(stat);
+    });
+    container.appendChild(stats);
+
+    const bar = document.createElement('div');
+    bar.className = 'd-flex';
+    bar.style.height = '14px';
+    bar.style.borderRadius = '7px';
+    bar.style.overflow = 'hidden';
+    bar.style.background = BW_GRID;
+    [
+      [compliant, COMPLIANCE_COMPLIANT_COLOR, 'Compliant'],
+      [nonCompliant, COMPLIANCE_NONCOMPLIANT_COLOR, 'Non-compliant'],
+      [unknown, COMPLIANCE_UNKNOWN_COLOR, 'Unknown'],
+    ].forEach(([count, color]) => {
+      if (count <= 0) return;
+      const seg = document.createElement('div');
+      seg.style.background = color;
+      seg.style.width = (count / total * 100) + '%';
+      bar.appendChild(seg);
+    });
+    container.appendChild(bar);
+  }
+
+  /* Per-category (platform/family) stacked bar chart — same SVG plumbing as
+     renderStackedBarChart, but categories on the x-axis instead of time
+     buckets, and always exactly the three compliance buckets as series. */
+  function renderComplianceBarChart(containerId, rows, categoryKey) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.textContent = '';
+
+    if (!rows || rows.length === 0) {
+      emptyState(container, 'No data available.');
+      return;
+    }
+
+    const legend = document.createElement('div');
+    legend.className = 'bw-legend d-flex flex-wrap gap-3 small mb-2';
+    legend.appendChild(legendSwatch(COMPLIANCE_COMPLIANT_COLOR, 'Compliant'));
+    legend.appendChild(legendSwatch(COMPLIANCE_NONCOMPLIANT_COLOR, 'Non-compliant'));
+    legend.appendChild(legendSwatch(COMPLIANCE_UNKNOWN_COLOR, 'Unknown'));
+    container.appendChild(legend);
+
+    const W = 640, H = 300;
+    const marginL = 40, marginR = 12, marginT = 10, marginB = 60;
+    const plotW = W - marginL - marginR;
+    const plotH = H - marginT - marginB;
+
+    const stacks = rows.map(r => {
+      let cum = 0;
+      return [
+        ['compliant', COMPLIANCE_COMPLIANT_COLOR],
+        ['non_compliant', COMPLIANCE_NONCOMPLIANT_COLOR],
+        ['unknown', COMPLIANCE_UNKNOWN_COLOR],
+      ].map(([key, color]) => {
+        const v = r[key] || 0;
+        const start = cum;
+        cum += v;
+        return { key, color, start, end: cum, value: v };
+      });
+    });
+    const maxTotal = Math.max(1, ...stacks.map(s => s.length ? s[s.length - 1].end : 0));
+
+    function niceCeil(v) {
+      if (v <= 0) return 1;
+      const mag = Math.pow(10, Math.floor(Math.log10(v)));
+      const norm = v / mag;
+      const nice = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10;
+      return nice * mag;
+    }
+    const yMax = niceCeil(maxTotal);
+
+    const svg = svgEl('svg', {
+      viewBox: `0 0 ${W} ${H}`, width: '100%', style: 'display:block',
+      role: 'img', 'aria-label': 'Golden image compliance by ' + categoryKey,
+    });
+
+    const ySteps = 5;
+    for (let i = 0; i <= ySteps; i++) {
+      const v = (yMax / ySteps) * i;
+      const y = marginT + plotH - (v / yMax) * plotH;
+      svg.appendChild(svgEl('line', { x1: marginL, x2: W - marginR, y1: y, y2: y, stroke: BW_GRID, 'stroke-width': 1 }));
+      const t = svgEl('text', { x: marginL - 6, y: y + 3, 'text-anchor': 'end', 'font-size': 9, fill: BW_TEXT_MUTED });
+      t.textContent = Math.round(v);
+      svg.appendChild(t);
+    }
+    svg.appendChild(svgEl('line', {
+      x1: marginL, x2: W - marginR, y1: marginT + plotH, y2: marginT + plotH,
+      stroke: BW_AXIS, 'stroke-width': 1,
+    }));
+
+    const bandW = plotW / rows.length;
+    const barW = Math.max(1, bandW * 0.6);
+    const tooltip = document.createElement('div');
+    tooltip.className = 'bw-tooltip';
+
+    rows.forEach((row, ri) => {
+      const bandX = marginL + ri * bandW;
+      const barX = bandX + (bandW - barW) / 2;
+
+      stacks[ri].forEach(seg => {
+        if (seg.value <= 0) return;
+        const yTop = marginT + plotH - (seg.end / yMax) * plotH;
+        const yBottom = marginT + plotH - (seg.start / yMax) * plotH;
+        const h = yBottom - yTop;
+        if (h <= 0) return;
+        svg.appendChild(svgEl('rect', { x: barX, y: yTop, width: barW, height: h, fill: seg.color }));
+      });
+
+      const label = svgEl('text', {
+        x: bandX + bandW / 2, y: H - marginB + 14, 'text-anchor': 'end', 'font-size': 9,
+        fill: BW_TEXT_MUTED, transform: `rotate(-35 ${bandX + bandW / 2} ${H - marginB + 14})`,
+      });
+      const raw = String(row[categoryKey] == null ? '' : row[categoryKey]);
+      label.textContent = raw.length > 16 ? raw.slice(0, 15) + '…' : raw;
+      svg.appendChild(label);
+
+      const hit = svgEl('rect', { x: bandX, y: marginT, width: bandW, height: plotH, fill: 'transparent' });
+      hit.addEventListener('pointerenter', () => {
+        tooltip.textContent = '';
+        const timeEl = document.createElement('div');
+        timeEl.className = 'bw-tooltip-time';
+        timeEl.textContent = raw;
+        tooltip.appendChild(timeEl);
+        stacks[ri].filter(s => s.value > 0).forEach(seg => {
+          const label = seg.key === 'compliant' ? 'Compliant' : (seg.key === 'non_compliant' ? 'Non-compliant' : 'Unknown');
+          tooltip.appendChild(tooltipRow(seg.color, label, String(seg.value)));
+        });
+        tooltip.style.display = 'block';
+      });
+      hit.addEventListener('pointermove', (evt) => {
+        const containerRect = container.getBoundingClientRect();
+        let left = evt.clientX - containerRect.left + 12;
+        const top = evt.clientY - containerRect.top + 12;
+        if (left + 160 > containerRect.width) left = evt.clientX - containerRect.left - 160;
+        tooltip.style.left = left + 'px';
+        tooltip.style.top = top + 'px';
+      });
+      hit.addEventListener('pointerleave', () => { tooltip.style.display = 'none'; });
+      svg.appendChild(hit);
+    });
+
+    container.appendChild(svg);
+    container.appendChild(tooltip);
+  }
+
   // ── Shared ─────────────────────────────────────────────────────────────────
 
   function toggleTable(prefix) {
@@ -580,5 +785,8 @@
     renderSnaTable,
     toggleTable,
     formatMbps,
+    renderComplianceOverview,
+    renderComplianceBarChart,
+    compliancePct,
   };
 })();

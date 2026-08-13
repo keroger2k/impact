@@ -1,0 +1,165 @@
+<div class="d-flex flex-column gap-3 animate-fade-in" data-job-type="{{ job_type }}">
+  <div>
+    <a href="/software" hx-get="/software" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML"
+       class="text-muted small text-decoration-none">
+      <i class="ph ph-arrow-left"></i> Back to Software Management
+    </a>
+  </div>
+
+  <div class="row g-4">
+    <div class="col-12">
+      <div class="card shadow-sm border-0">
+        <div class="card-header {{ 'bg-danger' if job_type == 'activation' else 'bg-navy' }} text-white d-flex align-items-center gap-2">
+          <i class="ph {{ 'ph-warning' if job_type == 'activation' else 'ph-broadcast' }}"></i>
+          <span class="fw-bold">{{ 'Image Activation Jobs' if job_type == 'activation' else 'Image Distribution Jobs' }}</span>
+          <a class="btn btn-light btn-sm ms-auto" href="/software/{{ job_type }}/new"
+             hx-get="/software/{{ job_type }}/new" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+            <i class="ph ph-plus"></i> New Job
+          </a>
+        </div>
+        <div class="card-body">
+          {% if job_type == 'activation' %}
+          <div class="alert alert-warning py-2 small mb-3">
+            Activation reboots every targeted device. Distribute first, verify it staged cleanly,
+            then activate during your actual maintenance window.
+          </div>
+          {% endif %}
+          <div id="jl-loading" class="text-muted small py-4 text-center">
+            <i class="ph ph-circle-notch ph-spin"></i> Loading jobs…
+          </div>
+          <div class="table-responsive d-none" id="jl-table-wrap">
+            <table class="table table-sm data-table mb-0">
+              <thead>
+                <tr>
+                  <th>Job</th>
+                  <th>Image</th>
+                  <th>Status</th>
+                  <th>Devices</th>
+                  <th>Progress</th>
+                  <th>Created</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="jl-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  // querySelector, not currentScript.closest(): the <script> tag is a
+  // sibling of the [data-job-type] wrapper, not a descendant, so .closest()
+  // (which only walks up through ancestors) would never find it.
+  const jobType = document.querySelector('[data-job-type]').dataset.jobType;
+
+  function statusBadge(status) {
+    const tone = { draft: 'secondary', running: 'primary', paused: 'warning',
+                   completed: 'success', completed_with_errors: 'warning', cancelled: 'secondary' }[status] || 'secondary';
+    const span = document.createElement('span');
+    span.className = 'badge bg-' + tone;
+    span.textContent = status;
+    return span;
+  }
+
+  function progressCell(counts) {
+    const total = Object.values(counts).reduce((a, b) => a + b, 0) || 1;
+    const done = (counts.success || 0) + (counts.failed || 0) + (counts.cancelled || 0);
+    const pct = Math.round((done / total) * 100);
+    const wrap = document.createElement('div');
+    wrap.className = 'd-flex align-items-center gap-2';
+    const bar = document.createElement('div');
+    bar.className = 'progress flex-grow-1';
+    bar.style.height = '8px';
+    bar.style.minWidth = '80px';
+    const inner = document.createElement('div');
+    inner.className = 'progress-bar ' + ((counts.failed || 0) > 0 ? 'bg-warning' : 'bg-success');
+    inner.style.width = pct + '%';
+    bar.appendChild(inner);
+    const label = document.createElement('span');
+    label.className = 'text-muted small';
+    label.textContent = pct + '%';
+    wrap.appendChild(bar);
+    wrap.appendChild(label);
+    return wrap;
+  }
+
+  function load() {
+    fetch('/api/swim/jobs?job_type=' + encodeURIComponent(jobType))
+      .then(r => r.json())
+      .then(data => {
+        document.getElementById('jl-loading').classList.add('d-none');
+        document.getElementById('jl-table-wrap').classList.remove('d-none');
+        const body = document.getElementById('jl-body');
+        body.innerHTML = '';
+        if (!data.jobs.length) {
+          const tr = document.createElement('tr');
+          const td = document.createElement('td');
+          td.colSpan = 7;
+          td.className = 'text-muted small';
+          td.textContent = 'No jobs yet.';
+          tr.appendChild(td);
+          body.appendChild(tr);
+          return;
+        }
+        data.jobs.forEach(job => {
+          const tr = document.createElement('tr');
+
+          const jobCell = document.createElement('td');
+          const link = document.createElement('a');
+          link.href = '/software/' + jobType + '/' + job.id;
+          link.setAttribute('hx-get', '/software/' + jobType + '/' + job.id);
+          link.setAttribute('hx-target', '#main-content');
+          link.setAttribute('hx-push-url', 'true');
+          link.setAttribute('hx-swap', 'innerHTML');
+          link.textContent = job.name || ('Job #' + job.id);
+          jobCell.appendChild(link);
+          tr.appendChild(jobCell);
+
+          const imgCell = document.createElement('td');
+          imgCell.textContent = job.image_name || job.image_version || job.image_uuid;
+          tr.appendChild(imgCell);
+
+          const statusCell = document.createElement('td');
+          statusCell.appendChild(statusBadge(job.status));
+          tr.appendChild(statusCell);
+
+          const devCell = document.createElement('td');
+          devCell.textContent = job.total_devices;
+          tr.appendChild(devCell);
+
+          const progCell = document.createElement('td');
+          progCell.appendChild(progressCell(job.device_counts || {}));
+          tr.appendChild(progCell);
+
+          const createdCell = document.createElement('td');
+          createdCell.textContent = (job.created_at || '').replace('T', ' ').slice(0, 16);
+          tr.appendChild(createdCell);
+
+          const actionCell = document.createElement('td');
+          const openLink = document.createElement('a');
+          openLink.className = 'btn btn-sm btn-outline';
+          openLink.href = '/software/' + jobType + '/' + job.id;
+          openLink.setAttribute('hx-get', '/software/' + jobType + '/' + job.id);
+          openLink.setAttribute('hx-target', '#main-content');
+          openLink.setAttribute('hx-push-url', 'true');
+          openLink.setAttribute('hx-swap', 'innerHTML');
+          openLink.textContent = 'Open';
+          actionCell.appendChild(openLink);
+          tr.appendChild(actionCell);
+
+          body.appendChild(tr);
+        });
+        if (window.ImpactDataTable) window.ImpactDataTable.init(document.getElementById('jl-table-wrap'));
+      })
+      .catch(() => {
+        document.getElementById('jl-loading').textContent = 'Failed to load jobs.';
+      });
+  }
+
+  load();
+})();
+</script>

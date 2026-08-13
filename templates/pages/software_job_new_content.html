@@ -1,0 +1,371 @@
+<div class="d-flex flex-column gap-3 animate-fade-in" data-job-type="{{ job_type }}">
+  <div>
+    <a href="/software/{{ job_type }}" hx-get="/software/{{ job_type }}" hx-target="#main-content"
+       hx-push-url="true" hx-swap="innerHTML" class="text-muted small text-decoration-none">
+      <i class="ph ph-arrow-left"></i> Back to {{ 'Activation' if job_type == 'activation' else 'Distribution' }} Jobs
+    </a>
+  </div>
+
+  <div class="row g-4">
+    <div class="col-12">
+      <div class="card shadow-sm border-0">
+        <div class="card-header {{ 'bg-danger' if job_type == 'activation' else 'bg-navy' }} text-white d-flex align-items-center gap-2">
+          <i class="ph {{ 'ph-warning' if job_type == 'activation' else 'ph-broadcast' }}"></i>
+          <span class="fw-bold">{{ 'New Activation Job' if job_type == 'activation' else 'New Distribution Job' }}</span>
+        </div>
+        <div class="card-body">
+          <p class="text-muted small mb-3">
+            {% if job_type == 'activation' %}
+            Builds a draft job — nothing runs and no device reboots yet. You'll confirm and start
+            it separately from the job's own page, typing the device count to acknowledge the
+            reboot before anything happens.
+            {% else %}
+            Builds a draft job — nothing is pushed to any device yet. You'll start it separately
+            from the job's own page, when your maintenance window opens.
+            {% endif %}
+          </p>
+
+          <div id="jn-error" class="alert alert-danger py-2 small d-none" role="alert"></div>
+
+          <!-- ── Image ────────────────────────────────────────────── -->
+          <h6 class="small fw-bold text-uppercase text-muted mb-2" style="letter-spacing:.05em">1. Image</h6>
+          <div class="row g-2 align-items-end mb-4">
+            <div class="col-auto">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="jn-golden-only" checked>
+                <label class="form-check-label small" for="jn-golden-only">Golden images only</label>
+              </div>
+            </div>
+            <div class="col-auto" style="min-width:340px">
+              <label class="form-label small text-muted mb-1">Image</label>
+              <select class="form-select form-select-sm" id="jn-image-select"></select>
+            </div>
+          </div>
+
+          <!-- ── Devices ──────────────────────────────────────────── -->
+          <h6 class="small fw-bold text-uppercase text-muted mb-2" style="letter-spacing:.05em">2. Target Devices</h6>
+          <ul class="nav nav-tabs small mb-3" id="jn-target-tabs">
+            <li class="nav-item"><button class="nav-link active" type="button" data-tab="filter">Filter Devices</button></li>
+            <li class="nav-item"><button class="nav-link" type="button" data-tab="csv">Paste / Upload List</button></li>
+          </ul>
+
+          <div id="jn-tab-filter">
+            <p class="text-muted small">
+              Narrow by site and/or platform/family — select one site and one platform to target
+              "everything of this type at this site," or leave a field blank to match more broadly.
+              Devices are typically one platform per job.
+            </p>
+            <div class="row g-2 mb-2">
+              <div class="col-md-4">
+                <label class="form-label small text-muted mb-1">Site(s)</label>
+                <select class="form-select form-select-sm" id="jn-f-sites" multiple size="5"></select>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label small text-muted mb-1">Platform(s)</label>
+                <select class="form-select form-select-sm" id="jn-f-platforms" multiple size="5"></select>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label small text-muted mb-1">Family(ies)</label>
+                <select class="form-select form-select-sm" id="jn-f-families" multiple size="5"></select>
+              </div>
+            </div>
+            <div class="row g-2 mb-3">
+              <div class="col-md-4">
+                <label class="form-label small text-muted mb-1">Hostname contains</label>
+                <input type="text" class="form-control form-control-sm" id="jn-f-hostname">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label small text-muted mb-1">Reachability</label>
+                <select class="form-select form-select-sm" id="jn-f-reachability">
+                  <option value="">Any</option>
+                  <option value="reachable">Reachable only</option>
+                  <option value="unreachable">Unreachable only</option>
+                </select>
+              </div>
+              <div class="col-md-4 d-flex align-items-end">
+                <button class="btn btn-outline btn-sm" type="button" id="jn-f-search">
+                  <i class="ph ph-magnifying-glass"></i> Preview Matches
+                </button>
+              </div>
+            </div>
+            <div id="jn-f-results" class="small"></div>
+          </div>
+
+          <div id="jn-tab-csv" class="d-none">
+            <p class="text-muted small">
+              One hostname or management IP per line. Extra CSV columns are ignored.
+            </p>
+            <div class="mb-2">
+              <input type="file" accept=".csv,.txt" class="form-control form-control-sm" id="jn-csv-file" style="max-width:320px">
+            </div>
+            <textarea class="form-control font-mono mb-2" id="jn-csv-input" rows="6"
+                      placeholder="R-SITE01-01&#10;10.1.2.3"></textarea>
+            <button class="btn btn-outline btn-sm mb-2" type="button" id="jn-csv-resolve">Resolve</button>
+            <div id="jn-csv-results" class="small"></div>
+          </div>
+
+          <!-- ── Batching ─────────────────────────────────────────── -->
+          <h6 class="small fw-bold text-uppercase text-muted mb-2 mt-4" style="letter-spacing:.05em">3. Per-Site Throttling</h6>
+          <p class="text-muted small">
+            The circuit-overload control: only this many devices at any one site run at once. Other
+            sites proceed in parallel.
+          </p>
+          <div class="row g-2 mb-4">
+            <div class="col-auto">
+              <label class="form-label small text-muted mb-1">Devices in flight per site</label>
+              <input type="number" class="form-control form-control-sm" id="jn-site-concurrency" value="3" min="1" max="10" style="width:100px">
+            </div>
+          </div>
+
+          {% if job_type == 'activation' %}
+          <h6 class="small fw-bold text-uppercase text-muted mb-2" style="letter-spacing:.05em">4. Activation Options</h6>
+          <div class="row g-3 mb-4">
+            <div class="col-auto">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="jn-activate-lower">
+                <label class="form-check-label small" for="jn-activate-lower">Allow activating a lower image version</label>
+              </div>
+            </div>
+            <div class="col-auto">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="jn-distribute-if-needed">
+                <label class="form-check-label small" for="jn-distribute-if-needed">Distribute first if not already staged</label>
+              </div>
+            </div>
+            <div class="col-auto">
+              <label class="form-label small text-muted mb-1">Device upgrade mode (optional)</label>
+              <input type="text" class="form-control form-control-sm" id="jn-upgrade-mode" style="width:180px">
+            </div>
+          </div>
+          {% endif %}
+
+          <button class="btn {{ 'btn-danger' if job_type == 'activation' else 'btn-primary' }}" type="button" id="jn-create-btn">
+            <i class="ph ph-plus"></i> Create Draft Job
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  // querySelector, not currentScript.closest(): the <script> tag is a
+  // sibling of the [data-job-type] wrapper, not a descendant, so .closest()
+  // (which only walks up through ancestors) would never find it.
+  const jobType = document.querySelector('[data-job-type]').dataset.jobType;
+
+  function csrfHeaders() {
+    const token = document.cookie.split('; ').find(row => row.startsWith('csrf_token='));
+    return { 'X-CSRF-Token': token ? token.split('=')[1] : '' };
+  }
+
+  function showError(msg) {
+    const box = document.getElementById('jn-error');
+    box.textContent = msg;
+    box.classList.remove('d-none');
+  }
+
+  // ── Tabs ───────────────────────────────────────────────────────────────
+  let activeTab = 'filter';
+  document.querySelectorAll('#jn-target-tabs button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#jn-target-tabs button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activeTab = btn.dataset.tab;
+      document.getElementById('jn-tab-filter').classList.toggle('d-none', activeTab !== 'filter');
+      document.getElementById('jn-tab-csv').classList.toggle('d-none', activeTab !== 'csv');
+    });
+  });
+
+  // ── Image picker ─────────────────────────────────────────────────────
+  function loadImages() {
+    const golden = document.getElementById('jn-golden-only').checked;
+    fetch('/api/swim/images?golden=' + golden)
+      .then(r => r.json())
+      .then(data => {
+        const select = document.getElementById('jn-image-select');
+        select.innerHTML = '';
+        (data.images || []).forEach(img => {
+          const opt = document.createElement('option');
+          opt.value = img.id || img.imageUuid || img.name;
+          opt.dataset.name = img.name || '';
+          opt.dataset.version = img.version || img.imageVersion || '';
+          opt.textContent = (img.name || 'image') + (img.version ? (' — ' + img.version) : '');
+          select.appendChild(opt);
+        });
+        if (!data.images || !data.images.length) {
+          const opt = document.createElement('option');
+          opt.value = '';
+          opt.textContent = 'No images found';
+          select.appendChild(opt);
+        }
+      })
+      .catch(() => showError('Failed to load image list from DNAC.'));
+  }
+  document.getElementById('jn-golden-only').addEventListener('change', loadImages);
+  loadImages();
+
+  // ── Filter tab ───────────────────────────────────────────────────────
+  function loadFacets() {
+    fetch('/api/swim/devices/facets?job_type=' + encodeURIComponent(jobType))
+      .then(r => r.json())
+      .then(data => {
+        function fill(id, values) {
+          const select = document.getElementById(id);
+          select.innerHTML = '';
+          values.forEach(v => {
+            const opt = document.createElement('option');
+            opt.value = v;
+            opt.textContent = v;
+            select.appendChild(opt);
+          });
+        }
+        fill('jn-f-sites', data.site_codes || []);
+        fill('jn-f-platforms', data.platforms || []);
+        fill('jn-f-families', data.families || []);
+      })
+      .catch(() => showError('Failed to load device facets.'));
+  }
+  loadFacets();
+
+  function selected(id) {
+    return Array.from(document.getElementById(id).selectedOptions).map(o => o.value);
+  }
+
+  let lastFilterResult = null;
+
+  function filterCriteria() {
+    return {
+      site_codes: selected('jn-f-sites'),
+      platforms: selected('jn-f-platforms'),
+      families: selected('jn-f-families'),
+      hostname_contains: document.getElementById('jn-f-hostname').value || null,
+      reachability: document.getElementById('jn-f-reachability').value || null,
+    };
+  }
+
+  document.getElementById('jn-f-search').addEventListener('click', () => {
+    const body = { job_type: jobType, page: 1, page_size: 25, ...filterCriteria() };
+    fetch('/api/swim/devices/search', {
+      method: 'POST',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, csrfHeaders()),
+      body: JSON.stringify(body),
+    }).then(async r => {
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.detail || 'Search failed');
+      lastFilterResult = data;
+      const box = document.getElementById('jn-f-results');
+      box.innerHTML = '';
+      const summary = document.createElement('div');
+      summary.className = 'fw-bold mb-1';
+      summary.textContent = data.total_matches + ' device(s) match — showing first ' + data.rows.length;
+      box.appendChild(summary);
+      if (data.rows.length) {
+        const wrap = document.createElement('div');
+        wrap.className = 'table-responsive';
+        wrap.style.maxHeight = '220px';
+        const table = document.createElement('table');
+        table.className = 'table table-sm mb-0';
+        table.innerHTML = '<thead><tr><th>Hostname</th><th>IP</th><th>Platform</th><th>Site</th></tr></thead>';
+        const tbody = document.createElement('tbody');
+        data.rows.forEach(d => {
+          const tr = document.createElement('tr');
+          [d.hostname, d.managementIpAddress, d.platformId, d.site_code].forEach(v => {
+            const td = document.createElement('td');
+            td.textContent = v || '—';
+            tr.appendChild(td);
+          });
+          tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        wrap.appendChild(table);
+        box.appendChild(wrap);
+      }
+    }).catch(err => showError(err.message));
+  });
+
+  // ── CSV tab ──────────────────────────────────────────────────────────
+  document.getElementById('jn-csv-file').addEventListener('change', (evt) => {
+    const file = evt.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => { document.getElementById('jn-csv-input').value = reader.result; };
+    reader.readAsText(file);
+  });
+
+  let lastCsvMatched = [];
+
+  document.getElementById('jn-csv-resolve').addEventListener('click', () => {
+    const lines = document.getElementById('jn-csv-input').value.split('\n');
+    fetch('/api/swim/devices/resolve-csv', {
+      method: 'POST',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, csrfHeaders()),
+      body: JSON.stringify({ job_type: jobType, lines }),
+    }).then(async r => {
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.detail || 'Resolve failed');
+      lastCsvMatched = data.matched;
+      const box = document.getElementById('jn-csv-results');
+      box.innerHTML = '';
+      const summary = document.createElement('div');
+      summary.className = 'fw-bold mb-1';
+      summary.textContent = data.matched.length + ' matched, ' + data.unmatched.length + ' unmatched';
+      box.appendChild(summary);
+      if (data.unmatched.length) {
+        const warn = document.createElement('div');
+        warn.className = 'text-warning mb-1';
+        warn.textContent = 'Unmatched: ' + data.unmatched.join(', ');
+        box.appendChild(warn);
+      }
+    }).catch(err => showError(err.message));
+  });
+
+  // ── Create ───────────────────────────────────────────────────────────
+  document.getElementById('jn-create-btn').addEventListener('click', () => {
+    const imgSelect = document.getElementById('jn-image-select');
+    const opt = imgSelect.selectedOptions[0];
+    if (!opt || !opt.value) { showError('Select an image first.'); return; }
+
+    let targeting_mode, criteria = null, device_ids = null;
+    if (activeTab === 'csv') {
+      if (!lastCsvMatched.length) { showError('Resolve the device list first.'); return; }
+      targeting_mode = 'csv';
+      device_ids = lastCsvMatched.map(d => d.device_id);
+    } else {
+      if (!lastFilterResult || !lastFilterResult.total_matches) { showError('Preview matches first.'); return; }
+      targeting_mode = 'filter';
+      criteria = filterCriteria();
+    }
+
+    const body = {
+      job_type: jobType,
+      image_uuid: opt.value,
+      image_name: opt.dataset.name,
+      image_version: opt.dataset.version,
+      site_concurrency: parseInt(document.getElementById('jn-site-concurrency').value, 10) || 3,
+      targeting_mode, criteria, device_ids,
+    };
+    if (jobType === 'activation') {
+      body.activate_lower_image_version = document.getElementById('jn-activate-lower').checked;
+      body.distribute_if_needed = document.getElementById('jn-distribute-if-needed').checked;
+      body.device_upgrade_mode = document.getElementById('jn-upgrade-mode').value || null;
+    }
+
+    fetch('/api/swim/jobs', {
+      method: 'POST',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, csrfHeaders()),
+      body: JSON.stringify(body),
+    }).then(async r => {
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.detail || 'Job creation failed');
+      let msg = 'Job created with ' + data.total_devices + ' device(s).';
+      if (data.homogeneity_warning) msg += '\n' + data.homogeneity_warning;
+      if (data.unresolved_site_count) msg += '\n' + data.unresolved_site_count + ' device(s) have no resolvable site code.';
+      if (window.showToast) window.showToast(msg, 'success');
+      const jobId = data.job.id;
+      htmx.ajax('GET', '/software/' + jobType + '/' + jobId, { target: '#main-content', swap: 'innerHTML', pushUrl: true });
+    }).catch(err => showError(err.message));
+  });
+})();
+</script>

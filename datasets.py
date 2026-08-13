@@ -149,6 +149,16 @@ DATASETS = [
         "count_key": "f5_inventory",
         "sse_fn": "triggerF5CacheRefresh()",
     },
+    {
+        "id": "swim_images",
+        "label": "SWIM Images",
+        "title": "Golden Software Images",
+        "icon": "ph ph-cube",
+        "color": "info",
+        "kind": "api",
+        "keys": ["dnac_golden_images"],
+        "count_key": "dnac_golden_images",
+    },
 ]
 
 
@@ -294,10 +304,27 @@ async def _refresh_panorama(session):
         logger.warning(f"Panorama re-fetch failed: {e}")
 
 
+async def _refresh_swim_images(session):
+    from logger_config import run_with_context
+    import clients.swim as swim_client
+    import auth as auth_module
+    loop = asyncio.get_event_loop()
+    try:
+        dnac = auth_module.get_dnac_for_session(session)
+        logger.info("Cache refresh: re-fetching SWIM golden images")
+        images = await loop.run_in_executor(None, run_with_context(swim_client.list_golden_images, dnac))
+        if images is not None:
+            cache.set("dnac_golden_images", images, TTL_STANDARD)
+            logger.info(f"Cache refresh: stored {len(images)} golden images")
+    except Exception as e:
+        logger.warning(f"SWIM image re-fetch failed: {e}")
+
+
 _REFRESH_FNS = {
     "dnac": _refresh_dnac,
     "ise": _refresh_ise,
     "panorama": _refresh_panorama,
+    "swim_images": _refresh_swim_images,
 }
 
 

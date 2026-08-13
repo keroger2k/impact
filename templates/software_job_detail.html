@@ -1,0 +1,5 @@
+{% extends "base.html" %}
+{% block page_title %}{{ 'Activation Job' if job_type == 'activation' else 'Distribution Job' }}{% endblock %}
+{% block content %}
+  {% include "pages/software_job_detail_content.html" %}
+{% endblock %}

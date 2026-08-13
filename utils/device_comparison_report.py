@@ -53,6 +53,7 @@ import clients.solarwinds as solarwinds
 from cache import cache
 from utils.bandwidth_report import short_hostname
 from utils.report_pool import FANOUT_POOL
+from utils.version_compare import versions_compatible
 
 logger = logging.getLogger(__name__)
 
@@ -319,18 +320,13 @@ def _model_matches(a: str | None, b: str | None) -> bool:
     return na in nb or nb in na
 
 
-def _version_parts(value: str | None) -> tuple[int, ...]:
-    return tuple(int(p) for p in re.findall(r"\d+", value or ""))
-
-
 def _version_matches(a: str | None, b: str | None) -> bool:
     """Compare numerically so zero-padding doesn't read as a mismatch —
-    SolarWinds reports "17.06.05" where DNAC reports "17.6.5"."""
-    pa, pb = _version_parts(a), _version_parts(b)
-    if not pa or not pb:
-        return True
-    length = min(len(pa), len(pb))
-    return pa[:length] == pb[:length]
+    SolarWinds reports "17.06.05" where DNAC reports "17.6.5". Prefix-
+    tolerant (truncated-to-shortest-length): moved to utils/version_compare
+    so the golden-image compliance dashboard can reuse the same zero-padding
+    handling under its own, stricter, non-truncating semantics."""
+    return versions_compatible(a, b)
 
 
 def _differences(dnac: dict, sw: dict, matched_by: str) -> list[dict]:

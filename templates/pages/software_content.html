@@ -1,0 +1,74 @@
+<div class="row g-4">
+  <div class="col-md-6 col-lg-4">
+    <a href="/software/compliance" hx-get="/software/compliance" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML"
+       class="text-decoration-none report-card-link">
+      <div class="card shadow-sm border-0 animate-fade-in report-card">
+        <div class="card-header bg-navy text-white d-flex align-items-center gap-2">
+          <i class="ph ph-chart-donut"></i>
+          <span class="fw-bold">Golden Image Compliance</span>
+        </div>
+        <div class="card-body d-flex flex-column">
+          <p class="text-muted small mb-0 flex-grow-1">
+            Which devices are running the golden IOS image and which aren't, broken down by
+            platform, device family, and site — read-only, always available.
+          </p>
+          <div class="text-end mt-3">
+            <span class="text-primary small fw-bold">Open dashboard <i class="ph ph-arrow-right"></i></span>
+          </div>
+        </div>
+      </div>
+    </a>
+  </div>
+
+  {% if swim_distribution_enabled %}
+  <div class="col-md-6 col-lg-4">
+    <a href="/software/distribution" hx-get="/software/distribution" hx-target="#main-content"
+       hx-push-url="true" hx-swap="innerHTML" class="text-decoration-none report-card-link">
+      <div class="card shadow-sm border-0 animate-fade-in report-card">
+        <div class="card-header bg-navy text-white d-flex align-items-center gap-2">
+          <i class="ph ph-broadcast"></i>
+          <span class="fw-bold">Image Distribution</span>
+        </div>
+        <div class="card-body d-flex flex-column">
+          <p class="text-muted small mb-0 flex-grow-1">
+            Stage a golden image on many devices, throttled per site so a distribution can't
+            saturate a site's WAN circuit. Build a job now, run it when your window opens.
+          </p>
+          <div class="text-end mt-3">
+            <span class="text-primary small fw-bold">Open jobs <i class="ph ph-arrow-right"></i></span>
+          </div>
+        </div>
+      </div>
+    </a>
+  </div>
+  {% endif %}
+
+  {% if swim_activation_enabled %}
+  <div class="col-md-6 col-lg-4">
+    <a href="/software/activation" hx-get="/software/activation" hx-target="#main-content"
+       hx-push-url="true" hx-swap="innerHTML" class="text-decoration-none report-card-link">
+      <div class="card shadow-sm border-0 animate-fade-in report-card">
+        <div class="card-header bg-danger text-white d-flex align-items-center gap-2">
+          <i class="ph ph-warning"></i>
+          <span class="fw-bold">Image Activation</span>
+        </div>
+        <div class="card-body d-flex flex-column">
+          <p class="text-muted small mb-0 flex-grow-1">
+            Activate an already-distributed image — this reboots every targeted device. Separate
+            from Distribution on purpose, with its own, stronger confirmation.
+          </p>
+          <div class="text-end mt-3">
+            <span class="text-danger small fw-bold">Open jobs <i class="ph ph-arrow-right"></i></span>
+          </div>
+        </div>
+      </div>
+    </a>
+  </div>
+  {% endif %}
+</div>
+
+<style>
+  .report-card-link { display: block; }
+  .report-card { transition: transform var(--transition, 0.15s), box-shadow var(--transition, 0.15s); height: 100%; }
+  .report-card-link:hover .report-card { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+</style>

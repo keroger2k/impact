@@ -464,6 +464,81 @@ async def reports_maintenance_page(request: Request, response: Response, user: S
         return templates.TemplateResponse(request, "pages/reports_maintenance_content.html", context)
     return templates.TemplateResponse(request, "reports_maintenance.html", context)
 
+def _swim_context(user: SessionEntry, active_page: str = "software") -> dict:
+    return {
+        "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
+        "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
+        "swim_distribution_enabled": os.getenv("SWIM_DISTRIBUTION_ENABLED", "false").lower() == "true",
+        "swim_activation_enabled": os.getenv("SWIM_ACTIVATION_ENABLED", "false").lower() == "true",
+        "active_page": active_page,
+        "username": user.username,
+    }
+
+
+@router.get("/software", response_class=HTMLResponse)
+async def software_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
+    if not user: return RedirectResponse(url="/login")
+    context = _swim_context(user)
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse(request, "pages/software_content.html", context)
+    return templates.TemplateResponse(request, "software.html", context)
+
+
+@router.get("/software/compliance", response_class=HTMLResponse)
+async def software_compliance_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
+    if not user: return RedirectResponse(url="/login")
+    context = _swim_context(user)
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse(request, "pages/software_compliance_content.html", context)
+    return templates.TemplateResponse(request, "software_compliance.html", context)
+
+
+def _require_swim_job_type(job_type: str):
+    flag = "SWIM_DISTRIBUTION_ENABLED" if job_type == "distribution" else "SWIM_ACTIVATION_ENABLED"
+    if os.getenv(flag, "false").lower() != "true":
+        raise HTTPException(403, f"SWIM {job_type} jobs are disabled")
+
+
+@router.get("/software/{job_type}", response_class=HTMLResponse)
+async def software_job_list_page(job_type: str, request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
+    if not user: return RedirectResponse(url="/login")
+    if job_type not in ("distribution", "activation"):
+        raise HTTPException(404, "Not found")
+    _require_swim_job_type(job_type)
+    context = {**_swim_context(user, active_page=f"software-{job_type}"), "job_type": job_type}
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse(request, "pages/software_job_list_content.html", context)
+    return templates.TemplateResponse(request, "software_job_list.html", context)
+
+
+@router.get("/software/{job_type}/new", response_class=HTMLResponse)
+async def software_job_new_page(job_type: str, request: Request, response: Response, user: SessionEntry = Depends(get_current_user_from_cookie)):
+    if not user: return RedirectResponse(url="/login")
+    if job_type not in ("distribution", "activation"):
+        raise HTTPException(404, "Not found")
+    _require_swim_job_type(job_type)
+    from utils.csrf import set_csrf_cookie
+    set_csrf_cookie(response)
+    context = {**_swim_context(user, active_page=f"software-{job_type}"), "job_type": job_type}
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse(request, "pages/software_job_new_content.html", context)
+    return templates.TemplateResponse(request, "software_job_new.html", context)
+
+
+@router.get("/software/{job_type}/{job_id}", response_class=HTMLResponse)
+async def software_job_detail_page(job_type: str, job_id: int, request: Request, response: Response, user: SessionEntry = Depends(get_current_user_from_cookie)):
+    if not user: return RedirectResponse(url="/login")
+    if job_type not in ("distribution", "activation"):
+        raise HTTPException(404, "Not found")
+    _require_swim_job_type(job_type)
+    from utils.csrf import set_csrf_cookie
+    set_csrf_cookie(response)
+    context = {**_swim_context(user, active_page=f"software-{job_type}"), "job_type": job_type, "job_id": job_id}
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse(request, "pages/software_job_detail_content.html", context)
+    return templates.TemplateResponse(request, "software_job_detail.html", context)
+
+
 @router.get("/cache-mgmt", response_class=HTMLResponse)
 async def cache_mgmt_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
     if not user: return RedirectResponse(url="/login")

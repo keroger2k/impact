@@ -1,0 +1,224 @@
+<div class="d-flex flex-column gap-3 animate-fade-in">
+  <div>
+    <a href="/software" hx-get="/software" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML"
+       class="text-muted small text-decoration-none">
+      <i class="ph ph-arrow-left"></i> Back to Software Management
+    </a>
+  </div>
+
+  <div class="row g-4">
+    <div class="col-12">
+      <div class="card shadow-sm border-0">
+        <div class="card-header bg-navy text-white d-flex align-items-center gap-2">
+          <i class="ph ph-chart-donut"></i>
+          <span class="fw-bold">Golden Image Compliance</span>
+          <button class="btn btn-outline-light btn-xs ms-auto" id="sc-refresh-btn" type="button">
+            <i class="ph ph-arrow-clockwise"></i> Refresh
+          </button>
+        </div>
+        <div class="card-body">
+          <p class="text-muted small mb-3">
+            Compares each device's current software version against DNAC's golden image for its
+            platform. <strong>Unknown</strong> means no golden image is on record for that
+            platform at all — a different gap than being out of date. Read-only; computed from
+            already-cached inventory, no live device calls.
+          </p>
+
+          <div class="d-flex flex-wrap gap-2 align-items-end mb-3">
+            <div>
+              <label class="form-label small text-muted mb-1">Platform</label>
+              <select class="form-select form-select-sm" id="sc-filter-platform" style="min-width:180px"></select>
+            </div>
+            <div>
+              <label class="form-label small text-muted mb-1">Family</label>
+              <select class="form-select form-select-sm" id="sc-filter-family" style="min-width:180px"></select>
+            </div>
+            <div>
+              <label class="form-label small text-muted mb-1">Site</label>
+              <select class="form-select form-select-sm" id="sc-filter-site" style="min-width:140px"></select>
+            </div>
+            <button class="btn btn-outline btn-sm" id="sc-clear-filters" type="button">Clear filters</button>
+          </div>
+
+          <div id="sc-loading" class="text-muted small py-4 text-center">
+            <i class="ph ph-circle-notch ph-spin"></i> Loading compliance data…
+          </div>
+          <div id="sc-error" class="alert alert-danger py-2 small d-none" role="alert"></div>
+
+          <div id="sc-content" class="d-none">
+            <h6 class="small fw-bold text-uppercase text-muted mb-2" style="letter-spacing:.05em">Overall</h6>
+            <div id="sc-overview" class="mb-4"></div>
+
+            <div class="row g-4 mb-2">
+              <div class="col-lg-6">
+                <h6 class="small fw-bold text-uppercase text-muted mb-2" style="letter-spacing:.05em">By Platform</h6>
+                <div id="sc-by-platform"></div>
+              </div>
+              <div class="col-lg-6">
+                <h6 class="small fw-bold text-uppercase text-muted mb-2" style="letter-spacing:.05em">By Device Family</h6>
+                <div id="sc-by-family"></div>
+              </div>
+            </div>
+
+            <h6 class="small fw-bold text-uppercase text-muted mb-2 mt-3" style="letter-spacing:.05em">By Site</h6>
+            <div class="table-responsive">
+              <table class="table table-sm data-table mb-0">
+                <thead>
+                  <tr>
+                    <th>Site</th>
+                    <th>Compliant</th>
+                    <th>Non-compliant</th>
+                    <th>Unknown</th>
+                    <th style="min-width:160px">Progress</th>
+                  </tr>
+                </thead>
+                <tbody id="sc-by-site-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  /* IIFE-scoped: htmx re-executes inline <script> tags on every swap into
+     #main-content — only the elements' own event listeners persist. */
+
+  function setOptions(select, values, label) {
+    select.innerHTML = '';
+    const allOpt = document.createElement('option');
+    allOpt.value = '';
+    allOpt.textContent = 'All ' + label;
+    select.appendChild(allOpt);
+    values.forEach(v => {
+      const opt = document.createElement('option');
+      opt.value = v;
+      opt.textContent = v;
+      select.appendChild(opt);
+    });
+  }
+
+  function progressBar(row) {
+    const total = row.total || 1;
+    const pct = Math.round(((row.compliant || 0) / total) * 100);
+    const wrap = document.createElement('div');
+    wrap.className = 'd-flex align-items-center gap-2';
+    const bar = document.createElement('div');
+    bar.className = 'progress flex-grow-1';
+    bar.style.height = '8px';
+    const inner = document.createElement('div');
+    inner.className = 'progress-bar bg-success';
+    inner.style.width = pct + '%';
+    bar.appendChild(inner);
+    const pctLabel = document.createElement('span');
+    pctLabel.className = 'text-muted small';
+    pctLabel.style.minWidth = '36px';
+    pctLabel.textContent = pct + '%';
+    wrap.appendChild(bar);
+    wrap.appendChild(pctLabel);
+    return wrap;
+  }
+
+  function renderSiteTable(rows) {
+    const body = document.getElementById('sc-by-site-body');
+    body.innerHTML = '';
+    if (!rows.length) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = 5;
+      td.className = 'text-muted small';
+      td.textContent = 'No devices to evaluate.';
+      tr.appendChild(td);
+      body.appendChild(tr);
+      return;
+    }
+    rows.forEach(row => {
+      const tr = document.createElement('tr');
+      [row.site_code, row.compliant, row.non_compliant, row.unknown].forEach(v => {
+        const td = document.createElement('td');
+        td.textContent = v;
+        tr.appendChild(td);
+      });
+      const progressTd = document.createElement('td');
+      progressTd.appendChild(progressBar(row));
+      tr.appendChild(progressTd);
+      body.appendChild(tr);
+    });
+    if (window.ImpactDataTable) window.ImpactDataTable.init(document.getElementById('sc-by-site-body').closest('table').parentElement);
+  }
+
+  let lastData = null;
+
+  function render(data) {
+    lastData = data;
+    document.getElementById('sc-loading').classList.add('d-none');
+    document.getElementById('sc-error').classList.add('d-none');
+    document.getElementById('sc-content').classList.remove('d-none');
+
+    window.ImpactReportCharts.renderComplianceOverview('sc-overview', data.overall);
+    window.ImpactReportCharts.renderComplianceBarChart('sc-by-platform', data.by_platform, 'platform');
+    window.ImpactReportCharts.renderComplianceBarChart('sc-by-family', data.by_family, 'family');
+    renderSiteTable(data.by_site);
+
+    // Populate filters from the unfiltered response the first time only —
+    // a filtered re-fetch shouldn't shrink the dropdowns to just what's left.
+    if (!filtersPopulated) {
+      setOptions(document.getElementById('sc-filter-platform'), data.by_platform.map(r => r.platform), 'Platforms');
+      setOptions(document.getElementById('sc-filter-family'), data.by_family.map(r => r.family), 'Families');
+      setOptions(document.getElementById('sc-filter-site'), data.by_site.map(r => r.site_code), 'Sites');
+      filtersPopulated = true;
+    }
+  }
+
+  let filtersPopulated = false;
+
+  function currentFilters() {
+    const params = new URLSearchParams();
+    const platform = document.getElementById('sc-filter-platform').value;
+    const family = document.getElementById('sc-filter-family').value;
+    const site = document.getElementById('sc-filter-site').value;
+    if (platform) params.set('platform', platform);
+    if (family) params.set('family', family);
+    if (site) params.set('site', site);
+    return params;
+  }
+
+  function load() {
+    document.getElementById('sc-loading').classList.remove('d-none');
+    document.getElementById('sc-content').classList.add('d-none');
+    document.getElementById('sc-error').classList.add('d-none');
+
+    fetch('/api/swim/compliance/summary?' + currentFilters().toString())
+      .then(async res => {
+        if (!res.ok) {
+          const data = await res.json().catch(() => null);
+          throw new Error((data && data.detail) || ('Request failed (HTTP ' + res.status + ')'));
+        }
+        return res.json();
+      })
+      .then(render)
+      .catch(err => {
+        document.getElementById('sc-loading').classList.add('d-none');
+        const box = document.getElementById('sc-error');
+        box.textContent = err.message;
+        box.classList.remove('d-none');
+      });
+  }
+
+  document.getElementById('sc-refresh-btn').addEventListener('click', load);
+  document.getElementById('sc-filter-platform').addEventListener('change', load);
+  document.getElementById('sc-filter-family').addEventListener('change', load);
+  document.getElementById('sc-filter-site').addEventListener('change', load);
+  document.getElementById('sc-clear-filters').addEventListener('click', function() {
+    document.getElementById('sc-filter-platform').value = '';
+    document.getElementById('sc-filter-family').value = '';
+    document.getElementById('sc-filter-site').value = '';
+    load();
+  });
+
+  load();
+})();
+</script>
