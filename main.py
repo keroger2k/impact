@@ -213,8 +213,28 @@ async def status(session: SessionEntry = Depends(require_auth)):
     from utils.system_status import get_system_status
     return await get_system_status(session)
 
+class NoCacheStaticFiles(StaticFiles):
+    """StaticFiles serves no Cache-Control header by default, so a browser's
+    own heuristic caching can keep serving an old cached copy of a JS/CSS
+    file for hours or days after it's changed on disk — confirmed in
+    production: a returning browser served a stale report-charts.js and hit
+    `window.ImpactReportCharts.renderComplianceOverview is not a function`
+    after that file gained new exports, even though the new file was live on
+    disk. `no-cache` forces a conditional revalidation (If-None-Match /
+    If-Modified-Since) on every request rather than trusting a local
+    heuristic — still a fast 304 when nothing changed, but a code change is
+    never silently invisible to an already-open browser tab. No build step
+    or content-hashed filenames exist in this app to do this the "proper"
+    versioned-asset way, so this is the proportionate fix.
+    """
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 static_dir = Path(__file__).parent / "static"
-app.mount("/static", StaticFiles(directory=static_dir), name="static")
+app.mount("/static", NoCacheStaticFiles(directory=static_dir), name="static")
 
 @app.get("/partials/status", response_class=HTMLResponse)
 async def get_status_partial(request: Request, session: SessionEntry = Depends(require_auth)):
