@@ -18,19 +18,20 @@
         </div>
         <div class="card-body">
           <p class="text-muted small mb-3">
-            Compares each device's current software version against DNAC's golden image for its
-            platform. <strong>Unknown</strong> means no golden image is on record for that
-            platform at all — a different gap than being out of date. Read-only; computed from
-            already-cached inventory, no live device calls.
+            Compares each device's current software version against DNAC's own golden-image
+            product assignment (the same data DNAC uses to decide which devices an image belongs
+            on — not a guess from model numbers). <strong>Unknown</strong> means DNAC has no
+            golden image assigned to that product family at all — a different gap than being out
+            of date. Read-only; computed from already-cached inventory, no live device calls.
           </p>
 
           <div class="d-flex flex-wrap gap-2 align-items-end mb-3">
             <div>
-              <label class="form-label small text-muted mb-1">Platform</label>
-              <select class="form-select form-select-sm" id="sc-filter-platform" style="min-width:180px"></select>
+              <label class="form-label small text-muted mb-1">Product Family</label>
+              <select class="form-select form-select-sm" id="sc-filter-product-family" style="min-width:220px"></select>
             </div>
             <div>
-              <label class="form-label small text-muted mb-1">Family</label>
+              <label class="form-label small text-muted mb-1">Device Family</label>
               <select class="form-select form-select-sm" id="sc-filter-family" style="min-width:180px"></select>
             </div>
             <div>
@@ -51,8 +52,8 @@
 
             <div class="row g-4 mb-2">
               <div class="col-lg-6">
-                <h6 class="small fw-bold text-uppercase text-muted mb-2" style="letter-spacing:.05em">By Platform</h6>
-                <div id="sc-by-platform"></div>
+                <h6 class="small fw-bold text-uppercase text-muted mb-2" style="letter-spacing:.05em">By Product Family</h6>
+                <div id="sc-by-product-family"></div>
               </div>
               <div class="col-lg-6">
                 <h6 class="small fw-bold text-uppercase text-muted mb-2" style="letter-spacing:.05em">By Device Family</h6>
@@ -159,15 +160,15 @@
     document.getElementById('sc-content').classList.remove('d-none');
 
     window.ImpactReportCharts.renderComplianceOverview('sc-overview', data.overall);
-    window.ImpactReportCharts.renderComplianceBarChart('sc-by-platform', data.by_platform, 'platform');
+    window.ImpactReportCharts.renderComplianceBarChart('sc-by-product-family', data.by_product_family, 'product_family');
     window.ImpactReportCharts.renderComplianceBarChart('sc-by-family', data.by_family, 'family');
     renderSiteTable(data.by_site);
 
     // Populate filters from the unfiltered response the first time only —
     // a filtered re-fetch shouldn't shrink the dropdowns to just what's left.
     if (!filtersPopulated) {
-      setOptions(document.getElementById('sc-filter-platform'), data.by_platform.map(r => r.platform), 'Platforms');
-      setOptions(document.getElementById('sc-filter-family'), data.by_family.map(r => r.family), 'Families');
+      setOptions(document.getElementById('sc-filter-product-family'), data.by_product_family.map(r => r.product_family), 'Product Families');
+      setOptions(document.getElementById('sc-filter-family'), data.by_family.map(r => r.family), 'Device Families');
       setOptions(document.getElementById('sc-filter-site'), data.by_site.map(r => r.site_code), 'Sites');
       filtersPopulated = true;
     }
@@ -177,10 +178,10 @@
 
   function currentFilters() {
     const params = new URLSearchParams();
-    const platform = document.getElementById('sc-filter-platform').value;
+    const productFamily = document.getElementById('sc-filter-product-family').value;
     const family = document.getElementById('sc-filter-family').value;
     const site = document.getElementById('sc-filter-site').value;
-    if (platform) params.set('platform', platform);
+    if (productFamily) params.set('product_family', productFamily);
     if (family) params.set('family', family);
     if (site) params.set('site', site);
     return params;
@@ -209,11 +210,11 @@
   }
 
   document.getElementById('sc-refresh-btn').addEventListener('click', load);
-  document.getElementById('sc-filter-platform').addEventListener('change', load);
+  document.getElementById('sc-filter-product-family').addEventListener('change', load);
   document.getElementById('sc-filter-family').addEventListener('change', load);
   document.getElementById('sc-filter-site').addEventListener('change', load);
   document.getElementById('sc-clear-filters').addEventListener('click', function() {
-    document.getElementById('sc-filter-platform').value = '';
+    document.getElementById('sc-filter-product-family').value = '';
     document.getElementById('sc-filter-family').value = '';
     document.getElementById('sc-filter-site').value = '';
     load();

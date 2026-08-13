@@ -233,6 +233,16 @@
     return Array.from(document.getElementById(id).selectedOptions).map(o => o.value);
   }
 
+  // The image must be picked first (step 1) — every device-targeting call
+  // below sends it along so the server can filter to only devices DNAC
+  // actually has this image assigned to (clients.swim.get_assigned_products).
+  // Without an image selected yet, calls proceed unfiltered so the picker
+  // is still usable while building out step 1.
+  function selectedImageId() {
+    const opt = document.getElementById('jn-image-select').selectedOptions[0];
+    return opt ? opt.value : '';
+  }
+
   let lastFilterResult = null;
 
   function filterCriteria() {
@@ -246,7 +256,7 @@
   }
 
   document.getElementById('jn-f-search').addEventListener('click', () => {
-    const body = { job_type: jobType, page: 1, page_size: 25, ...filterCriteria() };
+    const body = { job_type: jobType, image_uuid: selectedImageId() || null, page: 1, page_size: 25, ...filterCriteria() };
     fetch('/api/swim/devices/search', {
       method: 'POST',
       headers: Object.assign({ 'Content-Type': 'application/json' }, csrfHeaders()),
@@ -259,8 +269,14 @@
       box.innerHTML = '';
       const summary = document.createElement('div');
       summary.className = 'fw-bold mb-1';
-      summary.textContent = data.total_matches + ' device(s) match — showing first ' + data.rows.length;
+      summary.textContent = data.total_matches + ' device(s) compatible with the selected image — showing first ' + data.rows.length;
       box.appendChild(summary);
+      if (data.incompatible_count) {
+        const warn = document.createElement('div');
+        warn.className = 'text-muted small mb-1';
+        warn.textContent = data.incompatible_count + ' matching device(s) excluded — not assigned to the selected image in DNAC.';
+        box.appendChild(warn);
+      }
       if (data.rows.length) {
         const wrap = document.createElement('div');
         wrap.className = 'table-responsive';
@@ -301,7 +317,7 @@
     fetch('/api/swim/devices/resolve-csv', {
       method: 'POST',
       headers: Object.assign({ 'Content-Type': 'application/json' }, csrfHeaders()),
-      body: JSON.stringify({ job_type: jobType, lines }),
+      body: JSON.stringify({ job_type: jobType, image_uuid: selectedImageId() || null, lines }),
     }).then(async r => {
       const data = await r.json();
       if (!r.ok) throw new Error(data.detail || 'Resolve failed');
@@ -310,12 +326,19 @@
       box.innerHTML = '';
       const summary = document.createElement('div');
       summary.className = 'fw-bold mb-1';
-      summary.textContent = data.matched.length + ' matched, ' + data.unmatched.length + ' unmatched';
+      summary.textContent = data.matched.length + ' compatible with the selected image, ' + data.unmatched.length + ' unmatched';
       box.appendChild(summary);
       if (data.unmatched.length) {
         const warn = document.createElement('div');
         warn.className = 'text-warning mb-1';
         warn.textContent = 'Unmatched: ' + data.unmatched.join(', ');
+        box.appendChild(warn);
+      }
+      if (data.incompatible && data.incompatible.length) {
+        const warn = document.createElement('div');
+        warn.className = 'text-muted small mb-1';
+        warn.textContent = data.incompatible.length + ' resolved but excluded — not assigned to the selected image in DNAC: '
+          + data.incompatible.map(d => d.hostname).join(', ');
         box.appendChild(warn);
       }
     }).catch(err => showError(err.message));

@@ -107,7 +107,7 @@ async def list_images(golden: bool = Query(True), session: SessionEntry = Depend
 
 @router.get("/compliance/summary")
 async def compliance_summary(
-    platform: Optional[str] = Query(None),
+    product_family: Optional[str] = Query(None),
     family: Optional[str] = Query(None),
     site: Optional[str] = Query(None),
     session: SessionEntry = Depends(require_auth),
@@ -121,7 +121,7 @@ async def compliance_summary(
     devices, device_site_map = _devices_cache()
     return swim_compliance.compute_compliance(
         devices, device_site_map, golden_images or [],
-        platform=platform, family=family, site=site,
+        product_family=product_family, family=family, site=site,
     )
 
 
@@ -136,6 +136,7 @@ async def devices_facets(job_type: str = Query(...), session: SessionEntry = Dep
 
 class DeviceSearchRequest(BaseModel):
     job_type: str
+    image_uuid: Optional[str] = None
     site_codes: list[str] = []
     platforms: list[str] = []
     families: list[str] = []
@@ -155,6 +156,21 @@ async def devices_search(req: DeviceSearchRequest, session: SessionEntry = Depen
         families=req.families or None, hostname_contains=req.hostname_contains,
         reachability=req.reachability,
     )
+
+    incompatible_count = 0
+    if req.image_uuid:
+        # Preview-time compatibility filter — mirrors the authoritative gate
+        # in create_job() below, so a device that will be rejected there
+        # never shows up here as a false "match" in the first place. Always
+        # live (see clients.swim.get_assigned_products): this is a safety
+        # signal, not a display value.
+        loop = asyncio.get_event_loop()
+        dnac = _get_dnac(session)
+        compat = await loop.run_in_executor(None, run_with_context(swim_client.get_assigned_products, dnac, req.image_uuid))
+        before = len(matched)
+        matched = [d for d in matched if d.get("platformId") in compat]
+        incompatible_count = before - len(matched)
+
     total = len(matched)
     page_size = max(1, min(req.page_size, 200))
     start = max(0, (req.page - 1) * page_size)
@@ -170,13 +186,17 @@ async def devices_search(req: DeviceSearchRequest, session: SessionEntry = Depen
             "site_code": code or "UNKNOWN", "site_code_source": source,
         }
 
-    return {"total_matches": total, "page": req.page, "page_size": page_size, "rows": [_row(d) for d in page_rows]}
+    return {
+        "total_matches": total, "incompatible_count": incompatible_count,
+        "page": req.page, "page_size": page_size, "rows": [_row(d) for d in page_rows],
+    }
 
 
 # ── Device targeting (mode c: CSV paste) ────────────────────────────────────
 
 class ResolveCsvRequest(BaseModel):
     job_type: str
+    image_uuid: Optional[str] = None
     lines: list[str]
 
 
@@ -185,8 +205,24 @@ async def devices_resolve_csv(req: ResolveCsvRequest, session: SessionEntry = De
     _require_job_type_enabled(req.job_type)
     devices, device_site_map = _devices_cache()
     matched, unmatched = swim_targeting.resolve_csv_lines(req.lines, devices)
+
+    incompatible: list[dict] = []
+    if req.image_uuid:
+        # Same live compatibility filter as devices_search — a device that
+        # resolves fine from the pasted list but isn't assigned to the
+        # selected image is reported separately from "unmatched" (couldn't
+        # find the device at all), since the fix for each is different.
+        loop = asyncio.get_event_loop()
+        dnac = _get_dnac(session)
+        compat = await loop.run_in_executor(None, run_with_context(swim_client.get_assigned_products, dnac, req.image_uuid))
+        still_matched, incompatible_devices = [], []
+        for d in matched:
+            (still_matched if d.get("platformId") in compat else incompatible_devices).append(d)
+        matched = still_matched
+        incompatible = swim_targeting.snapshot_for_job(incompatible_devices, device_site_map)
+
     rows = swim_targeting.snapshot_for_job(matched, device_site_map)
-    return {"matched": rows, "unmatched": unmatched}
+    return {"matched": rows, "unmatched": unmatched, "incompatible": incompatible}
 
 
 # ── Jobs ──────────────────────────────────────────────────────────────────
@@ -246,6 +282,32 @@ async def create_job(req: CreateJobRequest, session: SessionEntry = Depends(requ
 
     if not resolved:
         raise HTTPException(400, "No devices matched the given targeting criteria")
+
+    # Authoritative compatibility gate — this is the check that actually
+    # decides which devices this job is allowed to touch, not just a preview
+    # nicety like the one in devices_search/devices_resolve_csv above (which
+    # exist so an operator sees the same answer before they get here, but a
+    # client could in principle skip straight to this endpoint). Always
+    # live: see clients.swim.get_assigned_products for why this is never
+    # cached, and why an empty compatibility set blocks rather than allows.
+    dnac = _get_dnac(session)
+    loop = asyncio.get_event_loop()
+    compat = await loop.run_in_executor(None, run_with_context(swim_client.get_assigned_products, dnac, req.image_uuid))
+    if not compat:
+        raise HTTPException(
+            400,
+            "DNAC has no product-compatibility data for the selected image — cannot verify "
+            "which devices it belongs on, refusing to create this job.",
+        )
+    incompatible_count = sum(1 for d in resolved if d.get("platformId") not in compat)
+    resolved = [d for d in resolved if d.get("platformId") in compat]
+    if not resolved:
+        raise HTTPException(
+            400,
+            f"{incompatible_count} device(s) matched the targeting criteria, but none are "
+            "assigned to the selected image in DNAC — refusing to create this job.",
+        )
+
     if len(resolved) > swim_targeting.MAX_DEVICES_PER_JOB:
         raise HTTPException(400, f"Too many devices matched ({len(resolved)}); "
                                   f"max per job is {swim_targeting.MAX_DEVICES_PER_JOB}")
@@ -275,6 +337,7 @@ async def create_job(req: CreateJobRequest, session: SessionEntry = Depends(requ
         "platform_counts": dict(platform_counts),
         "homogeneity_warning": swim_targeting.homogeneity_warning(rows),
         "unresolved_site_count": swim_targeting.unresolved_site_count(rows),
+        "incompatible_excluded_count": incompatible_count,
     }
 
 

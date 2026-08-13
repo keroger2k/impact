@@ -78,6 +78,20 @@ _DEV_GOLDEN_VERSIONS = {
     "ISR4451-X/K9": "17.9.5",
 }
 
+# Human-readable product/family names DNAC would normally supply via
+# get_assigned_products() below — mocked here so DEV_MODE exercises the same
+# family-labeled compliance grouping and image/device compatibility gate a
+# real instance provides, without needing live DNAC access. Two distinct
+# platformIds (C9300-48U/C9300-24P) intentionally share one family name, the
+# same many-PIDs-one-family shape DNAC's real productName data has.
+_DEV_PRODUCT_FAMILIES = {
+    "C9300-48U": "Cisco Catalyst 9300 Series Switches",
+    "C9300-24P": "Cisco Catalyst 9300 Series Switches",
+    "C9500-40X": "Cisco Catalyst 9500 Series Switches",
+    "C9600-LC-40YL4": "Cisco Catalyst 9600 Series Switches",
+    "ISR4451-X/K9": "Cisco 4000 Series Integrated Services Routers",
+}
+
 
 def trigger_distribution(dnac, device_uuid: str, image_uuid: str) -> str | None:
     """Distribute one image to one device. Returns DNAC's taskId (for
@@ -168,9 +182,13 @@ def list_images(dnac, golden: bool | None = None, site_id: str | None = None) ->
     if DEV_MODE:
         if golden is False:
             return []
+        # id = platformId here (not a random UUID) so the mock
+        # get_assigned_products() below can key off it directly — see that
+        # function's DEV_MODE branch.
         return [
-            {"name": f"{platform}-golden.bin", "version": version,
-             "productNames": [{"productName": platform}], "family": "Switches and Hubs"}
+            {"id": platform, "name": f"{platform}-golden.bin", "version": version,
+             "productNames": [{"productName": _DEV_PRODUCT_FAMILIES.get(platform, platform)}],
+             "family": "Switches and Hubs"}
             for platform, version in _DEV_GOLDEN_VERSIONS.items()
         ]
 
@@ -204,8 +222,100 @@ def list_golden_images(dnac, site_id: str | None = None) -> list[dict]:
     filter. First cut pulls global (no site_id) golden images grouped by
     platform — DNAC's golden designation *can* be site-scoped, and it's not
     confirmed this fleet differentiates by site; a known simplification to
-    revisit if compliance numbers look wrong against a real instance."""
-    return list_images(dnac, golden=True, site_id=site_id)
+    revisit if compliance numbers look wrong against a real instance.
+
+    Each returned image carries an `assigned_products` dict (pid -> product
+    name, see get_assigned_products) — the compliance dashboard's family
+    grouping is built from this, not from platformId string-matching.
+    """
+    images = list_images(dnac, golden=True, site_id=site_id)
+    return attach_assigned_products(dnac, images)
+
+
+def get_assigned_products(dnac, image_id: str) -> dict[str, str]:
+    """DNAC's own authoritative list of which device product IDs (PIDs —
+    the same value a device reports as its own `platformId`) this image is
+    actually assigned to, each paired with its human-readable product/
+    family name (e.g. "Cisco Catalyst 9300 Series Switches").
+
+    Confirmed present on the pinned DNAC version via
+    `retrieves_network_device_product_names_assigned_to_a_software_image`
+    (not a newer-version-only API), filtered to `assigned="ASSIGNED"` —
+    DNAC's own compatibility list, not a guess. This is the authoritative
+    source both the distribution/activation compatibility gate
+    (routers/swim.py) and the compliance dashboard's family grouping
+    (utils/swim_compliance.py) are built on, replacing an earlier
+    model-number-substring heuristic that could tell "looks similar" but
+    never "DNAC actually says this image belongs on this device" — which
+    is what actually matters before pushing an image to a device.
+
+    Field names below (productId/productName) are the natural reading of
+    the SDK's own docstring ("network device product names ... and the
+    support PIDs") but haven't been confirmed against a live response body
+    the way, say, clients/solarwinds.py's fields have — tries a couple of
+    plausible key-name variants defensively, the same posture
+    clients/dnac.py's get_recent_issues() takes for similarly
+    under-documented fields.
+
+    Never cached: this backs a safety gate (which devices an operator is
+    even allowed to target), not a display value, so it always asks DNAC
+    fresh rather than act on a possibly-stale answer — same "live verify
+    over local logic" posture as the Firewall Policy Tester. An empty
+    result (no assigned products found, or the call failed) is treated by
+    callers as "compatibility unknown" and blocks the action — silently
+    allowing everything when this can't be determined would defeat the
+    entire point of the gate.
+    """
+    from dev import DEV_MODE
+    if DEV_MODE:
+        if image_id in _DEV_GOLDEN_VERSIONS:
+            return {image_id: _DEV_PRODUCT_FAMILIES.get(image_id, image_id)}
+        return {}
+
+    pids: dict[str, str] = {}
+    limit, offset = 500, 1
+    while True:
+        try:
+            page = dnac.software_image_management_swim.retrieves_network_device_product_names_assigned_to_a_software_image(
+                image_id=image_id, assigned="ASSIGNED", limit=limit, offset=offset,
+            )
+            items = page.response if hasattr(page, "response") else page
+            if not items:
+                break
+            for row in items:
+                d = _dictify(row)
+                pid = d.get("productId") or d.get("productID") or d.get("pid")
+                name = d.get("productName") or d.get("product_name") or pid
+                if pid:
+                    pids[pid] = name
+            if len(items) < limit:
+                break
+            offset += limit
+        except Exception as e:
+            logger.warning(f"Assigned-products fetch failed for image {image_id}: {e}", extra={
+                "target": "DNAC", "action": "SWIM_ASSIGNED_PRODUCTS", "status": 500,
+            })
+            break
+    return pids
+
+
+def attach_assigned_products(dnac, images: list[dict]) -> list[dict]:
+    """Fetch and attach `assigned_products` (see get_assigned_products) onto
+    each image dict in place. Bounded parallel fetch — one extra call per
+    image — mirroring clients/dnac.py's per-site parallel-fetch pattern
+    (_build_via_per_site_parallel) for the same class of N+1 problem."""
+    if not images:
+        return images
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _fetch(image: dict) -> None:
+        image_id = image.get("id") or image.get("imageId") or image.get("name")
+        image["assigned_products"] = get_assigned_products(dnac, image_id) if image_id else {}
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        list(pool.map(_fetch, images))
+    return images
 
 
 def poll_device_status(dnac, device_id: str, since: datetime) -> dict:
