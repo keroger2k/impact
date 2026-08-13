@@ -356,7 +356,8 @@
       targeting_mode = 'csv';
       device_ids = lastCsvMatched.map(d => d.device_id);
     } else {
-      if (!lastFilterResult || !lastFilterResult.total_matches) { showError('Preview matches first.'); return; }
+      if (!lastFilterResult) { showError('Preview matches first.'); return; }
+      if (!lastFilterResult.total_matches) { showError('No devices compatible with the selected image — nothing to create.'); return; }
       targeting_mode = 'filter';
       criteria = filterCriteria();
     }
