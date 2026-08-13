@@ -109,11 +109,33 @@ async def _poll_once(dnac, device_id: str, since: datetime) -> dict:
     return await loop.run_in_executor(None, lambda: swim_client.poll_device_status(dnac, device_id, since))
 
 
-async def _device_worker(dnac, job: dict, row: dict, site_sem: asyncio.Semaphore, queue: asyncio.Queue, skip_submit: bool):
+async def _run_cleanup(row: dict, ssh_username: str, ssh_password: str) -> dict:
+    """Run `install remove inactive` on one device via SSH before its
+    distribution trigger fires — see utils/device_ssh.py for why this has
+    to be a device-CLI operation rather than a DNAC API call (there is no
+    flash-management endpoint anywhere in DNAC's SWIM API surface, checked
+    directly against Cisco's own published spec). Not gated by GLOBAL_SEM:
+    that semaphore bounds concurrent DNAC HTTP calls specifically, and SSH
+    to a device doesn't touch DNAC's connection pool at all."""
+    from utils.device_ssh import guess_device_type, run_flash_cleanup
+    loop = asyncio.get_event_loop()
+    device_type = guess_device_type(row.get("platform_id") or "")
+    return await loop.run_in_executor(
+        None,
+        lambda: run_flash_cleanup(row["management_ip"], ssh_username, ssh_password, device_type),
+    )
+
+
+async def _device_worker(
+    dnac, job: dict, row: dict, site_sem: asyncio.Semaphore, queue: asyncio.Queue, skip_submit: bool,
+    ssh_username: str | None = None, ssh_password: str | None = None,
+):
     """Run one device row to a terminal state (or until cancelled/interrupted).
 
     `skip_submit=True` for rows resumed in status 'in_progress' — they were
-    already submitted in a previous run; this worker only polls.
+    already submitted in a previous run; this worker only polls (flash
+    cleanup, if enabled, only ever runs once per device — on a resume from
+    'in_progress' the device is already past that point).
     """
     async with site_sem:
         # Race safety: a concurrent cancel-queued call may have flipped this
@@ -127,6 +149,28 @@ async def _device_worker(dnac, job: dict, row: dict, site_sem: asyncio.Semaphore
         since = _parse_since(row.get("submitted_at") or row.get("created_at"))
 
         if not skip_submit:
+            if job.get("flash_cleanup"):
+                await queue.put({
+                    "type": "device_update", "device_row_id": row["id"], "device_id": row["device_id"],
+                    "hostname": row.get("hostname"), "site_code": row.get("site_code"),
+                    "status": "submitting", "message": "Running flash cleanup (install remove inactive)…",
+                })
+                cleanup = await _run_cleanup(row, ssh_username or "", ssh_password or "")
+                if cleanup["status"] != "success":
+                    reason = f"Flash cleanup failed: {cleanup.get('error') or 'unknown error'}"
+                    swim_jobs.set_device_status(row["id"], "failed", error_message=reason[:500], completed_at=_now_iso())
+                    await queue.put({
+                        "type": "device_update", "device_row_id": row["id"], "device_id": row["device_id"],
+                        "hostname": row.get("hostname"), "site_code": row.get("site_code"),
+                        "status": "failed", "message": reason,
+                    })
+                    return
+                await queue.put({
+                    "type": "device_update", "device_row_id": row["id"], "device_id": row["device_id"],
+                    "hostname": row.get("hostname"), "site_code": row.get("site_code"),
+                    "status": "submitting", "message": "Flash cleanup complete",
+                })
+
             swim_jobs.set_device_status(row["id"], "submitting")
             try:
                 async with GLOBAL_SEM:
@@ -187,11 +231,17 @@ async def _device_worker(dnac, job: dict, row: dict, site_sem: asyncio.Semaphore
                 return
 
 
-async def run_job(job_id: int, dnac):
+async def run_job(job_id: int, dnac, ssh_username: str | None = None, ssh_password: str | None = None):
     """Resumable execution generator for one job. Yields plain event dicts
     (the caller — routers/swim.py — wraps each in the app's standard SSE
     `emit()` helper). See the module docstring for the concurrency model and
     the resume semantics below.
+
+    `ssh_username`/`ssh_password` are the operator's own session credentials
+    (same "no dedicated service account" posture as every other SSH surface
+    in this app — routers/commands.py, the Nexus collector) — only actually
+    used when `job["flash_cleanup"]` is set; harmless to pass (or omit) for
+    a job that doesn't need them.
 
     On every call (fresh Start or Resume — same code path):
       1. queued rows          -> new work, submitted fresh.
@@ -271,7 +321,10 @@ async def run_job(job_id: int, dnac):
 
     async def worker(row: dict, skip_submit: bool):
         try:
-            await _device_worker(dnac, job, row, sem_for(row.get("site_code")), queue, skip_submit)
+            await _device_worker(
+                dnac, job, row, sem_for(row.get("site_code")), queue, skip_submit,
+                ssh_username=ssh_username, ssh_password=ssh_password,
+            )
         except asyncio.CancelledError:
             raise
         except Exception as e:

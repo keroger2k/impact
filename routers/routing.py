@@ -4,7 +4,8 @@ import logging
 import asyncio
 import re
 from auth import require_auth, SessionEntry
-from routers.commands import _run_on_device, guess_device_type
+from routers.commands import _run_on_device
+from utils.device_ssh import guess_device_type
 from utils.routing import correlate_next_hops
 from cache import cache
 

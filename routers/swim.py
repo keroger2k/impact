@@ -79,6 +79,10 @@ def _require_job_type_enabled(job_type: str) -> None:
         raise HTTPException(400, f"invalid job_type: {job_type!r}")
 
 
+def _flash_cleanup_enabled() -> bool:
+    return os.getenv("SWIM_FLASH_CLEANUP_ENABLED", "false").lower() == "true"
+
+
 def _devices_cache() -> tuple[list[dict], dict[str, str]]:
     return cache.get_stale("devices") or [], cache.get_stale("device_site_map") or {}
 
@@ -247,6 +251,8 @@ class CreateJobRequest(BaseModel):
     targeting_mode: str
     criteria: Optional[DeviceFilterCriteria] = None
     device_ids: Optional[list[str]] = None
+    # distribution-only
+    flash_cleanup: bool = False
     # activation-only
     schedule_validate: Optional[bool] = None
     activate_lower_image_version: bool = False
@@ -257,6 +263,12 @@ class CreateJobRequest(BaseModel):
 @router.post("/jobs")
 async def create_job(req: CreateJobRequest, session: SessionEntry = Depends(require_auth)):
     _require_job_type_enabled(req.job_type)
+
+    if req.flash_cleanup:
+        if req.job_type != "distribution":
+            raise HTTPException(400, "flash_cleanup only applies to distribution jobs")
+        if not _flash_cleanup_enabled():
+            raise HTTPException(403, "Flash cleanup (install remove inactive) is disabled")
 
     devices, device_site_map = _devices_cache()
 
@@ -320,6 +332,7 @@ async def create_job(req: CreateJobRequest, session: SessionEntry = Depends(requ
         image_version=req.image_version, platform_id=req.platform_id,
         site_concurrency=site_concurrency, targeting_mode=req.targeting_mode,
         targeting_criteria=criteria_snapshot, created_by=session.username, name=req.name,
+        flash_cleanup=req.flash_cleanup,
         schedule_validate=req.schedule_validate,
         activate_lower_image_version=req.activate_lower_image_version,
         device_upgrade_mode=req.device_upgrade_mode, distribute_if_needed=req.distribute_if_needed,
@@ -417,7 +430,7 @@ async def start_job(req: StartJobRequest, session: SessionEntry = Depends(requir
         def emit(d: dict) -> str:
             return f"data: {json.dumps(d)}\n\n"
         try:
-            async for event in swim_scheduler.run_job(req.job_id, dnac):
+            async for event in swim_scheduler.run_job(req.job_id, dnac, session.username, session.password):
                 yield emit(event)
         finally:
             _running_jobs.discard(req.job_id)

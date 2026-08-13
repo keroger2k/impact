@@ -470,6 +470,7 @@ def _swim_context(user: SessionEntry, active_page: str = "software") -> dict:
         "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
         "swim_distribution_enabled": os.getenv("SWIM_DISTRIBUTION_ENABLED", "false").lower() == "true",
         "swim_activation_enabled": os.getenv("SWIM_ACTIVATION_ENABLED", "false").lower() == "true",
+        "swim_flash_cleanup_enabled": os.getenv("SWIM_FLASH_CLEANUP_ENABLED", "false").lower() == "true",
         "active_page": active_page,
         "username": user.username,
     }

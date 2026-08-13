@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from auth import SessionEntry, require_auth
+from utils.device_ssh import guess_device_type
 
 SSH_TIMEOUT = 30
 SSH_MAX_WORKERS = 10
@@ -33,24 +34,6 @@ ALLOWED_PREFIXES = {
 # Netmiko writes to the Cisco CLI, not a shell, so regex chars used in
 # `| include <regex>` filters (parens, braces, anchors, etc.) are safe.
 DISALLOWED_CHARS = {"\n", "\r", "\t"}
-
-PLATFORM_MAP = [
-    ("N9K", "cisco_nxos"), ("N7K", "cisco_nxos"), ("N5K", "cisco_nxos"), ("N3K", "cisco_nxos"),
-    ("C9",  "cisco_ios"),  ("C8",  "cisco_ios"),  ("ISR", "cisco_ios"),  ("ASR", "cisco_ios"),
-    ("CSR", "cisco_ios"),  ("C38", "cisco_ios"),  ("C36", "cisco_ios"),  ("C35", "cisco_ios"),
-    ("CISCO39", "cisco_ios"), ("CISCO38", "cisco_ios"),
-    ("ASA", "cisco_asa"), ("FTD", "cisco_ftd"), ("WLC", "cisco_wlc"),
-]
-
-
-def guess_device_type(platform_id: str) -> str:
-    if not platform_id:
-        return "cisco_ios"
-    pid = platform_id.upper()
-    for substr, dtype in PLATFORM_MAP:
-        if substr in pid:
-            return dtype
-    return "cisco_ios"
 
 
 def _run_on_device(

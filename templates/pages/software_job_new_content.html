@@ -117,6 +117,26 @@
             </div>
           </div>
 
+          {% if job_type == 'distribution' and swim_flash_cleanup_enabled %}
+          <h6 class="small fw-bold text-uppercase text-muted mb-2" style="letter-spacing:.05em">4. Distribution Options</h6>
+          <div class="row g-3 mb-4">
+            <div class="col-auto">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="jn-flash-cleanup">
+                <label class="form-check-label small" for="jn-flash-cleanup">
+                  Run flash cleanup (<code>install remove inactive</code>) on each device first
+                </label>
+              </div>
+              <div class="text-muted small mt-1" style="max-width:520px">
+                Clears old inactive software from flash over SSH before distributing — fixes
+                "not enough space" failures. Runs one device at a time per site, inside the same
+                throttling as distribution itself. A device where cleanup fails is marked failed
+                and distribution is skipped for it.
+              </div>
+            </div>
+          </div>
+          {% endif %}
+
           {% if job_type == 'activation' %}
           <h6 class="small fw-bold text-uppercase text-muted mb-2" style="letter-spacing:.05em">4. Activation Options</h6>
           <div class="row g-3 mb-4">
@@ -370,6 +390,10 @@
       site_concurrency: parseInt(document.getElementById('jn-site-concurrency').value, 10) || 3,
       targeting_mode, criteria, device_ids,
     };
+    if (jobType === 'distribution') {
+      const cleanupCheckbox = document.getElementById('jn-flash-cleanup');
+      body.flash_cleanup = cleanupCheckbox ? cleanupCheckbox.checked : false;
+    }
     if (jobType === 'activation') {
       body.activate_lower_image_version = document.getElementById('jn-activate-lower').checked;
       body.distribute_if_needed = document.getElementById('jn-distribute-if-needed').checked;

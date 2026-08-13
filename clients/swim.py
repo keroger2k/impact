@@ -32,6 +32,23 @@ guessed:
     cancel: once a device is submitted here, it cannot be stopped through
     any API, which is why utils/swim_scheduler.py's "cancel" only ever means
     "stop submitting devices that haven't been sent yet".
+  * **No task-naming field exists anywhere in the public SWIM trigger
+    surface either** — checked every SWIM POST/PUT in Cisco's own published
+    OpenAPI spec (Catalyst Center Intent API 3.1.6: the old single-device
+    endpoints above, the newer bulk ones, and the newer single-device
+    `/networkDeviceImages/{id}/distribute|activate`), and none accept a
+    name/description/label. This is why jobs created through this app show
+    up unnamed in DNAC's own Provision > Inventory > Image Update Status
+    screen (confirmed with the user, 2026-08-13) — it isn't something this
+    app's request is missing, DNAC's public API has nowhere to put it. The
+    one place a name does exist is the same undocumented `scheduled-job`
+    wrapper mentioned above (its payload has a `description` field, almost
+    certainly what backs DNAC's own GUI-created task names) — so
+    investigating that endpoint would resolve naming and native scheduling
+    together, not two separate efforts. Deliberately not pursued for now
+    (user decision, 2026-08-13); this app's own job list/detail pages
+    (`/software/distribution`, `/software/activation`) remain the place to
+    identify a job by name in the meantime.
 
 `get_network_device_image_updates` is per-device *update-job* status
 (`FAILURE|SUCCESS|IN_PROGRESS|PENDING`, filterable by `network_device_id`

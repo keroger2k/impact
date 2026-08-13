@@ -57,18 +57,18 @@ def _device(n: int, site="K001") -> dict:
     }
 
 
-def _make_job(job_type="distribution", site_concurrency=3, n=1) -> tuple[int, list[int]]:
+def _make_job(job_type="distribution", site_concurrency=3, flash_cleanup=False, n=1) -> tuple[int, list[int]]:
     job_id = jobs.create_job(
         job_type=job_type, image_uuid="img-1", image_name="golden.bin", image_version="17.9.3",
         platform_id="C9300-48U", site_concurrency=site_concurrency, targeting_mode="filter",
-        targeting_criteria=None, created_by="kyle.rogers",
+        targeting_criteria=None, created_by="kyle.rogers", flash_cleanup=flash_cleanup,
     )
     return job_id
 
 
-async def _collect(job_id: int, dnac=object()) -> list[dict]:
+async def _collect(job_id: int, dnac=object(), ssh_username=None, ssh_password=None) -> list[dict]:
     events = []
-    async for event in scheduler.run_job(job_id, dnac):
+    async for event in scheduler.run_job(job_id, dnac, ssh_username, ssh_password):
         events.append(event)
     return events
 
@@ -106,6 +106,91 @@ async def test_failed_device_marks_job_completed_with_errors(db: Path, monkeypat
     row = jobs.list_job_devices(job_id)[0]
     assert row["status"] == "failed"
     assert row["error_message"] == "boom"
+
+
+# ── Flash cleanup pre-step ───────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_flash_cleanup_runs_before_distribution_trigger_when_enabled(db: Path, monkeypatch):
+    job_id = _make_job(flash_cleanup=True)
+    jobs.add_devices(job_id, [_device(1)])
+
+    call_order = []
+    monkeypatch.setattr(scheduler, "_run_cleanup",
+                         lambda row, u, p: call_order.append("cleanup") or
+                         _async_result({"status": "success", "error": None}))
+    monkeypatch.setattr(scheduler.swim_client, "trigger_distribution",
+                         lambda dnac, dev, img: call_order.append("trigger") or "task-1")
+    monkeypatch.setattr(scheduler.swim_client, "poll_device_status",
+                         lambda dnac, dev, since: {"status": "success", "failure_reason": None})
+
+    events = await _collect(job_id, ssh_username="u", ssh_password="p")
+    assert events[-1]["status"] == "completed"
+    assert call_order == ["cleanup", "trigger"]
+    assert jobs.list_job_devices(job_id)[0]["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_flash_cleanup_failure_skips_distribution_and_marks_failed(db: Path, monkeypatch):
+    job_id = _make_job(flash_cleanup=True)
+    jobs.add_devices(job_id, [_device(1)])
+
+    def fail_if_called(*a, **k):
+        raise AssertionError("trigger_distribution must not be called when cleanup fails")
+
+    monkeypatch.setattr(scheduler, "_run_cleanup",
+                         lambda row, u, p: _async_result({"status": "error", "error": "not enough flash space"}))
+    monkeypatch.setattr(scheduler.swim_client, "trigger_distribution", fail_if_called)
+
+    events = await _collect(job_id, ssh_username="u", ssh_password="p")
+    assert events[-1]["status"] == "completed_with_errors"
+    row = jobs.list_job_devices(job_id)[0]
+    assert row["status"] == "failed"
+    assert "Flash cleanup failed" in row["error_message"]
+    assert "not enough flash space" in row["error_message"]
+
+
+@pytest.mark.asyncio
+async def test_flash_cleanup_skipped_entirely_when_disabled(db: Path, monkeypatch):
+    job_id = _make_job(flash_cleanup=False)
+    jobs.add_devices(job_id, [_device(1)])
+
+    def fail_if_called(*a, **k):
+        raise AssertionError("_run_cleanup must not be called when flash_cleanup is off")
+
+    monkeypatch.setattr(scheduler, "_run_cleanup", fail_if_called)
+    monkeypatch.setattr(scheduler.swim_client, "trigger_distribution", lambda dnac, dev, img: "task-1")
+    monkeypatch.setattr(scheduler.swim_client, "poll_device_status",
+                         lambda dnac, dev, since: {"status": "success", "failure_reason": None})
+
+    events = await _collect(job_id)
+    assert events[-1]["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_flash_cleanup_not_rerun_on_resume_from_in_progress(db: Path, monkeypatch):
+    """A device already resumed as 'in_progress' has necessarily already
+    passed the cleanup step in an earlier run — must not run it again."""
+    job_id = _make_job(flash_cleanup=True)
+    jobs.add_devices(job_id, [_device(1)])
+    row = jobs.list_job_devices(job_id)[0]
+    jobs.set_device_status(row["id"], "in_progress", submitted_at="2026-08-12T00:00:00+00:00")
+
+    def fail_if_called(*a, **k):
+        raise AssertionError("_run_cleanup must not run again on an in_progress resume")
+
+    monkeypatch.setattr(scheduler, "_run_cleanup", fail_if_called)
+    monkeypatch.setattr(scheduler.swim_client, "poll_device_status",
+                         lambda dnac, dev, since: {"status": "success", "failure_reason": None})
+
+    events = await _collect(job_id, ssh_username="u", ssh_password="p")
+    assert events[-1]["status"] == "completed"
+
+
+def _async_result(value):
+    async def _coro():
+        return value
+    return _coro()
 
 
 # ── Property 1 & 2: two-level concurrency hold-scope ────────────────────────

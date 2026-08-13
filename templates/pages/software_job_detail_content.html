@@ -78,6 +78,10 @@
           This begins pushing the image to devices, throttled per site. Already-submitted devices
           cannot be stopped once this starts.
         </div>
+        <div class="alert alert-secondary py-2 small d-none" id="jd-confirm-cleanup-note">
+          This job also runs <code>install remove inactive</code> on each device over SSH before
+          distributing to it, to clear flash space.
+        </div>
         {% endif %}
         <p class="small mb-1">Type <strong id="jd-confirm-phrase-label"></strong> to continue:</p>
         <input type="text" class="form-control" id="jd-confirm-input" autocomplete="off">
@@ -222,6 +226,7 @@
           'Image: ' + (data.image_name || data.image_version || data.image_uuid) +
           ' · Devices: ' + data.total_devices +
           ' · Site concurrency: ' + data.site_concurrency +
+          (data.flash_cleanup ? ' · Flash cleanup: yes' : '') +
           ' · Created by ' + data.created_by + ' at ' + (data.created_at || '').replace('T', ' ').slice(0, 16);
         renderTiles(data.device_counts || {});
         document.getElementById('jd-start-label').textContent = data.confirmed_at ? 'Resume' : 'Start';
@@ -301,6 +306,8 @@
     const n = activeDeviceCount(currentJob.device_counts);
     const expected = jobType === 'activation' ? ('ACTIVATE ' + n + ' DEVICES') : 'DISTRIBUTE';
     document.getElementById('jd-confirm-phrase-label').textContent = expected;
+    const cleanupNote = document.getElementById('jd-confirm-cleanup-note');
+    if (cleanupNote) cleanupNote.classList.toggle('d-none', !currentJob.flash_cleanup);
     const input = document.getElementById('jd-confirm-input');
     input.value = '';
     const submitBtn = document.getElementById('jd-confirm-submit');

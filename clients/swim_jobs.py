@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     image_version                 TEXT,
     platform_id                   TEXT,
     site_concurrency              INTEGER NOT NULL DEFAULT 3,
+    flash_cleanup                 INTEGER NOT NULL DEFAULT 0,
     schedule_validate             INTEGER,
     activate_lower_image_version  INTEGER,
     device_upgrade_mode           TEXT,
@@ -172,13 +173,17 @@ def create_job(
     targeting_criteria: dict | None,
     created_by: str,
     name: str | None = None,
+    flash_cleanup: bool = False,
     schedule_validate: bool | None = None,
     activate_lower_image_version: bool | None = None,
     device_upgrade_mode: str | None = None,
     distribute_if_needed: bool | None = None,
 ) -> int:
     """Insert a new draft job. Returns its id. Caller inserts job_devices
-    rows separately via add_devices()."""
+    rows separately via add_devices(). `flash_cleanup` is distribution-only
+    (see utils/swim_scheduler.py) — callers are expected to only set it True
+    for job_type='distribution'; this layer doesn't enforce that itself
+    (routers/swim.py does, alongside the env-flag gate)."""
     if job_type not in JOB_TYPES:
         raise ValueError(f"invalid job_type: {job_type!r}")
     if targeting_mode not in TARGETING_MODES:
@@ -189,14 +194,14 @@ def create_job(
             """
             INSERT INTO jobs (
                 job_type, name, image_uuid, image_name, image_version, platform_id,
-                site_concurrency, schedule_validate, activate_lower_image_version,
+                site_concurrency, flash_cleanup, schedule_validate, activate_lower_image_version,
                 device_upgrade_mode, distribute_if_needed,
                 targeting_mode, targeting_criteria, created_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job_type, name, image_uuid, image_name, image_version, platform_id,
-                site_concurrency,
+                site_concurrency, int(flash_cleanup),
                 None if schedule_validate is None else int(schedule_validate),
                 None if activate_lower_image_version is None else int(activate_lower_image_version),
                 device_upgrade_mode,

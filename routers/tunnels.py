@@ -436,7 +436,7 @@ def _fetch_ios_live(session: SessionEntry, tunnel: dict, endpoint: dict) -> dict
     if DEV_MODE:
         return _mock_ios_state(tunnel, endpoint)
 
-    from routers.commands import guess_device_type
+    from utils.device_ssh import guess_device_type
     device_meta = {d["id"]: d for d in (cache.get("devices") or [])}
     meta = device_meta.get(endpoint.get("device_id", "")) or {}
     device_type = guess_device_type(meta.get("platformId", ""))
