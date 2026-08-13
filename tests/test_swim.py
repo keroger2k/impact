@@ -134,3 +134,56 @@ def test_poll_device_status_swallows_sdk_errors_as_pending():
     dnac.software_image_management_swim.get_network_device_image_updates.side_effect = RuntimeError("timeout")
     result = swim.poll_device_status(dnac, "d1", datetime.now(timezone.utc))
     assert result["status"] == "pending"
+
+
+# ── get_assigned_products() ───────────────────────────────────────────────────
+# Response shape below is the real schema from Cisco's own published OpenAPI
+# spec (Catalyst Center Intent API 3.1.6,
+# retrievesNetworkDeviceProductNamesAssignedToASoftwareImageResponse) — not a
+# guess. Confirms the fix for a real bug: an earlier version of this function
+# read a singular `productId` field that doesn't exist in the real response
+# (the actual field is `productIds`, a list), so it silently found nothing
+# for every real image and reported every device as incompatible.
+
+def _fake_products_dnac(rows: list[dict]):
+    dnac = MagicMock()
+    resp = MagicMock()
+    resp.response = rows
+    dnac.software_image_management_swim.retrieves_network_device_product_names_assigned_to_a_software_image.return_value = resp
+    return dnac
+
+
+def test_get_assigned_products_reads_productIds_list_not_singular_productId():
+    dnac = _fake_products_dnac([
+        {"id": "1", "productName": "Cisco Catalyst 9300 Series Switches", "productNameOrdinal": 1,
+         "productIds": ["C9300-48U", "C9300-24P"], "recommended": "CISCO"},
+    ])
+    result = swim.get_assigned_products(dnac, "image-1")
+    assert result == {
+        "C9300-48U": "Cisco Catalyst 9300 Series Switches",
+        "C9300-24P": "Cisco Catalyst 9300 Series Switches",
+    }
+
+
+def test_get_assigned_products_does_not_filter_by_assigned_status():
+    """No `assigned=` kwarg should be sent — NOT_ASSIGNED rows still "apply
+    to" the image per DNAC's own field description, and most golden-tag
+    workflows never touch the separate formal-assignment step."""
+    dnac = _fake_products_dnac([
+        {"id": "1", "productName": "Cisco Catalyst 9300 Series Switches", "productNameOrdinal": 1,
+         "productIds": ["C9300-48U"], "recommended": "USER"},
+    ])
+    swim.get_assigned_products(dnac, "image-1")
+    call_kwargs = dnac.software_image_management_swim.retrieves_network_device_product_names_assigned_to_a_software_image.call_args.kwargs
+    assert "assigned" not in call_kwargs
+
+
+def test_get_assigned_products_empty_response():
+    dnac = _fake_products_dnac([])
+    assert swim.get_assigned_products(dnac, "image-1") == {}
+
+
+def test_get_assigned_products_swallows_sdk_errors_as_empty():
+    dnac = MagicMock()
+    dnac.software_image_management_swim.retrieves_network_device_product_names_assigned_to_a_software_image.side_effect = RuntimeError("timeout")
+    assert swim.get_assigned_products(dnac, "image-1") == {}

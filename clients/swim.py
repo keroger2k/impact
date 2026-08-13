@@ -41,6 +41,17 @@ device and carries a clear terminal/non-terminal status. It is historical,
 not job-scoped, so `poll_device_status` always passes `start_time` (this
 job's own submission instant) to exclude a device's rows from any earlier
 job that happened to touch the same device.
+
+`get_assigned_products` (the image/device compatibility gate backing both
+job creation and the compliance dashboard's family grouping) is built on
+`retrieves_network_device_product_names_assigned_to_a_software_image`, whose
+response shape was pulled directly from Cisco's own published OpenAPI spec
+(Catalyst Center Intent API 3.1.6) rather than inferred from the SDK's
+docstring — an earlier version of this function guessed a singular
+`productId` field that doesn't exist (the real field is `productIds`, a
+list) and filtered to `assigned=ASSIGNED` only, which undercounted devices
+whose compatibility came from golden-tagging alone. See that function's own
+docstring for the full story.
 """
 from __future__ import annotations
 
@@ -234,28 +245,40 @@ def list_golden_images(dnac, site_id: str | None = None) -> list[dict]:
 
 def get_assigned_products(dnac, image_id: str) -> dict[str, str]:
     """DNAC's own authoritative list of which device product IDs (PIDs —
-    the same value a device reports as its own `platformId`) this image is
-    actually assigned to, each paired with its human-readable product/
-    family name (e.g. "Cisco Catalyst 9300 Series Switches").
+    the same value a device reports as its own `platformId`) this image
+    applies to, each paired with its human-readable product/family name
+    (e.g. "Cisco Catalyst 9300 Series Switches").
 
     Confirmed present on the pinned DNAC version via
-    `retrieves_network_device_product_names_assigned_to_a_software_image`
-    (not a newer-version-only API), filtered to `assigned="ASSIGNED"` —
-    DNAC's own compatibility list, not a guess. This is the authoritative
-    source both the distribution/activation compatibility gate
-    (routers/swim.py) and the compliance dashboard's family grouping
-    (utils/swim_compliance.py) are built on, replacing an earlier
-    model-number-substring heuristic that could tell "looks similar" but
-    never "DNAC actually says this image belongs on this device" — which
-    is what actually matters before pushing an image to a device.
+    `retrieves_network_device_product_names_assigned_to_a_software_image` —
+    this is the authoritative source both the distribution/activation
+    compatibility gate (routers/swim.py) and the compliance dashboard's
+    family grouping (utils/swim_compliance.py) are built on, replacing an
+    earlier model-number-substring heuristic that could tell "looks
+    similar" but never "DNAC actually says this image applies to this
+    device" — which is what actually matters before pushing an image to a
+    device.
 
-    Field names below (productId/productName) are the natural reading of
-    the SDK's own docstring ("network device product names ... and the
-    support PIDs") but haven't been confirmed against a live response body
-    the way, say, clients/solarwinds.py's fields have — tries a couple of
-    plausible key-name variants defensively, the same posture
-    clients/dnac.py's get_recent_issues() takes for similarly
-    under-documented fields.
+    Response shape confirmed against Cisco's own published OpenAPI spec
+    (Catalyst Center Intent API 3.1.6, `retrievesNetworkDeviceProductNames
+    AssignedToASoftwareImageResponse` — pulled and inspected directly, not
+    guessed from the SDK docstring the way an earlier version of this
+    function did): each row carries `productName` plus **`productIds`, a
+    LIST of PIDs, not a singular `productId`** — one product name commonly
+    covers several exact PIDs. That earlier singular-field guess is why
+    this returned empty against a real instance even for images with real,
+    correct assignments: the row shape genuinely didn't have the field
+    being read.
+
+    No `assigned` filter is applied, deliberately: the endpoint's own spec
+    describes `ASSIGNED` as "associated with the given image" and
+    `NOT_ASSIGNED` as "have not yet been associated ... but apply to it" —
+    both states mean the product applies to this image, and most golden-
+    image workflows (tag by device family/role) never touch the separate,
+    optional formal-assignment step. Filtering to `ASSIGNED` only, as an
+    earlier version of this function did, silently dropped every device
+    whose compatibility came from golden-tagging alone rather than that
+    extra manual step, undercounting real compatibility.
 
     Never cached: this backs a safety gate (which devices an operator is
     even allowed to target), not a display value, so it always asks DNAC
@@ -277,17 +300,17 @@ def get_assigned_products(dnac, image_id: str) -> dict[str, str]:
     while True:
         try:
             page = dnac.software_image_management_swim.retrieves_network_device_product_names_assigned_to_a_software_image(
-                image_id=image_id, assigned="ASSIGNED", limit=limit, offset=offset,
+                image_id=image_id, limit=limit, offset=offset,
             )
             items = page.response if hasattr(page, "response") else page
             if not items:
                 break
             for row in items:
                 d = _dictify(row)
-                pid = d.get("productId") or d.get("productID") or d.get("pid")
-                name = d.get("productName") or d.get("product_name") or pid
-                if pid:
-                    pids[pid] = name
+                name = d.get("productName") or ""
+                for pid in (d.get("productIds") or []):
+                    if pid:
+                        pids[pid] = name or pid
             if len(items) < limit:
                 break
             offset += limit
