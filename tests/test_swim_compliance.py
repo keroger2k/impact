@@ -90,6 +90,28 @@ def test_classify_device_does_not_fuzzy_match_similar_pids():
     assert result["status"] == "unknown"
 
 
+def test_classify_device_stacked_switch_all_members_known():
+    # DNAC reports a stack's platformId as a comma-separated list of every
+    # member's exact PID — confirmed against a real instance where stacked
+    # devices classified as "unknown" even though every member PID
+    # individually had a golden image (the whole combined string was being
+    # looked up as one key, which never matches).
+    index = build_golden_version_index([_golden_image("17.9.3", {"C9300-48UXM": "Cisco Catalyst 9300 Series Switches"})])
+    device = _device("d1", "stack-1", "C9300-48UXM,C9300-48UXM,C9300-48UXM", "17.9.3")
+    result = classify_device(device, index)
+    assert result["status"] == "compliant"
+    assert result["product_family"] == "Cisco Catalyst 9300 Series Switches"
+
+
+def test_classify_device_stacked_switch_partial_coverage_is_unknown():
+    # Only one member's PID has a golden assignment — not enough
+    # information to confidently call the whole stack compliant or not.
+    index = build_golden_version_index([_golden_image("17.9.3", {"C9300-48UXM": "Cisco Catalyst 9300 Series Switches"})])
+    device = _device("d1", "stack-1", "C9300-48UXM,C9300-24UXM", "17.9.3")
+    result = classify_device(device, index)
+    assert result["status"] == "unknown"
+
+
 # ── compute_compliance() ─────────────────────────────────────────────────────
 
 def test_compute_compliance_overall_and_breakdowns():

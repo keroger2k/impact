@@ -11,8 +11,8 @@ dashboard view costs nothing beyond a few thousand in-memory comparisons.
 
 **Golden-image-to-device matching is exact, keyed on DNAC's own assigned
 product IDs** (`clients.swim.get_assigned_products` — PID, matching a
-device's `platformId` exactly), not a heuristic. An earlier version of this
-module matched by extracting shared 3+-digit "model number" tokens out of
+device's `platformId`), not a heuristic. An earlier version of this module
+matched by extracting shared 3+-digit "model number" tokens out of
 `platformId` and an image's `productNames` strings — the same class of
 device-comparison-report trick, but wrong here for a reason that trick
 doesn't have: a heuristic "looks similar" match is a false compatibility
@@ -21,6 +21,16 @@ to, not just a display nicety. DNAC's own per-image assigned-products list is
 the actual source of truth for that, so both this dashboard and the
 distribution/activation compatibility gate (`routers/swim.py`) are now built
 on the same data.
+
+**"Exactly" needs one qualifier: `platformId` isn't always a single PID.**
+A stacked switch reports it as a comma-separated list of every stack
+member's exact PID (e.g. "C9300-48UXM,C9300-48UXM") — confirmed against a
+real instance where stacked devices classified as "unknown" even though
+every member PID individually had a golden image assigned. `classify_device`
+below splits and requires every member to resolve (via
+`utils.swim_targeting.split_platform_ids`/the same all-must-match rule the
+compatibility gate uses), rather than matching the whole combined string or
+guessing from just one member.
 
 Two distinct "family" axes exist here, intentionally not conflated:
   * **product family** — DNAC's own per-image assigned product name (e.g.
@@ -73,12 +83,30 @@ def classify_device(device: dict, golden_index: dict[str, dict]) -> dict:
     """Return {"status": "compliant"|"non_compliant"|"unknown",
     "golden_version": str|None, "golden_image_name": str|None,
     "product_family": str|None}. Exact platformId lookup — no partial or
-    token-based matching."""
-    golden = golden_index.get(device.get("platformId"))
+    token-based matching.
 
-    if golden is None:
+    Stack-aware via utils.swim_targeting.split_platform_ids: a stacked
+    switch's platformId is a comma-separated list of each member's exact
+    PID, not a single value — confirmed against a real instance where
+    stacked devices were reading as "unknown" even though every member PID
+    individually had a golden image. Classification requires *every* member
+    PID to resolve in the golden index (same "all, not any" rule the
+    compatibility gate uses in routers/swim.py, via the same helper) —
+    partial coverage isn't enough to confidently call a multi-member device
+    compliant or not, so it falls back to "unknown" rather than guessing
+    from whichever member happens to match.
+    """
+    from utils.swim_targeting import split_platform_ids
+
+    ids = split_platform_ids(device.get("platformId"))
+    if not ids or not all(pid in golden_index for pid in ids):
         return {"status": "unknown", "golden_version": None, "golden_image_name": None, "product_family": None}
 
+    # All member PIDs resolved — a stack's members share one running
+    # version, and DNAC's own productIds grouping for an image commonly
+    # spans a whole compatible family together, so the first resolved
+    # entry represents the device as a whole.
+    golden = golden_index[ids[0]]
     current = device.get("softwareVersion")
     status = "compliant" if versions_equal(current, golden["version"]) else "non_compliant"
     return {

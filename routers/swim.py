@@ -168,7 +168,7 @@ async def devices_search(req: DeviceSearchRequest, session: SessionEntry = Depen
         dnac = _get_dnac(session)
         compat = await loop.run_in_executor(None, run_with_context(swim_client.get_assigned_products, dnac, req.image_uuid))
         before = len(matched)
-        matched = [d for d in matched if d.get("platformId") in compat]
+        matched = [d for d in matched if swim_targeting.is_compatible(d, compat)]
         incompatible_count = before - len(matched)
 
     total = len(matched)
@@ -217,7 +217,7 @@ async def devices_resolve_csv(req: ResolveCsvRequest, session: SessionEntry = De
         compat = await loop.run_in_executor(None, run_with_context(swim_client.get_assigned_products, dnac, req.image_uuid))
         still_matched, incompatible_devices = [], []
         for d in matched:
-            (still_matched if d.get("platformId") in compat else incompatible_devices).append(d)
+            (still_matched if swim_targeting.is_compatible(d, compat) else incompatible_devices).append(d)
         matched = still_matched
         incompatible = swim_targeting.snapshot_for_job(incompatible_devices, device_site_map)
 
@@ -299,8 +299,8 @@ async def create_job(req: CreateJobRequest, session: SessionEntry = Depends(requ
             "DNAC has no product-compatibility data for the selected image — cannot verify "
             "which devices it belongs on, refusing to create this job.",
         )
-    incompatible_count = sum(1 for d in resolved if d.get("platformId") not in compat)
-    resolved = [d for d in resolved if d.get("platformId") in compat]
+    incompatible_count = sum(1 for d in resolved if not swim_targeting.is_compatible(d, compat))
+    resolved = [d for d in resolved if swim_targeting.is_compatible(d, compat)]
     if not resolved:
         raise HTTPException(
             400,

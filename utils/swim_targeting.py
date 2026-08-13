@@ -34,7 +34,13 @@ def _q(field: str | None, val: str | None) -> bool:
 
 def list_facets(devices: list[dict], device_site_map: dict[str, str]) -> dict:
     """Distinct site codes, platform IDs, and families present in the
-    devices cache — populates the picker's filter controls."""
+    devices cache — populates the picker's filter controls.
+
+    Platform IDs are split per split_platform_ids() before being added —
+    without this, a stacked switch's raw comma-joined platformId (e.g.
+    "C9300-48UXM,C9300-24UXM") would show up as its own garbled "platform"
+    option instead of contributing its real, individually-selectable member
+    PIDs."""
     site_codes: set[str] = set()
     platforms: set[str] = set()
     families: set[str] = set()
@@ -42,8 +48,7 @@ def list_facets(devices: list[dict], device_site_map: dict[str, str]) -> dict:
         code, _source = resolve_site_code(d.get("id"), d.get("hostname"), device_site_map)
         if code:
             site_codes.add(code)
-        if d.get("platformId"):
-            platforms.add(d["platformId"])
+        platforms.update(split_platform_ids(d.get("platformId")))
         family = d.get("family") or d.get("deviceFamily")
         if family:
             families.add(family)
@@ -75,7 +80,13 @@ def search_devices(
 
     out = []
     for d in devices:
-        if platform_set and d.get("platformId") not in platform_set:
+        # "Any member matches" here (not the compatibility gate's stricter
+        # "every member must match") — this filter is for *finding* devices
+        # of a given platform, so a stack containing that PID as one of
+        # several members should surface; is_compatible() downstream still
+        # enforces the stricter all-members rule before anything is
+        # actually targeted.
+        if platform_set and not (platform_set & set(split_platform_ids(d.get("platformId")))):
             continue
         family = d.get("family") or d.get("deviceFamily")
         if family_set and family not in family_set:
@@ -167,3 +178,40 @@ def homogeneity_warning(rows: list[dict]) -> str | None:
 
 def unresolved_site_count(rows: list[dict]) -> int:
     return sum(1 for r in rows if r.get("site_code_source") == "unresolved")
+
+
+# ── Image/device compatibility (stack-aware) ────────────────────────────────
+# Shared by routers/swim.py's compatibility gate and utils/swim_compliance.py's
+# classification, so both interpret DNAC's platformId shape identically — a
+# fix here fixes it everywhere, rather than needing the same reasoning
+# re-applied at each call site.
+
+def split_platform_ids(platform_id: str | None) -> list[str]:
+    """DNAC reports a stacked switch's platformId as a comma-separated list
+    of each stack member's exact PID (e.g. "C9300-48UXM,C9300-48UXM"), not a
+    single value — confirmed from a real instance where multi-platform
+    devices (stacks) were being reported as incompatible/unmatched even when
+    every member PID was individually valid, because the whole combined
+    string was being looked up as if it were one PID. A single-platform
+    device (the common case) returns a one-element list unchanged.
+
+    Splits on comma only — a real PID can itself contain "/" (e.g.
+    "ISR4451-X/K9"), so that character can't double as a delimiter here.
+    """
+    if not platform_id:
+        return []
+    return [p.strip() for p in platform_id.split(",") if p.strip()]
+
+
+def is_compatible(device: dict, compat: dict[str, str]) -> bool:
+    """True only if EVERY platform id this device reports (every stack
+    member, for a stacked switch) is in `compat` (see
+    clients.swim.get_assigned_products). An image pushed to a stack affects
+    the whole unit at once — StackWise requires every member to run the
+    same software — so partial coverage (some members recognized, some not)
+    is not safe to call compatible; it's treated the same as "not
+    compatible at all" rather than silently proceeding on incomplete
+    information.
+    """
+    ids = split_platform_ids(device.get("platformId"))
+    return bool(ids) and all(pid in compat for pid in ids)

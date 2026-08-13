@@ -97,6 +97,48 @@ async def test_create_job_excludes_incompatible_devices_but_keeps_compatible_one
 
 
 @pytest.mark.asyncio
+async def test_create_job_stacked_switch_with_all_members_compatible(db: Path, monkeypatch):
+    """A stacked switch's platformId is a comma-separated list of every
+    member's exact PID — the gate must recognize the whole stack as
+    compatible when every member PID is, not reject it because the
+    combined string isn't itself a key in the compatibility set."""
+    stack = _device(1, "stack-1", "C9300-48UXM,C9300-48UXM")
+    _fake_devices(monkeypatch, [stack])
+    monkeypatch.setattr(
+        s.swim_client, "get_assigned_products",
+        lambda dnac, image_id: {"C9300-48UXM": "Cisco Catalyst 9300 Series Switches"},
+    )
+
+    req = s.CreateJobRequest(
+        job_type="distribution", image_uuid="c9300-golden", targeting_mode="filter",
+        criteria=s.DeviceFilterCriteria(),
+    )
+    result = await s.create_job(req, session=_SESSION)
+    assert result["total_devices"] == 1
+    assert result["incompatible_excluded_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_create_job_stacked_switch_partial_coverage_excluded(db: Path, monkeypatch):
+    """Only one stack member's PID is compatible — the whole stack must be
+    excluded, since an image push affects every member at once."""
+    stack = _device(1, "stack-1", "C9300-48UXM,C9300-24UXM")
+    _fake_devices(monkeypatch, [stack])
+    monkeypatch.setattr(
+        s.swim_client, "get_assigned_products",
+        lambda dnac, image_id: {"C9300-48UXM": "Cisco Catalyst 9300 Series Switches"},
+    )
+
+    req = s.CreateJobRequest(
+        job_type="distribution", image_uuid="c9300-golden", targeting_mode="filter",
+        criteria=s.DeviceFilterCriteria(),
+    )
+    with pytest.raises(HTTPException) as e:
+        await s.create_job(req, session=_SESSION)
+    assert e.value.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_create_job_blocks_when_all_matched_devices_are_incompatible(db: Path, monkeypatch):
     _fake_devices(monkeypatch, [_device(1, "sw-1", "ISR4451-X/K9")])
     monkeypatch.setattr(
