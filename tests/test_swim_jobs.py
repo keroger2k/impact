@@ -45,6 +45,33 @@ def test_init_schema_is_idempotent(tmp_path: Path):
     assert {"jobs", "job_devices"}.issubset(tables)
 
 
+def test_init_schema_migrates_flash_cleanup_onto_pre_existing_db(tmp_path: Path):
+    """A `jobs` table created before flash_cleanup existed must gain the
+    column via ALTER TABLE — CREATE TABLE IF NOT EXISTS silently does nothing
+    once the table is already present, which is exactly what let a real
+    deployed database miss this column and fail every create_job() call with
+    'table jobs has no column named flash_cleanup'."""
+    path = tmp_path / "old_schema.db"
+    old_schema = jobs.SCHEMA.replace(
+        "    flash_cleanup                 INTEGER NOT NULL DEFAULT 0,\n", ""
+    )
+    assert "flash_cleanup" not in old_schema
+    conn = jobs._connect_raw(path)
+    try:
+        conn.executescript(old_schema)
+        conn.commit()
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+        assert "flash_cleanup" not in cols
+    finally:
+        conn.close()
+
+    jobs.init_schema(path)
+
+    with jobs.connect(path) as conn:
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+        assert "flash_cleanup" in cols
+
+
 # ── jobs + job_devices CRUD ──────────────────────────────────────────────────
 
 def test_create_job_and_add_devices(db: Path):

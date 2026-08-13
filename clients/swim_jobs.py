@@ -120,8 +120,20 @@ def _connect_raw(path: Path):
     return conn
 
 
+def _ensure_column(conn, table: str, column: str, decl: str) -> None:
+    """Add a column to an existing table if it's missing (SQLite has no
+    ADD COLUMN IF NOT EXISTS, and CREATE TABLE IF NOT EXISTS is a no-op on a
+    table that already exists — new columns added to SCHEMA never reach an
+    already-created database without this)."""
+    cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+        logger.info("swim_jobs: added column %s.%s", table, column)
+
+
 def init_schema(path: Optional[Path] = None) -> None:
-    """Create tables and indexes if missing. Safe to call repeatedly."""
+    """Create tables and indexes if missing, and migrate any columns added
+    to SCHEMA after a database was first created. Safe to call repeatedly."""
     global _initialized
     target = path or DB_PATH
     with _init_lock:
@@ -129,6 +141,7 @@ def init_schema(path: Optional[Path] = None) -> None:
         conn = _connect_raw(target)
         try:
             conn.executescript(SCHEMA)
+            _ensure_column(conn, "jobs", "flash_cleanup", "INTEGER NOT NULL DEFAULT 0")
             conn.commit()
         finally:
             conn.close()
