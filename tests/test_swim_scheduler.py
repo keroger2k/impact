@@ -347,3 +347,110 @@ async def test_cancelled_device_is_never_submitted(db: Path, monkeypatch):
     assert events[-1]["type"] == "complete"
     counts = jobs.device_status_counts(job_id)
     assert counts["cancelled"] == 2
+
+
+# ── run_single_device: manual per-device start ──────────────────────────────
+
+async def _collect_single(job_id: int, device_row_id: int, dnac=object(),
+                           ssh_username=None, ssh_password=None) -> list[dict]:
+    events = []
+    async for event in scheduler.run_single_device(job_id, device_row_id, dnac, ssh_username, ssh_password):
+        events.append(event)
+    return events
+
+
+@pytest.mark.asyncio
+async def test_run_single_device_submits_only_the_targeted_row(db: Path, monkeypatch):
+    """Two queued devices; manually starting one must not touch the other."""
+    job_id = _make_job()
+    jobs.add_devices(job_id, [_device(1), _device(2)])
+    rows = jobs.list_job_devices(job_id)
+    target = rows[0]
+
+    submitted = []
+    monkeypatch.setattr(scheduler.swim_client, "trigger_distribution",
+                         lambda dnac, dev, img: submitted.append(dev) or "task-1")
+    monkeypatch.setattr(scheduler.swim_client, "poll_device_status",
+                         lambda dnac, dev, since: {"status": "success", "failure_reason": None})
+
+    events = await _collect_single(job_id, target["id"])
+    assert submitted == [target["device_id"]]
+    assert events[-1]["type"] == "complete"
+
+    by_id = {r["id"]: r for r in jobs.list_job_devices(job_id)}
+    assert by_id[target["id"]]["status"] == "success"
+    assert by_id[rows[1]["id"]]["status"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_run_single_device_job_completes_when_it_was_the_last_queued_row(db: Path, monkeypatch):
+    job_id = _make_job()
+    jobs.add_devices(job_id, [_device(1)])
+    row = jobs.list_job_devices(job_id)[0]
+
+    monkeypatch.setattr(scheduler.swim_client, "trigger_distribution", lambda dnac, dev, img: "task-1")
+    monkeypatch.setattr(scheduler.swim_client, "poll_device_status",
+                         lambda dnac, dev, since: {"status": "success", "failure_reason": None})
+
+    events = await _collect_single(job_id, row["id"])
+    assert events[-1]["status"] == "completed"
+    assert jobs.get_job(job_id)["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_run_single_device_job_goes_to_paused_when_others_still_queued(db: Path, monkeypatch):
+    """Unlike run_job, leftover queued/in_progress work after the call is the
+    expected case here (every other row is untouched by design) — the job
+    must land on 'paused', not stay 'running'."""
+    job_id = _make_job()
+    jobs.add_devices(job_id, [_device(1), _device(2)])
+    rows = jobs.list_job_devices(job_id)
+
+    monkeypatch.setattr(scheduler.swim_client, "trigger_distribution", lambda dnac, dev, img: "task-1")
+    monkeypatch.setattr(scheduler.swim_client, "poll_device_status",
+                         lambda dnac, dev, since: {"status": "success", "failure_reason": None})
+
+    events = await _collect_single(job_id, rows[0]["id"])
+    assert events[-1]["status"] == "paused"
+    assert jobs.get_job(job_id)["status"] == "paused"
+    assert jobs.list_job_devices(job_id, status="queued")[0]["id"] == rows[1]["id"]
+
+
+@pytest.mark.asyncio
+async def test_run_single_device_unknown_row_yields_error(db: Path):
+    job_id = _make_job()
+    jobs.add_devices(job_id, [_device(1)])
+
+    events = await _collect_single(job_id, device_row_id=999999)
+    assert events == [{"type": "error", "message": f"Device row 999999 not found on job {job_id}"}]
+
+
+@pytest.mark.asyncio
+async def test_run_single_device_refuses_a_non_queued_row(db: Path):
+    job_id = _make_job()
+    jobs.add_devices(job_id, [_device(1)])
+    row = jobs.list_job_devices(job_id)[0]
+    jobs.set_device_status(row["id"], "success", completed_at="2026-08-12T00:00:00+00:00")
+
+    events = await _collect_single(job_id, row["id"])
+    assert events == [{"type": "error", "message": "Device is not queued (current status: success)"}]
+
+
+@pytest.mark.asyncio
+async def test_run_single_device_respects_flash_cleanup(db: Path, monkeypatch):
+    job_id = _make_job(flash_cleanup=True)
+    jobs.add_devices(job_id, [_device(1)])
+    row = jobs.list_job_devices(job_id)[0]
+
+    call_order = []
+    monkeypatch.setattr(scheduler, "_run_cleanup",
+                         lambda row, u, p: call_order.append("cleanup") or
+                         _async_result({"status": "success", "error": None}))
+    monkeypatch.setattr(scheduler.swim_client, "trigger_distribution",
+                         lambda dnac, dev, img: call_order.append("trigger") or "task-1")
+    monkeypatch.setattr(scheduler.swim_client, "poll_device_status",
+                         lambda dnac, dev, since: {"status": "success", "failure_reason": None})
+
+    events = await _collect_single(job_id, row["id"], ssh_username="u", ssh_password="p")
+    assert events[-1]["status"] == "completed"
+    assert call_order == ["cleanup", "trigger"]

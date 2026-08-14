@@ -451,3 +451,54 @@ async def cancel_queued(job_id: int, session: SessionEntry = Depends(require_aut
         raise HTTPException(404, "Job not found")
     _require_job_type_enabled(job["job_type"])
     return swim_jobs.cancel_queued(job_id)
+
+
+@router.post("/jobs/{job_id}/devices/{device_row_id}/start")
+async def start_device(job_id: int, device_row_id: int, session: SessionEntry = Depends(require_auth)):
+    """Manually submit one still-queued device without running the job's
+    full concurrency-bounded batch — see utils.swim_scheduler.run_single_device
+    for why the per-site cap is bypassed here. Reuses `_running_jobs` (the
+    same claim start_job() makes) as the guard against overlapping with a
+    full batch run for this job, and against two manual single-device starts
+    racing each other: either would mean two workers able to see the same
+    row as 'queued' and both submit it.
+
+    Requires the job to have been confirmed once already via a normal Start
+    — the typed confirm phrase is this app's one point of operator consent
+    for "this job will submit device operations," and a device submitted by
+    hand is still a device submission."""
+    job = swim_jobs.get_job(job_id)
+    if job is None:
+        raise HTTPException(404, "Job not found")
+    _require_job_type_enabled(job["job_type"])
+
+    if job["confirmed_at"] is None:
+        raise HTTPException(400, "Start the job (and confirm) at least once before manually starting individual devices")
+
+    if job_id in _running_jobs:
+        raise HTTPException(409, "This job has a run active (in this tab or another) — cannot manually start an individual device while that's active")
+
+    row = next((r for r in swim_jobs.list_job_devices(job_id) if r["id"] == device_row_id), None)
+    if row is None:
+        raise HTTPException(404, "Device not found on this job")
+    if row["status"] != "queued":
+        raise HTTPException(409, f"Device is not queued (current status: {row['status']})")
+
+    _running_jobs.add(job_id)
+    dnac = _get_dnac(session)
+
+    async def generate():
+        def emit(d: dict) -> str:
+            return f"data: {json.dumps(d)}\n\n"
+        try:
+            async for event in swim_scheduler.run_single_device(
+                job_id, device_row_id, dnac, session.username, session.password
+            ):
+                yield emit(event)
+        finally:
+            _running_jobs.discard(job_id)
+
+    return StreamingResponse(
+        generate(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

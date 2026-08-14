@@ -148,3 +148,73 @@ async def test_cancel_queued_gated_per_job_type(db: Path, monkeypatch):
     with pytest.raises(HTTPException) as e:
         await s.cancel_queued(job_id, session=_SESSION)
     assert e.value.status_code == 403
+
+
+# ── start_device(): manual per-device start guards ──────────────────────────
+# Only the guard checks are exercised here — every path below raises before
+# _get_dnac(session) is ever reached, so a bare SimpleNamespace session is
+# fine (no real DNAC connection needed).
+
+@pytest.mark.asyncio
+async def test_start_device_disabled_returns_403(db: Path, monkeypatch):
+    monkeypatch.delenv("SWIM_DISTRIBUTION_ENABLED", raising=False)
+    job_id = _create_draft_job("distribution")
+    row_id = jobs.list_job_devices(job_id)[0]["id"]
+    with pytest.raises(HTTPException) as e:
+        await s.start_device(job_id, row_id, session=_SESSION)
+    assert e.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_start_device_missing_job_returns_404(monkeypatch):
+    monkeypatch.setenv("SWIM_DISTRIBUTION_ENABLED", "true")
+    with pytest.raises(HTTPException) as e:
+        await s.start_device(999999, 1, session=_SESSION)
+    assert e.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_start_device_requires_job_confirmed_first(db: Path, monkeypatch):
+    monkeypatch.setenv("SWIM_DISTRIBUTION_ENABLED", "true")
+    job_id = _create_draft_job("distribution")  # never confirmed via start_job
+    row_id = jobs.list_job_devices(job_id)[0]["id"]
+    with pytest.raises(HTTPException) as e:
+        await s.start_device(job_id, row_id, session=_SESSION)
+    assert e.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_start_device_blocked_while_job_running(db: Path, monkeypatch):
+    monkeypatch.setenv("SWIM_DISTRIBUTION_ENABLED", "true")
+    job_id = _create_draft_job("distribution")
+    jobs.confirm_job(job_id, "kyle.rogers")
+    row_id = jobs.list_job_devices(job_id)[0]["id"]
+    s._running_jobs.add(job_id)
+    try:
+        with pytest.raises(HTTPException) as e:
+            await s.start_device(job_id, row_id, session=_SESSION)
+        assert e.value.status_code == 409
+    finally:
+        s._running_jobs.discard(job_id)
+
+
+@pytest.mark.asyncio
+async def test_start_device_missing_row_returns_404(db: Path, monkeypatch):
+    monkeypatch.setenv("SWIM_DISTRIBUTION_ENABLED", "true")
+    job_id = _create_draft_job("distribution")
+    jobs.confirm_job(job_id, "kyle.rogers")
+    with pytest.raises(HTTPException) as e:
+        await s.start_device(job_id, 999999, session=_SESSION)
+    assert e.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_start_device_non_queued_row_returns_409(db: Path, monkeypatch):
+    monkeypatch.setenv("SWIM_DISTRIBUTION_ENABLED", "true")
+    job_id = _create_draft_job("distribution")
+    jobs.confirm_job(job_id, "kyle.rogers")
+    row = jobs.list_job_devices(job_id)[0]
+    jobs.set_device_status(row["id"], "success", completed_at="2026-08-12T00:00:00+00:00")
+    with pytest.raises(HTTPException) as e:
+        await s.start_device(job_id, row["id"], session=_SESSION)
+    assert e.value.status_code == 409

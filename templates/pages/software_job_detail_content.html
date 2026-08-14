@@ -42,6 +42,7 @@
                   <th>Site</th>
                   <th>Status</th>
                   <th>Detail</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody id="jd-devices-body"></tbody>
@@ -125,6 +126,7 @@
   }
 
   let currentJob = null;
+  let deviceOpInFlight = false;
 
   function statTile(label, value, colorClass) {
     const col = document.createElement('div');
@@ -179,13 +181,21 @@
     if (!rows.length) {
       const tr = document.createElement('tr');
       const td = document.createElement('td');
-      td.colSpan = 5;
+      td.colSpan = 6;
       td.className = 'text-muted small';
       td.textContent = 'No devices.';
       tr.appendChild(td);
       body.appendChild(tr);
       return;
     }
+    // A queued row's manual Start button only makes sense once the job has
+    // been confirmed at least once (the typed phrase is this app's one
+    // consent point for submitting device operations) and while nothing
+    // else is actively running for this job — see routers/swim.py's
+    // start_device, which enforces the same two conditions server-side.
+    const canManualStart = !!(currentJob && currentJob.confirmed_at && !currentJob.is_running_here);
+    const manualStartTitle = !currentJob || !currentJob.confirmed_at
+      ? 'Start the job once first' : (currentJob.is_running_here ? 'A run is already active for this job' : 'Manually start this device now');
     rows.forEach(d => {
       const tr = document.createElement('tr');
       [d.hostname, d.management_ip, d.site_code].forEach(v => {
@@ -200,6 +210,18 @@
       detailTd.className = 'text-muted small';
       detailTd.textContent = d.error_message || '';
       tr.appendChild(detailTd);
+      const actionTd = document.createElement('td');
+      if (d.status === 'queued') {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn btn-outline-secondary btn-sm py-0 px-2';
+        btn.textContent = 'Start';
+        btn.disabled = !canManualStart || deviceOpInFlight;
+        btn.title = manualStartTitle;
+        btn.addEventListener('click', () => runSingleDevice(d.id, d.hostname));
+        actionTd.appendChild(btn);
+      }
+      tr.appendChild(actionTd);
       body.appendChild(tr);
     });
     if (window.ImpactDataTable) window.ImpactDataTable.init(document.getElementById('jd-devices-body').closest('table').parentElement);
@@ -230,12 +252,54 @@
           ' · Created by ' + data.created_by + ' at ' + (data.created_at || '').replace('T', ' ').slice(0, 16);
         renderTiles(data.device_counts || {});
         document.getElementById('jd-start-label').textContent = data.confirmed_at ? 'Resume' : 'Start';
+        document.getElementById('jd-start-btn').disabled = !!data.is_running_here;
         return data;
       });
   }
 
   function activeDeviceCount(counts) {
     return Object.entries(counts || {}).filter(([k]) => k !== 'cancelled').reduce((a, [, v]) => a + v, 0);
+  }
+
+  // Shared SSE-body reader for both a full job run and a manual
+  // single-device start — both endpoints emit the same event shapes
+  // (log/device_update/error/complete), only `completeLabel` differs.
+  function consumeEventStream(response, completeLabel) {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffered = '';
+
+    function process({ done, value }) {
+      if (done) return;
+      buffered += decoder.decode(value, { stream: true });
+      const parts = buffered.split('\n\n');
+      buffered = parts.pop();
+      parts.forEach(part => {
+        part.split('\n').forEach(line => {
+          if (!line.startsWith('data: ')) return;
+          let data;
+          try { data = JSON.parse(line.substring(6)); } catch (e) { return; }
+          if (data.type === 'log') {
+            appendLog(data.message, data.level);
+          } else if (data.type === 'device_update') {
+            appendLog((data.hostname || data.device_id) + ': ' + data.status + ' — ' + (data.message || ''),
+                       data.status === 'failed' ? 'error' : (data.status === 'success' ? 'success' : 'info'));
+            // Keep the stat tiles and device table live during a run, not
+            // just at the end — each event is a cheap indexed-count read.
+            loadJob();
+            loadDevices();
+          } else if (data.type === 'error') {
+            appendLog(data.message, 'error');
+          } else if (data.type === 'complete') {
+            appendLog(completeLabel + ' — job status: ' + data.status, 'success');
+            loadJob();
+            loadDevices();
+          }
+        });
+      });
+      return reader.read().then(process);
+    }
+    return reader.read().then(process);
   }
 
   function runStart(confirmPhrase) {
@@ -250,41 +314,7 @@
       if (!response.ok) {
         return response.json().then(d => { throw new Error(d.detail || ('Request failed (HTTP ' + response.status + ')')); });
       }
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffered = '';
-
-      function process({ done, value }) {
-        if (done) return finish();
-        buffered += decoder.decode(value, { stream: true });
-        const parts = buffered.split('\n\n');
-        buffered = parts.pop();
-        parts.forEach(part => {
-          part.split('\n').forEach(line => {
-            if (!line.startsWith('data: ')) return;
-            let data;
-            try { data = JSON.parse(line.substring(6)); } catch (e) { return; }
-            if (data.type === 'log') {
-              appendLog(data.message, data.level);
-            } else if (data.type === 'device_update') {
-              appendLog((data.hostname || data.device_id) + ': ' + data.status + ' — ' + (data.message || ''),
-                         data.status === 'failed' ? 'error' : (data.status === 'success' ? 'success' : 'info'));
-              // Keep the stat tiles and device table live during a run, not
-              // just at the end — each event is a cheap indexed-count read.
-              loadJob();
-              loadDevices();
-            } else if (data.type === 'error') {
-              appendLog(data.message, 'error');
-            } else if (data.type === 'complete') {
-              appendLog('Run finished — job status: ' + data.status, 'success');
-              loadJob();
-              loadDevices();
-            }
-          });
-        });
-        return reader.read().then(process);
-      }
-      return reader.read().then(process);
+      return consumeEventStream(response, 'Run finished');
     }).catch(err => {
       appendLog(err.message, 'error');
       showError(err.message);
@@ -295,6 +325,33 @@
       loadJob();
       loadDevices();
     }
+  }
+
+  function runSingleDevice(deviceRowId, hostname) {
+    if (deviceOpInFlight) return;
+    if (jobType === 'activation') {
+      if (!confirm('Manually start ' + (hostname || 'this device') + ' now? This will reboot the device once activation completes.')) return;
+    }
+    document.getElementById('jd-error').classList.add('d-none');
+    deviceOpInFlight = true;
+    loadDevices(); // re-render so every row's Start button disables immediately
+
+    fetch('/api/swim/jobs/' + jobId + '/devices/' + deviceRowId + '/start', {
+      method: 'POST',
+      headers: csrfHeaders(),
+    }).then(response => {
+      if (!response.ok) {
+        return response.json().then(d => { throw new Error(d.detail || ('Request failed (HTTP ' + response.status + ')')); });
+      }
+      return consumeEventStream(response, 'Manual device start finished');
+    }).catch(err => {
+      appendLog(err.message, 'error');
+      showError(err.message);
+    }).finally(() => {
+      deviceOpInFlight = false;
+      loadJob();
+      loadDevices();
+    });
   }
 
   document.getElementById('jd-start-btn').addEventListener('click', () => {
@@ -334,7 +391,6 @@
     }).catch(err => showError(err.message));
   });
 
-  loadJob();
-  loadDevices();
+  loadJob().then(loadDevices);
 })();
 </script>

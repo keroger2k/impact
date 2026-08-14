@@ -372,3 +372,106 @@ async def run_job(job_id: int, dnac, ssh_username: str | None = None, ssh_passwo
         job_now = swim_jobs.get_job(job_id)
         if job_now and job_now["status"] == "running":
             swim_jobs.set_job_status(job_id, "paused")
+
+
+async def run_single_device(
+    job_id: int, device_row_id: int, dnac,
+    ssh_username: str | None = None, ssh_password: str | None = None,
+):
+    """Manually submit exactly one still-queued device row, independent of a
+    full run_job() pass — for nudging one specific device (e.g. the couple
+    left behind after a job paused mid-run) without resuming the job's whole
+    concurrency-bounded batch, which would also re-submit every other
+    still-queued device.
+
+    Deliberately bypasses the per-site semaphore entirely (a fresh
+    `asyncio.Semaphore(1)` scoped to just this call): site_concurrency
+    exists to bound how many devices *at one site* are simultaneously
+    mid-distribution over that site's shared WAN circuit, and a single
+    hand-triggered device can't cause that problem on its own. Still goes
+    through GLOBAL_SEM for each individual DNAC call, and the same
+    flash-cleanup step as a normal run — this is "run _device_worker for one
+    row right now," not a different execution path.
+
+    Callers (routers/swim.py) own the policy guards — job already confirmed
+    once, and no full batch run currently active for this job in this
+    process — since those aren't this function's concern. The one race this
+    function does re-check itself is the device row's own status, matching
+    _device_worker's own re-check: a concurrent cancel-queued call is
+    possible right up until submission.
+
+    Unlike run_job(), finding queued/submitting/in_progress work left after
+    this single device finishes is the *expected* case (every other
+    still-queued row is untouched), not a defensive fallback — so the job
+    goes back to 'paused' rather than staying 'running'.
+    """
+    job = swim_jobs.get_job(job_id)
+    if job is None:
+        yield {"type": "error", "message": f"Job {job_id} not found"}
+        return
+
+    row = next((r for r in swim_jobs.list_job_devices(job_id) if r["id"] == device_row_id), None)
+    if row is None:
+        yield {"type": "error", "message": f"Device row {device_row_id} not found on job {job_id}"}
+        return
+    if row["status"] != "queued":
+        yield {"type": "error", "message": f"Device is not queued (current status: {row['status']})"}
+        return
+
+    yield {"type": "log", "level": "info", "message":
+           f"Manually starting {row.get('hostname') or row['device_id']}"}
+
+    swim_jobs.set_job_status(job_id, "running", started_at=job.get("started_at") or _now_iso())
+
+    queue: asyncio.Queue = asyncio.Queue()
+    sentinel = object()
+    solo_sem = asyncio.Semaphore(1)
+
+    async def worker():
+        try:
+            await _device_worker(
+                dnac, job, row, solo_sem, queue, False,
+                ssh_username=ssh_username, ssh_password=ssh_password,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"SWIM manual start crashed for device {row.get('device_id')}: {e}")
+            swim_jobs.set_device_status(row["id"], "failed", error_message=str(e)[:500], completed_at=_now_iso())
+            await queue.put({
+                "type": "device_update", "device_row_id": row["id"], "device_id": row["device_id"],
+                "hostname": row.get("hostname"), "site_code": row.get("site_code"),
+                "status": "failed", "message": f"Internal error: {str(e)[:200]}",
+            })
+        finally:
+            await queue.put(sentinel)
+
+    task = asyncio.create_task(worker())
+
+    try:
+        while True:
+            msg = await queue.get()
+            if msg is sentinel:
+                break
+            yield msg
+
+        counts = swim_jobs.device_status_counts(job_id)
+        remaining = counts["queued"] + counts["submitting"] + counts["in_progress"]
+        if remaining == 0:
+            final_status = "completed" if counts["failed"] == 0 else "completed_with_errors"
+            swim_jobs.set_job_status(job_id, final_status, completed_at=_now_iso())
+        else:
+            final_status = "paused"
+            swim_jobs.set_job_status(job_id, final_status)
+        yield {"type": "complete", "job_id": job_id, "status": final_status, "counts": counts}
+    finally:
+        # Same "stop watching either way" posture as run_job()'s finally —
+        # if the SSE connection dropped before the block above ran, make
+        # sure the solo worker task is actually stopped and the job doesn't
+        # get stuck reporting 'running' with nothing behind it.
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        job_now = swim_jobs.get_job(job_id)
+        if job_now and job_now["status"] == "running":
+            swim_jobs.set_job_status(job_id, "paused")
