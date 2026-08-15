@@ -97,6 +97,41 @@ async def test_create_job_excludes_incompatible_devices_but_keeps_compatible_one
 
 
 @pytest.mark.asyncio
+async def test_create_job_populates_site_limits(db: Path, monkeypatch):
+    """create_job() must resolve and persist per-site circuit-derived
+    concurrency (utils/swim_site_circuit.py) before returning — both as
+    job_site_limits rows and in the response payload. SOLARWINDS_URL is
+    unset in the test environment, so any real site would come back
+    'solarwinds-unreachable'; the hostnames here ('sw-1'/'sw-3') don't match
+    the site-code convention at all, so resolve_site_code() gives them
+    'UNKNOWN' and the lookup short-circuits to 'unresolved-site' without a
+    network call — either way, this test only cares that the plumbing runs
+    and the result is persisted/returned, not which source wins."""
+    devices = [_device(1, "sw-1", "C9300-48U"), _device(3, "sw-3", "C9300-48U")]
+    _fake_devices(monkeypatch, devices)
+    monkeypatch.setattr(
+        s.swim_client, "get_assigned_products",
+        lambda dnac, image_id: {"C9300-48U": "Cisco Catalyst 9300 Series Switches"},
+    )
+
+    req = s.CreateJobRequest(
+        job_type="distribution", image_uuid="c9300-golden", targeting_mode="filter",
+        criteria=s.DeviceFilterCriteria(),
+    )
+    result = await s.create_job(req, session=_SESSION)
+
+    assert "site_limits" in result
+    assert len(result["site_limits"]) >= 1
+    for row in result["site_limits"]:
+        assert row["source"] in jobs.SITE_LIMIT_SOURCES
+        assert row["concurrency"] >= 1
+        assert "effective_concurrency" in row
+
+    persisted = jobs.list_site_limits(result["job"]["id"])
+    assert len(persisted) == len(result["site_limits"])
+
+
+@pytest.mark.asyncio
 async def test_create_job_stacked_switch_with_all_members_compatible(db: Path, monkeypatch):
     """A stacked switch's platformId is a comma-separated list of every
     member's exact PID — the gate must recognize the whole stack as

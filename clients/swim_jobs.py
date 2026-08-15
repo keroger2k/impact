@@ -10,15 +10,21 @@ as ``clients/ip_registry.py``: a ``SCHEMA`` string run via
 contextmanager with commit-on-success/rollback-on-error, status-vocabulary
 tuples colocated with the schema, and narrow ``set_*``-style update helpers.
 
-Two tables:
-  * ``jobs``        — one row per distribution/activation job (image, target
-                       criteria, concurrency settings, lifecycle status).
+Three tables:
+  * ``jobs``            — one row per distribution/activation job (image,
+                       target criteria, concurrency settings, lifecycle status).
   * ``job_devices``  — one row per device targeted by a job, tracking its own
                        submit/poll lifecycle independently so a resumed job
                        can tell exactly what still needs doing (see
                        ``utils/swim_scheduler.py``, which is the only writer
                        of device *status* transitions — this module just
                        exposes the primitives it composes them from).
+  * ``job_site_limits`` — one row per distinct site targeted by a job, holding
+                       the per-site concurrency derived from that site's
+                       SolarWinds-reported WAN circuit size (see
+                       ``utils/swim_site_circuit.py``). Written once at job
+                       creation, read by ``utils/swim_scheduler.py`` to size
+                       each site's semaphore.
 
 Nothing here talks to DNAC. ``clients/swim.py`` owns the DNAC-facing calls;
 ``utils/swim_scheduler.py`` is what ties the two together.
@@ -47,6 +53,12 @@ JOB_TYPES = ("distribution", "activation")
 JOB_STATUSES = ("draft", "running", "paused", "completed", "completed_with_errors", "cancelled")
 DEVICE_STATUSES = ("queued", "submitting", "in_progress", "success", "failed", "cancelled")
 TARGETING_MODES = ("filter", "site_family", "csv")
+
+# Where a job_site_limits row's concurrency value came from — see
+# utils/swim_site_circuit.py. Anything other than 'solarwinds' means the
+# circuit-derived value couldn't be established and concurrency was set to
+# the unconditional fallback of 1.
+SITE_LIMIT_SOURCES = ("solarwinds", "solarwinds-unreachable", "no-circuit-data", "unresolved-site")
 
 # Device-row states a resumed job must feed back into the scheduler as "still
 # needs work" — see utils/swim_scheduler.py's resume logic.
@@ -102,6 +114,17 @@ CREATE TABLE IF NOT EXISTS job_devices (
     UNIQUE (job_id, device_id)
 );
 
+CREATE TABLE IF NOT EXISTS job_site_limits (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id         INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    site_code      TEXT    NOT NULL,
+    circuit_mbps   REAL,
+    concurrency    INTEGER NOT NULL,
+    source         TEXT    NOT NULL,
+    resolved_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (job_id, site_code)
+);
+
 CREATE INDEX IF NOT EXISTS idx_jobs_status         ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_type           ON jobs(job_type);
 CREATE INDEX IF NOT EXISTS idx_job_devices_job     ON job_devices(job_id);
@@ -109,6 +132,7 @@ CREATE INDEX IF NOT EXISTS idx_job_devices_status  ON job_devices(job_id, status
 -- Every semaphore-scheduling tick and every resume needs "how many devices at
 -- site X are currently submitting/in_progress for job Y" fast.
 CREATE INDEX IF NOT EXISTS idx_job_devices_site    ON job_devices(job_id, site_code, status);
+CREATE INDEX IF NOT EXISTS idx_job_site_limits_job ON job_site_limits(job_id);
 """
 
 
@@ -408,3 +432,45 @@ def cancel_queued(job_id: int) -> dict:
             "already_in_flight_count": in_flight,
             "already_terminal_count": terminal,
         }
+
+
+# ── Job site limits ─────────────────────────────────────────────────────────
+
+def set_site_limits(job_id: int, limits: dict[str, dict]) -> None:
+    """Bulk-write per-site concurrency limits for a job, one transaction.
+
+    `limits` maps site_code -> {"concurrency": int, "circuit_mbps": float |
+    None, "source": str} — the exact shape utils.swim_site_circuit.
+    resolve_site_concurrency() returns. Called once, at job-creation time
+    (routers/swim.py::create_job), right after add_devices(). Upserts keyed
+    on (job_id, site_code) so a second call (there shouldn't be one, but
+    this keeps the primitive honest) updates rather than duplicates.
+    """
+    with connect() as conn:
+        for site_code, limit in limits.items():
+            source = limit["source"]
+            if source not in SITE_LIMIT_SOURCES:
+                raise ValueError(f"invalid site limit source: {source!r}")
+            conn.execute(
+                """
+                INSERT INTO job_site_limits (job_id, site_code, circuit_mbps, concurrency, source)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT (job_id, site_code) DO UPDATE SET
+                    circuit_mbps = excluded.circuit_mbps,
+                    concurrency = excluded.concurrency,
+                    source = excluded.source,
+                    resolved_at = datetime('now')
+                """,
+                (job_id, site_code, limit.get("circuit_mbps"), limit["concurrency"], source),
+            )
+
+
+def list_site_limits(job_id: int) -> list[dict]:
+    """Every job_site_limits row for a job, ordered by site_code. Read by
+    utils.swim_scheduler.run_job() (loaded once into a dict at the top of a
+    run) and by routers/swim.py (job-detail/create response, for display)."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM job_site_limits WHERE job_id = ? ORDER BY site_code", (job_id,)
+        ).fetchall()
+        return [_row(r) for r in rows]

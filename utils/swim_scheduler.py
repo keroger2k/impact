@@ -16,8 +16,12 @@ correctly with no double-submission.
 Two concurrency levels, held for **different durations** — this is the part
 that's easy to get backwards and defeats the whole feature if you do:
 
-  * A **per-site** `asyncio.Semaphore` (capacity = `jobs.site_concurrency`,
-    fresh per `run_job()` call, never shared across jobs — see the module
+  * A **per-site** `asyncio.Semaphore` (capacity = that site's circuit-derived
+    concurrency from `clients.swim_jobs.list_site_limits()` — see
+    `utils/swim_site_circuit.py` — clamped to never exceed the operator's
+    `jobs.site_concurrency` ceiling; falls back to the flat ceiling itself for
+    jobs created before that feature existed, see `legacy_job` below; fresh
+    per `run_job()` call, never shared across jobs — see the module
     docstring's "known v1 limitation" note below) is held for a device's
     **entire lifecycle**, submission through terminal DNAC status. The
     WAN-saturation risk is the download itself, which happens over the whole
@@ -303,13 +307,32 @@ async def run_job(job_id: int, dnac, ssh_username: str | None = None, ssh_passwo
         yield {"type": "complete", "job_id": job_id, "status": final_status, "counts": counts}
         return
 
-    site_concurrency = min(max(1, job.get("site_concurrency") or 3), _SITE_CONCURRENCY_CEILING)
+    # Per-site concurrency is normally sized per site from that site's
+    # SolarWinds circuit speed (utils/swim_site_circuit.py), snapshotted into
+    # job_site_limits at job-creation time — see that module's docstring.
+    # `jobs.site_concurrency` is the operator's ceiling, never a floor: a
+    # circuit-derived value never gets to exceed it.
+    #
+    # `legacy_job` covers jobs created before this feature shipped (still
+    # draft/paused with zero job_site_limits rows at deploy time) — without
+    # this branch every one of their sites would silently drop from their
+    # original flat site_concurrency to 1, a safe direction but a surprising
+    # regression for in-flight jobs. It's distinct from "some sites present,
+    # this one missing" below, which still defends to 1 for just that site.
+    site_limits = {r["site_code"]: r for r in swim_jobs.list_site_limits(job_id)}
+    legacy_job = not site_limits
+    operator_ceiling = min(max(1, job.get("site_concurrency") or 3), _SITE_CONCURRENCY_CEILING)
     site_sems: dict[str, asyncio.Semaphore] = {}
 
     def sem_for(site_code: str) -> asyncio.Semaphore:
         key = site_code or "UNKNOWN"
         if key not in site_sems:
-            site_sems[key] = asyncio.Semaphore(site_concurrency)
+            if legacy_job:
+                capacity = operator_ceiling
+            else:
+                row = site_limits.get(key)
+                capacity = min(max(1, row["concurrency"] if row else 1), operator_ceiling)
+            site_sems[key] = asyncio.Semaphore(capacity)
         return site_sems[key]
 
     swim_jobs.set_job_status(job_id, "running", started_at=job.get("started_at") or _now_iso())

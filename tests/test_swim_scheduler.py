@@ -254,6 +254,147 @@ async def test_global_semaphore_does_not_span_device_lifecycle(db: Path, monkeyp
     assert elapsed < 0.20, f"devices did not overlap their poll sleeps (elapsed={elapsed:.3f}s) — global semaphore held too long"
 
 
+# ── Circuit-derived per-site concurrency (utils/swim_site_circuit.py) ──────
+
+@pytest.mark.asyncio
+async def test_per_site_limits_apply_independently_across_sites(db: Path, monkeypatch):
+    """Two sites in one job: K001 gets a stored concurrency of 1 (serialize),
+    K002 gets 3 (fully parallel). Each site has 3 devices needing 2 poll
+    rounds. If per-site limits are applied correctly, K001's devices
+    serialize (~3 * 2 * interval) while K002's run all at once
+    (~1 * 2 * interval) *concurrently with K001* — so total job elapsed
+    tracks K001's slower time, not the sum of both sites (which would mean
+    sites are serializing against each other, a different bug)."""
+    # Wider interval than the module-default fast-polling fixture, so the
+    # ~0.06s of fixed asyncio/executor-dispatch overhead observed on this
+    # machine doesn't eat into the (fairly narrow) gap between "correct"
+    # and "sites serialized against each other" (a difference of exactly
+    # one interval) at the default 0.05s granularity.
+    monkeypatch.setattr(scheduler, "SWIM_POLL_INTERVAL", 0.1)
+
+    job_id = _make_job(site_concurrency=5)  # ceiling high enough to never clamp here
+    jobs.add_devices(job_id, [_device(i, site="K001") for i in range(3)] + [_device(i, site="K002") for i in range(3, 6)])
+    jobs.set_site_limits(job_id, {
+        "K001": {"concurrency": 1, "circuit_mbps": 5.0, "source": "solarwinds"},
+        "K002": {"concurrency": 3, "circuit_mbps": 200.0, "source": "solarwinds"},
+    })
+
+    monkeypatch.setattr(scheduler.swim_client, "trigger_distribution", lambda dnac, dev, img: "task")
+
+    poll_counts: dict[str, int] = {}
+
+    def fake_poll(dnac, device_id, since):
+        poll_counts[device_id] = poll_counts.get(device_id, 0) + 1
+        if poll_counts[device_id] < 2:
+            return {"status": "in_progress", "failure_reason": None}
+        return {"status": "success", "failure_reason": None}
+
+    monkeypatch.setattr(scheduler.swim_client, "poll_device_status", fake_poll)
+
+    start = time.monotonic()
+    events = await _collect(job_id)
+    elapsed = time.monotonic() - start
+
+    assert events[-1]["status"] == "completed"
+    # K001 alone: ~3*2*0.1=0.60s. Sites serializing against each other (bug)
+    # would add K002's ~0.20s on top -> ~0.80s. K001's limit being ignored
+    # (bug, e.g. falling back to the ceiling of 5) would drop this to ~0.20s.
+    assert 0.45 < elapsed < 0.75, f"elapsed={elapsed:.3f}s — per-site limits not isolated/applied correctly"
+
+
+@pytest.mark.asyncio
+async def test_operator_ceiling_clamps_a_high_stored_concurrency(db: Path, monkeypatch):
+    """job_site_limits stores concurrency=8 for the site, but the job's own
+    site_concurrency (operator ceiling) is 1 — the ceiling must win. 3
+    devices, 2 poll rounds each: clamped to 1 -> serialized (~0.30s);
+    unclamped (bug, using the raw stored 8) -> fully parallel (~0.10s)."""
+    job_id = _make_job(site_concurrency=1)
+    jobs.add_devices(job_id, [_device(1), _device(2), _device(3)])
+    jobs.set_site_limits(job_id, {"K001": {"concurrency": 8, "circuit_mbps": 500.0, "source": "solarwinds"}})
+
+    monkeypatch.setattr(scheduler.swim_client, "trigger_distribution", lambda dnac, dev, img: "task")
+
+    poll_counts: dict[str, int] = {}
+
+    def fake_poll(dnac, device_id, since):
+        poll_counts[device_id] = poll_counts.get(device_id, 0) + 1
+        if poll_counts[device_id] < 2:
+            return {"status": "in_progress", "failure_reason": None}
+        return {"status": "success", "failure_reason": None}
+
+    monkeypatch.setattr(scheduler.swim_client, "poll_device_status", fake_poll)
+
+    start = time.monotonic()
+    events = await _collect(job_id)
+    elapsed = time.monotonic() - start
+
+    assert events[-1]["status"] == "completed"
+    assert elapsed > 0.20, f"elapsed={elapsed:.3f}s — operator ceiling did not clamp the stored concurrency"
+
+
+@pytest.mark.asyncio
+async def test_site_missing_from_populated_limits_map_defaults_to_one(db: Path, monkeypatch):
+    """job_site_limits has a row for a different site ('OTHER'), so this job
+    is *not* a legacy_job (the map is non-empty) — but the actual target
+    site ('K001') has no row of its own. That site must default to
+    concurrency 1, not fall back to the job's flat/ceiling site_concurrency
+    (which is deliberately set high here to make the two cases
+    distinguishable)."""
+    job_id = _make_job(site_concurrency=5)
+    jobs.add_devices(job_id, [_device(1), _device(2), _device(3)])
+    jobs.set_site_limits(job_id, {"OTHER": {"concurrency": 5, "circuit_mbps": 200.0, "source": "solarwinds"}})
+
+    monkeypatch.setattr(scheduler.swim_client, "trigger_distribution", lambda dnac, dev, img: "task")
+
+    poll_counts: dict[str, int] = {}
+
+    def fake_poll(dnac, device_id, since):
+        poll_counts[device_id] = poll_counts.get(device_id, 0) + 1
+        if poll_counts[device_id] < 2:
+            return {"status": "in_progress", "failure_reason": None}
+        return {"status": "success", "failure_reason": None}
+
+    monkeypatch.setattr(scheduler.swim_client, "poll_device_status", fake_poll)
+
+    start = time.monotonic()
+    events = await _collect(job_id)
+    elapsed = time.monotonic() - start
+
+    assert events[-1]["status"] == "completed"
+    assert elapsed > 0.20, f"elapsed={elapsed:.3f}s — a site missing from a populated limits map should default to 1"
+
+
+@pytest.mark.asyncio
+async def test_legacy_job_with_no_site_limits_rows_uses_flat_ceiling(db: Path, monkeypatch):
+    """A job with zero job_site_limits rows at all (pre-feature job, or one
+    where set_site_limits() was simply never called) must behave exactly as
+    it did before this feature — every site gets the flat operator
+    site_concurrency, not a silent drop to 1."""
+    job_id = _make_job(site_concurrency=3)
+    jobs.add_devices(job_id, [_device(1), _device(2), _device(3)])
+    assert jobs.list_site_limits(job_id) == []  # confirm no rows -> legacy_job path
+
+    monkeypatch.setattr(scheduler.swim_client, "trigger_distribution", lambda dnac, dev, img: "task")
+
+    poll_counts: dict[str, int] = {}
+
+    def fake_poll(dnac, device_id, since):
+        poll_counts[device_id] = poll_counts.get(device_id, 0) + 1
+        if poll_counts[device_id] < 2:
+            return {"status": "in_progress", "failure_reason": None}
+        return {"status": "success", "failure_reason": None}
+
+    monkeypatch.setattr(scheduler.swim_client, "poll_device_status", fake_poll)
+
+    start = time.monotonic()
+    events = await _collect(job_id)
+    elapsed = time.monotonic() - start
+
+    assert events[-1]["status"] == "completed"
+    # site_concurrency=3 for 3 devices -> fully parallel, ~1*2*0.05=0.10s.
+    assert elapsed < 0.20, f"elapsed={elapsed:.3f}s — legacy job did not use its flat site_concurrency"
+
+
 # ── Property 3: resume semantics ────────────────────────────────────────────
 
 @pytest.mark.asyncio

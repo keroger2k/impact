@@ -107,12 +107,16 @@
           <!-- ── Batching ─────────────────────────────────────────── -->
           <h6 class="small fw-bold text-uppercase text-muted mb-2 mt-4" style="letter-spacing:.05em">3. Per-Site Throttling</h6>
           <p class="text-muted small">
-            The circuit-overload control: only this many devices at any one site run at once. Other
-            sites proceed in parallel.
+            The circuit-overload control: only this many devices at any one site run at once, and
+            other sites proceed in parallel. Each site's actual concurrency is sized automatically
+            from its SolarWinds-reported WAN circuit speed once you create the job (see the
+            per-site table on the job's own page) — this field is a <strong>ceiling</strong> that
+            value never exceeds, not a flat setting. A site SolarWinds can't reach or has no circuit
+            data for always falls back to 1 device at a time regardless of this ceiling.
           </p>
           <div class="row g-2 mb-4">
             <div class="col-auto">
-              <label class="form-label small text-muted mb-1">Devices in flight per site</label>
+              <label class="form-label small text-muted mb-1">Max devices in flight per site</label>
               <input type="number" class="form-control form-control-sm" id="jn-site-concurrency" value="3" min="1" max="10" style="width:100px">
             </div>
           </div>
@@ -410,6 +414,12 @@
       let msg = 'Job created with ' + data.total_devices + ' device(s).';
       if (data.homogeneity_warning) msg += '\n' + data.homogeneity_warning;
       if (data.unresolved_site_count) msg += '\n' + data.unresolved_site_count + ' device(s) have no resolvable site code.';
+      const siteLimits = data.site_limits || [];
+      const fallbackSites = siteLimits.filter(function (r) { return r.source !== 'solarwinds'; });
+      if (fallbackSites.length) {
+        msg += '\n' + fallbackSites.length + ' of ' + siteLimits.length
+          + ' site(s) fell back to 1 device at a time (SolarWinds unreachable or no circuit data) — see the per-site table on the job page.';
+      }
       if (window.showToast) window.showToast(msg, 'success');
       const jobId = data.job.id;
       htmx.ajax('GET', '/software/' + jobType + '/' + jobId, { target: '#main-content', swap: 'innerHTML', pushUrl: true });

@@ -42,7 +42,7 @@ def test_init_schema_is_idempotent(tmp_path: Path):
         tables = {r[0] for r in conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
         ).fetchall()}
-    assert {"jobs", "job_devices"}.issubset(tables)
+    assert {"jobs", "job_devices", "job_site_limits"}.issubset(tables)
 
 
 def test_init_schema_migrates_flash_cleanup_onto_pre_existing_db(tmp_path: Path):
@@ -70,6 +70,30 @@ def test_init_schema_migrates_flash_cleanup_onto_pre_existing_db(tmp_path: Path)
     with jobs.connect(path) as conn:
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(jobs)").fetchall()}
         assert "flash_cleanup" in cols
+
+
+def test_init_schema_adds_job_site_limits_table_to_pre_existing_db(tmp_path: Path):
+    """A database created before this feature existed has no job_site_limits
+    table at all — CREATE TABLE IF NOT EXISTS in the normal init_schema()
+    path must add it (unlike flash_cleanup's ALTER TABLE column case, this is
+    a whole new table, so no _ensure_column() migration is needed)."""
+    path = tmp_path / "pre_site_limits.db"
+    old_schema = jobs.SCHEMA[: jobs.SCHEMA.index("CREATE TABLE IF NOT EXISTS job_site_limits")]
+    assert "job_site_limits" not in old_schema
+    conn = jobs._connect_raw(path)
+    try:
+        conn.executescript(old_schema)
+        conn.commit()
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        assert "job_site_limits" not in tables
+    finally:
+        conn.close()
+
+    jobs.init_schema(path)
+
+    with jobs.connect(path) as conn:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        assert "job_site_limits" in tables
 
 
 # ── jobs + job_devices CRUD ──────────────────────────────────────────────────
@@ -224,3 +248,53 @@ def test_get_device_status_single_column_read(db: Path):
     jobs.set_device_status(row_id, "cancelled")
     assert jobs.get_device_status(row_id) == "cancelled"
     assert jobs.get_device_status(999999) is None
+
+
+# ── job_site_limits CRUD ─────────────────────────────────────────────────────
+
+def _new_job(db: Path, **overrides) -> int:
+    params = dict(
+        job_type="distribution", image_uuid="i", image_name=None, image_version=None,
+        platform_id=None, site_concurrency=3, targeting_mode="filter",
+        targeting_criteria=None, created_by="kyle",
+    )
+    params.update(overrides)
+    return jobs.create_job(**params)
+
+
+def test_set_and_list_site_limits(db: Path):
+    job_id = _new_job(db)
+    jobs.set_site_limits(job_id, {
+        "K001": {"concurrency": 3, "circuit_mbps": 42.0, "source": "solarwinds"},
+        "K002": {"concurrency": 1, "circuit_mbps": None, "source": "no-circuit-data"},
+    })
+
+    rows = {r["site_code"]: r for r in jobs.list_site_limits(job_id)}
+    assert rows["K001"]["concurrency"] == 3
+    assert rows["K001"]["circuit_mbps"] == 42.0
+    assert rows["K001"]["source"] == "solarwinds"
+    assert rows["K002"]["concurrency"] == 1
+    assert rows["K002"]["circuit_mbps"] is None
+    assert rows["K002"]["source"] == "no-circuit-data"
+
+
+def test_set_site_limits_upserts_rather_than_duplicates(db: Path):
+    job_id = _new_job(db)
+    jobs.set_site_limits(job_id, {"K001": {"concurrency": 1, "circuit_mbps": None, "source": "solarwinds-unreachable"}})
+    jobs.set_site_limits(job_id, {"K001": {"concurrency": 5, "circuit_mbps": 80.0, "source": "solarwinds"}})
+
+    rows = jobs.list_site_limits(job_id)
+    assert len(rows) == 1
+    assert rows[0]["concurrency"] == 5
+    assert rows[0]["source"] == "solarwinds"
+
+
+def test_set_site_limits_rejects_invalid_source(db: Path):
+    job_id = _new_job(db)
+    with pytest.raises(ValueError):
+        jobs.set_site_limits(job_id, {"K001": {"concurrency": 1, "circuit_mbps": None, "source": "bogus"}})
+
+
+def test_list_site_limits_empty_for_job_with_none_set(db: Path):
+    job_id = _new_job(db)
+    assert jobs.list_site_limits(job_id) == []

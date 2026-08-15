@@ -39,6 +39,7 @@ import clients.swim as swim_client
 import clients.swim_jobs as swim_jobs
 import utils.swim_compliance as swim_compliance
 import utils.swim_scheduler as swim_scheduler
+import utils.swim_site_circuit as swim_site_circuit
 import utils.swim_targeting as swim_targeting
 from auth import SessionEntry, require_auth
 from cache import TTL_STANDARD, cache
@@ -399,6 +400,17 @@ async def create_job(req: CreateJobRequest, session: SessionEntry = Depends(requ
     site_concurrency = max(1, min(req.site_concurrency, 10))
     rows = swim_targeting.snapshot_for_job(resolved, device_site_map)
 
+    # Circuit-derived per-site concurrency (utils/swim_site_circuit.py) —
+    # looked up once, here, for every distinct site actually present in the
+    # final device list (after compatibility filtering), same moment
+    # site_code itself gets snapshotted onto job_devices. Never raises: a
+    # SolarWinds outage can't block job creation, every affected site just
+    # lands on the concurrency-1 fallback.
+    distinct_site_codes = sorted({r["site_code"] for r in rows})
+    site_lookup = await swim_site_circuit.resolve_site_concurrency(
+        distinct_site_codes, session.username, session.password,
+    )
+
     job_id = swim_jobs.create_job(
         job_type=req.job_type, image_uuid=req.image_uuid, image_name=req.image_name,
         image_version=req.image_version, platform_id=req.platform_id,
@@ -410,6 +422,7 @@ async def create_job(req: CreateJobRequest, session: SessionEntry = Depends(requ
         device_upgrade_mode=req.device_upgrade_mode, distribute_if_needed=req.distribute_if_needed,
     )
     swim_jobs.add_devices(job_id, rows)
+    swim_jobs.set_site_limits(job_id, site_lookup)
 
     from collections import Counter
     site_counts = Counter(r["site_code"] for r in rows)
@@ -423,6 +436,7 @@ async def create_job(req: CreateJobRequest, session: SessionEntry = Depends(requ
         "homogeneity_warning": swim_targeting.homogeneity_warning(rows),
         "unresolved_site_count": swim_targeting.unresolved_site_count(rows),
         "incompatible_excluded_count": incompatible_count,
+        "site_limits": _shape_site_limits(job_id, site_concurrency),
     }
 
 
@@ -434,6 +448,17 @@ async def list_jobs(job_type: Optional[str] = Query(None), session: SessionEntry
     return {"jobs": jobs}
 
 
+def _shape_site_limits(job_id: int, ceiling: int) -> list[dict]:
+    """job_site_limits rows plus effective_concurrency = min(concurrency,
+    ceiling) — a display convenience for the UI. The stored `concurrency`
+    value is what utils.swim_scheduler.run_job() itself re-clamps against
+    the operator ceiling at run time; this just previews that math."""
+    rows = swim_jobs.list_site_limits(job_id)
+    for row in rows:
+        row["effective_concurrency"] = min(row["concurrency"], ceiling)
+    return rows
+
+
 @router.get("/jobs/{job_id}")
 async def get_job(job_id: int, session: SessionEntry = Depends(require_auth)):
     job = swim_jobs.get_job(job_id)
@@ -441,6 +466,7 @@ async def get_job(job_id: int, session: SessionEntry = Depends(require_auth)):
         raise HTTPException(404, "Job not found")
     job["device_counts"] = swim_jobs.device_status_counts(job_id)
     job["is_running_here"] = job_id in _running_jobs
+    job["site_limits"] = _shape_site_limits(job_id, job["site_concurrency"])
     return job
 
 

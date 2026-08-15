@@ -32,6 +32,28 @@
 
           <div id="jd-log" class="d-none mb-3" style="max-height:220px;overflow-y:auto;font-family:var(--font-mono,monospace);font-size:12px;background:#0b0b0b;color:#e5e5e5;padding:10px;border-radius:6px;"></div>
 
+          <h6 class="small fw-bold text-uppercase text-muted mb-2" style="letter-spacing:.05em">Per-Site Concurrency</h6>
+          <p class="text-muted small">
+            Resolved once at job creation from each site's SolarWinds circuit speed, capped at this
+            job's ceiling ("Effective"). A source other than <code>solarwinds</code> means that site
+            fell back to 1 device at a time — SolarWinds was unreachable, or no usable circuit data
+            was found.
+          </p>
+          <div class="table-responsive mb-3">
+            <table class="table table-sm mb-0">
+              <thead>
+                <tr>
+                  <th>Site</th>
+                  <th>Circuit (Mbps)</th>
+                  <th>Concurrency</th>
+                  <th>Effective</th>
+                  <th>Source</th>
+                </tr>
+              </thead>
+              <tbody id="jd-site-limits-body"></tbody>
+            </table>
+          </div>
+
           <h6 class="small fw-bold text-uppercase text-muted mb-2" style="letter-spacing:.05em">Devices</h6>
           <div class="table-responsive">
             <table class="table table-sm data-table mb-0">
@@ -227,6 +249,50 @@
     if (window.ImpactDataTable) window.ImpactDataTable.init(document.getElementById('jd-devices-body').closest('table').parentElement);
   }
 
+  const siteLimitSourceLabel = {
+    'solarwinds': 'SolarWinds',
+    'solarwinds-unreachable': 'SolarWinds unreachable',
+    'no-circuit-data': 'No circuit data',
+    'unresolved-site': 'Unresolved site',
+  };
+
+  function renderSiteLimits(rows) {
+    const body = document.getElementById('jd-site-limits-body');
+    body.innerHTML = '';
+    if (!rows || !rows.length) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = 5;
+      td.className = 'text-muted small';
+      td.textContent = 'No per-site data — draft job created before this feature, or nothing resolved yet.';
+      tr.appendChild(td);
+      body.appendChild(tr);
+      return;
+    }
+    rows.forEach(r => {
+      const tr = document.createElement('tr');
+      const siteTd = document.createElement('td');
+      siteTd.textContent = r.site_code;
+      tr.appendChild(siteTd);
+      const mbpsTd = document.createElement('td');
+      mbpsTd.textContent = r.circuit_mbps != null ? r.circuit_mbps : '—';
+      tr.appendChild(mbpsTd);
+      const concTd = document.createElement('td');
+      concTd.textContent = r.concurrency;
+      tr.appendChild(concTd);
+      const effTd = document.createElement('td');
+      effTd.textContent = r.effective_concurrency;
+      tr.appendChild(effTd);
+      const sourceTd = document.createElement('td');
+      const badge = document.createElement('span');
+      badge.className = 'badge ' + (r.source === 'solarwinds' ? 'bg-success' : 'bg-warning text-dark');
+      badge.textContent = siteLimitSourceLabel[r.source] || r.source;
+      sourceTd.appendChild(badge);
+      tr.appendChild(sourceTd);
+      body.appendChild(tr);
+    });
+  }
+
   function loadDevices() {
     fetch('/api/swim/jobs/' + jobId + '/devices?page_size=500')
       .then(r => r.json())
@@ -247,10 +313,11 @@
         document.getElementById('jd-meta').textContent =
           'Image: ' + (data.image_name || data.image_version || data.image_uuid) +
           ' · Devices: ' + data.total_devices +
-          ' · Site concurrency: ' + data.site_concurrency +
+          ' · Site concurrency ceiling: ' + data.site_concurrency +
           (data.flash_cleanup ? ' · Flash cleanup: yes' : '') +
           ' · Created by ' + data.created_by + ' at ' + (data.created_at || '').replace('T', ' ').slice(0, 16);
         renderTiles(data.device_counts || {});
+        renderSiteLimits(data.site_limits || []);
         document.getElementById('jd-start-label').textContent = data.confirmed_at ? 'Resume' : 'Start';
         document.getElementById('jd-start-btn').disabled = !!data.is_running_here;
         return data;
