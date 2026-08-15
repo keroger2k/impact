@@ -403,12 +403,15 @@ async def create_job(req: CreateJobRequest, session: SessionEntry = Depends(requ
     # Circuit-derived per-site concurrency (utils/swim_site_circuit.py) —
     # looked up once, here, for every distinct site actually present in the
     # final device list (after compatibility filtering), same moment
-    # site_code itself gets snapshotted onto job_devices. Never raises: a
-    # SolarWinds outage can't block job creation, every affected site just
-    # lands on the concurrency-1 fallback.
+    # site_code itself gets snapshotted onto job_devices. Sourced from DNAC's
+    # cached running-config (see that module's docstring for why, not
+    # SolarWinds) — reuses the same `dnac` client already obtained above for
+    # the compatibility gate. Never raises: a config-fetch failure can't
+    # block job creation, every affected site just lands on the
+    # concurrency-1 fallback.
     distinct_site_codes = sorted({r["site_code"] for r in rows})
     site_lookup = await swim_site_circuit.resolve_site_concurrency(
-        distinct_site_codes, session.username, session.password,
+        distinct_site_codes, dnac, devices, device_site_map,
     )
 
     job_id = swim_jobs.create_job(

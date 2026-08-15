@@ -265,14 +265,14 @@ def _new_job(db: Path, **overrides) -> int:
 def test_set_and_list_site_limits(db: Path):
     job_id = _new_job(db)
     jobs.set_site_limits(job_id, {
-        "K001": {"concurrency": 3, "circuit_mbps": 42.0, "source": "solarwinds"},
+        "K001": {"concurrency": 3, "circuit_mbps": 42.0, "source": "dnac-config"},
         "K002": {"concurrency": 1, "circuit_mbps": None, "source": "no-circuit-data"},
     })
 
     rows = {r["site_code"]: r for r in jobs.list_site_limits(job_id)}
     assert rows["K001"]["concurrency"] == 3
     assert rows["K001"]["circuit_mbps"] == 42.0
-    assert rows["K001"]["source"] == "solarwinds"
+    assert rows["K001"]["source"] == "dnac-config"
     assert rows["K002"]["concurrency"] == 1
     assert rows["K002"]["circuit_mbps"] is None
     assert rows["K002"]["source"] == "no-circuit-data"
@@ -280,13 +280,13 @@ def test_set_and_list_site_limits(db: Path):
 
 def test_set_site_limits_upserts_rather_than_duplicates(db: Path):
     job_id = _new_job(db)
-    jobs.set_site_limits(job_id, {"K001": {"concurrency": 1, "circuit_mbps": None, "source": "solarwinds-unreachable"}})
-    jobs.set_site_limits(job_id, {"K001": {"concurrency": 5, "circuit_mbps": 80.0, "source": "solarwinds"}})
+    jobs.set_site_limits(job_id, {"K001": {"concurrency": 1, "circuit_mbps": None, "source": "no-circuit-data"}})
+    jobs.set_site_limits(job_id, {"K001": {"concurrency": 5, "circuit_mbps": 80.0, "source": "dnac-config"}})
 
     rows = jobs.list_site_limits(job_id)
     assert len(rows) == 1
     assert rows[0]["concurrency"] == 5
-    assert rows[0]["source"] == "solarwinds"
+    assert rows[0]["source"] == "dnac-config"
 
 
 def test_set_site_limits_rejects_invalid_source(db: Path):

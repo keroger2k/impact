@@ -34,10 +34,10 @@
 
           <h6 class="small fw-bold text-uppercase text-muted mb-2" style="letter-spacing:.05em">Per-Site Concurrency</h6>
           <p class="text-muted small">
-            Resolved once at job creation from each site's SolarWinds circuit speed, capped at this
-            job's ceiling ("Effective"). A source other than <code>solarwinds</code> means that site
-            fell back to 1 device at a time — SolarWinds was unreachable, or no usable circuit data
-            was found.
+            Resolved once at job creation from each site's WAN router configured circuit bandwidth
+            (via DNAC's cached running-config), capped at this job's ceiling ("Effective"). A source
+            other than <code>dnac-config</code> means that site fell back to 1 device at a time — no
+            router or circuit bandwidth could be found for it.
           </p>
           <div class="table-responsive mb-3">
             <table class="table table-sm mb-0">
@@ -250,8 +250,7 @@
   }
 
   const siteLimitSourceLabel = {
-    'solarwinds': 'SolarWinds',
-    'solarwinds-unreachable': 'SolarWinds unreachable',
+    'dnac-config': 'DNAC config',
     'no-circuit-data': 'No circuit data',
     'unresolved-site': 'Unresolved site',
   };
@@ -285,7 +284,7 @@
       tr.appendChild(effTd);
       const sourceTd = document.createElement('td');
       const badge = document.createElement('span');
-      badge.className = 'badge ' + (r.source === 'solarwinds' ? 'bg-success' : 'bg-warning text-dark');
+      badge.className = 'badge ' + (r.source === 'dnac-config' ? 'bg-success' : 'bg-warning text-dark');
       badge.textContent = siteLimitSourceLabel[r.source] || r.source;
       sourceTd.appendChild(badge);
       tr.appendChild(sourceTd);

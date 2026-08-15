@@ -20,8 +20,8 @@ Three tables:
                        of device *status* transitions — this module just
                        exposes the primitives it composes them from).
   * ``job_site_limits`` — one row per distinct site targeted by a job, holding
-                       the per-site concurrency derived from that site's
-                       SolarWinds-reported WAN circuit size (see
+                       the per-site concurrency derived from that site's WAN
+                       router's configured circuit bandwidth (see
                        ``utils/swim_site_circuit.py``). Written once at job
                        creation, read by ``utils/swim_scheduler.py`` to size
                        each site's semaphore.
@@ -55,10 +55,10 @@ DEVICE_STATUSES = ("queued", "submitting", "in_progress", "success", "failed", "
 TARGETING_MODES = ("filter", "site_family", "csv")
 
 # Where a job_site_limits row's concurrency value came from — see
-# utils/swim_site_circuit.py. Anything other than 'solarwinds' means the
+# utils/swim_site_circuit.py. Anything other than 'dnac-config' means the
 # circuit-derived value couldn't be established and concurrency was set to
 # the unconditional fallback of 1.
-SITE_LIMIT_SOURCES = ("solarwinds", "solarwinds-unreachable", "no-circuit-data", "unresolved-site")
+SITE_LIMIT_SOURCES = ("dnac-config", "no-circuit-data", "unresolved-site")
 
 # Device-row states a resumed job must feed back into the scheduler as "still
 # needs work" — see utils/swim_scheduler.py's resume logic.

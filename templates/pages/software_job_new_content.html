@@ -109,10 +109,11 @@
           <p class="text-muted small">
             The circuit-overload control: only this many devices at any one site run at once, and
             other sites proceed in parallel. Each site's actual concurrency is sized automatically
-            from its SolarWinds-reported WAN circuit speed once you create the job (see the
-            per-site table on the job's own page) — this field is a <strong>ceiling</strong> that
-            value never exceeds, not a flat setting. A site SolarWinds can't reach or has no circuit
-            data for always falls back to 1 device at a time regardless of this ceiling.
+            from its WAN router's configured circuit bandwidth (read from DNAC's cached
+            running-config) once you create the job (see the per-site table on the job's own page)
+            — this field is a <strong>ceiling</strong> that value never exceeds, not a flat setting.
+            A site with no router or circuit bandwidth found always falls back to 1 device at a time
+            regardless of this ceiling.
           </p>
           <div class="row g-2 mb-4">
             <div class="col-auto">
@@ -415,10 +416,10 @@
       if (data.homogeneity_warning) msg += '\n' + data.homogeneity_warning;
       if (data.unresolved_site_count) msg += '\n' + data.unresolved_site_count + ' device(s) have no resolvable site code.';
       const siteLimits = data.site_limits || [];
-      const fallbackSites = siteLimits.filter(function (r) { return r.source !== 'solarwinds'; });
+      const fallbackSites = siteLimits.filter(function (r) { return r.source !== 'dnac-config'; });
       if (fallbackSites.length) {
         msg += '\n' + fallbackSites.length + ' of ' + siteLimits.length
-          + ' site(s) fell back to 1 device at a time (SolarWinds unreachable or no circuit data) — see the per-site table on the job page.';
+          + ' site(s) fell back to 1 device at a time (no router/circuit bandwidth found) — see the per-site table on the job page.';
       }
       if (window.showToast) window.showToast(msg, 'success');
       const jobId = data.job.id;

@@ -308,7 +308,7 @@ async def run_job(job_id: int, dnac, ssh_username: str | None = None, ssh_passwo
         return
 
     # Per-site concurrency is normally sized per site from that site's
-    # SolarWinds circuit speed (utils/swim_site_circuit.py), snapshotted into
+    # WAN router's configured circuit speed (utils/swim_site_circuit.py), snapshotted into
     # job_site_limits at job-creation time — see that module's docstring.
     # `jobs.site_concurrency` is the operator's ceiling, never a floor: a
     # circuit-derived value never gets to exceed it.

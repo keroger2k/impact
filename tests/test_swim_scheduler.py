@@ -275,8 +275,8 @@ async def test_per_site_limits_apply_independently_across_sites(db: Path, monkey
     job_id = _make_job(site_concurrency=5)  # ceiling high enough to never clamp here
     jobs.add_devices(job_id, [_device(i, site="K001") for i in range(3)] + [_device(i, site="K002") for i in range(3, 6)])
     jobs.set_site_limits(job_id, {
-        "K001": {"concurrency": 1, "circuit_mbps": 5.0, "source": "solarwinds"},
-        "K002": {"concurrency": 3, "circuit_mbps": 200.0, "source": "solarwinds"},
+        "K001": {"concurrency": 1, "circuit_mbps": 5.0, "source": "dnac-config"},
+        "K002": {"concurrency": 3, "circuit_mbps": 200.0, "source": "dnac-config"},
     })
 
     monkeypatch.setattr(scheduler.swim_client, "trigger_distribution", lambda dnac, dev, img: "task")
@@ -310,7 +310,7 @@ async def test_operator_ceiling_clamps_a_high_stored_concurrency(db: Path, monke
     unclamped (bug, using the raw stored 8) -> fully parallel (~0.10s)."""
     job_id = _make_job(site_concurrency=1)
     jobs.add_devices(job_id, [_device(1), _device(2), _device(3)])
-    jobs.set_site_limits(job_id, {"K001": {"concurrency": 8, "circuit_mbps": 500.0, "source": "solarwinds"}})
+    jobs.set_site_limits(job_id, {"K001": {"concurrency": 8, "circuit_mbps": 500.0, "source": "dnac-config"}})
 
     monkeypatch.setattr(scheduler.swim_client, "trigger_distribution", lambda dnac, dev, img: "task")
 
@@ -342,7 +342,7 @@ async def test_site_missing_from_populated_limits_map_defaults_to_one(db: Path, 
     distinguishable)."""
     job_id = _make_job(site_concurrency=5)
     jobs.add_devices(job_id, [_device(1), _device(2), _device(3)])
-    jobs.set_site_limits(job_id, {"OTHER": {"concurrency": 5, "circuit_mbps": 200.0, "source": "solarwinds"}})
+    jobs.set_site_limits(job_id, {"OTHER": {"concurrency": 5, "circuit_mbps": 200.0, "source": "dnac-config"}})
 
     monkeypatch.setattr(scheduler.swim_client, "trigger_distribution", lambda dnac, dev, img: "task")
 
