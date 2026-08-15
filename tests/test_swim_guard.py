@@ -18,6 +18,9 @@ import clients.swim_jobs as jobs
 from routers import swim as s
 
 _SESSION = SimpleNamespace(username="kyle.rogers", password="p")
+# Guard-check tests all raise before generate() ever touches `request` — a
+# bare placeholder is fine, no real Starlette Request needed.
+_REQUEST = SimpleNamespace()
 
 
 @pytest.fixture
@@ -108,7 +111,7 @@ async def test_start_job_disabled_returns_403(db: Path, monkeypatch):
     monkeypatch.delenv("SWIM_DISTRIBUTION_ENABLED", raising=False)
     job_id = _create_draft_job("distribution")
     with pytest.raises(HTTPException) as e:
-        await s.start_job(s.StartJobRequest(job_id=job_id, confirm="DISTRIBUTE"), session=_SESSION)
+        await s.start_job(s.StartJobRequest(job_id=job_id, confirm="DISTRIBUTE"), _REQUEST, session=_SESSION)
     assert e.value.status_code == 403
 
 
@@ -117,7 +120,7 @@ async def test_start_job_wrong_confirm_phrase_rejected(db: Path, monkeypatch):
     monkeypatch.setenv("SWIM_DISTRIBUTION_ENABLED", "true")
     job_id = _create_draft_job("distribution")
     with pytest.raises(HTTPException) as e:
-        await s.start_job(s.StartJobRequest(job_id=job_id, confirm="yes please"), session=_SESSION)
+        await s.start_job(s.StartJobRequest(job_id=job_id, confirm="yes please"), _REQUEST, session=_SESSION)
     assert e.value.status_code == 400
     # Confirmation must not have been stamped on a rejected attempt.
     assert jobs.get_job(job_id)["confirmed_at"] is None
@@ -129,7 +132,7 @@ async def test_start_job_activation_confirm_phrase_embeds_live_device_count(db: 
     job_id = _create_draft_job("activation")
     # Wrong count in the phrase must be rejected even though the words are right.
     with pytest.raises(HTTPException) as e:
-        await s.start_job(s.StartJobRequest(job_id=job_id, confirm="ACTIVATE 99 DEVICES"), session=_SESSION)
+        await s.start_job(s.StartJobRequest(job_id=job_id, confirm="ACTIVATE 99 DEVICES"), _REQUEST, session=_SESSION)
     assert e.value.status_code == 400
 
 
@@ -137,7 +140,7 @@ async def test_start_job_activation_confirm_phrase_embeds_live_device_count(db: 
 async def test_start_job_missing_returns_404(db: Path, monkeypatch):
     monkeypatch.setenv("SWIM_DISTRIBUTION_ENABLED", "true")
     with pytest.raises(HTTPException) as e:
-        await s.start_job(s.StartJobRequest(job_id=999999, confirm="DISTRIBUTE"), session=_SESSION)
+        await s.start_job(s.StartJobRequest(job_id=999999, confirm="DISTRIBUTE"), _REQUEST, session=_SESSION)
     assert e.value.status_code == 404
 
 
@@ -161,7 +164,7 @@ async def test_start_device_disabled_returns_403(db: Path, monkeypatch):
     job_id = _create_draft_job("distribution")
     row_id = jobs.list_job_devices(job_id)[0]["id"]
     with pytest.raises(HTTPException) as e:
-        await s.start_device(job_id, row_id, session=_SESSION)
+        await s.start_device(job_id, row_id, _REQUEST, session=_SESSION)
     assert e.value.status_code == 403
 
 
@@ -169,7 +172,7 @@ async def test_start_device_disabled_returns_403(db: Path, monkeypatch):
 async def test_start_device_missing_job_returns_404(monkeypatch):
     monkeypatch.setenv("SWIM_DISTRIBUTION_ENABLED", "true")
     with pytest.raises(HTTPException) as e:
-        await s.start_device(999999, 1, session=_SESSION)
+        await s.start_device(999999, 1, _REQUEST, session=_SESSION)
     assert e.value.status_code == 404
 
 
@@ -179,7 +182,7 @@ async def test_start_device_requires_job_confirmed_first(db: Path, monkeypatch):
     job_id = _create_draft_job("distribution")  # never confirmed via start_job
     row_id = jobs.list_job_devices(job_id)[0]["id"]
     with pytest.raises(HTTPException) as e:
-        await s.start_device(job_id, row_id, session=_SESSION)
+        await s.start_device(job_id, row_id, _REQUEST, session=_SESSION)
     assert e.value.status_code == 400
 
 
@@ -192,7 +195,7 @@ async def test_start_device_blocked_while_job_running(db: Path, monkeypatch):
     s._running_jobs.add(job_id)
     try:
         with pytest.raises(HTTPException) as e:
-            await s.start_device(job_id, row_id, session=_SESSION)
+            await s.start_device(job_id, row_id, _REQUEST, session=_SESSION)
         assert e.value.status_code == 409
     finally:
         s._running_jobs.discard(job_id)
@@ -204,7 +207,7 @@ async def test_start_device_missing_row_returns_404(db: Path, monkeypatch):
     job_id = _create_draft_job("distribution")
     jobs.confirm_job(job_id, "kyle.rogers")
     with pytest.raises(HTTPException) as e:
-        await s.start_device(job_id, 999999, session=_SESSION)
+        await s.start_device(job_id, 999999, _REQUEST, session=_SESSION)
     assert e.value.status_code == 404
 
 
@@ -216,5 +219,5 @@ async def test_start_device_non_queued_row_returns_409(db: Path, monkeypatch):
     row = jobs.list_job_devices(job_id)[0]
     jobs.set_device_status(row["id"], "success", completed_at="2026-08-12T00:00:00+00:00")
     with pytest.raises(HTTPException) as e:
-        await s.start_device(job_id, row["id"], session=_SESSION)
+        await s.start_device(job_id, row["id"], _REQUEST, session=_SESSION)
     assert e.value.status_code == 409

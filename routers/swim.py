@@ -30,7 +30,7 @@ import logging
 import os
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -53,6 +53,78 @@ logger = logging.getLogger(__name__)
 # makes (check-and-add happens with no await in between, so it's atomic
 # under asyncio's single-threaded event loop without a lock).
 _running_jobs: set[int] = set()
+
+# How often generate() checks for a dropped client while it's otherwise idle
+# waiting on the next scheduler event — see _stream_with_disconnect_check's
+# docstring for why this polling exists at all instead of relying on
+# Starlette to notice on its own.
+_DISCONNECT_POLL_SECONDS = 5.0
+
+
+async def _stream_with_disconnect_check(request: Request, agen):
+    """Drain `agen` (an async generator of SSE event dicts), closing it the
+    moment the client disconnects instead of letting it run to completion
+    unattended.
+
+    This app's global middleware stack (CSRFMiddleware, the SSE
+    concurrency-rate-limit middleware in main.py — both `BaseHTTPMiddleware`-
+    style) sits between Starlette's StreamingResponse and the raw ASGI
+    connection. That's a known Starlette/FastAPI gap: BaseHTTPMiddleware runs
+    the downstream app in a separate task connected via an in-memory stream,
+    which does not forward the ASGI `http.disconnect` message down to the
+    request object in time for StreamingResponse's own disconnect-watcher to
+    ever fire. Confirmed empirically against this app (not just cited from
+    upstream reports): navigating away mid-run left `run_job`'s generator
+    executing to full completion in the background, `jobs.status` never
+    dropping out of 'running', and every device still getting submitted —
+    exactly the behavior utils.swim_scheduler.run_job's own docstring says
+    the SSE-drop path should prevent.
+
+    So this polls `request.is_disconnected()` itself rather than trusting
+    the framework to notice — on an *independent* timer, not one that only
+    fires when `agen` goes idle. A job with several devices at once emits an
+    event roughly every SWIM_POLL_INTERVAL seconds practically continuously
+    (there's almost always *something* to report), so a check that only ran
+    when the next-event fetch itself timed out would rarely or never fire —
+    an early version of this function had exactly that bug: `asyncio.
+    wait_for(it.__anext__(), timeout=...)` restarts its clock every time an
+    event arrives, so a steady stream of events starves the disconnect check
+    forever. Running the next-event fetch and the disconnect timer as two
+    separate tasks under `asyncio.wait(..., FIRST_COMPLETED)` means the
+    timer fires on its own schedule regardless of how chatty `agen` is.
+
+    On disconnect, cancelling the in-flight `it.__anext__()` task delivers
+    CancelledError into `agen` at its current suspend point (inside
+    run_job's/run_single_device's `await queue.get()`) — that's what
+    actually triggers their own `finally` blocks (cancel workers, pause the
+    job), the same mechanism Starlette's own auto-cancellation would have
+    used if it had fired.
+    """
+    it = agen.__aiter__()
+    next_task = asyncio.ensure_future(it.__anext__())
+    check_task = asyncio.ensure_future(asyncio.sleep(_DISCONNECT_POLL_SECONDS))
+    try:
+        while True:
+            done, _ = await asyncio.wait({next_task, check_task}, return_when=asyncio.FIRST_COMPLETED)
+
+            if check_task in done and await request.is_disconnected():
+                next_task.cancel()
+                return
+
+            if next_task in done:
+                try:
+                    event = next_task.result()
+                except StopAsyncIteration:
+                    return
+                yield event
+                next_task = asyncio.ensure_future(it.__anext__())
+
+            if check_task in done:
+                check_task = asyncio.ensure_future(asyncio.sleep(_DISCONNECT_POLL_SECONDS))
+    finally:
+        for t in (next_task, check_task):
+            if not t.done():
+                t.cancel()
 
 
 def _get_dnac(session: SessionEntry):
@@ -399,7 +471,7 @@ class StartJobRequest(BaseModel):
 
 
 @router.post("/jobs/start")
-async def start_job(req: StartJobRequest, session: SessionEntry = Depends(require_auth)):
+async def start_job(req: StartJobRequest, request: Request, session: SessionEntry = Depends(require_auth)):
     """Run (or resume) a job. SSE for the lifetime of the connection — see
     utils/swim_scheduler.py for the resumable, no-background-poller design.
 
@@ -422,15 +494,16 @@ async def start_job(req: StartJobRequest, session: SessionEntry = Depends(requir
 
     if req.job_id in _running_jobs:
         raise HTTPException(409, "This job is already running (in this tab or another)")
-    _running_jobs.add(req.job_id)
 
-    dnac = _get_dnac(session)
+    dnac = _get_dnac(session)  # before the claim below: a failure here must never leak it
+    _running_jobs.add(req.job_id)
 
     async def generate():
         def emit(d: dict) -> str:
             return f"data: {json.dumps(d)}\n\n"
         try:
-            async for event in swim_scheduler.run_job(req.job_id, dnac, session.username, session.password):
+            agen = swim_scheduler.run_job(req.job_id, dnac, session.username, session.password)
+            async for event in _stream_with_disconnect_check(request, agen):
                 yield emit(event)
         finally:
             _running_jobs.discard(req.job_id)
@@ -454,7 +527,7 @@ async def cancel_queued(job_id: int, session: SessionEntry = Depends(require_aut
 
 
 @router.post("/jobs/{job_id}/devices/{device_row_id}/start")
-async def start_device(job_id: int, device_row_id: int, session: SessionEntry = Depends(require_auth)):
+async def start_device(job_id: int, device_row_id: int, request: Request, session: SessionEntry = Depends(require_auth)):
     """Manually submit one still-queued device without running the job's
     full concurrency-bounded batch — see utils.swim_scheduler.run_single_device
     for why the per-site cap is bypassed here. Reuses `_running_jobs` (the
@@ -484,16 +557,15 @@ async def start_device(job_id: int, device_row_id: int, session: SessionEntry = 
     if row["status"] != "queued":
         raise HTTPException(409, f"Device is not queued (current status: {row['status']})")
 
+    dnac = _get_dnac(session)  # before the claim below: a failure here must never leak it
     _running_jobs.add(job_id)
-    dnac = _get_dnac(session)
 
     async def generate():
         def emit(d: dict) -> str:
             return f"data: {json.dumps(d)}\n\n"
         try:
-            async for event in swim_scheduler.run_single_device(
-                job_id, device_row_id, dnac, session.username, session.password
-            ):
+            agen = swim_scheduler.run_single_device(job_id, device_row_id, dnac, session.username, session.password)
+            async for event in _stream_with_disconnect_check(request, agen):
                 yield emit(event)
         finally:
             _running_jobs.discard(job_id)
