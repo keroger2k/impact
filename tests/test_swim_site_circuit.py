@@ -40,8 +40,8 @@ def _device(id_: str, family="Routers", hostname=None) -> dict:
 @pytest.mark.parametrize("mbps,expected", [
     (0.0, 1),
     (9.9, 1),
-    (10.0, 2),
-    (24.9, 2),
+    (10.0, 1),
+    (24.9, 1),
     (25.0, 3),
     (49.9, 3),
     (50.0, 5),
@@ -195,10 +195,10 @@ def test_lookup_one_site_no_tunnel_bandwidth_falls_back(monkeypatch):
 
 def test_lookup_one_site_valid_config_resolves_tier(monkeypatch):
     _patch_site(monkeypatch, {"r1": "K001"})
-    config = "interface Tunnel5000\n bandwidth 20000\n!\n"  # 20 Mbps -> tier 2 (10-25 Mbps)
+    config = "interface Tunnel5000\n bandwidth 30000\n!\n"  # 30 Mbps -> tier 3 (25-50 Mbps)
     with patch("utils.swim_site_circuit.dnac_client.get_device_config", return_value=config) as mock_get_config:
         result = circuit._lookup_one_site("K001", [_device("r1")], {}, dnac="fake-dnac")
-    assert result == {"concurrency": 2, "circuit_mbps": 20.0, "source": "dnac-config"}
+    assert result == {"concurrency": 3, "circuit_mbps": 30.0, "source": "dnac-config"}
     mock_get_config.assert_called_once_with("fake-dnac", "r1")
 
 

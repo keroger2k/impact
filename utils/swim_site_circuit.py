@@ -76,8 +76,10 @@ FALLBACK_CONCURRENCY = 1
 # validation, not a per-deployment operational knob. (min_mbps, concurrency);
 # the highest tier whose threshold the circuit meets or exceeds wins.
 _CONCURRENCY_TIERS: list[tuple[float, int]] = [
-    (0.0, 1),                             # < 10 Mbps
-    (10.0, 2),                            # 10-25 Mbps
+    (0.0, 1),                             # < 25 Mbps — these sites are live/in-use,
+    (10.0, 1),                            # not down for maintenance, so anything under
+                                           # 25 Mbps stays at 1 device at a time even
+                                           # alongside normal production traffic.
     (25.0, 3),                            # 25-50 Mbps
     (50.0, 5),                            # 50-100 Mbps
     (100.0, _SITE_CONCURRENCY_CEILING),   # 100+ Mbps
