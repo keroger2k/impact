@@ -375,6 +375,34 @@ def tag_network_devices(dnac, tag_id: str, device_ids: list[str]) -> None:
     dnac.tag.update_tags_associated_with_the_network_devices(payload=payload)
 
 
+def get_device_interfaces(dnac, device_id: str) -> list[dict]:
+    """All interfaces for a single device. For callers that only need a
+    handful of devices (e.g. tagging scripts) — avoids the paginated,
+    fleet-wide sweep get_all_interfaces() does for cache warming."""
+    try:
+        resp  = dnac.devices.get_interface_info_by_id(device_id=device_id)
+        items = getattr(resp, "response", None) or []
+        return [_dictify(i) for i in items]
+    except Exception as e:
+        logger.warning(f"Interface fetch failed for device {device_id}: {e}")
+        return []
+
+
+def tag_interfaces(dnac, tag_id: str, interface_ids: list[str]) -> None:
+    """Associate tag_id with each interface UUID.
+
+    Deliberately uses the single-tag `POST /tag/{id}/member` endpoint
+    (add_members_to_the_tag), not the bulk `.../membersAssociations/bulk`
+    endpoint tag_network_devices() uses: the bulk endpoint's payload
+    replaces each member's *entire* tags list, and these interfaces likely
+    already carry other tags — /member is scoped to this one tag ID and can
+    only add to it, never touch unrelated tags on the same interface.
+    """
+    dnac.tag.add_members_to_the_tag(
+        id=tag_id, memberType=["interface"], payload={"interface": interface_ids}
+    )
+
+
 def get_interface_by_ip(dnac, ip: str) -> list[dict]:
     from dev import DEV_MODE, MOCK_DEVICES
     if DEV_MODE:
