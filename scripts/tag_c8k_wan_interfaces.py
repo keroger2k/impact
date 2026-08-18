@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""scripts/tag_c8k_wan_interfaces.py — tag Catalyst 8000 series WAN uplinks.
+"""scripts/tag_c8k_wan_interfaces.py — tag Catalyst 8000 / ISR 1000 WAN uplinks.
 
 Applies a DNAC tag (default "WAN") to the *physical* interface carrying WAN
 traffic on every Catalyst 8000 series router (C8200/C8300/C8500 hardware,
-C8000V virtual) in DNAC's inventory.
+C8000V virtual) and every ISR 1000 series router (C1111/C1121X/C1161X etc.)
+in DNAC's inventory. Deliberately does NOT match Catalyst 1000 series
+SWITCHES (platformId "C1000-...") — same "C1" prefix as ISR1000 but a
+different digit pattern, see _TARGET_PLATFORM_RE.
 
 "WAN interface" here means: an interface whose VRF forwarding is "WAN" or
 "INTERNET" (exact match, case-insensitive; override with --vrf). That VRF
@@ -18,9 +21,9 @@ physical WAN uplink, not every VRF member.
 
 Device identification is automatic: DNAC's device inventory is filtered by
 `platformId` (falling back to `series` when platformId is blank) against the
-Catalyst 8000 family. No device list file needed. Every matched device is
-printed before anything is written, so a run is easy to sanity-check before
---apply.
+Catalyst 8000 and ISR 1000 families. No device list file needed. Every
+matched device is printed before anything is written, so a run is easy to
+sanity-check before --apply.
 
 VRF membership is read from DNAC's own cached running-config for each device
 (`GET /network-device/{id}/config` — the same source config-search and the
@@ -68,13 +71,24 @@ import clients.dnac as dc  # noqa: E402
 from clients.dnac import _dictify  # noqa: E402
 from utils.ipsec_parser import _RE_INTERFACE, _block_lines, _iter_blocks  # noqa: E402
 
-# Catalyst 8000 family: C8200/C8200L, C8300, C8500/C8500L hardware, C8000V
-# virtual. Matches on the ordering PID (platformId) — precise and doesn't
-# depend on how `family`/`series` happen to be worded in this DNAC instance.
-_C8K_PLATFORM_RE = re.compile(r"^C8(200|300|500|000V)", re.IGNORECASE)
+# Catalyst 8000 family (C8200/C8200L, C8300, C8500/C8500L hardware, C8000V
+# virtual) + ISR 1000 series branch routers (C11xx — C1101, C1109, C1111,
+# C1113, C1116, C1117, C1121(X), C1126, C1127(X), C1131(X), C1161(X)).
+# Matches on the ordering PID (platformId) — precise and doesn't depend on
+# how `family`/`series` happen to be worded in this DNAC instance.
+#
+# Deliberately does NOT match Catalyst 1000 series SWITCHES (platformId
+# "C1000-8T-2G-L" etc.) — same "C1" prefix as ISR1000, but the digit
+# pattern is C1000 (third digit 0) vs C11xx (third digit 1), so \d{2} after
+# "C11" can't accidentally match a switch's PID.
+_TARGET_PLATFORM_RE = re.compile(r"^(?:C8(?:200|300|500|000V)|C11\d{2})", re.IGNORECASE)
 # Fallback for inventory rows with a blank platformId — matches the `series`
-# string instead (e.g. "Cisco Catalyst 8300 Series Edge Platforms").
-_C8K_SERIES_RE = re.compile(r"Catalyst\s+8(200|300|500|000V)", re.IGNORECASE)
+# string instead (e.g. "Cisco Catalyst 8300 Series Edge Platforms" or
+# "Cisco 1000 Series Integrated Services Routers").
+_TARGET_SERIES_RE = re.compile(
+    r"Catalyst\s+8(?:200|300|500|000V)|1000\s+Series\s+Integrated\s+Services",
+    re.IGNORECASE,
+)
 
 _VRF_FORWARDING_RE = re.compile(r"^(?:ip\s+vrf\s+forwarding|vrf\s+forwarding)\s+(\S+)", re.IGNORECASE)
 
@@ -94,12 +108,12 @@ DEFAULT_VRFS = ["WAN", "INTERNET"]
 _TAG_MEMBER_PAGE = 500
 
 
-def is_c8k(device: dict) -> bool:
+def is_target_router(device: dict) -> bool:
     platform_id = (device.get("platformId") or "").strip()
     if platform_id:
-        return bool(_C8K_PLATFORM_RE.match(platform_id))
+        return bool(_TARGET_PLATFORM_RE.match(platform_id))
     series = (device.get("series") or "").strip()
-    return bool(_C8K_SERIES_RE.search(series))
+    return bool(_TARGET_SERIES_RE.search(series))
 
 
 def physical_parent(interface_name: str) -> str | None:
@@ -193,8 +207,8 @@ def main() -> int:
 
     print("Fetching DNAC device inventory...")
     devices = dc.get_all_devices(dnac, strict=True)
-    candidates = [d for d in devices if is_c8k(d)]
-    print(f"  {len(devices)} devices total, {len(candidates)} match the Catalyst 8000 family")
+    candidates = [d for d in devices if is_target_router(d)]
+    print(f"  {len(devices)} devices total, {len(candidates)} match the Catalyst 8000 / ISR 1000 families")
 
     if args.site:
         needle = args.site.lower()
