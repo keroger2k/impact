@@ -397,10 +397,14 @@ def tag_interfaces(dnac, tag_id: str, interface_ids: list[str]) -> None:
     replaces each member's *entire* tags list, and these interfaces likely
     already carry other tags — /member is scoped to this one tag ID and can
     only add to it, never touch unrelated tags on the same interface.
+
+    Deliberately does NOT pass the SDK's `memberType` kwarg: the SDK merges
+    it straight into the JSON body as a literal `"memberType"` key, but the
+    real endpoint's body is just `{"interface": [ids]}` — no such field.
+    Sending it gets a live 400 back from DNAC ("memberType is not a
+    supported member type"), confirmed against a real instance.
     """
-    dnac.tag.add_members_to_the_tag(
-        id=tag_id, memberType=["interface"], payload={"interface": interface_ids}
-    )
+    dnac.tag.add_members_to_the_tag(id=tag_id, payload={"interface": interface_ids})
 
 
 def get_interface_by_ip(dnac, ip: str) -> list[dict]:
