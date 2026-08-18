@@ -12,9 +12,10 @@ only place this shows individually today.
 Joins Orion.AlertSuppression to Orion.Nodes on EntityUri = Uri to get a
 friendly Caption instead of a bare Uri.
 
-Env vars (.env): SOLARWINDS_URL (required), SOLARWINDS_DOMAIN/PORT/TIMEOUT
-(optional), SOLARWINDS_USERNAME/PASSWORD (default to DOMAIN_USERNAME/PASSWORD),
-SOLARWINDS_VERIFY_SSL (default false).
+Env vars (.env): SOLARWINDS_URL (required), SOLARWINDS_USERNAME/PASSWORD
+(required — the same dedicated service account clients/solarwinds.py itself
+now reads), SOLARWINDS_DOMAIN/PORT/TIMEOUT (optional), SOLARWINDS_VERIFY_SSL
+(default false).
 
 Usage:
     python -m scripts.solarwinds_list_suppressed_nodes
@@ -44,13 +45,11 @@ def main():
                      help="Include entries whose window already ended (default: only current/future)")
     args = ap.parse_args()
 
-    username = os.getenv("SOLARWINDS_USERNAME") or os.getenv("DOMAIN_USERNAME", "")
-    password = os.getenv("SOLARWINDS_PASSWORD") or os.getenv("DOMAIN_PASSWORD", "")
     if not os.getenv("SOLARWINDS_URL"):
         print("ERROR: SOLARWINDS_URL must be set (see .env.template).")
         sys.exit(1)
-    if not username or not password:
-        print("ERROR: SOLARWINDS_USERNAME/SOLARWINDS_PASSWORD (or DOMAIN_USERNAME/DOMAIN_PASSWORD) must be set.")
+    if not os.getenv("SOLARWINDS_USERNAME") or not os.getenv("SOLARWINDS_PASSWORD"):
+        print("ERROR: SOLARWINDS_USERNAME/SOLARWINDS_PASSWORD must be set.")
         sys.exit(1)
 
     # No WHERE-clause date filter — GETUTCDATE() is confirmed valid SWQL on
@@ -72,7 +71,7 @@ JOIN Orion.Nodes n ON a.EntityUri = n.Uri
 ORDER BY a.SuppressFrom
 """
     try:
-        rows = solarwinds.query(swql, username, password)
+        rows = solarwinds.query(swql)
     except Exception as e:
         print(f"Query failed: {e}")
         sys.exit(1)

@@ -69,7 +69,7 @@ def test_bare_interface_name_output_passes_swql_validation():
 def _capture_swql():
     captured = {}
 
-    def fake_query(swql, username, password, timeout=None):
+    def fake_query(swql, timeout=None):
         captured["swql"] = swql
         return []
 
@@ -81,7 +81,7 @@ def test_find_interfaces_normalizes_fqdn_router_name():
 
     captured, fake_query = _capture_swql()
     with patch("clients.solarwinds.query", side_effect=fake_query):
-        find_interfaces("R-SITE-01.network.ad.tsa.gov", "Tunnel5000", "dev", "dev")
+        find_interfaces("R-SITE-01.network.ad.tsa.gov", "Tunnel5000")
 
     assert "n.Caption = 'R-SITE-01'" in captured["swql"]
     assert "tsa.gov" not in captured["swql"]
@@ -90,7 +90,7 @@ def test_find_interfaces_normalizes_fqdn_router_name():
 def test_find_node_ip_normalizes_fqdn_router_name():
     captured, fake_query = _capture_swql()
     with patch("clients.solarwinds.query", side_effect=fake_query):
-        find_node_ip("R-SITE-01.network.ad.tsa.gov", "dev", "dev")
+        find_node_ip("R-SITE-01.network.ad.tsa.gov")
 
     assert "tsa.gov" not in captured["swql"]
 
@@ -98,7 +98,7 @@ def test_find_node_ip_normalizes_fqdn_router_name():
 def test_list_interfaces_for_router_normalizes_fqdn_router_name():
     captured, fake_query = _capture_swql()
     with patch("clients.solarwinds.query", side_effect=fake_query):
-        list_interfaces_for_router("R-SITE-01.network.ad.tsa.gov", "dev", "dev")
+        list_interfaces_for_router("R-SITE-01.network.ad.tsa.gov")
 
     assert "tsa.gov" not in captured["swql"]
 
@@ -110,7 +110,7 @@ def test_generate_bandwidth_report_accepts_fqdn_router_name():
     with patch("clients.solarwinds.query") as mock_query:
         mock_query.side_effect = [[_fake_meta()], [], []]
         result = generate_bandwidth_report(
-            "R-SITE-01.network.ad.tsa.gov", "Tunnel5000", None, "dev", "dev",
+            "R-SITE-01.network.ad.tsa.gov", "Tunnel5000", None,
         )
 
     assert result["status"] == "ok"
@@ -123,26 +123,26 @@ def test_find_node_ip_exact_match_preferred():
         {"NodeName": "R-SITE-01", "NodeIpAddress": "1.2.3.4"},
     ]
     with patch("clients.solarwinds.query", return_value=rows):
-        ip = find_node_ip("R-SITE-01", "dev", "dev")
+        ip = find_node_ip("R-SITE-01")
     assert ip == "1.2.3.4"
 
 
 def test_find_node_ip_falls_back_to_first_like_match():
     rows = [{"NodeName": "R-SITE-01-SUB", "NodeIpAddress": "5.6.7.8"}]
     with patch("clients.solarwinds.query", return_value=rows):
-        ip = find_node_ip("R-SITE-01", "dev", "dev")
+        ip = find_node_ip("R-SITE-01")
     assert ip == "5.6.7.8"
 
 
 def test_find_node_ip_no_match_returns_none():
     with patch("clients.solarwinds.query", return_value=[]):
-        ip = find_node_ip("nonexistent-router", "dev", "dev")
+        ip = find_node_ip("nonexistent-router")
     assert ip is None
 
 
 def test_find_node_ip_rejects_bad_charset():
     with pytest.raises(InvalidNameError):
-        find_node_ip("bad;name", "dev", "dev")
+        find_node_ip("bad;name")
 
 
 def test_find_node_ip_like_fallback_is_deterministically_ordered():
@@ -152,12 +152,12 @@ def test_find_node_ip_like_fallback_is_deterministically_ordered():
     as find_interfaces() already does."""
     captured = {}
 
-    def fake_query(swql, username, password):
+    def fake_query(swql):
         captured["swql"] = swql
         return []
 
     with patch("clients.solarwinds.query", side_effect=fake_query):
-        find_node_ip("R-SITE-01", "dev", "dev")
+        find_node_ip("R-SITE-01")
 
     assert "ORDER BY n.Caption" in captured["swql"]
 
@@ -173,7 +173,7 @@ def test_list_interfaces_prefers_exact_node_match():
         {"NodeName": "R-SITE-01", "InterfaceID": 2, "InterfaceCaption": "Tunnel100"},
     ]
     with patch("clients.solarwinds.query", return_value=rows):
-        result = list_interfaces_for_router("R-SITE-01", "dev", "dev")
+        result = list_interfaces_for_router("R-SITE-01")
 
     assert [r["InterfaceCaption"] for r in result] == ["Tunnel100"]
 
@@ -181,19 +181,19 @@ def test_list_interfaces_prefers_exact_node_match():
 def test_list_interfaces_falls_back_to_like_matches():
     rows = [{"NodeName": "R-SITE-01-SUB", "InterfaceID": 1, "InterfaceCaption": "Tunnel20"}]
     with patch("clients.solarwinds.query", return_value=rows):
-        result = list_interfaces_for_router("R-SITE-01", "dev", "dev")
+        result = list_interfaces_for_router("R-SITE-01")
 
     assert len(result) == 1
 
 
 def test_list_interfaces_no_rows_returns_empty():
     with patch("clients.solarwinds.query", return_value=[]):
-        assert list_interfaces_for_router("nonexistent", "dev", "dev") == []
+        assert list_interfaces_for_router("nonexistent") == []
 
 
 def test_list_interfaces_rejects_bad_charset():
     with pytest.raises(InvalidNameError):
-        list_interfaces_for_router("bad;name", "dev", "dev")
+        list_interfaces_for_router("bad;name")
 
 
 def test_list_interfaces_uses_short_timeout():
@@ -202,12 +202,12 @@ def test_list_interfaces_uses_short_timeout():
     the control the user is waiting on."""
     captured = {}
 
-    def fake_query(swql, username, password, timeout=None):
+    def fake_query(swql, timeout=None):
         captured["timeout"] = timeout
         return []
 
     with patch("clients.solarwinds.query", side_effect=fake_query):
-        list_interfaces_for_router("R-SITE-01", "dev", "dev")
+        list_interfaces_for_router("R-SITE-01")
 
     assert captured["timeout"] is not None and captured["timeout"] <= 30
 
@@ -276,7 +276,7 @@ def test_generate_bandwidth_report_includes_site_info():
             [],  # series_24h
             [],  # series_7d
         ]
-        result = generate_bandwidth_report("R-SITE-01", "Tunnel5000", None, "dev", "dev")
+        result = generate_bandwidth_report("R-SITE-01", "Tunnel5000", None)
 
     assert result["status"] == "ok"
     assert result["site_info"]["site_code"] == "S001"
@@ -288,7 +288,7 @@ def test_generate_bandwidth_report_24h_and_7d_windows_land_correctly_when_run_co
     rather than back-to-back — key the fake response off the SWQL text (not call
     order) to make sure results still land in the right window regardless of
     which thread's request the mock happens to service first."""
-    def fake_query(swql, username, password):
+    def fake_query(swql):
         if "ADDHOUR(-24," in swql:
             return [{"DateTime": "2026-08-04T00:00:00Z", "InPercentUtil": "1.0", "OutPercentUtil": "2.0"}]
         if "ADDHOUR(-168," in swql:
@@ -296,7 +296,7 @@ def test_generate_bandwidth_report_24h_and_7d_windows_land_correctly_when_run_co
         return [_fake_meta()]
 
     with patch("clients.solarwinds.query", side_effect=fake_query):
-        result = generate_bandwidth_report("R-SITE-01", "Tunnel5000", None, "dev", "dev")
+        result = generate_bandwidth_report("R-SITE-01", "Tunnel5000", None)
 
     assert result["series_24h"] == [{"t": "2026-08-04T00:00:00Z", "in": 1.0, "out": 2.0}]
     assert result["series_7d"] == [{"t": "2026-07-29T00:00:00Z", "in": 3.0, "out": 4.0}]

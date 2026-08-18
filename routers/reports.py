@@ -93,7 +93,7 @@ async def generate_cdrl49(
     try:
         pdf_bytes, rows_by_key = await loop.run_in_executor(
             None, run_with_context(generate_report),
-            day, keys, generated_at, session.username, session.password,
+            day, keys, generated_at,
         )
     except Exception as e:
         logger.error(f"CDRL49 report generation failed: {e}", extra={"target": "SolarWinds", "action": "CDRL49_GENERATE"})
@@ -134,7 +134,7 @@ async def generate_bandwidth(
     try:
         result = await loop.run_in_executor(
             None, run_with_context(generate_bandwidth_report),
-            router, interface, interface_id, session.username, session.password,
+            router, interface, interface_id,
         )
     except InvalidNameError as e:
         raise HTTPException(400, str(e))
@@ -234,7 +234,7 @@ async def bandwidth_interfaces(
         try:
             rows = await loop.run_in_executor(
                 None, run_with_context(list_interfaces_for_router),
-                router, session.username, session.password,
+                router,
             )
         except InvalidNameError:
             return HTMLResponse('<option value="">Invalid router name</option>')
@@ -319,7 +319,7 @@ async def _build_device_comparison(session: SessionEntry) -> dict:
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
         None, run_with_context(generate_device_comparison_report),
-        dnac, session.username, session.password,
+        dnac,
     )
 
 
@@ -444,7 +444,7 @@ async def schedule_maintenance(req: MaintenanceScheduleRequest, session: Session
         try:
             node_map = await loop.run_in_executor(
                 None, run_with_context(resolve_node_uris),
-                [row["node"] for row in valid], session.username, session.password,
+                [row["node"] for row in valid],
             )
         except Exception as e:
             logger.error(f"Maintenance-mode node resolution failed: {e}",
@@ -477,7 +477,6 @@ async def schedule_maintenance(req: MaintenanceScheduleRequest, session: Session
                         await loop.run_in_executor(
                             None, run_with_context(schedule_one),
                             lookup["uri"], row["start"], row["stop"],
-                            session.username, session.password,
                         )
                         # "muted", not "scheduled" — the latter is exactly the word
                         # that caused confusion with SolarWinds' own, unrelated
@@ -532,7 +531,7 @@ async def cancel_maintenance(req: MaintenanceCancelRequest, session: SessionEntr
     try:
         await loop.run_in_executor(
             None, run_with_context(cancel_one),
-            req.uri, session.username, session.password,
+            req.uri,
         )
     except Exception as e:
         logger.error(f"Maintenance-mode cancel failed: {e}",

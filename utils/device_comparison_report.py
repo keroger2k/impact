@@ -189,7 +189,7 @@ def maintenance_state(node: dict) -> tuple[bool, str | None]:
     return True, (until.strip() if isinstance(until, str) and until.strip() else None)
 
 
-def fetch_solarwinds_devices(username: str, password: str, timeout: int | None = None) -> list[dict]:
+def fetch_solarwinds_devices(timeout: int | None = None) -> list[dict]:
     """Cisco nodes from SolarWinds.
 
     `Vendor = 'Cisco'` and `MachineType` are both confirmed working against the
@@ -216,7 +216,7 @@ def fetch_solarwinds_devices(username: str, password: str, timeout: int | None =
     """
     try:
         return solarwinds.query(
-            _node_swql(_MAINTENANCE_COLUMNS), username, password, timeout=timeout,
+            _node_swql(_MAINTENANCE_COLUMNS), timeout=timeout,
         )
     except Exception as e:
         logger.warning(
@@ -224,7 +224,7 @@ def fetch_solarwinds_devices(username: str, password: str, timeout: int | None =
             f"(devices will show as maintenance-unknown): {e}",
             extra={"target": "SolarWinds", "action": "DEVICE_COMPARISON"},
         )
-        return solarwinds.query(_node_swql(""), username, password, timeout=timeout)
+        return solarwinds.query(_node_swql(""), timeout=timeout)
 
 
 def fetch_dnac_devices(dnac) -> list[dict]:
@@ -492,7 +492,7 @@ def compare_inventories(dnac_devices: list[dict], sw_nodes: list[dict]) -> dict:
     }
 
 
-def generate_device_comparison_report(dnac, username: str, password: str) -> dict:
+def generate_device_comparison_report(dnac) -> dict:
     """Pull both inventories live and reconcile them.
 
     Either side failing raises rather than degrading to a one-sided report:
@@ -506,7 +506,7 @@ def generate_device_comparison_report(dnac, username: str, password: str) -> dic
     thing on the Reports pages.
     """
     fut_dnac = FANOUT_POOL.submit(fetch_dnac_devices, dnac)
-    fut_sw = FANOUT_POOL.submit(fetch_solarwinds_devices, username, password)
+    fut_sw = FANOUT_POOL.submit(fetch_solarwinds_devices)
     return compare_inventories(fut_dnac.result(), fut_sw.result())
 
 

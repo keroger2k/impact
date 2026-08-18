@@ -63,4 +63,4 @@ async def test_cancel_succeeds_when_enabled(monkeypatch):
     with patch("routers.reports.cancel_one") as mock_cancel:
         result = await r.cancel_maintenance(_cancel_req(), session=_SESSION)
     assert result == {"status": "ok"}
-    mock_cancel.assert_called_once_with(_cancel_req().uri, "u", "p")
+    mock_cancel.assert_called_once_with(_cancel_req().uri)

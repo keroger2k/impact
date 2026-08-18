@@ -398,7 +398,7 @@ def test_dnac_side_is_fetched_live_not_from_cache():
     with patch("clients.dnac.get_all_devices", return_value=live) as mock_fetch, \
          patch("utils.device_comparison_report.cache.get_stale") as mock_cache, \
          patch("utils.device_comparison_report.fetch_solarwinds_devices", return_value=[]):
-        report = generate_device_comparison_report(object(), "dev", "dev")
+        report = generate_device_comparison_report(object())
 
     mock_fetch.assert_called_once()
     mock_cache.assert_not_called()
@@ -410,7 +410,7 @@ def test_dnac_fetch_is_strict():
     would, so the report must ask for all-or-nothing."""
     with patch("clients.dnac.get_all_devices", return_value=[]) as mock_fetch, \
          patch("utils.device_comparison_report.fetch_solarwinds_devices", return_value=[]):
-        generate_device_comparison_report(object(), "dev", "dev")
+        generate_device_comparison_report(object())
 
     assert mock_fetch.call_args.kwargs.get("strict") is True
 
@@ -419,7 +419,7 @@ def test_dnac_failure_propagates_rather_than_reporting_everything_as_a_gap():
     with patch("clients.dnac.get_all_devices", side_effect=RuntimeError("DNAC unreachable")), \
          patch("utils.device_comparison_report.fetch_solarwinds_devices", return_value=[]):
         with pytest.raises(RuntimeError, match="DNAC unreachable"):
-            generate_device_comparison_report(object(), "dev", "dev")
+            generate_device_comparison_report(object())
 
 
 def test_solarwinds_failure_propagates():
@@ -427,14 +427,14 @@ def test_solarwinds_failure_propagates():
          patch("utils.device_comparison_report.fetch_solarwinds_devices",
                side_effect=RuntimeError("SolarWinds query failed")):
         with pytest.raises(RuntimeError, match="SolarWinds"):
-            generate_device_comparison_report(object(), "dev", "dev")
+            generate_device_comparison_report(object())
 
 
 def test_no_dnac_client_falls_back_to_cache_for_dev_mode():
     with patch("utils.device_comparison_report.cache.get_stale", return_value=[]) as mock_cache, \
          patch("clients.dnac.get_all_devices") as mock_fetch, \
          patch("utils.device_comparison_report.fetch_solarwinds_devices", return_value=[]):
-        generate_device_comparison_report(None, "dev", "dev")
+        generate_device_comparison_report(None)
 
     mock_cache.assert_called_once_with("devices")
     mock_fetch.assert_not_called()
@@ -505,14 +505,14 @@ def test_maintenance_columns_are_dropped_if_solarwinds_rejects_them():
     of the query — an unresolvable one must not take down a working report."""
     attempts = []
 
-    def fake_query(swql, username, password, timeout=None):
+    def fake_query(swql, timeout=None):
         attempts.append(swql)
         if "UnManageUntil" in swql:
             raise RuntimeError("SolarWinds query failed (HTTP 400): Cannot resolve property Unmanaged")
         return [{"NodeName": "R-SITE-01", "NodeIpAddress": "1.2.3.4"}]
 
     with patch("clients.solarwinds.query", side_effect=fake_query):
-        rows = fetch_solarwinds_devices("dev", "dev")
+        rows = fetch_solarwinds_devices()
 
     assert len(attempts) == 2
     assert "UnManageUntil" not in attempts[1]

@@ -50,7 +50,7 @@ def auth_headers():
 # ── Bandwidth generate (In/Out + Site Information) ───────────────────────────
 
 def test_bandwidth_generate_ok(auth_headers, monkeypatch):
-    def fake_report(router_name, interface_name, interface_id, username, password):
+    def fake_report(router_name, interface_name, interface_id):
         assert router_name == "R-SITE-01"
         return {
             "status": "ok",
@@ -181,7 +181,7 @@ def test_interfaces_no_match_returns_placeholder(auth_headers, monkeypatch):
 def test_interfaces_lists_solarwinds_interfaces_with_ids(auth_headers, monkeypatch):
     """Every option must carry its SolarWinds InterfaceID — that's what lets
     Generate post interface_id and bypass the name-based lookup entirely."""
-    def fake_list(router_name, username, password):
+    def fake_list(router_name):
         assert router_name == "R-SITE-01"
         return [
             {"NodeName": "R-SITE-01", "InterfaceID": 11, "InterfaceCaption": "GigabitEthernet0/0/0",
@@ -228,7 +228,7 @@ def test_interfaces_option_value_is_the_bare_name_not_the_caption(auth_headers, 
 def test_interfaces_result_is_cached_per_router(auth_headers, monkeypatch):
     calls = []
 
-    def fake_list(router_name, username, password):
+    def fake_list(router_name):
         calls.append(router_name)
         return [{"NodeName": router_name, "InterfaceID": 1,
                  "InterfaceCaption": "Tunnel5000", "StatusDescription": "Up"}]
@@ -245,7 +245,7 @@ def test_interfaces_result_is_cached_per_router(auth_headers, monkeypatch):
 def test_interfaces_normalizes_fqdn_before_lookup_and_caching(auth_headers, monkeypatch):
     calls = []
 
-    def fake_list(router_name, username, password):
+    def fake_list(router_name):
         calls.append(router_name)
         return [{"NodeName": router_name, "InterfaceID": 1,
                  "InterfaceCaption": "Tunnel5000", "StatusDescription": "Up"}]
@@ -515,7 +515,7 @@ _FAKE_COMPARISON = {
 def test_device_comparison_generate_ok(auth_headers, monkeypatch):
     monkeypatch.setattr(
         "routers.reports.generate_device_comparison_report",
-        lambda dnac, username, password: _FAKE_COMPARISON,
+        lambda dnac: _FAKE_COMPARISON,
     )
 
     r = client.post("/api/reports/device-comparison/generate", headers=auth_headers)
@@ -530,7 +530,7 @@ def test_device_comparison_generate_ok(auth_headers, monkeypatch):
 
 
 def test_device_comparison_solarwinds_failure(auth_headers, monkeypatch):
-    def boom(dnac, username, password):
+    def boom(dnac):
         raise RuntimeError("SolarWinds query failed (HTTP 400): Cannot resolve property IOSVersion")
 
     monkeypatch.setattr("routers.reports.generate_device_comparison_report", boom)
@@ -550,7 +550,7 @@ def test_device_comparison_requires_auth():
 def test_device_comparison_csv_export(auth_headers, monkeypatch):
     monkeypatch.setattr(
         "routers.reports.generate_device_comparison_report",
-        lambda dnac, username, password: _FAKE_COMPARISON,
+        lambda dnac: _FAKE_COMPARISON,
     )
 
     r = client.get("/api/reports/device-comparison/export.csv", headers=auth_headers)

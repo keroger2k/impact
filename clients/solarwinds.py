@@ -23,11 +23,13 @@ grep-able as the F5 client's GET-only guarantee is (`clients/f5.py`), just
 inverted: instead of zero mutating verbs, there is a small, fixed, explicitly
 named set, rather than a parameterized function that could reach any verb.
 
-Auth: like F5 (`clients/f5.py`), this uses the logged-in user's own AD
-credentials via HTTP Basic Auth rather than a dedicated service account —
-passed in per call, never read from the environment. SolarWinds expects
-NTLM-style `DOMAIN\\username`, so a domain prefix is added unless the caller
-already supplied one (`user@domain` or `domain\\user`).
+Auth: unlike F5 (`clients/f5.py`), this now uses a dedicated service account
+read from the environment (`SOLARWINDS_USERNAME`/`SOLARWINDS_PASSWORD`)
+rather than the logged-in user's own AD credentials — the Orion instance
+moved off per-user AD auth, so there's no longer a live user credential to
+pass through per call. SolarWinds expects NTLM-style `DOMAIN\\username`, so a
+domain prefix is added unless the configured username already supplied one
+(`user@domain` or `domain\\user`).
 """
 import os
 from datetime import datetime
@@ -54,6 +56,14 @@ def _format_username(username: str) -> str:
     return f"{domain}\\{username}"
 
 
+def _credentials() -> HTTPBasicAuth:
+    username = os.getenv("SOLARWINDS_USERNAME", "").strip()
+    password = os.getenv("SOLARWINDS_PASSWORD", "")
+    if not username or not password:
+        raise RuntimeError("SOLARWINDS_USERNAME/SOLARWINDS_PASSWORD are not configured")
+    return HTTPBasicAuth(_format_username(username), password)
+
+
 def _raise_for_error(resp: requests.Response, action: str) -> None:
     if resp.status_code < 400:
         return
@@ -72,7 +82,7 @@ def _endpoint(frag: str) -> str:
     return f"{_base_url()}:{port}/SolarWinds/InformationService/v3/Json/{frag}"
 
 
-def query(swql: str, username: str, password: str, timeout: int | None = None) -> list[dict]:
+def query(swql: str, timeout: int | None = None) -> list[dict]:
     """Run a SWQL SELECT against Orion and return the result rows.
 
     `timeout` overrides SOLARWINDS_TIMEOUT (default 180s) for this call. That
@@ -81,16 +91,13 @@ def query(swql: str, username: str, password: str, timeout: int | None = None) -
     interface dropdown) should pass something short so a slow/unreachable
     Orion surfaces as a quick inline message instead of a hung UI element.
     """
-    if not username or not password:
-        raise RuntimeError("SolarWinds credentials are required")
-
     if timeout is None:
         timeout = int(os.getenv("SOLARWINDS_TIMEOUT", "180"))
 
     resp = requests.post(
         _endpoint("Query"),
         json={"query": swql},
-        auth=HTTPBasicAuth(_format_username(username), password),
+        auth=_credentials(),
         verify=verify_ssl(),
         timeout=timeout,
         headers={"Accept": "application/json", "Content-Type": "application/json"},
@@ -100,8 +107,7 @@ def query(swql: str, username: str, password: str, timeout: int | None = None) -
 
 
 def suppress_alerts(
-    uri: str, start: datetime, end: datetime,
-    username: str, password: str, timeout: int | None = None,
+    uri: str, start: datetime, end: datetime, timeout: int | None = None,
 ) -> None:
     """Mute alerts for one entity between `start` and `end`.
 
@@ -141,8 +147,6 @@ def suppress_alerts(
     datetimes (see utils/maintenance_report.py, which converts the UTC ISO
     strings the browser submits).
     """
-    if not username or not password:
-        raise RuntimeError("SolarWinds credentials are required")
     if start.tzinfo is None or end.tzinfo is None:
         raise ValueError("start and end must be timezone-aware")
 
@@ -153,7 +157,7 @@ def suppress_alerts(
     resp = requests.post(
         _endpoint("Invoke/Orion.AlertSuppression/SuppressAlerts"),
         json=args,
-        auth=HTTPBasicAuth(_format_username(username), password),
+        auth=_credentials(),
         verify=verify_ssl(),
         timeout=timeout,
         headers={"Accept": "application/json", "Content-Type": "application/json"},
@@ -161,7 +165,7 @@ def suppress_alerts(
     _raise_for_error(resp, "suppress alerts")
 
 
-def resume_alerts(uri: str, username: str, password: str, timeout: int | None = None) -> None:
+def resume_alerts(uri: str, timeout: int | None = None) -> None:
     """Cancel an active or pending alert suppression for one entity early.
 
     Invokes `Orion.AlertSuppression/ResumeAlerts` — confirmed to exist via a
@@ -176,16 +180,13 @@ def resume_alerts(uri: str, username: str, password: str, timeout: int | None = 
     `uri` is the same entity Uri passed to the original `suppress_alerts()`
     call.
     """
-    if not username or not password:
-        raise RuntimeError("SolarWinds credentials are required")
-
     if timeout is None:
         timeout = int(os.getenv("SOLARWINDS_TIMEOUT", "180"))
 
     resp = requests.post(
         _endpoint("Invoke/Orion.AlertSuppression/ResumeAlerts"),
         json=[[uri]],
-        auth=HTTPBasicAuth(_format_username(username), password),
+        auth=_credentials(),
         verify=verify_ssl(),
         timeout=timeout,
         headers={"Accept": "application/json", "Content-Type": "application/json"},

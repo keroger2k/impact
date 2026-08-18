@@ -161,7 +161,7 @@ def test_generate_report_resolves_ip_before_matching_exporters():
             "https://sna.example.com", "network", "dev", "dev", "R-SITE-01", "Tunnel5000",
         )
 
-    mock_find_ip.assert_called_once_with("R-SITE-01", "dev", "dev")
+    mock_find_ip.assert_called_once_with("R-SITE-01")
     assert result["status"] == "ok"
     assert result["interface_name"] == "Tunnel5000"
     assert "traffic_24h" in result and "traffic_7d" in result
@@ -217,7 +217,7 @@ def test_generate_report_normalizes_fqdn_router_name_for_sna_match():
             "R-SITE-01.network.ad.tsa.gov", "Tunnel5000",
         )
 
-    mock_find_ip.assert_called_once_with("R-SITE-01", "dev", "dev")
+    mock_find_ip.assert_called_once_with("R-SITE-01")
     assert result["status"] == "ok"
     assert result["node_name"] == "R-SITE-01"
 

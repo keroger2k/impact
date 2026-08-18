@@ -122,7 +122,7 @@ def generate_application_traffic_report(
     # once here so every downstream use — including the routers/reports.py
     # datalist this usually arrives from — sees the same short name.
     router_name = short_hostname(router_name)
-    router_ip = find_node_ip(router_name, username, password)
+    router_ip = find_node_ip(router_name)
 
     session = sna_client.login(base_url, username, password, domain)
     try:

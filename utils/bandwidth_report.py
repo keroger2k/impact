@@ -112,7 +112,7 @@ JOIN Orion.NodesCustomProperties cp ON cp.NodeID = n.NodeID
 """
 
 
-def find_interfaces(router_name: str | None, interface_name: str, username: str, password: str) -> list[dict]:
+def find_interfaces(router_name: str | None, interface_name: str) -> list[dict]:
     """Find interfaces matching `interface_name`, optionally scoped to a router."""
     interface_name = _validate_name(interface_name, "Interface name")
     iface_lit = _escape_literal(interface_name)
@@ -137,10 +137,10 @@ WHERE
     )
 ORDER BY n.Caption, i.Caption
 """
-    return solarwinds.query(swql, username, password)
+    return solarwinds.query(swql)
 
 
-def find_node_ip(router_name: str, username: str, password: str) -> str | None:
+def find_node_ip(router_name: str) -> str | None:
     """Resolve a router's SolarWinds-polled IP address by node Caption.
 
     Used by the Application Traffic report (utils/sna_report.py) to match SNA's
@@ -156,7 +156,7 @@ FROM Orion.Nodes n
 WHERE n.Caption = '{lit}' OR n.Caption LIKE '%{lit}%'
 ORDER BY n.Caption
 """
-    rows = solarwinds.query(swql, username, password)
+    rows = solarwinds.query(swql)
     if not rows:
         return None
     exact = [r for r in rows if (r.get("NodeName") or "").strip().lower() == name.lower()]
@@ -170,7 +170,7 @@ ORDER BY n.Caption
 _DROPDOWN_TIMEOUT = 20
 
 
-def list_interfaces_for_router(router_name: str, username: str, password: str) -> list[dict]:
+def list_interfaces_for_router(router_name: str) -> list[dict]:
     """Every interface SolarWinds is polling on `router_name`.
 
     Backs the Bandwidth Utilization report's Interface dropdown. Sourced from
@@ -200,23 +200,23 @@ JOIN Orion.Nodes n ON i.NodeID = n.NodeID
 WHERE n.Caption = '{lit}' OR n.Caption LIKE '%{lit}%'
 ORDER BY n.Caption, i.Caption
 """
-    rows = solarwinds.query(swql, username, password, timeout=_DROPDOWN_TIMEOUT)
+    rows = solarwinds.query(swql, timeout=_DROPDOWN_TIMEOUT)
     if not rows:
         return []
     exact = [r for r in rows if (r.get("NodeName") or "").strip().lower() == name.lower()]
     return exact if exact else rows
 
 
-def get_interface_by_id(interface_id: int, username: str, password: str) -> dict | None:
+def get_interface_by_id(interface_id: int) -> dict | None:
     swql = f"""
 SELECT{_SITE_INFO_SELECT}{_SITE_INFO_JOIN}
 WHERE i.InterfaceID = {int(interface_id)}
 """
-    rows = solarwinds.query(swql, username, password)
+    rows = solarwinds.query(swql)
     return rows[0] if rows else None
 
 
-def get_traffic_series(interface_id: int, hours: int, username: str, password: str) -> list[dict]:
+def get_traffic_series(interface_id: int, hours: int) -> list[dict]:
     swql = f"""
 SELECT
     it.DateTime,
@@ -227,7 +227,7 @@ WHERE it.InterfaceID = {int(interface_id)}
 AND it.DateTime >= ADDHOUR(-{int(hours)}, GETUTCDATE())
 ORDER BY it.DateTime
 """
-    raw = solarwinds.query(swql, username, password)
+    raw = solarwinds.query(swql)
 
     def _num(value):
         if value in (None, ""):
@@ -254,8 +254,6 @@ def generate_bandwidth_report(
     router_name: str | None,
     interface_name: str,
     interface_id: int | None,
-    username: str,
-    password: str,
 ) -> dict:
     """Resolve the target interface, then pull 24h + 7d traffic series.
 
@@ -267,13 +265,13 @@ def generate_bandwidth_report(
     Raises InvalidNameError on bad input, LookupError if nothing matches.
     """
     if interface_id is not None:
-        meta = get_interface_by_id(interface_id, username, password)
+        meta = get_interface_by_id(interface_id)
         if not meta:
             raise LookupError("Interface not found")
     else:
         if not router_name:
             raise InvalidNameError("Router name is required")
-        matches = find_interfaces(router_name, interface_name or DEFAULT_INTERFACE, username, password)
+        matches = find_interfaces(router_name, interface_name or DEFAULT_INTERFACE)
         if not matches:
             raise LookupError("No matching interface found")
         if len(matches) > 1:
@@ -301,8 +299,8 @@ def generate_bandwidth_report(
     # on this synchronous, uncached endpoint. Submitted to the shared
     # FANOUT_POOL (see utils/report_pool.py) rather than a per-request pool so
     # concurrent requests can't multiply threads without bound.
-    fut_24h = FANOUT_POOL.submit(get_traffic_series, iface_id, 24, username, password)
-    fut_7d = FANOUT_POOL.submit(get_traffic_series, iface_id, 24 * 7, username, password)
+    fut_24h = FANOUT_POOL.submit(get_traffic_series, iface_id, 24)
+    fut_7d = FANOUT_POOL.submit(get_traffic_series, iface_id, 24 * 7)
     series_24h = fut_24h.result()
     series_7d = fut_7d.result()
 

@@ -22,9 +22,12 @@ _SRC = Path(__file__).resolve().parent.parent / "clients" / "solarwinds.py"
 
 @pytest.fixture(autouse=True)
 def _solarwinds_url(monkeypatch):
-    # _base_url() reads this per-call (not at import time, unlike conftest.py's
-    # DEV_MODE/ACI_FABRICS), so a plain per-test monkeypatch is fine here.
+    # _base_url()/_credentials() read these per-call (not at import time,
+    # unlike conftest.py's DEV_MODE/ACI_FABRICS), so a plain per-test
+    # monkeypatch is fine here.
     monkeypatch.setenv("SOLARWINDS_URL", "https://solarwinds.example.local")
+    monkeypatch.setenv("SOLARWINDS_USERNAME", "dev")
+    monkeypatch.setenv("SOLARWINDS_PASSWORD", "dev")
 
 
 # ── Write-surface narrowness ─────────────────────────────────────────────────
@@ -55,7 +58,7 @@ def _fake_response(status_code=200, json_body=None, text=""):
 def test_query_posts_swql_and_returns_results():
     resp = _fake_response(200, {"results": [{"NodeID": 1}]})
     with patch("requests.post", return_value=resp) as mock_post:
-        rows = sw.query("SELECT NodeID FROM Orion.Nodes", "dev", "dev")
+        rows = sw.query("SELECT NodeID FROM Orion.Nodes")
     assert rows == [{"NodeID": 1}]
     args, kwargs = mock_post.call_args
     assert args[0].endswith("/SolarWinds/InformationService/v3/Json/Query")
@@ -66,12 +69,14 @@ def test_query_raises_with_response_detail_on_error():
     resp = _fake_response(400, text="Cannot resolve property X")
     with patch("requests.post", return_value=resp):
         with pytest.raises(RuntimeError, match="Cannot resolve property X"):
-            sw.query("SELECT bogus", "dev", "dev")
+            sw.query("SELECT bogus")
 
 
-def test_query_requires_credentials():
+def test_query_requires_credentials(monkeypatch):
+    monkeypatch.delenv("SOLARWINDS_USERNAME", raising=False)
+    monkeypatch.delenv("SOLARWINDS_PASSWORD", raising=False)
     with pytest.raises(RuntimeError):
-        sw.query("SELECT 1", "", "")
+        sw.query("SELECT 1")
 
 
 # ── suppress_alerts() ─────────────────────────────────────────────────────────
@@ -84,7 +89,7 @@ def test_suppress_alerts_posts_expected_invoke_body():
     start = datetime(2026, 8, 10, 8, 0, tzinfo=timezone.utc)
     stop = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
     with patch("requests.post", return_value=resp) as mock_post:
-        sw.suppress_alerts(_URI, start, stop, "dev", "dev")
+        sw.suppress_alerts(_URI, start, stop)
 
     args, kwargs = mock_post.call_args
     assert args[0].endswith("/SolarWinds/InformationService/v3/Json/Invoke/Orion.AlertSuppression/SuppressAlerts")
@@ -95,7 +100,7 @@ def test_suppress_alerts_requires_timezone_aware_datetimes():
     naive = datetime(2026, 8, 10, 8, 0)
     aware = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
     with pytest.raises(ValueError):
-        sw.suppress_alerts(_URI, naive, aware, "dev", "dev")
+        sw.suppress_alerts(_URI, naive, aware)
 
 
 def test_suppress_alerts_raises_with_response_detail_on_error():
@@ -104,14 +109,16 @@ def test_suppress_alerts_raises_with_response_detail_on_error():
     stop = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
     with patch("requests.post", return_value=resp):
         with pytest.raises(RuntimeError, match="Access to Orion.AlertSuppression.SuppressAlerts verb denied"):
-            sw.suppress_alerts(_URI, start, stop, "dev", "dev")
+            sw.suppress_alerts(_URI, start, stop)
 
 
-def test_suppress_alerts_requires_credentials():
+def test_suppress_alerts_requires_credentials(monkeypatch):
+    monkeypatch.delenv("SOLARWINDS_USERNAME", raising=False)
+    monkeypatch.delenv("SOLARWINDS_PASSWORD", raising=False)
     start = datetime(2026, 8, 10, 8, 0, tzinfo=timezone.utc)
     stop = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
     with pytest.raises(RuntimeError):
-        sw.suppress_alerts(_URI, start, stop, "", "")
+        sw.suppress_alerts(_URI, start, stop)
 
 
 # ── resume_alerts() ───────────────────────────────────────────────────────────
@@ -119,7 +126,7 @@ def test_suppress_alerts_requires_credentials():
 def test_resume_alerts_posts_expected_invoke_body():
     resp = _fake_response(200, text="")
     with patch("requests.post", return_value=resp) as mock_post:
-        sw.resume_alerts(_URI, "dev", "dev")
+        sw.resume_alerts(_URI)
 
     args, kwargs = mock_post.call_args
     assert args[0].endswith("/SolarWinds/InformationService/v3/Json/Invoke/Orion.AlertSuppression/ResumeAlerts")
@@ -130,9 +137,11 @@ def test_resume_alerts_raises_with_response_detail_on_error():
     resp = _fake_response(400, text='{"Message":"No active suppression for this entity."}')
     with patch("requests.post", return_value=resp):
         with pytest.raises(RuntimeError, match="No active suppression for this entity"):
-            sw.resume_alerts(_URI, "dev", "dev")
+            sw.resume_alerts(_URI)
 
 
-def test_resume_alerts_requires_credentials():
+def test_resume_alerts_requires_credentials(monkeypatch):
+    monkeypatch.delenv("SOLARWINDS_USERNAME", raising=False)
+    monkeypatch.delenv("SOLARWINDS_PASSWORD", raising=False)
     with pytest.raises(RuntimeError):
-        sw.resume_alerts(_URI, "", "")
+        sw.resume_alerts(_URI)

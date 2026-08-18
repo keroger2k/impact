@@ -284,16 +284,17 @@ def build_pdf(rows_by_key: dict[str, list[dict]], keys: list[str], generated_at:
 # ── Orchestration ────────────────────────────────────────────────────────────
 
 def generate_report(
-    day: date, keys: list[str], generated_at: str, username: str, password: str
+    day: date, keys: list[str], generated_at: str
 ) -> tuple[bytes, dict[str, list[dict]]]:
     """Query SolarWinds for each selected report and build the combined PDF.
 
-    Uses the logged-in user's own AD credentials (same pattern as F5) rather
-    than a dedicated service account. Returns (pdf_bytes, rows_by_key) so the
-    caller can also offer the underlying CSVs without re-querying.
+    Uses the dedicated SolarWinds service account (SOLARWINDS_USERNAME/
+    SOLARWINDS_PASSWORD) rather than the logged-in user's own AD credentials.
+    Returns (pdf_bytes, rows_by_key) so the caller can also offer the
+    underlying CSVs without re-querying.
     """
     def _fetch(key: str) -> list[dict]:
-        raw = solarwinds.query(build_swql(key, day), username, password)
+        raw = solarwinds.query(build_swql(key, day))
         return [normalize_result_row(r) for r in raw]
 
     # At most 2 keys (eis/soho) today, but they're independent SolarWinds

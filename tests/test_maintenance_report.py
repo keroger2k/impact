@@ -77,7 +77,7 @@ _URI = "swis://host/Orion/Orion.Nodes/NodeID=42"
 def test_resolve_node_uris_unique_match():
     fake_rows = [{"Uri": _URI, "Caption": "R-SITE01-01"}]
     with patch("clients.solarwinds.query", return_value=fake_rows) as mock_query:
-        result = resolve_node_uris(["R-SITE01-01"], "dev", "dev")
+        result = resolve_node_uris(["R-SITE01-01"])
     assert result["r-site01-01"] == {"uri": _URI}
     swql = mock_query.call_args[0][0]
     assert "Caption = 'R-SITE01-01'" in swql
@@ -85,7 +85,7 @@ def test_resolve_node_uris_unique_match():
 
 def test_resolve_node_uris_not_found():
     with patch("clients.solarwinds.query", return_value=[]):
-        result = resolve_node_uris(["R-SITE01-01"], "dev", "dev")
+        result = resolve_node_uris(["R-SITE01-01"])
     assert result["r-site01-01"] == {"error": "not found in SolarWinds"}
 
 
@@ -95,20 +95,20 @@ def test_resolve_node_uris_ambiguous():
         {"Uri": "swis://host/Orion/Orion.Nodes/NodeID=43", "Caption": "R-SITE01-01"},
     ]
     with patch("clients.solarwinds.query", return_value=fake_rows):
-        result = resolve_node_uris(["R-SITE01-01"], "dev", "dev")
+        result = resolve_node_uris(["R-SITE01-01"])
     assert "error" in result["r-site01-01"]
     assert "ambiguous" in result["r-site01-01"]["error"]
 
 
 def test_resolve_node_uris_queries_once_for_multiple_distinct_names():
     with patch("clients.solarwinds.query", return_value=[]) as mock_query:
-        resolve_node_uris(["R-SITE01-01", "R-SITE02-01", "r-site01-01"], "dev", "dev")
+        resolve_node_uris(["R-SITE01-01", "R-SITE02-01", "r-site01-01"])
     assert mock_query.call_count == 1
 
 
 def test_resolve_node_uris_empty_input_skips_query():
     with patch("clients.solarwinds.query") as mock_query:
-        result = resolve_node_uris([], "dev", "dev")
+        result = resolve_node_uris([])
     assert result == {}
     mock_query.assert_not_called()
 
@@ -120,13 +120,13 @@ def test_schedule_one_calls_suppress_alerts():
     start = datetime(2026, 8, 10, 8, 0, tzinfo=timezone.utc)
     stop = datetime(2026, 8, 10, 9, 0, tzinfo=timezone.utc)
     with patch("clients.solarwinds.suppress_alerts") as mock_suppress:
-        schedule_one(_URI, start, stop, "dev", "dev")
-    mock_suppress.assert_called_once_with(_URI, start, stop, "dev", "dev")
+        schedule_one(_URI, start, stop)
+    mock_suppress.assert_called_once_with(_URI, start, stop)
 
 
 # ── cancel_one ────────────────────────────────────────────────────────────────
 
 def test_cancel_one_calls_resume_alerts():
     with patch("clients.solarwinds.resume_alerts") as mock_resume:
-        cancel_one(_URI, "dev", "dev")
-    mock_resume.assert_called_once_with(_URI, "dev", "dev")
+        cancel_one(_URI)
+    mock_resume.assert_called_once_with(_URI)

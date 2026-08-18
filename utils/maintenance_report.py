@@ -91,7 +91,7 @@ def parse_rows(raw_rows: list[dict]) -> tuple[list[dict], list[dict]]:
     return valid, errors
 
 
-def resolve_node_uris(names: list[str], username: str, password: str) -> dict[str, dict]:
+def resolve_node_uris(names: list[str]) -> dict[str, dict]:
     """Resolve distinct node (Caption) names to their Orion Uri, one batched query.
 
     Returns a map of lowercased name -> `{"uri": str}` on a unique match, or
@@ -103,7 +103,7 @@ def resolve_node_uris(names: list[str], username: str, password: str) -> dict[st
 
     clauses = " OR ".join(f"Caption = '{_escape_literal(n)}'" for n in distinct)
     swql = f"SELECT Uri, Caption FROM Orion.Nodes WHERE {clauses}"
-    rows = solarwinds.query(swql, username, password)
+    rows = solarwinds.query(swql)
 
     by_name: dict[str, list[dict]] = {}
     for row in rows:
@@ -123,11 +123,11 @@ def resolve_node_uris(names: list[str], username: str, password: str) -> dict[st
     return result
 
 
-def schedule_one(uri: str, start: datetime, stop: datetime, username: str, password: str) -> None:
+def schedule_one(uri: str, start: datetime, stop: datetime) -> None:
     """Mute alerts for one already-resolved node."""
-    solarwinds.suppress_alerts(uri, start, stop, username, password)
+    solarwinds.suppress_alerts(uri, start, stop)
 
 
-def cancel_one(uri: str, username: str, password: str) -> None:
+def cancel_one(uri: str) -> None:
     """Cancel an active/pending mute for one node, before its window ends."""
-    solarwinds.resume_alerts(uri, username, password)
+    solarwinds.resume_alerts(uri)
