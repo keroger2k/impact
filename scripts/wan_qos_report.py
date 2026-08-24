@@ -2,8 +2,19 @@
 """scripts/wan_qos_report.py — WAN queue/QoS report for a site's border router.
 
 Given a site name, this:
-  1. Resolves the site in DNAC (site hierarchy, substring match).
-  2. Finds the device(s) at that site whose DNAC role is "BORDER ROUTER".
+  1. Resolves the site in DNAC (site hierarchy, substring match) — preferring
+     the shallowest matching level (Building/Area) over a deeper one
+     (Floor), then searching that site plus every descendant site for
+     devices. dc.get_site_cache() sorts deepest-first for a different
+     caller's needs, and a Floor's hierarchy path always substring-matches
+     whenever its parent Building does (it's the Building's path plus a
+     suffix) — matching depth-first would silently resolve to a Floor
+     instead. This fleet only floor-assigns APs, so a Floor-scoped device
+     search finds zero border routers and the report comes back empty even
+     though the router is right there on the parent Building. See
+     find_best_site_match_prefer_shallow() / site_and_descendant_ids().
+  2. Finds the device(s) at that site (or its descendants) whose DNAC role
+     is "BORDER ROUTER".
   3. Resolves each border router's WAN interface — first by DNAC "WAN" tag
      membership (the tag scripts/tag_c8k_wan_interfaces.py applies), falling
      back to the same VRF-forwarding heuristic that script uses
@@ -140,6 +151,40 @@ def get_site_device_ids(dnac, site_id: str) -> set[str]:
             break
         offset += 500
     return ids
+
+
+def find_best_site_match_prefer_shallow(site_cache: list[dict], term: str) -> tuple[str | None, str | None]:
+    """Like dc.find_best_site_match, but prefers the least-specific
+    (shallowest) matching site rather than the most-specific.
+
+    dc.get_site_cache() sorts deepest-first so build_device_site_map's
+    "most specific assignment wins" logic works — but that same order means
+    a Floor whose hierarchy path is `<Building path>/Floor N` always
+    substring-matches a search term whenever its parent Building does too,
+    and gets returned first since it's deeper. This fleet only assigns APs
+    to floors — border routers sit at the Building/Area level — so
+    depth-first matching silently resolves "site" to a floor with no
+    border router on it, and the report comes back empty. Matching
+    shallowest-first fixes that without touching dc.get_site_cache's
+    ordering, which other callers (e.g. device import) rely on as-is.
+    """
+    for site in sorted(site_cache, key=lambda s: s["name"].count("/")):
+        if term.lower() in site["name"].lower():
+            return site["id"], site["name"]
+    return None, None
+
+
+def site_and_descendant_ids(site_cache: list[dict], site_name: str) -> set[str]:
+    """The matched site's id plus every descendant site's id (Floors under
+    a matched Building, sites under a matched Area, ...). Border routers
+    live at the Building/Area level in this fleet, but unioning in
+    descendants keeps the search correct even where a router genuinely is
+    floor-assigned, rather than assuming the hierarchy shape."""
+    prefix = site_name + "/"
+    return {
+        s["id"] for s in site_cache
+        if s["name"] == site_name or s["name"].startswith(prefix)
+    }
 
 
 def find_border_routers(devices: list[dict], site_device_ids: set[str], role: str) -> list[dict]:
@@ -669,13 +714,16 @@ def main() -> int:
     else:
         logger.info("Resolving site '%s'...", args.site)
         site_cache = dc.get_site_cache(dnac)
-        site_id, site_name = dc.find_best_site_match(site_cache, args.site)
+        site_id, site_name = find_best_site_match_prefer_shallow(site_cache, args.site)
         if not site_id:
             logger.error("No site matching '%s'", args.site)
             return 1
         logger.info("Site: %s", site_name)
 
-        site_device_ids = get_site_device_ids(dnac, site_id)
+        branch_ids = site_and_descendant_ids(site_cache, site_name)
+        site_device_ids: set[str] = set()
+        for sid in branch_ids:
+            site_device_ids |= get_site_device_ids(dnac, sid)
         targets = find_border_routers(devices, site_device_ids, args.role)
         if not targets:
             logger.error("No device with role matching '%s' found at site '%s'", args.role, site_name)
