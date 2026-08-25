@@ -699,15 +699,21 @@ def main() -> int:
     ap.add_argument("-v", "--verbose", action="store_true", help="Debug logging")
     args = ap.parse_args()
 
-    # Default output stays minimal: only warnings/errors print (from this
-    # script, clients.dnac, and netmiko/paramiko — all of which log routine
-    # progress at INFO/DEBUG, e.g. per-page DNAC fetches and SSH connection
-    # banners). -v/--verbose restores the full trail for troubleshooting.
     logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.WARNING,
+        level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)-7s %(message)s",
         datefmt="%H:%M:%S",
     )
+    if not args.verbose:
+        # This script's own logger.info() calls are the one-line-per-step
+        # progress output ("Querying DNAC...", "connecting via SSH...", ...).
+        # clients.dnac and netmiko/paramiko log their own routine internals
+        # at the same INFO/DEBUG levels (per-page DNAC fetches, the SSH
+        # connection/auth handshake) — quiet those specifically rather than
+        # dropping INFO globally, so this script's steps still show.
+        logging.getLogger("clients.dnac").setLevel(logging.WARNING)
+        logging.getLogger("netmiko").setLevel(logging.WARNING)
+        logging.getLogger("paramiko").setLevel(logging.WARNING)
 
     if not args.site and not args.device:
         ap.error("either SITE or --device is required")
@@ -717,7 +723,7 @@ def main() -> int:
 
     dnac = dc.get_client()
 
-    logger.info("Fetching DNAC device inventory...")
+    logger.info("Querying DNAC for device inventory...")
     devices = dc.get_all_devices(dnac, strict=True)
 
     if args.device:
@@ -726,13 +732,12 @@ def main() -> int:
             logger.error("No device matching '%s' in DNAC inventory", args.device)
             return 1
     else:
-        logger.info("Resolving site '%s'...", args.site)
         site_cache = dc.get_site_cache(dnac)
         site_id, site_name = find_best_site_match_prefer_shallow(site_cache, args.site)
         if not site_id:
             logger.error("No site matching '%s'", args.site)
             return 1
-        logger.info("Site: %s", site_name)
+        logger.info("Site '%s' resolved to: %s", args.site, site_name)
 
         branch_ids = site_and_descendant_ids(site_cache, site_name)
         site_device_ids: set[str] = set()
