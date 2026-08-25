@@ -67,6 +67,11 @@ Env vars (.env) — same convention as scripts/sna_discover.py:
     SNA_TIMEOUT         default 30
     SNA_VERIFY_SSL      default false (self-signed certs)
 
+Also requires SolarWinds to be configured (SOLARWINDS_URL/SOLARWINDS_USERNAME/
+SOLARWINDS_PASSWORD) — resolving --router to an SNA Exporter goes through
+SolarWinds first (see resolve_target()'s comment for why), same as the
+production Application Traffic chart does.
+
 Usage:
     .venv/bin/python -m scripts.sna_discover_dscp --router RTR-DCA-01 --interface Tunnel5000
 """
@@ -88,6 +93,7 @@ from dotenv import load_dotenv  # noqa: E402
 load_dotenv()
 
 import clients.sna as sna_client  # noqa: E402
+from utils.bandwidth_report import find_node_ip  # noqa: E402
 from utils.sna_report import find_exporters, find_interfaces  # noqa: E402
 
 REPORT_BUILDER = "/report-builder/api/v1"
@@ -161,9 +167,20 @@ def resolve_target(
     domain_id = sna_client.get_tenant_id(session, base_url, timeout)
     print(f"Tenant/domain ID: {domain_id}")
 
-    exporters = find_exporters(session, base_url, domain_id, router)
+    # Exporters are keyed by IP, not hostname (clients/sna.py's own module
+    # docstring — a hostname substring match alone comes up empty even for
+    # a router that resolves fine everywhere else). Resolve the
+    # SolarWinds-polled IP first, same as the production
+    # utils/sna_report.py::generate_application_traffic_report does, and
+    # pass both — find_exporters() tries the IP match before falling back
+    # to the name substring match.
+    router_ip = find_node_ip(router)
+    print(f"SolarWinds-resolved IP for '{router}': {router_ip or '(not found)'}")
+
+    exporters = find_exporters(session, base_url, domain_id, router, router_ip)
     if not exporters:
-        print(f"\nNo SNA exporter found matching '{router}'. Nothing further to probe.")
+        detail = f" (resolved IP {router_ip})" if router_ip else " (no IP resolved from SolarWinds either)"
+        print(f"\nNo SNA exporter found matching '{router}'{detail}. Nothing further to probe.")
         sys.exit(1)
     if len(exporters) > 1:
         print(f"\nMultiple exporters matched '{router}' — pick one and re-run with a more specific --router:")
