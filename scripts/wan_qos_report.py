@@ -22,18 +22,9 @@ Given a site name, this:
      DNAC's cached running-config) if the interface isn't tagged yet.
      Reuses those functions directly from tag_c8k_wan_interfaces.py rather
      than re-implementing "what counts as a WAN interface" a second time.
-  4. SSHes to the device (Netmiko) and runs exactly two read-only commands:
+  4. SSHes to the device (Netmiko) and runs exactly one read-only command:
        show policy-map interface <wan-if> output
-       show interface <wan-if> | include Last clearing
-     Nothing else is ever sent — no send_config_set, no write verbs. The
-     second command is a best-effort answer to "how long have these queue
-     counters been accumulating": IOS/IOS-XE does not expose a QoS-counter
-     reset timestamp directly (the parent `show policy-map interface`
-     counters live for as long as the service-policy has been attached, and
-     that isn't independently tracked) — the interface's own last-counters-
-     clear time is the closest real datum, printed alongside the device's
-     DNAC-reported uptime as an upper bound. Both are labeled as
-     approximations, not asserted as exact.
+     Nothing else is ever sent — no send_config_set, no write verbs.
   5. Parses the policy-map output into per-queue stats and prints a report:
      a "Queue summary" table (packets/bytes share, queue depth vs limit,
      drops, drop % of that queue's own traffic, each queue's share of total
@@ -70,9 +61,9 @@ rolled up at different levels — aren't double-counted.
 
 Read-only guarantee: the only DNAC calls made are GETs (device inventory,
 site membership, interface list, tag membership, cached config text) and
-the only device commands are the two `show` commands above, run once each
-via Netmiko's send_command. There is no config-mode code path in this
-script at all.
+the only device command is the `show` command above, run once via
+Netmiko's send_command. There is no config-mode code path in this script
+at all.
 
 Auth:
   DNAC:   the app's shared service account, same as every other script here
@@ -540,8 +531,7 @@ def _display_name(c: dict) -> str:
 
 
 def render_report(hostname: str, ip: str, wan_if: str, detection_method: str,
-                   parsed: dict, stats: dict, counters_since: str | None,
-                   device_uptime: str | None, raw_text: str, show_raw: bool,
+                   parsed: dict, stats: dict, raw_text: str, show_raw: bool,
                    show_detail: bool) -> None:
     classes = stats["classes"]
     print("=" * 88)
@@ -555,8 +545,6 @@ def render_report(hostname: str, ip: str, wan_if: str, detection_method: str,
     print(f"Total traffic:    {_fmt_int(stats['total_traffic_pkts'])} packets (all queues)")
     print(f"Total drops:      {_fmt_int(stats['total_drops'])} packets "
           f"({_fmt_pct((stats['total_drops'] / stats['total_traffic_pkts'] * 100) if stats['total_traffic_pkts'] and stats['total_drops'] is not None else None)} overall)")
-    print(f"Counters since:   {counters_since or 'unknown'}  (approx — IOS does not expose a QoS")
-    print(f"                  counter-reset time directly; upper-bounded by device uptime: {device_uptime or 'unknown'})")
     print()
 
     print("Queue summary:")
@@ -639,7 +627,6 @@ def process_device(dnac, device: dict, args) -> int:
     device_type = guess_device_type(device.get("platformId", ""))
     commands = [
         ("policy", f"show policy-map interface {wan_if} output"),
-        ("clearing", f"show interface {wan_if} | include Last clearing"),
     ]
 
     logger.info("%s: connecting via SSH...", hostname)
@@ -655,16 +642,11 @@ def process_device(dnac, device: dict, args) -> int:
                       "no service-policy applied, or wrong interface name?", hostname, wan_if)
         return 1
 
-    counters_since = None
-    m = re.search(r"Last clearing.*?:\s*(.+)", raw.get("clearing", ""), re.IGNORECASE)
-    if m:
-        counters_since = m.group(1).strip()
-
     parsed = parse_policy_map(policy_text)
     stats = compute_stats(parsed)
     render_report(
         hostname, ip, wan_if, method, parsed, stats,
-        counters_since, device.get("upTime"), policy_text, args.raw, args.detail,
+        policy_text, args.raw, args.detail,
     )
     return 0
 
