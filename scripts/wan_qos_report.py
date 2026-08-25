@@ -35,10 +35,14 @@ Given a site name, this:
      DNAC-reported uptime as an upper bound. Both are labeled as
      approximations, not asserted as exact.
   5. Parses the policy-map output into per-queue stats and prints a report:
-     packets/bytes, current 30s offered/drop rate, queue depth vs limit,
-     total/no-buffer drops, drop % of that queue's own traffic, each
-     queue's share of total interface drops, each queue's share of total
-     interface traffic, and the queue's configured priority/bandwidth.
+     a "Queue summary" table (packets/bytes share, queue depth vs limit,
+     drops, drop % of that queue's own traffic, each queue's share of total
+     interface drops, and configured priority/bandwidth) — this table is
+     the report's primary output and always prints. A "Detail per queue"
+     section with the same data broken out per-queue (matches, 30s
+     offered/drop rate, output counters, full config) is opt-in via
+     --detail: it's long enough on a multi-queue policy-map to push the
+     summary table off screen, so it stays hidden unless asked for.
 
 Handles Cisco's hierarchical (parent-shaper + child-LLQ/CBWFQ) policy-map
 shape, which is what this fleet runs: a parent class-default shapes to the
@@ -537,7 +541,8 @@ def _display_name(c: dict) -> str:
 
 def render_report(hostname: str, ip: str, wan_if: str, detection_method: str,
                    parsed: dict, stats: dict, counters_since: str | None,
-                   device_uptime: str | None, raw_text: str, show_raw: bool) -> None:
+                   device_uptime: str | None, raw_text: str, show_raw: bool,
+                   show_detail: bool) -> None:
     classes = stats["classes"]
     print("=" * 88)
     print(f"WAN QoS Queue Report — {hostname} ({ip})")
@@ -573,31 +578,32 @@ def render_report(hostname: str, ip: str, wan_if: str, detection_method: str,
         print(row)
     print()
 
-    print("Detail per queue:")
-    for c in sorted(classes, key=lambda c: c["depth"]):
-        print(f"  [{_display_name(c)}] (match-{c['match_type']})")
-        if c["matches"]:
-            print(f"    Matches:      {', '.join(c['matches'])}")
-        print(f"    Traffic:      {_fmt_int(c['packets'])} pkts / {_fmt_int(c['bytes'])} bytes"
-              f"  ({_fmt_pct(c['pct_of_total_traffic'])} of interface total)")
-        print(f"    30s rate:     {_fmt_int(c['offered_bps'])} bps offered / {_fmt_int(c['drop_bps'])} bps dropped"
-              f"  ({_fmt_pct(c['instant_drop_pct'])} instantaneous)")
-        note = "  [shared priority (LLQ) queue]" if c["shared_priority_queue"] else ""
-        print(f"    Queue:        depth {_fmt_int(c['queue_depth'])} / limit {_fmt_int(c['queue_limit'])} packets"
-              f"  ({_fmt_pct(c['queue_fill_pct'])} full){note}")
-        print(f"    Drops:        {_fmt_int(c['total_drops'])} total, {_fmt_int(c['no_buffer_drops'])} no-buffer"
-              f"  ({_fmt_pct(c['drop_pct_of_queue'])} of this queue's traffic,"
-              f" {_fmt_pct(c['share_of_total_drops'])} of all interface drops)")
-        print(f"    Output:       {_fmt_int(c['pkts_output'])} pkts / {_fmt_int(c['bytes_output'])} bytes")
-        cfg_bits = [_bw_config(c)]
-        if c["priority_burst_bytes"] is not None:
-            cfg_bits.append(f"burst {_fmt_int(c['priority_burst_bytes'])} bytes")
-        if c["bw_exceed_drops"] is not None:
-            cfg_bits.append(f"b/w exceed drops {_fmt_int(c['bw_exceed_drops'])}")
-        if c["target_shape_bps"] is not None:
-            cfg_bits.append(f"target shape {_fmt_int(c['target_shape_bps'])} bps")
-        print(f"    Config:       {', '.join(cfg_bits)}")
-        print()
+    if show_detail:
+        print("Detail per queue:")
+        for c in sorted(classes, key=lambda c: c["depth"]):
+            print(f"  [{_display_name(c)}] (match-{c['match_type']})")
+            if c["matches"]:
+                print(f"    Matches:      {', '.join(c['matches'])}")
+            print(f"    Traffic:      {_fmt_int(c['packets'])} pkts / {_fmt_int(c['bytes'])} bytes"
+                  f"  ({_fmt_pct(c['pct_of_total_traffic'])} of interface total)")
+            print(f"    30s rate:     {_fmt_int(c['offered_bps'])} bps offered / {_fmt_int(c['drop_bps'])} bps dropped"
+                  f"  ({_fmt_pct(c['instant_drop_pct'])} instantaneous)")
+            note = "  [shared priority (LLQ) queue]" if c["shared_priority_queue"] else ""
+            print(f"    Queue:        depth {_fmt_int(c['queue_depth'])} / limit {_fmt_int(c['queue_limit'])} packets"
+                  f"  ({_fmt_pct(c['queue_fill_pct'])} full){note}")
+            print(f"    Drops:        {_fmt_int(c['total_drops'])} total, {_fmt_int(c['no_buffer_drops'])} no-buffer"
+                  f"  ({_fmt_pct(c['drop_pct_of_queue'])} of this queue's traffic,"
+                  f" {_fmt_pct(c['share_of_total_drops'])} of all interface drops)")
+            print(f"    Output:       {_fmt_int(c['pkts_output'])} pkts / {_fmt_int(c['bytes_output'])} bytes")
+            cfg_bits = [_bw_config(c)]
+            if c["priority_burst_bytes"] is not None:
+                cfg_bits.append(f"burst {_fmt_int(c['priority_burst_bytes'])} bytes")
+            if c["bw_exceed_drops"] is not None:
+                cfg_bits.append(f"b/w exceed drops {_fmt_int(c['bw_exceed_drops'])}")
+            if c["target_shape_bps"] is not None:
+                cfg_bits.append(f"target shape {_fmt_int(c['target_shape_bps'])} bps")
+            print(f"    Config:       {', '.join(cfg_bits)}")
+            print()
 
     if show_raw:
         print("Raw CLI output:")
@@ -658,7 +664,7 @@ def process_device(dnac, device: dict, args) -> int:
     stats = compute_stats(parsed)
     render_report(
         hostname, ip, wan_if, method, parsed, stats,
-        counters_since, device.get("upTime"), policy_text, args.raw,
+        counters_since, device.get("upTime"), policy_text, args.raw, args.detail,
     )
     return 0
 
@@ -685,12 +691,20 @@ def main() -> int:
     ap.add_argument("--password", default=os.getenv("DOMAIN_PASSWORD", ""),
                      help="SSH password (default: DOMAIN_PASSWORD from .env)")
     ap.add_argument("--timeout", type=int, default=SSH_TIMEOUT, help=f"SSH timeout in seconds (default: {SSH_TIMEOUT})")
+    ap.add_argument("--detail", action="store_true",
+                     help="Also print the per-queue detail section (matches, 30s rate, config, ...) "
+                          "below the queue summary table. Off by default so the summary — the part "
+                          "usually being read — doesn't scroll off screen.")
     ap.add_argument("--raw", action="store_true", help="Also print the raw CLI output")
     ap.add_argument("-v", "--verbose", action="store_true", help="Debug logging")
     args = ap.parse_args()
 
+    # Default output stays minimal: only warnings/errors print (from this
+    # script, clients.dnac, and netmiko/paramiko — all of which log routine
+    # progress at INFO/DEBUG, e.g. per-page DNAC fetches and SSH connection
+    # banners). -v/--verbose restores the full trail for troubleshooting.
     logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
+        level=logging.DEBUG if args.verbose else logging.WARNING,
         format="%(asctime)s %(levelname)-7s %(message)s",
         datefmt="%H:%M:%S",
     )
