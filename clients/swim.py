@@ -59,8 +59,8 @@ not job-scoped, so `poll_device_status` always passes `start_time` (this
 job's own submission instant) to exclude a device's rows from any earlier
 job that happened to touch the same device.
 
-`get_assigned_products` (the image/device compatibility gate backing both
-job creation and the compliance dashboard's family grouping) is built on
+`get_assigned_products` (the image/device compatibility gate backing job
+creation) is built on
 `retrieves_network_device_product_names_assigned_to_a_software_image`, whose
 response shape was pulled directly from Cisco's own published OpenAPI spec
 (Catalyst Center Intent API 3.1.6) rather than inferred from the SDK's
@@ -96,8 +96,8 @@ def _epoch_ms(dt: datetime) -> int:
 
 # Mock golden versions keyed by dev.py's MOCK_DEVICES platformIds — deliberately
 # a mix of matching and non-matching current versions, so DEV_MODE exercises
-# both the compliant and non-compliant paths in the compliance dashboard
-# without needing a real DNAC instance.
+# both the compatible and incompatible paths through the job compatibility
+# gate without needing a real DNAC instance.
 _DEV_GOLDEN_VERSIONS = {
     "C9300-48U": "17.9.3",
     "C9300-24P": "17.9.3",
@@ -108,10 +108,10 @@ _DEV_GOLDEN_VERSIONS = {
 
 # Human-readable product/family names DNAC would normally supply via
 # get_assigned_products() below — mocked here so DEV_MODE exercises the same
-# family-labeled compliance grouping and image/device compatibility gate a
-# real instance provides, without needing live DNAC access. Two distinct
-# platformIds (C9300-48U/C9300-24P) intentionally share one family name, the
-# same many-PIDs-one-family shape DNAC's real productName data has.
+# image/device compatibility gate a real instance provides, without needing
+# live DNAC access. Two distinct platformIds (C9300-48U/C9300-24P)
+# intentionally share one family name, the same many-PIDs-one-family shape
+# DNAC's real productName data has.
 _DEV_PRODUCT_FAMILIES = {
     "C9300-48U": "Cisco Catalyst 9300 Series Switches",
     "C9300-24P": "Cisco Catalyst 9300 Series Switches",
@@ -245,16 +245,16 @@ def list_images(dnac, golden: bool | None = None, site_id: str | None = None) ->
 
 
 def list_golden_images(dnac, site_id: str | None = None) -> list[dict]:
-    """Convenience wrapper — golden-tagged images only. Backs the compliance
-    dashboard (utils/swim_compliance.py) and the job wizard's default image
-    filter. First cut pulls global (no site_id) golden images grouped by
-    platform — DNAC's golden designation *can* be site-scoped, and it's not
-    confirmed this fleet differentiates by site; a known simplification to
-    revisit if compliance numbers look wrong against a real instance.
+    """Convenience wrapper — golden-tagged images only. Backs the job
+    wizard's default image filter. First cut pulls global (no site_id)
+    golden images grouped by platform — DNAC's golden designation *can* be
+    site-scoped, and it's not confirmed this fleet differentiates by site;
+    a known simplification to revisit if results look wrong against a real
+    instance.
 
     Each returned image carries an `assigned_products` dict (pid -> product
-    name, see get_assigned_products) — the compliance dashboard's family
-    grouping is built from this, not from platformId string-matching.
+    name, see get_assigned_products) — the compatibility gate is built from
+    this, not from platformId string-matching.
     """
     images = list_images(dnac, golden=True, site_id=site_id)
     return attach_assigned_products(dnac, images)
@@ -268,13 +268,11 @@ def get_assigned_products(dnac, image_id: str) -> dict[str, str]:
 
     Confirmed present on the pinned DNAC version via
     `retrieves_network_device_product_names_assigned_to_a_software_image` —
-    this is the authoritative source both the distribution/activation
-    compatibility gate (routers/swim.py) and the compliance dashboard's
-    family grouping (utils/swim_compliance.py) are built on, replacing an
-    earlier model-number-substring heuristic that could tell "looks
-    similar" but never "DNAC actually says this image applies to this
-    device" — which is what actually matters before pushing an image to a
-    device.
+    this is the authoritative source the distribution/activation
+    compatibility gate (routers/swim.py) is built on, replacing an earlier
+    model-number-substring heuristic that could tell "looks similar" but
+    never "DNAC actually says this image applies to this device" — which is
+    what actually matters before pushing an image to a device.
 
     Response shape confirmed against Cisco's own published OpenAPI spec
     (Catalyst Center Intent API 3.1.6, `retrievesNetworkDeviceProductNames

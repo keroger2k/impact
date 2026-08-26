@@ -1,12 +1,11 @@
 """tests/test_swim_targeting.py — split_platform_ids()/is_compatible(),
-the shared stack-aware primitives behind both routers/swim.py's
-compatibility gate and utils/swim_compliance.py's classification.
+the stack-aware primitives behind routers/swim.py's compatibility gate.
 
 Confirms the fix for a real bug: DNAC reports a stacked switch's
 platformId as a comma-separated list of every member's exact PID, not a
-single value — matching/compliance code that looked up the whole combined
-string as one key always failed for stacks, even when every individual
-member PID was genuinely compatible.
+single value — matching code that looked up the whole combined string as
+one key always failed for stacks, even when every individual member PID
+was genuinely compatible.
 """
 from __future__ import annotations
 

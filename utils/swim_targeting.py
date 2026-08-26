@@ -181,10 +181,9 @@ def unresolved_site_count(rows: list[dict]) -> int:
 
 
 # ── Image/device compatibility (stack-aware) ────────────────────────────────
-# Shared by routers/swim.py's compatibility gate and utils/swim_compliance.py's
-# classification, so both interpret DNAC's platformId shape identically — a
-# fix here fixes it everywhere, rather than needing the same reasoning
-# re-applied at each call site.
+# Backs routers/swim.py's compatibility gate — kept as a shared helper so any
+# other caller that needs to interpret DNAC's platformId shape gets the same
+# stack-aware behavior rather than re-deriving it.
 
 def split_platform_ids(platform_id: str | None) -> list[str]:
     """DNAC reports a stacked switch's platformId as a comma-separated list

@@ -7,14 +7,12 @@ string). `resolve_site_code()` is the one place in the codebase that turns
 that hierarchy string (or, failing that, the hostname) into the short code
 (`K024`, `SDCZ`, ...) used everywhere else.
 
-Two callers share this function unchanged:
-  * utils/swim_targeting.py — snapshots a site_code onto each job_devices
-    row at job-creation time, so a job's per-site batching plan is stable
-    even if the site map cache changes later.
-  * utils/swim_compliance.py — the same resolution, for the compliance
-    dashboard's by-site breakdown.
+Shared unchanged by every SWIM caller that needs a device's site — e.g.
+utils/swim_targeting.py snapshots a site_code onto each job_devices row at
+job-creation time, so a job's per-site batching plan is stable even if the
+site map cache changes later.
 
-"Which site is this device in" should never be answered a third way.
+"Which site is this device in" should never be answered a second way.
 """
 from __future__ import annotations
 

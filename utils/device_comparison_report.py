@@ -323,9 +323,9 @@ def _model_matches(a: str | None, b: str | None) -> bool:
 def _version_matches(a: str | None, b: str | None) -> bool:
     """Compare numerically so zero-padding doesn't read as a mismatch —
     SolarWinds reports "17.06.05" where DNAC reports "17.6.5". Prefix-
-    tolerant (truncated-to-shortest-length): moved to utils/version_compare
-    so the golden-image compliance dashboard can reuse the same zero-padding
-    handling under its own, stricter, non-truncating semantics."""
+    tolerant (truncated-to-shortest-length); lives in utils/version_compare
+    since it's generically useful version-string handling, not specific to
+    this report."""
     return versions_compatible(a, b)
 
 

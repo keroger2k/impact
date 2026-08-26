@@ -1,5 +1,4 @@
-"""routers/swim.py — /api/swim/*: golden-image distribution/activation jobs
-and the read-only compliance dashboard.
+"""routers/swim.py — /api/swim/*: golden-image distribution/activation jobs.
 
 Two independent env flags gate the mutating surface — `SWIM_DISTRIBUTION_
 ENABLED` and `SWIM_ACTIVATION_ENABLED` — checked per job_type, never a
@@ -8,7 +7,7 @@ different risk tier than distribution (staging an image) and a site may
 want one enabled without the other. Every handler that creates, starts, or
 cancels a job re-checks the relevant flag independently (same three-layer
 posture as SOLARWINDS_WRITES_ENABLED — see routers/pages.py for the matching
-page-route checks). Compliance endpoints carry no gate; they're read-only.
+page-route checks).
 
 Job creation/execution/cancellation reuse this codebase's established
 patterns rather than inventing new ones:
@@ -37,7 +36,6 @@ from pydantic import BaseModel
 import auth as auth_module
 import clients.swim as swim_client
 import clients.swim_jobs as swim_jobs
-import utils.swim_compliance as swim_compliance
 import utils.swim_scheduler as swim_scheduler
 import utils.swim_site_circuit as swim_site_circuit
 import utils.swim_targeting as swim_targeting
@@ -178,28 +176,6 @@ async def list_images(golden: bool = Query(True), session: SessionEntry = Depend
     else:
         images = await loop.run_in_executor(None, run_with_context(swim_client.list_images, dnac, None))
     return {"images": images or []}
-
-
-# ── Compliance dashboard (read-only, no gate) ───────────────────────────────
-
-@router.get("/compliance/summary")
-async def compliance_summary(
-    product_family: Optional[str] = Query(None),
-    family: Optional[str] = Query(None),
-    site: Optional[str] = Query(None),
-    session: SessionEntry = Depends(require_auth),
-):
-    dnac = _get_dnac(session)
-    loop = asyncio.get_event_loop()
-    golden_images = await loop.run_in_executor(
-        None, run_with_context(cache.get_or_set), "dnac_golden_images",
-        lambda: swim_client.list_golden_images(dnac), TTL_STANDARD,
-    )
-    devices, device_site_map = _devices_cache()
-    return swim_compliance.compute_compliance(
-        devices, device_site_map, golden_images or [],
-        product_family=product_family, family=family, site=site,
-    )
 
 
 # ── Device targeting (modes a/b: filter picker + site/family auto-target) ──

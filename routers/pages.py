@@ -500,15 +500,6 @@ async def software_page(request: Request, user: SessionEntry = Depends(get_curre
     return templates.TemplateResponse(request, "software.html", context)
 
 
-@router.get("/software/compliance", response_class=HTMLResponse)
-async def software_compliance_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
-    if not user: return RedirectResponse(url="/login")
-    context = _swim_context(user)
-    if request.headers.get("HX-Request"):
-        return templates.TemplateResponse(request, "pages/software_compliance_content.html", context)
-    return templates.TemplateResponse(request, "software_compliance.html", context)
-
-
 def _require_swim_job_type(job_type: str):
     flag = "SWIM_DISTRIBUTION_ENABLED" if job_type == "distribution" else "SWIM_ACTIVATION_ENABLED"
     if os.getenv(flag, "false").lower() != "true":

@@ -219,9 +219,9 @@ class NoCacheStaticFiles(StaticFiles):
     own heuristic caching can keep serving an old cached copy of a JS/CSS
     file for hours or days after it's changed on disk — confirmed in
     production: a returning browser served a stale report-charts.js and hit
-    `window.ImpactReportCharts.renderComplianceOverview is not a function`
-    after that file gained new exports, even though the new file was live on
-    disk. `no-cache` forces a conditional revalidation (If-None-Match /
+    a "not a function" error on a renderer that had just been added to that
+    file, even though the new file was live on disk. `no-cache` forces a
+    conditional revalidation (If-None-Match /
     If-Modified-Since) on every request rather than trusting a local
     heuristic — still a fast 304 when nothing changed, but a code change is
     never silently invisible to an already-open browser tab. No build step
