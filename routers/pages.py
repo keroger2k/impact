@@ -264,6 +264,21 @@ async def config_search_page(request: Request, response: Response, user: Session
         return templates.TemplateResponse(request, "pages/config_search_content.html", context)
     return templates.TemplateResponse(request, "config_search.html", context)
 
+@router.get("/config-diff", response_class=HTMLResponse)
+async def config_diff_page(request: Request, response: Response, user: SessionEntry = Depends(get_current_user_from_cookie)):
+    if not user: return RedirectResponse(url="/login")
+    from utils.csrf import set_csrf_cookie
+    set_csrf_cookie(response)
+    context = {
+        "debug_enabled": os.getenv("CONSOLE_LOG_LEVEL", "INFO") == "DEBUG" or os.getenv("DEV_MODE", "false").lower() == "true",
+        "commands_enabled": os.getenv("COMMANDS_ENABLED", "false").lower() == "true",
+        "active_page": "config-diff",
+        "username": user.username,
+    }
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse(request, "pages/config_diff_content.html", context)
+    return templates.TemplateResponse(request, "config_diff.html", context)
+
 @router.get("/ip-lookup", response_class=HTMLResponse)
 async def ip_lookup_page(request: Request, user: SessionEntry = Depends(get_current_user_from_cookie)):
     if not user: return RedirectResponse(url="/login")

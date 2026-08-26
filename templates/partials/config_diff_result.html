@@ -1,0 +1,22 @@
+<div class="card shadow-sm border-0 animate-fade-in mt-3">
+  <div class="card-header bg-navy text-white d-flex align-items-center gap-2">
+    <i class="ph ph-git-diff"></i>
+    <span class="fw-bold">Differences: {{ left.hostname }} vs {{ right.hostname }}</span>
+  </div>
+  <div class="card-body">
+    {% if identical %}
+      <div class="alert alert-success small mb-0">
+        <i class="ph ph-check-circle me-1"></i> Configurations are identical.
+      </div>
+    {% else %}
+      <div class="small text-muted mb-2 d-flex gap-3">
+        <span><span class="diff-swatch diff-swatch-sub"></span> Removed</span>
+        <span><span class="diff-swatch diff-swatch-add"></span> Added</span>
+        <span><span class="diff-swatch diff-swatch-chg"></span> Changed</span>
+      </div>
+      <div class="diff-table-wrap">
+        {{ diff_table | safe }}
+      </div>
+    {% endif %}
+  </div>
+</div>

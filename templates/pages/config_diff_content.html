@@ -1,0 +1,65 @@
+<div class="d-flex flex-column gap-3 animate-fade-in">
+  <div class="row g-4">
+    <div class="col-12">
+      <div class="card shadow-sm border-0">
+        <div class="card-header bg-navy text-white d-flex align-items-center gap-2">
+          <i class="ph ph-git-diff"></i>
+          <span class="fw-bold">Config Diff</span>
+        </div>
+        <div class="card-body">
+          <p class="text-muted small mb-3">
+            Pick a device on each side by hostname (DNAC-managed or Nexus), review the loaded
+            running-configs, then compare them side by side with differences highlighted.
+          </p>
+
+          <div class="row g-4">
+            <div class="col-md-6">
+              <label class="form-label small fw-bold uppercase letter-spacing-1">Device A</label>
+              <input type="text" id="cd-left-input" name="hostname" class="form-control" list="cd-left-options"
+                     placeholder="e.g. R-SITE-01" autocomplete="off"
+                     hx-get="/api/config-diff/device-options" hx-trigger="keyup changed delay:300ms, focus"
+                     hx-target="#cd-left-options" hx-swap="innerHTML">
+              <datalist id="cd-left-options"></datalist>
+
+              <div id="cd-left-panel" class="mt-3"
+                   hx-get="/api/config-diff/load" hx-trigger="change from:#cd-left-input"
+                   hx-include="#cd-left-input" hx-vals='{"side": "left"}'
+                   hx-sync="this:replace" hx-swap="innerHTML">
+                <p class="text-muted small fst-italic mb-0">No device loaded yet.</p>
+              </div>
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label small fw-bold uppercase letter-spacing-1">Device B</label>
+              <input type="text" id="cd-right-input" name="hostname" class="form-control" list="cd-right-options"
+                     placeholder="e.g. N9K-SITE-01" autocomplete="off"
+                     hx-get="/api/config-diff/device-options" hx-trigger="keyup changed delay:300ms, focus"
+                     hx-target="#cd-right-options" hx-swap="innerHTML">
+              <datalist id="cd-right-options"></datalist>
+
+              <div id="cd-right-panel" class="mt-3"
+                   hx-get="/api/config-diff/load" hx-trigger="change from:#cd-right-input"
+                   hx-include="#cd-right-input" hx-vals='{"side": "right"}'
+                   hx-sync="this:replace" hx-swap="innerHTML">
+                <p class="text-muted small fst-italic mb-0">No device loaded yet.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-4">
+            <button type="button" class="btn btn-primary" id="cd-compare-btn"
+                    hx-post="/api/config-diff/compare"
+                    hx-include="[name='left_device_id'], [name='right_device_id']"
+                    hx-target="#cd-diff-result" hx-swap="innerHTML"
+                    hx-indicator="#cd-diff-loading">
+              <i class="ph ph-columns me-1"></i> Show Differences
+            </button>
+            <span id="cd-diff-loading" class="htmx-indicator spinner-border spinner-border-sm ms-2" role="status" aria-label="Comparing"></span>
+          </div>
+
+          <div id="cd-diff-result"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

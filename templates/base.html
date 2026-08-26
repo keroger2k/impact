@@ -89,6 +89,10 @@
          hx-get="/config-search" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
         <span class="nav-icon"><i class="ph ph-magnifying-glass"></i></span> <span class="nav-text">Config Search</span>
       </a>
+      <a class="nav-item {% if active_page == 'config-diff' %}active{% endif %}"
+         hx-get="/config-diff" hx-target="#main-content" hx-push-url="true" hx-swap="innerHTML">
+        <span class="nav-icon"><i class="ph ph-git-diff"></i></span> <span class="nav-text">Config Diff</span>
+      </a>
 
       <!-- Engineering Tools -->
       <div class="sidebar-section-label">Engineering Tools</div>

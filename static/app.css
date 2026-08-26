@@ -422,6 +422,41 @@ body {
   white-space: pre-wrap;
 }
 
+/* ── Config Diff ──────────────────────────────────────────── */
+.diff-table-wrap {
+  overflow-x: auto;
+  border-radius: var(--radius-md);
+  background: #0F172A;
+  padding: 12px;
+}
+.diff-table-wrap table.diff {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: #F8FAFC;
+}
+.diff-table-wrap td, .diff-table-wrap th { padding: 2px 8px; vertical-align: top; }
+.diff-table-wrap td.diff_header, .diff-table-wrap th.diff_header {
+  color: #64748B;
+  text-align: right;
+  user-select: none;
+  white-space: nowrap;
+}
+.diff-table-wrap td.diff_next, .diff-table-wrap th.diff_next { display: none; }
+.diff-table-wrap .diff_add { background: rgba(34, 197, 94, 0.25); }
+.diff-table-wrap .diff_sub { background: rgba(239, 68, 68, 0.25); }
+.diff-table-wrap .diff_chg { background: rgba(245, 158, 11, 0.3); }
+.diff-table-wrap a { color: inherit; text-decoration: none; }
+
+.diff-swatch {
+  display: inline-block; width: 12px; height: 12px; border-radius: 3px;
+  margin-right: 4px; vertical-align: middle;
+}
+.diff-swatch-add { background: rgba(34, 197, 94, 0.6); }
+.diff-swatch-sub { background: rgba(239, 68, 68, 0.6); }
+.diff-swatch-chg { background: rgba(245, 158, 11, 0.6); }
+
 /* ── KPI Cards ────────────────────────────────────────────── */
 .kpi-row { display: grid; gap: 24px; margin-bottom: 24px; }
 .kpi-row.cols-4 { grid-template-columns: repeat(4, 1fr); }

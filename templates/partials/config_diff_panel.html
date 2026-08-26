@@ -1,0 +1,30 @@
+{% if state == "loaded" %}
+<div class="animate-fade-in">
+  <div class="d-flex justify-content-between align-items-center mb-2">
+    <div>
+      <span class="fw-bold">{{ candidate.hostname }}</span>
+      <span class="badge {{ 'bg-info-subtle text-info' if candidate.family == 'nexus' else 'bg-secondary-subtle text-secondary' }} ms-2 small">
+        {{ 'Nexus' if candidate.family == 'nexus' else (candidate.platform or 'DNAC') }}
+      </span>
+    </div>
+    <i class="ph ph-check-circle text-success"></i>
+  </div>
+  <pre class="config-container mb-0" style="max-height: 400px;">{{ config or "! Empty configuration" }}</pre>
+  <input type="hidden" name="{{ side }}_device_id" value="{{ candidate.id }}">
+</div>
+{% elif state == "ambiguous" %}
+<div class="alert alert-warning small mb-0">
+  <div class="fw-bold mb-2"><i class="ph ph-warning me-1"></i> Multiple devices match "{{ hostname }}" — pick one:</div>
+  <div class="d-flex flex-column gap-1">
+    {% for c in candidates %}
+      <button type="button" class="btn btn-sm btn-outline-secondary text-start"
+              hx-get="/api/config-diff/load?device_id={{ c.id | urlencode }}&side={{ side }}"
+              hx-target="#cd-{{ side }}-panel" hx-swap="innerHTML">
+        {{ c.hostname }} <span class="text-muted">({{ 'Nexus' if c.family == 'nexus' else (c.platform or 'DNAC') }})</span>
+      </button>
+    {% endfor %}
+  </div>
+</div>
+{% else %}
+<p class="text-danger small mb-0"><i class="ph ph-x-circle me-1"></i> No device found matching "{{ hostname }}".</p>
+{% endif %}
