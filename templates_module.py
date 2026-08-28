@@ -10,6 +10,7 @@ from utils.ipv6_assembler import (
     site_vvvv_mask as _site_vvvv_mask,
     site_vvvv_fixed_value as _site_vvvv_fixed_value,
 )
+from utils.nxos_interface import format_bytes as _shared_format_bytes
 
 templates = Jinja2Templates(directory="templates")
 
@@ -42,19 +43,14 @@ templates.env.filters["vvvv_mask_hex"] = _vvvv_mask_hex
 
 
 # Human-readable byte counter, e.g. for Nexus interface RX/TX totals.
-# `None` (never collected) renders distinctly from 0 (collected, zero traffic).
-# Also treats Jinja's Undefined as "missing" — `dict.attr` on a dict lacking
-# that key (e.g. a pre-existing cache entry from before this field existed)
-# resolves to Undefined, not None, and float(Undefined) raises UndefinedError.
+# Formatting itself lives in utils.nxos_interface (shared with the CLI health
+# report); this wrapper only adds the Jinja concern: `dict.attr` on a dict
+# lacking that key — a cache entry written before the field existed — resolves
+# to Undefined, not None, and float(Undefined) raises UndefinedError.
 def _format_bytes(value) -> str:
-    if value is None or isinstance(value, Undefined):
+    if isinstance(value, Undefined):
         return "N/A"
-    n = float(value)
-    for unit in ("B", "KB", "MB", "GB", "TB", "PB"):
-        if n < 1024 or unit == "PB":
-            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.2f} {unit}"
-        n /= 1024
-    return f"{n:.2f} PB"
+    return _shared_format_bytes(value)
 
 
 templates.env.filters["format_bytes"] = _format_bytes

@@ -37,6 +37,7 @@ from netmiko.exceptions import NetmikoAuthenticationException, NetmikoTimeoutExc
 
 from collectors.base import BaseCollector
 from models.interface import InterfaceResult
+from utils.nxos_interface import INPUT_BYTES_RE, OUTPUT_BYTES_RE
 
 logger = logging.getLogger(__name__)
 
@@ -91,11 +92,11 @@ _IFACE_HEADER_RE = re.compile(
     re.IGNORECASE,
 )
 
-# RX/TX cumulative byte counters, e.g.:
-#   "    123463701 input packets  987654321098 bytes"
-#   "    123463692 output packets  876543210987 bytes"
-_INPUT_BYTES_RE  = re.compile(r"^\s*\d+\s+input\s+packets\s+(\d+)\s+bytes", re.IGNORECASE)
-_OUTPUT_BYTES_RE = re.compile(r"^\s*\d+\s+output\s+packets\s+(\d+)\s+bytes", re.IGNORECASE)
+# RX/TX cumulative byte counters — pattern shared with the CLI health report
+# (scripts/nexus_interface_report.py) via utils.nxos_interface so the two
+# parsers can't drift. Matched against the stripped line.
+_INPUT_BYTES_RE = INPUT_BYTES_RE
+_OUTPUT_BYTES_RE = OUTPUT_BYTES_RE
 
 
 class NXOSCollector(BaseCollector):
@@ -589,12 +590,13 @@ class NXOSCollector(BaseCollector):
                 if m:
                     current_ipv4 = m.group(1)
 
-            # RX/TX cumulative byte counters
-            m = _INPUT_BYTES_RE.match(line)
+            # RX/TX cumulative byte counters (matched on the stripped line —
+            # the shared patterns are anchored at the first digit)
+            m = _INPUT_BYTES_RE.match(stripped)
             if m:
                 current_in_bytes = int(m.group(1))
                 continue
-            m = _OUTPUT_BYTES_RE.match(line)
+            m = _OUTPUT_BYTES_RE.match(stripped)
             if m:
                 current_out_bytes = int(m.group(1))
                 continue
