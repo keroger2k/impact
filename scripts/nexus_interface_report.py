@@ -67,6 +67,12 @@ Auth: defaults to the shared AD service account (DOMAIN_USERNAME/
 DOMAIN_PASSWORD in .env — same as every other script here); override with
 --username/--password for a specific run.
 
+Scope: one switch by default, or the whole device list with --all. In --all
+mode devices are collected concurrently (--workers, default 10), a Device
+column is added, and a per-device failure NEVER aborts the run — unreachable
+switches are listed in a summary under the table and set a nonzero exit code,
+so a partial fleet report can't be mistaken for a clean one.
+
 Usage:
     .venv/bin/python -m scripts.nexus_interface_report N9K-LEAF-01
     .venv/bin/python -m scripts.nexus_interface_report N9K-LEAF-01 --errors-only
@@ -76,6 +82,13 @@ Usage:
     .venv/bin/python -m scripts.nexus_interface_report N9K-LEAF-01 --interface Ethernet1/1
     .venv/bin/python -m scripts.nexus_interface_report --ip 1.2.3.4 --hostname spare-switch
     .venv/bin/python -m scripts.nexus_interface_report N9K-LEAF-01 --raw ./raw_output -v
+
+    # Whole fleet
+    .venv/bin/python -m scripts.nexus_interface_report --all
+    .venv/bin/python -m scripts.nexus_interface_report --all --errors-only --sort errors
+    .venv/bin/python -m scripts.nexus_interface_report --all --sort optics --limit 25
+    .venv/bin/python -m scripts.nexus_interface_report --all --down-only
+    .venv/bin/python -m scripts.nexus_interface_report --all --interface Ethernet1/1
 """
 from __future__ import annotations
 
@@ -85,6 +98,7 @@ import logging
 import os
 import re
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
 from difflib import get_close_matches
@@ -201,6 +215,7 @@ class TrunkInfo:
 @dataclass
 class InterfaceStats:
     name: str
+    device: str = ""              # owning switch; only rendered in --all mode
     oper_status: str = "unknown"  # "up" | "down", from the header line
     admin_status: str = "unknown"  # "up" | "administratively down" (best-effort)
     line_protocol: str | None = None
@@ -842,6 +857,144 @@ def resolve_device(name: str, rows: list[dict[str, str]]) -> tuple[str, str]:
     raise ValueError(f"No device '{name}' found in the Nexus device list.{hint}")
 
 
+# ─────────────────────────── per-device collection ──────────────────────────
+
+@dataclass
+class DeviceReport:
+    """Outcome of collecting one switch.
+
+    A failed device is a DeviceReport with `error` set rather than an
+    exception, so a fleet-wide run can report "38 of 41 devices" instead of
+    dying on the first unreachable box — and so the failures stay visible in
+    the summary rather than silently shrinking the table.
+    """
+    hostname: str
+    ip: str
+    interfaces: dict[str, InterfaceStats] = field(default_factory=dict)
+    raw: dict[str, str] = field(default_factory=dict)
+    error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
+
+
+COMMANDS: list[tuple[str, str]] = [
+    ("show_interface", "show interface"),
+    ("transceiver", "show interface transceiver details"),
+    ("err_disabled", "show interface status err-disabled"),
+    ("port_channel", "show port-channel summary"),
+    ("trunk", "show interface trunk"),
+    ("cdp", "show cdp neighbors detail"),
+    ("lldp", "show lldp neighbors detail"),
+]
+
+
+def _attach_supplementary(hostname: str, interfaces: dict[str, InterfaceStats],
+                           raw: dict[str, str], quiet: bool = False) -> None:
+    """Fold the optional commands' data onto the parsed interfaces.
+
+    Each source enriches the report; none is worth failing over, and each is
+    legitimately absent on some devices (copper-only switch, no LACP, no
+    trunks, LLDP disabled).
+    """
+    def attach(label: str, parser, apply_fn, what: str) -> None:
+        text = raw.get(label, "")
+        if not text.strip() or is_feature_disabled_output(text):
+            if not quiet:
+                logger.info("%s: no usable %s output", hostname, what)
+            return
+        try:
+            parsed = parser(text)
+        except Exception as e:
+            logger.warning("%s: failed to parse %s: %s", hostname, what, e)
+            return
+        hits = 0
+        for name, stats in interfaces.items():
+            key = normalize_iface_name(name)
+            if key in parsed:
+                apply_fn(stats, parsed[key])
+                hits += 1
+        logger.debug("%s: %s matched %d interface(s)", hostname, what, hits)
+
+    def set_optics(stats: InterfaceStats, value: TransceiverInfo) -> None:
+        stats.optics = value
+
+    def set_errdis(stats: InterfaceStats, value: str) -> None:
+        stats.err_disabled_reason = value
+
+    def set_pc(stats: InterfaceStats, value: tuple[str, str]) -> None:
+        stats.port_channel, stats.pc_member_state = value
+
+    def set_trunk(stats: InterfaceStats, value: TrunkInfo) -> None:
+        stats.trunk = value
+
+    attach("transceiver", parse_transceivers, set_optics, "transceiver DOM")
+    attach("err_disabled", parse_err_disabled, set_errdis, "err-disabled status")
+    attach("port_channel", parse_port_channel_summary, set_pc, "port-channel summary")
+    attach("trunk", parse_trunk, set_trunk, "trunk config")
+
+    cdp_text = raw.get("cdp", "")
+    cdp_neighbors: dict[str, NeighborInfo] = {}
+    if cdp_text.strip() and not is_feature_disabled_output(cdp_text):
+        try:
+            cdp_neighbors = parse_cdp_neighbors(cdp_text)
+        except Exception as e:
+            logger.warning("%s: failed to parse CDP neighbors: %s", hostname, e)
+    elif not quiet:
+        logger.info("%s: no usable CDP output", hostname)
+
+    lldp_text = raw.get("lldp", "")
+    lldp_neighbors: dict[str, NeighborInfo] = {}
+    if lldp_text.strip() and not is_feature_disabled_output(lldp_text):
+        try:
+            lldp_neighbors = parse_lldp_neighbors(lldp_text)
+        except Exception as e:
+            logger.warning("%s: failed to parse LLDP neighbors: %s", hostname, e)
+    elif not quiet:
+        logger.info("%s: LLDP not enabled or no neighbors — continuing with CDP only", hostname)
+
+    merge_neighbors(interfaces, cdp_neighbors, lldp_neighbors)
+
+
+def collect_device(hostname: str, ip: str, username: str, password: str,
+                    timeout: int, quiet: bool = False) -> DeviceReport:
+    """SSH to one switch, run every command, and return a parsed DeviceReport.
+
+    Never raises for a device-level problem — unreachable hosts, auth
+    failures and unparseable output all come back as `error` so callers can
+    aggregate. `quiet` suppresses the chatty per-source INFO lines that are
+    useful for one device but become noise across a fleet.
+    """
+    report = DeviceReport(hostname=hostname, ip=ip)
+    try:
+        report.raw = ssh_run_commands(ip, username, password, COMMANDS, timeout)
+    except Exception as e:
+        report.error = f"SSH failed — {type(e).__name__}: {str(e)[:200]}"
+        return report
+
+    iface_text = report.raw.get("show_interface", "")
+    if not iface_text.strip():
+        report.error = "empty output for 'show interface'"
+        return report
+
+    try:
+        report.interfaces = parse_show_interface(iface_text)
+    except Exception as e:
+        report.error = f"failed to parse 'show interface': {e}"
+        return report
+
+    if not report.interfaces:
+        report.error = "no interfaces parsed from 'show interface' output"
+        return report
+
+    for stats in report.interfaces.values():
+        stats.device = hostname
+
+    _attach_supplementary(hostname, report.interfaces, report.raw, quiet=quiet)
+    return report
+
+
 # ─────────────────────────── device SSH (read-only) ─────────────────────────
 
 def ssh_run_commands(ip: str, username: str, password: str,
@@ -985,9 +1138,14 @@ def _flap_cell(stats: InterfaceStats) -> Text:
     """Last flap + reset count. The single fastest 'is this the problem right
     now' signal — an interface that bounced minutes ago reads very differently
     from one that has been stable for a year."""
-    if stats.last_flapped is None and stats.interface_resets is None:
-        return Text("-", style="dim")
-    label = stats.last_flapped or "?"
+    if stats.last_flapped is None:
+        # No "Last link flapped" line at all. A zero reset count still means
+        # "nothing to report" — rendering "?" there implies missing data when
+        # the device actually told us the port has been stable.
+        if not stats.interface_resets:
+            return Text("-", style="dim")
+        return Text(f"? ({stats.interface_resets})")
+    label = stats.last_flapped
     if stats.interface_resets:
         label += f" ({stats.interface_resets})"
     style = "red" if _flap_is_recent(stats.last_flapped) else ""
@@ -1068,7 +1226,9 @@ def _counter_age_caption(rows: list[InterfaceStats]) -> str | None:
 
 
 def build_table(interfaces: list[InterfaceStats], sort: str, errors_only: bool,
-                 up_only: bool = False, down_only: bool = False) -> Table:
+                 up_only: bool = False, down_only: bool = False,
+                 show_device: bool = False, limit: int | None = None,
+                 title: str = "Interface Report") -> Table:
     rows = list(interfaces)
     if up_only:
         rows = [s for s in rows if s.is_oper_up]
@@ -1082,7 +1242,9 @@ def build_table(interfaces: list[InterfaceStats], sort: str, errors_only: bool,
     elif sort == "drops":
         rows.sort(key=lambda s: s.drop_total, reverse=True)
     elif sort == "name":
-        rows.sort(key=lambda s: s.name)
+        # Across a fleet, grouping by device is what makes a name sort
+        # readable — otherwise every switch's Ethernet1/1 interleaves.
+        rows.sort(key=lambda s: (s.device.lower(), s.name) if show_device else s.name)
     elif sort == "bytes":
         rows.sort(key=lambda s: s.total_bytes if s.total_bytes is not None else -1, reverse=True)
     elif sort == "flaps":
@@ -1107,7 +1269,12 @@ def build_table(interfaces: list[InterfaceStats], sort: str, errors_only: bool,
     def _plain(text: str | None) -> Text:
         return Text(text) if text else Text("-", style="dim")
 
-    specs: list[tuple[str, callable, bool, dict]] = [
+    specs: list[tuple[str, callable, bool, dict]] = []
+    if show_device:
+        # Only in fleet mode — on a single switch the column would repeat the
+        # hostname already printed above the table on every row.
+        specs.append(("Device", lambda s: Text(s.device or "-", style="bold"), True, {}))
+    specs += [
         ("Interface",     lambda s: Text(s.name),                                   True,  {}),
         ("Status",        _status_text,                                              True,  {}),
         ("Mode",          _mode_cell,                                                False, {}),
@@ -1124,6 +1291,15 @@ def build_table(interfaces: list[InterfaceStats], sort: str, errors_only: bool,
         ("Neighbor",      _neighbor_cell,                                            True,  {}),
     ]
 
+    # Truncation happens after sorting and filtering, so --limit always keeps
+    # the most interesting rows for the chosen sort rather than an arbitrary
+    # slice. The caption says so, because a silently truncated fleet report is
+    # exactly the kind of thing that gets mistaken for a clean bill of health.
+    total_rows = len(rows)
+    truncated = limit is not None and total_rows > limit
+    if truncated:
+        rows = rows[:limit]
+
     rendered: dict[str, list[Text]] = {}
     for header, renderer, _always, _kw in specs:
         rendered[header] = [renderer(s) for s in rows]
@@ -1131,7 +1307,11 @@ def build_table(interfaces: list[InterfaceStats], sort: str, errors_only: bool,
     def _is_empty(cells: list[Text]) -> bool:
         return all(c.plain.strip() in ("", "-") for c in cells)
 
-    table = Table(title="Interface Report", caption=_counter_age_caption(rows))
+    caption_parts = [p for p in (_counter_age_caption(rows),) if p]
+    if truncated:
+        caption_parts.insert(0, f"Showing top {limit} of {total_rows} interfaces (--limit)")
+
+    table = Table(title=title, caption="  ·  ".join(caption_parts) or None)
     active: list[str] = []
     for header, _renderer, always, kwargs in specs:
         if not always and _is_empty(rendered[header]):
@@ -1271,6 +1451,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
         epilog=__doc__,
     )
     ap.add_argument("device", nargs="?", help=f"Device hostname, matched in {NEXUS_CSV_PATH}")
+    ap.add_argument("--all", action="store_true",
+                     help=f"Report on EVERY device in {NEXUS_CSV_PATH} instead of one. Adds a Device "
+                          "column and collects switches concurrently (see --workers). Unreachable "
+                          "devices are listed in a summary rather than aborting the run")
+    ap.add_argument("--workers", type=int, default=10,
+                     help="Concurrent SSH sessions in --all mode (default: 10)")
+    ap.add_argument("--limit", type=int,
+                     help="Show only the first N rows after sorting/filtering — useful in --all mode, "
+                          "where a fleet can produce thousands of interfaces")
     ap.add_argument("--ip", help="Connect directly to this IP, skipping the device-list lookup")
     ap.add_argument("--hostname", help="Display label to use when --ip is given without a matching CSV row")
     ap.add_argument("--csv", type=Path, default=NEXUS_CSV_PATH,
@@ -1295,7 +1484,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--down-only", action="store_true",
                      help="Only interfaces that are down WITHOUT being administratively shut — i.e. "
                           "ports that should be up but aren't. The triage view")
-    ap.add_argument("--interface", help="Show full raw detail for exactly this interface, skip the table")
+    ap.add_argument("--interface",
+                     help="Single-device mode: show full raw detail for exactly this interface instead "
+                          "of the table. With --all: filter the fleet table to this interface name "
+                          "(e.g. the same uplink across every switch) — N raw dumps would be unreadable")
     ap.add_argument("--raw", type=Path, help="Dump raw show-command output to timestamped files in this directory")
     ap.add_argument("-v", "--verbose", action="store_true", help="Debug logging")
     return ap
@@ -1314,12 +1506,22 @@ def main() -> int:
         logging.getLogger("netmiko").setLevel(logging.WARNING)
         logging.getLogger("paramiko").setLevel(logging.WARNING)
 
-    if not args.device and not args.ip:
-        ap.error("either DEVICE or --ip is required")
+    if args.all and (args.device or args.ip):
+        ap.error("--all reports on the whole device list; don't also pass DEVICE or --ip")
+    if not args.all and not args.device and not args.ip:
+        ap.error("either DEVICE, --ip, or --all is required")
     if not args.username or not args.password:
         logger.error("No SSH credentials — set DOMAIN_USERNAME/DOMAIN_PASSWORD in .env or pass --username/--password")
         return 1
 
+    console = Console()
+
+    if args.all:
+        return _run_all(args, console)
+    return _run_single(args, ap, console)
+
+
+def _run_single(args, ap, console: Console) -> int:
     if args.ip:
         ip = args.ip
         hostname = args.hostname or args.ip
@@ -1331,113 +1533,116 @@ def main() -> int:
             logger.error(str(e))
             return 1
 
-    commands = [
-        ("show_interface", "show interface"),
-        ("transceiver", "show interface transceiver details"),
-        ("err_disabled", "show interface status err-disabled"),
-        ("port_channel", "show port-channel summary"),
-        ("trunk", "show interface trunk"),
-        ("cdp", "show cdp neighbors detail"),
-        ("lldp", "show lldp neighbors detail"),
-    ]
-
     logger.info("%s (%s): connecting via SSH...", hostname, ip)
-    try:
-        raw = ssh_run_commands(ip, args.username, args.password, commands, args.timeout)
-    except Exception as e:
-        logger.error("%s: SSH failed — %s: %s", hostname, type(e).__name__, str(e)[:200])
+    report = collect_device(hostname, ip, args.username, args.password, args.timeout)
+    if not report.ok:
+        logger.error("%s: %s", hostname, report.error)
         return 1
-
-    iface_text = raw.get("show_interface", "")
-    if not iface_text.strip():
-        logger.error("%s: empty output for 'show interface'", hostname)
-        return 1
-
-    interfaces = parse_show_interface(iface_text)
-    if not interfaces:
-        logger.error("%s: no interfaces parsed from 'show interface' output", hostname)
-        return 1
-    logger.info("%s: parsed %d interface(s)", hostname, len(interfaces))
-
-    # ── supplementary data, all best-effort ────────────────────────────────
-    # Each of these enriches the report; none of them is worth failing over,
-    # and each is absent for legitimate reasons on some devices (copper-only
-    # switch, no LACP, no trunks).
-    def _attach(label: str, parser, apply_fn, what: str) -> None:
-        text = raw.get(label, "")
-        if not text.strip() or is_feature_disabled_output(text):
-            logger.info("%s: no usable %s output", hostname, what)
-            return
-        try:
-            parsed = parser(text)
-        except Exception as e:
-            logger.warning("%s: failed to parse %s: %s", hostname, what, e)
-            return
-        hits = 0
-        for name, stats in interfaces.items():
-            key = normalize_iface_name(name)
-            if key in parsed:
-                apply_fn(stats, parsed[key])
-                hits += 1
-        logger.debug("%s: %s matched %d interface(s)", hostname, what, hits)
-
-    def _set_optics(stats: InterfaceStats, value: TransceiverInfo) -> None:
-        stats.optics = value
-
-    def _set_errdis(stats: InterfaceStats, value: str) -> None:
-        stats.err_disabled_reason = value
-
-    def _set_pc(stats: InterfaceStats, value: tuple[str, str]) -> None:
-        stats.port_channel, stats.pc_member_state = value
-
-    def _set_trunk(stats: InterfaceStats, value: TrunkInfo) -> None:
-        stats.trunk = value
-
-    _attach("transceiver", parse_transceivers, _set_optics, "transceiver DOM")
-    _attach("err_disabled", parse_err_disabled, _set_errdis, "err-disabled status")
-    _attach("port_channel", parse_port_channel_summary, _set_pc, "port-channel summary")
-    _attach("trunk", parse_trunk, _set_trunk, "trunk config")
-
-    cdp_text = raw.get("cdp", "")
-    cdp_neighbors: dict[str, NeighborInfo] = {}
-    if cdp_text.strip() and not is_feature_disabled_output(cdp_text):
-        try:
-            cdp_neighbors = parse_cdp_neighbors(cdp_text)
-        except Exception as e:
-            logger.warning("%s: failed to parse CDP neighbors: %s", hostname, e)
-    else:
-        logger.info("%s: no usable CDP output", hostname)
-
-    lldp_text = raw.get("lldp", "")
-    lldp_neighbors: dict[str, NeighborInfo] = {}
-    if lldp_text.strip() and not is_feature_disabled_output(lldp_text):
-        try:
-            lldp_neighbors = parse_lldp_neighbors(lldp_text)
-        except Exception as e:
-            logger.warning("%s: failed to parse LLDP neighbors: %s", hostname, e)
-    else:
-        logger.info("%s: LLDP not enabled or no neighbors — continuing with CDP only", hostname)
-
-    merge_neighbors(interfaces, cdp_neighbors, lldp_neighbors)
+    logger.info("%s: parsed %d interface(s)", hostname, len(report.interfaces))
 
     if args.raw:
-        dump_raw(raw, args.raw, hostname)
-
-    console = Console()
+        dump_raw(report.raw, args.raw, hostname)
 
     if args.interface:
         target = normalize_iface_name(args.interface)
-        stats = interfaces.get(target) or interfaces.get(args.interface)
+        stats = report.interfaces.get(target) or report.interfaces.get(args.interface)
         if not stats:
             logger.error("%s: no interface named '%s' found", hostname, args.interface)
             return 1
-        render_interface_detail(stats, cdp_text, lldp_text, console)
+        render_interface_detail(stats, report.raw.get("cdp", ""), report.raw.get("lldp", ""), console)
         return 0
 
-    table = build_table(list(interfaces.values()), args.sort, args.errors_only,
-                        args.up_only, args.down_only)
+    table = build_table(list(report.interfaces.values()), args.sort, args.errors_only,
+                        args.up_only, args.down_only, limit=args.limit)
     console.print(f"[bold]{hostname}[/bold] ({ip})")
     console.print(table)
+    return 0
+
+
+def _run_all(args, console: Console) -> int:
+    """Collect every device in the CSV concurrently and render one table.
+
+    Failure isolation is the point: one unreachable switch in a fleet of forty
+    must not cost you the other thirty-nine, and the ones that failed have to
+    stay visible afterwards — a fleet report that quietly drops devices reads
+    as "everything is fine" when it means "we didn't look".
+    """
+    devices = load_nexus_csv(args.csv)
+    if not devices:
+        logger.error("No devices found in %s", args.csv)
+        return 1
+
+    logger.info("Collecting %d device(s) with %d concurrent session(s)...",
+                len(devices), args.workers)
+
+    reports: list[DeviceReport] = []
+    done = 0
+    with ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
+        futures = {
+            pool.submit(collect_device, d["hostname"], d["ip"],
+                        args.username, args.password, args.timeout, True): d
+            for d in devices
+        }
+        for fut in as_completed(futures):
+            d = futures[fut]
+            done += 1
+            try:
+                report = fut.result()
+            except Exception as e:  # collect_device shouldn't raise; belt and braces
+                report = DeviceReport(hostname=d["hostname"], ip=d["ip"],
+                                      error=f"unexpected error: {type(e).__name__}: {e}")
+            reports.append(report)
+            if report.ok:
+                logger.info("[%d/%d] %s: %d interface(s)",
+                            done, len(devices), report.hostname, len(report.interfaces))
+            else:
+                logger.warning("[%d/%d] %s: %s", done, len(devices), report.hostname, report.error)
+
+    ok = [r for r in reports if r.ok]
+    failed = [r for r in reports if not r.ok]
+
+    if args.raw:
+        for r in ok:
+            dump_raw(r.raw, args.raw, r.hostname)
+
+    all_interfaces: list[InterfaceStats] = []
+    for r in ok:
+        all_interfaces.extend(r.interfaces.values())
+
+    if args.interface:
+        # Filtering, not N raw dumps — "show me this uplink on every switch".
+        target = normalize_iface_name(args.interface)
+        all_interfaces = [s for s in all_interfaces
+                          if normalize_iface_name(s.name) == target]
+        if not all_interfaces:
+            logger.error("No interface named '%s' found on any device", args.interface)
+            return 1
+
+    if not all_interfaces:
+        logger.error("No interfaces collected from any device")
+        return 1
+
+    table = build_table(all_interfaces, args.sort, args.errors_only,
+                        args.up_only, args.down_only,
+                        show_device=True, limit=args.limit,
+                        title=f"Interface Report — {len(ok)} device(s)")
+    console.print(table)
+
+    # Row count and collected count differ whenever a filter is active, so
+    # report both rather than one number that looks like the other.
+    shown = table.row_count
+    summary = (f"\n[bold]{len(ok)}[/bold] of [bold]{len(devices)}[/bold] device(s) collected, "
+               f"{len(all_interfaces)} interface(s)")
+    summary += f"; {shown} shown." if shown != len(all_interfaces) else "."
+    console.print(summary)
+    if failed:
+        # Printed after the table so it's the last thing on screen — this is
+        # the caveat that determines whether the report can be trusted as
+        # complete, and it must not scroll away above the data.
+        console.print(f"[bold red]{len(failed)} device(s) failed:[/bold red]")
+        for r in failed:
+            console.print(f"  [red]{r.hostname}[/red] ({r.ip}): {r.error}")
+        return 1
     return 0
 
 

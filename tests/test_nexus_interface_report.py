@@ -316,3 +316,86 @@ def test_sort_by_bytes_puts_busiest_first(ifaces):
     table = build_table(list(ifaces.values()), "bytes", False)
     first_cell = table.columns[0]._cells[0]
     assert "Ethernet1/1" in str(first_cell)
+
+
+def test_limit_truncates_after_sorting_and_says_so(ifaces):
+    rows = list(ifaces.values())
+    table = build_table(rows, "bytes", False, limit=2)
+    assert table.row_count == 2
+    # A silently truncated report is exactly what gets mistaken for a clean
+    # bill of health, so the caption has to admit it.
+    assert "limit" in (table.caption or "").lower()
+
+
+# ── --all / fleet mode ──────────────────────────────────────────────────────
+
+def test_device_column_only_appears_in_fleet_mode(ifaces):
+    rows = list(ifaces.values())
+    for r in rows:
+        r.device = "N9K-LEAF-01"
+
+    assert "Device" not in _headers(build_table(rows, "name", False))
+    assert "Device" in _headers(build_table(rows, "name", False, show_device=True))
+
+
+def test_fleet_name_sort_groups_by_device():
+    a1 = InterfaceStats(name="Ethernet1/1", device="SW-B", oper_status="up")
+    a2 = InterfaceStats(name="Ethernet1/2", device="SW-A", oper_status="up")
+    a3 = InterfaceStats(name="Ethernet1/1", device="SW-A", oper_status="up")
+
+    table = build_table([a1, a2, a3], "name", False, show_device=True)
+    devices = [str(c) for c in table.columns[0]._cells]
+    # Grouped, not interleaved by interface name across switches.
+    assert devices == ["SW-A", "SW-A", "SW-B"]
+
+
+def test_collect_device_returns_error_instead_of_raising(monkeypatch):
+    """A fleet run must survive one unreachable switch."""
+    import scripts.nexus_interface_report as mod
+
+    def boom(*a, **kw):
+        raise OSError("Connection refused")
+
+    monkeypatch.setattr(mod, "ssh_run_commands", boom)
+    report = mod.collect_device("SW-DEAD", "1.2.3.4", "u", "p", 5)
+
+    assert report.ok is False
+    assert "Connection refused" in report.error
+    assert report.interfaces == {}
+
+
+def test_collect_device_tags_interfaces_with_hostname(monkeypatch):
+    import scripts.nexus_interface_report as mod
+
+    monkeypatch.setattr(mod, "ssh_run_commands",
+                        lambda *a, **kw: {"show_interface": SHOW_INTERFACE})
+    report = mod.collect_device("SW-1", "1.2.3.4", "u", "p", 5)
+
+    assert report.ok is True
+    assert report.interfaces
+    assert all(s.device == "SW-1" for s in report.interfaces.values())
+
+
+def test_collect_device_reports_unparseable_output(monkeypatch):
+    import scripts.nexus_interface_report as mod
+
+    monkeypatch.setattr(mod, "ssh_run_commands",
+                        lambda *a, **kw: {"show_interface": "% Invalid command"})
+    report = mod.collect_device("SW-1", "1.2.3.4", "u", "p", 5)
+
+    assert report.ok is False
+    assert "no interfaces parsed" in report.error
+
+
+# ── flap cell ───────────────────────────────────────────────────────────────
+
+def test_flap_cell_does_not_claim_unknown_when_resets_are_zero():
+    """Regression: a port with no flap line but a reported 0 resets rendered
+    "?", implying missing data when the device said it had been stable."""
+    from scripts.nexus_interface_report import _flap_cell
+
+    stable = InterfaceStats(name="Ethernet1/1", interface_resets=0)
+    assert _flap_cell(stable).plain == "-"
+
+    bounced = InterfaceStats(name="Ethernet1/2", interface_resets=7)
+    assert "7" in _flap_cell(bounced).plain
