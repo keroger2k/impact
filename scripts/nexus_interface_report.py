@@ -9,8 +9,9 @@ commands:
        The workhorse — admin/line-protocol state, description, speed/duplex,
        MTU/BW, NX-OS's own txload/rxload (a 0-255 load scale, used directly
        as the busy/utilization signal rather than computed from raw bps),
-       30s in/out rates, and the RX/TX error-counter blocks (CRC, runts,
-       giants, input/output errors, collisions, ...).
+       30s in/out rates, cumulative RX/TX byte counters (since the device's
+       last "clear counters", not a rate), and the RX/TX error-counter
+       blocks (CRC, runts, giants, input/output errors, collisions, ...).
 
     2. show cdp neighbors detail
        Primary "what's plugged into this port" source.
@@ -25,8 +26,9 @@ Nothing else is ever sent — no send_config_set, no write verbs of any kind.
 
 Output is a single Rich table, sorted busiest-first by default: Interface,
 Status, Description, Speed/Duplex, In%/Out% utilization (color-coded),
-Errors (a compact red summary of nonzero counters), and Neighbor (device +
-remote port, CDP unless marked [lldp]).
+Bytes (cumulative RX+TX since last clear), Errors (a compact red summary of
+nonzero counters), and Neighbor (device + remote port, CDP unless marked
+[lldp]).
 
 Auth: defaults to the shared AD service account (DOMAIN_USERNAME/
 DOMAIN_PASSWORD in .env — same as every other script here); override with
@@ -36,6 +38,7 @@ Usage:
     .venv/bin/python -m scripts.nexus_interface_report N9K-LEAF-01
     .venv/bin/python -m scripts.nexus_interface_report N9K-LEAF-01 --errors-only
     .venv/bin/python -m scripts.nexus_interface_report N9K-LEAF-01 --up-only --sort errors
+    .venv/bin/python -m scripts.nexus_interface_report N9K-LEAF-01 --sort bytes
     .venv/bin/python -m scripts.nexus_interface_report N9K-LEAF-01 --interface Ethernet1/1
     .venv/bin/python -m scripts.nexus_interface_report --ip 10.1.1.5 --hostname spare-switch
     .venv/bin/python -m scripts.nexus_interface_report N9K-LEAF-01 --raw ./raw_output -v
@@ -124,6 +127,8 @@ class InterfaceStats:
     input_rate_pps: int | None = None
     output_rate_bps: int | None = None
     output_rate_pps: int | None = None
+    input_bytes: int | None = None   # cumulative RX byte counter, since last clear
+    output_bytes: int | None = None  # cumulative TX byte counter, since last clear
     input_errors: dict[str, int] = field(default_factory=dict)
     output_errors: dict[str, int] = field(default_factory=dict)
     neighbor: NeighborInfo | None = None
@@ -141,6 +146,13 @@ class InterfaceStats:
     def util_pct(self) -> float | None:
         vals = [v for v in (self.txload_pct, self.rxload_pct) if v is not None]
         return max(vals) if vals else None
+
+    @property
+    def total_bytes(self) -> int | None:
+        """Combined RX+TX traffic, or None if neither counter was collected."""
+        if self.input_bytes is None and self.output_bytes is None:
+            return None
+        return (self.input_bytes or 0) + (self.output_bytes or 0)
 
     @property
     def error_total(self) -> int:
@@ -166,6 +178,13 @@ _LOAD_RE = re.compile(r"txload\s+(\d+)/255,\s*rxload\s+(\d+)/255", re.IGNORECASE
 _DUPLEX_SPEED_RE = re.compile(r"^(full|half)-duplex,\s*([^,]+?),\s*media type", re.IGNORECASE)
 _INPUT_RATE_RE = re.compile(r"^\d+\s+seconds\s+input\s+rate\s+(\d+)\s*bits/sec,\s*(\d+)\s*packets/sec", re.IGNORECASE)
 _OUTPUT_RATE_RE = re.compile(r"^\d+\s+seconds\s+output\s+rate\s+(\d+)\s*bits/sec,\s*(\d+)\s*packets/sec", re.IGNORECASE)
+
+# Cumulative RX/TX byte counters, from inside the RX/TX blocks, e.g.:
+#   "123463701 input packets  987654321098 bytes"
+#   "123463692 output packets  876543210987 bytes"
+# Same pattern collectors/nxos.py uses — keep these two in sync.
+_INPUT_BYTES_RE  = re.compile(r"^\d+\s+input\s+packets\s+(\d+)\s+bytes", re.IGNORECASE)
+_OUTPUT_BYTES_RE = re.compile(r"^\d+\s+output\s+packets\s+(\d+)\s+bytes", re.IGNORECASE)
 
 # Matches "<count>  <label>" pairs on a counter line, e.g.
 # "0 runts  0 giants  0 CRC/FCS  0 no buffer" -> [("0","runts"), ("0","giants"), ...]
@@ -248,6 +267,14 @@ def parse_show_interface(text: str) -> dict[str, InterfaceStats]:
         if m:
             current.output_rate_bps = int(m.group(1))
             current.output_rate_pps = int(m.group(2))
+            continue
+        m = _INPUT_BYTES_RE.match(stripped)
+        if m:
+            current.input_bytes = int(m.group(1))
+            continue
+        m = _OUTPUT_BYTES_RE.match(stripped)
+        if m:
+            current.output_bytes = int(m.group(1))
             continue
         if current.line_protocol is None:
             lp = _LINE_PROTOCOL_RE.search(stripped)
@@ -457,6 +484,26 @@ def _error_summary(stats: InterfaceStats) -> Text:
     return Text(shown, style="red")
 
 
+def _format_bytes(n: int | None) -> str:
+    """Human-readable byte count. Mirrors templates_module.py::_format_bytes
+    (the web app's equivalent) — keep these two in sync."""
+    if n is None:
+        return "N/A"
+    val = float(n)
+    for unit in ("B", "KB", "MB", "GB", "TB", "PB"):
+        if val < 1024 or unit == "PB":
+            return f"{val:.0f} {unit}" if unit == "B" else f"{val:.2f} {unit}"
+        val /= 1024
+    return f"{val:.2f} PB"
+
+
+def _bytes_cell(stats: InterfaceStats) -> Text:
+    total = stats.total_bytes
+    if total is None:
+        return Text("N/A", style="dim")
+    return Text(_format_bytes(total))
+
+
 def _neighbor_cell(stats: InterfaceStats) -> Text:
     n = stats.neighbor
     if n is None:
@@ -480,6 +527,8 @@ def build_table(interfaces: list[InterfaceStats], sort: str, errors_only: bool, 
         rows.sort(key=lambda s: s.error_total, reverse=True)
     elif sort == "name":
         rows.sort(key=lambda s: s.name)
+    elif sort == "bytes":
+        rows.sort(key=lambda s: s.total_bytes if s.total_bytes is not None else -1, reverse=True)
     else:  # "util" (default)
         rows.sort(key=lambda s: s.util_pct if s.util_pct is not None else -1, reverse=True)
 
@@ -490,6 +539,7 @@ def build_table(interfaces: list[InterfaceStats], sort: str, errors_only: bool, 
     table.add_column("Speed/Duplex")
     table.add_column("In%", justify="right")
     table.add_column("Out%", justify="right")
+    table.add_column("Bytes (RX+TX)", justify="right")
     table.add_column("Errors")
     table.add_column("Neighbor")
 
@@ -502,6 +552,7 @@ def build_table(interfaces: list[InterfaceStats], sort: str, errors_only: bool, 
             speed_duplex,
             _fmt_pct(s.rxload_pct),
             _fmt_pct(s.txload_pct),
+            _bytes_cell(s),
             _error_summary(s),
             _neighbor_cell(s),
         )
@@ -562,8 +613,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--timeout", type=int, default=SSH_TIMEOUT_DEFAULT,
                      help=f"SSH read timeout in seconds (default: {SSH_TIMEOUT_DEFAULT}; a chassis with "
                           f"many interfaces may need more, e.g. --timeout 120)")
-    ap.add_argument("--sort", choices=("util", "errors", "name"), default="util",
-                     help="Sort order for the table (default: util — busiest interfaces first)")
+    ap.add_argument("--sort", choices=("util", "errors", "name", "bytes"), default="util",
+                     help="Sort order for the table (default: util — busiest by load% first; "
+                          "'bytes' sorts by cumulative RX+TX traffic instead)")
     ap.add_argument("--errors-only", action="store_true", help="Only show interfaces with nonzero error counters")
     ap.add_argument("--up-only", action="store_true", help="Hide administratively-down interfaces")
     ap.add_argument("--interface", help="Show full raw detail for exactly this interface, skip the table")
