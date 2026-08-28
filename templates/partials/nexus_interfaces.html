@@ -21,6 +21,7 @@
           <th>IPv4</th>
           <th>MAC</th>
           <th>Zone</th>
+          <th data-type="number">Traffic (RX+TX)</th>
         </tr>
       </thead>
       <tbody>
@@ -41,6 +42,15 @@
               <span class="badge bg-light text-muted">{{ i.zone }}</span>
             {% else %}
               <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td class="mono small"
+              data-sort-value="{{ (i.input_bytes or 0) + (i.output_bytes or 0) if (i.input_bytes is not none or i.output_bytes is not none) else -1 }}"
+              title="RX {{ i.input_bytes|format_bytes }} / TX {{ i.output_bytes|format_bytes }}">
+            {% if i.input_bytes is not none or i.output_bytes is not none %}
+              {{ ((i.input_bytes or 0) + (i.output_bytes or 0))|format_bytes }}
+            {% else %}
+              N/A
             {% endif %}
           </td>
         </tr>

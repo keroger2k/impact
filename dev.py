@@ -209,15 +209,18 @@ for _idx, _dev in enumerate(MOCK_NEXUS_DEVICES):
         "interface_name": "Ethernet1/1",
         "ipv4_address": f"10.60.{_n}.1/24",
         "vlans": [10, 20], "zone": "trust", "mac_address": _mac, "error": None,
+        "input_bytes": 1_500_000_000 * _n, "output_bytes": 900_000_000 * _n,
     })
 
     # Loopback0 — unique /32 per device. With 10 devices this exercises the
-    # "collapse 3+ loopbacks" behavior in the IPAM tree.
+    # "collapse 3+ loopbacks" behavior in the IPAM tree. Loopbacks carry no
+    # traffic counters on real hardware, so leave these None (renders "N/A").
     MOCK_NEXUS_INTERFACES.append({
         "hostname": _hostname, "device_ip": _device_ip, "platform": "nxos",
         "interface_name": "loopback0",
         "ipv4_address": f"10.99.10.{_n}/32",
         "vlans": [], "zone": "", "mac_address": _mac, "error": None,
+        "input_bytes": None, "output_bytes": None,
     })
 
     # SVIs on first 4 devices — per-device Vlan in the 10.70.x.0/24 space
@@ -227,6 +230,7 @@ for _idx, _dev in enumerate(MOCK_NEXUS_DEVICES):
             "interface_name": f"Vlan{200 + _n}",
             "ipv4_address": f"10.70.{_n}.1/24",
             "vlans": [200 + _n], "zone": "trust", "mac_address": _mac, "error": None,
+            "input_bytes": 300_000_000 * _n, "output_bytes": 250_000_000 * _n,
         })
 
     # Tunnel100 — DMVPN-style hub/spoke: devices 1..4 all share 10.99.0.0/24
@@ -237,6 +241,7 @@ for _idx, _dev in enumerate(MOCK_NEXUS_DEVICES):
             "interface_name": "Tunnel100",
             "ipv4_address": f"10.99.0.{_n}/24",
             "vlans": [], "zone": "vpn", "mac_address": _mac, "error": None,
+            "input_bytes": 50_000_000 * _n, "output_bytes": 45_000_000 * _n,
         })
 
     # Tunnel200 — point-to-point /30 between devices 5 and 6 (2-endpoint group)
@@ -246,6 +251,7 @@ for _idx, _dev in enumerate(MOCK_NEXUS_DEVICES):
             "interface_name": "Tunnel200",
             "ipv4_address": f"10.99.1.{_n - 4}/30",
             "vlans": [], "zone": "vpn", "mac_address": _mac, "error": None,
+            "input_bytes": 20_000_000 * _n, "output_bytes": 18_000_000 * _n,
         })
 
 # vPC pair on the first two switches; standalone PC on switch 3 to exercise

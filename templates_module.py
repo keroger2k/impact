@@ -38,3 +38,19 @@ def _vvvv_mask_hex(site: dict) -> str:
 
 templates.env.filters["vvvv_fixed_hex"] = _vvvv_fixed_hex
 templates.env.filters["vvvv_mask_hex"] = _vvvv_mask_hex
+
+
+# Human-readable byte counter, e.g. for Nexus interface RX/TX totals.
+# `None` (never collected) renders distinctly from 0 (collected, zero traffic).
+def _format_bytes(value) -> str:
+    if value is None:
+        return "N/A"
+    n = float(value)
+    for unit in ("B", "KB", "MB", "GB", "TB", "PB"):
+        if n < 1024 or unit == "PB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.2f} {unit}"
+        n /= 1024
+    return f"{n:.2f} PB"
+
+
+templates.env.filters["format_bytes"] = _format_bytes

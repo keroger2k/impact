@@ -15,6 +15,9 @@ Data collection (two commands per device):
          - Interface name  (Ethernet1/1, Vlan10, mgmt0, port-channel1, etc.)
          - MAC address     (NX-OS dotted format aaaa.bbbb.cccc → normalized to aa:bb:cc:dd:ee:ff)
          - IPv4 address    (x.x.x.x/prefix)
+         - RX/TX byte counters (cumulative since last "clear counters", from the
+           "N input packets M bytes" / "N output packets M bytes" lines in the
+           RX/TX sections — NOT the 30-second load-interval rate lines above them)
 
     2. "show ipv6 interface"
        Parses per-interface IPv6 address blocks, including:
@@ -87,6 +90,12 @@ _IFACE_HEADER_RE = re.compile(
     r"|nve\S+|Null\S+)\s+is\s+",
     re.IGNORECASE,
 )
+
+# RX/TX cumulative byte counters, e.g.:
+#   "    123463701 input packets  987654321098 bytes"
+#   "    123463692 output packets  876543210987 bytes"
+_INPUT_BYTES_RE  = re.compile(r"^\s*\d+\s+input\s+packets\s+(\d+)\s+bytes", re.IGNORECASE)
+_OUTPUT_BYTES_RE = re.compile(r"^\s*\d+\s+output\s+packets\s+(\d+)\s+bytes", re.IGNORECASE)
 
 
 class NXOSCollector(BaseCollector):
@@ -251,7 +260,7 @@ class NXOSCollector(BaseCollector):
 
         # Step 4: merge
         results: List[InterfaceResult] = []
-        for iface_name, (ipv4_addr, mac_addr) in sorted(iface_map.items()):
+        for iface_name, (ipv4_addr, mac_addr, in_bytes, out_bytes) in sorted(iface_map.items()):
             results.append(InterfaceResult(
                 hostname=self.hostname,
                 device_ip=self.ip_address,
@@ -260,6 +269,8 @@ class NXOSCollector(BaseCollector):
                 ipv4_address=ipv4_addr,
                 ipv6_addresses=ipv6_map.get(iface_name, []),
                 mac_address=mac_addr,
+                input_bytes=in_bytes,
+                output_bytes=out_bytes,
             ))
 
         # Step 5: Nexus-specific extras (port-channels, vPCs, VLANs).
@@ -504,9 +515,9 @@ class NXOSCollector(BaseCollector):
     #  "show interface" parser                                             #
     # ------------------------------------------------------------------ #
 
-    def _parse_show_interface(self, output: str) -> Dict[str, Tuple[str, str]]:
+    def _parse_show_interface(self, output: str) -> Dict[str, Tuple[str, str, Optional[int], Optional[int]]]:
         """
-        Parse 'show interface' output into {iface_name: (ipv4, mac)}.
+        Parse 'show interface' output into {iface_name: (ipv4, mac, input_bytes, output_bytes)}.
 
         NX-OS interface blocks look like:
 
@@ -514,6 +525,14 @@ class NXOSCollector(BaseCollector):
               Hardware: 100/1000/10000 Ethernet, address: 0050.5685.a1b2 (bia 0050.5685.a1b2)
               Internet Address is 10.0.0.1/24
               ...
+              RX
+                123456789 unicast packets  1234 multicast packets  5678 broadcast packets
+                123463701 input packets  987654321098 bytes
+                ...
+              TX
+                123456780 unicast packets  1234 multicast packets  5678 broadcast packets
+                123463692 output packets  876543210987 bytes
+                ...
 
             Vlan10 is up, line protocol is up
               Hardware is EtherSVI, address is 0050.5685.a1b3
@@ -522,16 +541,24 @@ class NXOSCollector(BaseCollector):
             mgmt0 is up
               Hardware: GigabitEthernet, address: 0050.5685.a1b4 (bia ...)
               Internet Address is 10.1.1.1/24
+
+        Byte counters are cumulative since the last "clear counters" on the
+        device (not reset on collection) — they are a running total, not a
+        point-in-time rate. Interfaces without an RX/TX section (e.g. some
+        loopbacks) are left as None rather than 0, so "no data" is distinct
+        from "zero bytes seen".
         """
-        iface_map: Dict[str, Tuple[str, str]] = {}
+        iface_map: Dict[str, Tuple[str, str, Optional[int], Optional[int]]] = {}
 
         current_iface: Optional[str] = None
         current_ipv4  = "N/A"
         current_mac   = "N/A"
+        current_in_bytes:  Optional[int] = None
+        current_out_bytes: Optional[int] = None
 
         def _flush():
             if current_iface:
-                iface_map[current_iface] = (current_ipv4, current_mac)
+                iface_map[current_iface] = (current_ipv4, current_mac, current_in_bytes, current_out_bytes)
 
         for line in output.splitlines():
             stripped = line.strip()
@@ -543,6 +570,8 @@ class NXOSCollector(BaseCollector):
                 current_iface = header.group(1)
                 current_ipv4  = "N/A"
                 current_mac   = "N/A"
+                current_in_bytes  = None
+                current_out_bytes = None
                 continue
 
             if current_iface is None:
@@ -559,6 +588,16 @@ class NXOSCollector(BaseCollector):
                 m = _IPV4_PREFIX_RE.search(stripped)
                 if m:
                     current_ipv4 = m.group(1)
+
+            # RX/TX cumulative byte counters
+            m = _INPUT_BYTES_RE.match(line)
+            if m:
+                current_in_bytes = int(m.group(1))
+                continue
+            m = _OUTPUT_BYTES_RE.match(line)
+            if m:
+                current_out_bytes = int(m.group(1))
+                continue
 
         _flush()
         return iface_map

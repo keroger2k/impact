@@ -44,7 +44,7 @@
         {% else %}
         <table class="table table-hover table-striped mb-0 data-table">
           <thead class="bg-light sticky-top">
-            <tr><th>Interface</th><th>IPv4</th><th>IPv6</th><th>MAC</th><th>Zone</th></tr>
+            <tr><th>Interface</th><th>IPv4</th><th>IPv6</th><th>MAC</th><th>Zone</th><th data-type="number">Traffic (RX+TX)</th></tr>
           </thead>
           <tbody>
             {% for i in interfaces %}
@@ -56,6 +56,15 @@
               </td>
               <td class="mono small text-muted">{{ i.mac_address or '—' }}</td>
               <td>{% if i.zone %}<span class="badge bg-light text-muted">{{ i.zone }}</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+              <td class="mono small"
+                  data-sort-value="{{ (i.input_bytes or 0) + (i.output_bytes or 0) if (i.input_bytes is not none or i.output_bytes is not none) else -1 }}"
+                  title="RX {{ i.input_bytes|format_bytes }} / TX {{ i.output_bytes|format_bytes }}">
+                {% if i.input_bytes is not none or i.output_bytes is not none %}
+                  {{ ((i.input_bytes or 0) + (i.output_bytes or 0))|format_bytes }}
+                {% else %}
+                  N/A
+                {% endif %}
+              </td>
             </tr>
             {% endfor %}
           </tbody>
