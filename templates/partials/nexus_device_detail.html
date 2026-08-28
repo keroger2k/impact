@@ -56,11 +56,13 @@
               </td>
               <td class="mono small text-muted">{{ i.mac_address or '—' }}</td>
               <td>{% if i.zone %}<span class="badge bg-light text-muted">{{ i.zone }}</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+              {% set in_b = i.get('input_bytes') %}
+              {% set out_b = i.get('output_bytes') %}
               <td class="mono small"
-                  data-sort-value="{{ (i.input_bytes or 0) + (i.output_bytes or 0) if (i.input_bytes is not none or i.output_bytes is not none) else -1 }}"
-                  title="RX {{ i.input_bytes|format_bytes }} / TX {{ i.output_bytes|format_bytes }}">
-                {% if i.input_bytes is not none or i.output_bytes is not none %}
-                  {{ ((i.input_bytes or 0) + (i.output_bytes or 0))|format_bytes }}
+                  data-sort-value="{{ (in_b or 0) + (out_b or 0) if (in_b is not none or out_b is not none) else -1 }}"
+                  title="RX {{ in_b|format_bytes }} / TX {{ out_b|format_bytes }}">
+                {% if in_b is not none or out_b is not none %}
+                  {{ ((in_b or 0) + (out_b or 0))|format_bytes }}
                 {% else %}
                   N/A
                 {% endif %}

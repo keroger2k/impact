@@ -1,4 +1,5 @@
 from fastapi.templating import Jinja2Templates
+from jinja2 import Undefined
 
 from utils.site_code import (
     site_code as _site_code,
@@ -42,8 +43,11 @@ templates.env.filters["vvvv_mask_hex"] = _vvvv_mask_hex
 
 # Human-readable byte counter, e.g. for Nexus interface RX/TX totals.
 # `None` (never collected) renders distinctly from 0 (collected, zero traffic).
+# Also treats Jinja's Undefined as "missing" — `dict.attr` on a dict lacking
+# that key (e.g. a pre-existing cache entry from before this field existed)
+# resolves to Undefined, not None, and float(Undefined) raises UndefinedError.
 def _format_bytes(value) -> str:
-    if value is None:
+    if value is None or isinstance(value, Undefined):
         return "N/A"
     n = float(value)
     for unit in ("B", "KB", "MB", "GB", "TB", "PB"):
