@@ -11,12 +11,21 @@ never the other way around), where router-to-router at least stays within
 one layer. Moving the shared piece here fixes it for every caller, not just
 the new one — routers/commands.py, routers/routing.py, and
 routers/tunnels.py all import from here now instead of from each other.
+
+`ssh_run_commands` arrived here by the same route, from the other side of
+the app: scripts/nexus_interface_report.py and scripts/wan_qos_report.py had
+each grown a private near-identical copy, and scripts/wan_queue_latency.py
+would have been a third. The two copies had already diverged in exactly the
+way duplicated code does — the Nexus one hardcoded its device_type but had
+best-effort semantics, the WAN QoS one took a device_type but had none — so
+this is the union of both, and both scripts now call it.
 """
 from __future__ import annotations
 
 import logging
 import re
 import time
+from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +46,72 @@ def guess_device_type(platform_id: str) -> str:
         if substr in pid:
             return dtype
     return "cisco_ios"
+
+
+@contextmanager
+def ssh_session(ip: str, username: str, password: str, device_type: str, timeout: int):
+    """Open one SSH session and yield a `run(commands, required=())` callable
+    that can be invoked repeatedly against it.
+
+    Exists for callers that sample a device over time — scripts/wan_queue_latency.py
+    polls `show policy-map interface` every couple of seconds for a minute,
+    and reconnecting per sample would add several seconds of login handshake
+    to every interval, which both distorts the timing the samples are meant
+    to measure and hammers the device's vty lines.
+
+    `run` never issues send_config_set. There is no write path here, which
+    is what makes the read-only guarantee in this module's callers structural
+    rather than a matter of care.
+    """
+    from netmiko import ConnectHandler
+
+    with ConnectHandler(
+        device_type=device_type,
+        host=ip,
+        username=username,
+        password=password,
+        timeout=timeout,
+        conn_timeout=timeout,
+        fast_cli=False,
+    ) as conn:
+        def run(commands: list[tuple[str, str]],
+                required: tuple[str, ...] = ()) -> dict[str, str]:
+            out: dict[str, str] = {}
+            for label, cmd in commands:
+                try:
+                    out[label] = conn.send_command(cmd, read_timeout=timeout) or ""
+                except Exception as exc:
+                    if label in required:
+                        raise
+                    logger.warning("'%s' failed (continuing without it): %s: %s",
+                                   cmd, type(exc).__name__, str(exc)[:120])
+                    out[label] = ""
+            return out
+
+        yield run
+
+
+def ssh_run_commands(ip: str, username: str, password: str, device_type: str,
+                     commands: list[tuple[str, str]], timeout: int,
+                     required: tuple[str, ...] = ()) -> dict[str, str]:
+    """SSH to one device, run each (label, command), disconnect.
+    Returns {label: output}.
+
+    Individual commands are best-effort: a switch with no optics, a router
+    without NBAR or IP SLA, a platform that rejects one `show` verb should
+    still produce a report, so a failing supplementary command yields an
+    empty string instead of aborting the run. Labels named in `required`
+    still propagate their exception — without those there is nothing to
+    render, and an empty section would read as "healthy" rather than
+    "never collected".
+
+    `required` defaults to empty (every command best-effort) so a caller has
+    to name what it genuinely cannot render without. Callers that run a
+    single indispensable command should name it rather than relying on the
+    default.
+    """
+    with ssh_session(ip, username, password, device_type, timeout) as run:
+        return run(commands, required=required)
 
 
 def run_flash_cleanup(ip: str, username: str, password: str, device_type: str, timeout: int = 120) -> dict:

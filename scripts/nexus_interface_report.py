@@ -116,6 +116,7 @@ from rich.console import Console  # noqa: E402
 from rich.table import Table  # noqa: E402
 from rich.text import Text  # noqa: E402
 
+from utils.device_ssh import ssh_run_commands  # noqa: E402
 from utils.nxos_interface import (  # noqa: E402
     CLEARED_RE,
     INPUT_BYTES_RE,
@@ -968,7 +969,8 @@ def collect_device(hostname: str, ip: str, username: str, password: str,
     """
     report = DeviceReport(hostname=hostname, ip=ip)
     try:
-        report.raw = ssh_run_commands(ip, username, password, COMMANDS, timeout)
+        report.raw = ssh_run_commands(ip, username, password, DEVICE_TYPE, COMMANDS,
+                                      timeout, required=("show_interface",))
     except Exception as e:
         report.error = f"SSH failed — {type(e).__name__}: {str(e)[:200]}"
         return report
@@ -996,42 +998,6 @@ def collect_device(hostname: str, ip: str, username: str, password: str,
 
 
 # ─────────────────────────── device SSH (read-only) ─────────────────────────
-
-def ssh_run_commands(ip: str, username: str, password: str,
-                      commands: list[tuple[str, str]], timeout: int,
-                      required: tuple[str, ...] = ("show_interface",)) -> dict[str, str]:
-    """SSH to one device and run each (label, command) with send_command
-    only. Never issues send_config_set — this function has no write path.
-
-    Individual commands are best-effort: a switch with no optics, no LACP or
-    LLDP disabled should still produce a report, so a failing supplementary
-    command yields an empty string instead of aborting the run. Labels in
-    `required` still propagate their exception — without `show interface`
-    there is no report to render.
-    """
-    from netmiko import ConnectHandler
-
-    out: dict[str, str] = {}
-    with ConnectHandler(
-        device_type=DEVICE_TYPE,
-        host=ip,
-        username=username,
-        password=password,
-        timeout=timeout,
-        conn_timeout=timeout,
-        fast_cli=False,
-    ) as conn:
-        for label, cmd in commands:
-            try:
-                out[label] = conn.send_command(cmd, read_timeout=timeout) or ""
-            except Exception as exc:
-                if label in required:
-                    raise
-                logger.warning("'%s' failed (continuing without it): %s: %s",
-                               cmd, type(exc).__name__, str(exc)[:120])
-                out[label] = ""
-    return out
-
 
 # ─────────────────────────── rendering ───────────────────────────────────────
 

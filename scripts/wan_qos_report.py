@@ -28,12 +28,28 @@ Given a site name, this:
   5. Parses the policy-map output into per-queue stats and prints a report:
      a "Queue summary" table (packets/bytes share, queue depth vs limit,
      drops, drop % of that queue's own traffic, each queue's share of total
-     interface drops, and configured priority/bandwidth) — this table is
-     the report's primary output and always prints. A "Detail per queue"
-     section with the same data broken out per-queue (matches, 30s
-     offered/drop rate, output counters, full config) is opt-in via
-     --detail: it's long enough on a multi-queue policy-map to push the
-     summary table off screen, so it stays hidden unless asked for.
+     interface drops, the delay a full queue would impose, and configured
+     priority/bandwidth) — this table is the report's primary output and
+     always prints. A "Detail per queue" section with the same data broken
+     out per-queue (matches, 30s offered/drop rate, output counters, full
+     config) is opt-in via --detail: it's long enough on a multi-queue
+     policy-map to push the summary table off screen, so it stays hidden
+     unless asked for.
+
+The "Full queue" column exists because a queue-limit in packets doesn't
+say what it costs. 4096 packets looks like headroom; at a class's guaranteed
+share of a 42.5 Mbps shaper it is seconds of delay, and raising queue-limit
+to make drops go away trades a loss problem for a latency one without
+changing any number this report previously showed. The column is computed
+from the class's cumulative counters, so it is a single-snapshot estimate —
+scripts/wan_queue_latency.py samples the same interface over a window and
+reports the *measured* drain rate, standing queue and windowed drop rate
+instead. Reach for that one when this report says "no drops" and users still
+say the site is slow.
+
+Parsing and the queue-delay math live in utils/wan_qos.py so this script and
+wan_queue_latency.py can't drift; this file keeps the DNAC target resolution,
+the CLI and the rendering.
 
 Handles Cisco's hierarchical (parent-shaper + child-LLQ/CBWFQ) policy-map
 shape, which is what this fleet runs: a parent class-default shapes to the
@@ -97,7 +113,15 @@ load_dotenv()
 
 import clients.dnac as dc  # noqa: E402
 from clients.dnac import _dictify  # noqa: E402
-from utils.device_ssh import guess_device_type  # noqa: E402
+from utils.device_ssh import guess_device_type, ssh_run_commands  # noqa: E402
+from utils.wan_qos import (  # noqa: E402
+    compute_stats,
+    full_queue_delay_ms,
+    guaranteed_bps,
+    parent_shape_bps,
+    parse_policy_map,
+    total_priority_bps,
+)
 from scripts.tag_c8k_wan_interfaces import (  # noqa: E402
     DEFAULT_TAG_NAME,
     DEFAULT_VRFS,
@@ -250,257 +274,6 @@ def resolve_wan_interface(dnac, device: dict, tag_name: str, target_vrfs: set[st
     return None, "not-found"
 
 
-# ─────────────────────────── Device SSH (read-only) ────────────────────────
-
-def ssh_run_commands(ip: str, username: str, password: str, device_type: str,
-                      commands: list[tuple[str, str]], timeout: int) -> dict[str, str]:
-    """SSH to one device and run each (label, command) with send_command
-    only. Never issues send_config_set — this function has no write path."""
-    from netmiko import ConnectHandler
-
-    out: dict[str, str] = {}
-    with ConnectHandler(
-        device_type=device_type,
-        host=ip,
-        username=username,
-        password=password,
-        timeout=timeout,
-        conn_timeout=timeout,
-        fast_cli=False,
-    ) as conn:
-        for label, cmd in commands:
-            out[label] = conn.send_command(cmd, read_timeout=timeout) or ""
-    return out
-
-
-# ─────────────────────────── policy-map parsing ────────────────────────────
-
-_RE_CLASS = re.compile(r"^Class-map:\s*(\S.+?)\s*\(match-(any|all)\)\s*$", re.IGNORECASE)
-_RE_COUNTS = re.compile(r"^([\d,]+)\s+packets,\s+([\d,]+)\s+bytes\s*$", re.IGNORECASE)
-_RE_RATE = re.compile(r"^30 second offered rate\s+(\d+)\s*bps,\s*drop rate\s+(\d+)\s*bps\s*$", re.IGNORECASE)
-_RE_MATCH = re.compile(r"^Match:\s*(.+)$", re.IGNORECASE)
-_RE_QUEUE_LIMIT = re.compile(r"^queue\s+limit\s+(\d+)\s+packets\s*$", re.IGNORECASE)
-_RE_QUEUE_STATS = re.compile(
-    r"^\(queue depth/total drops/no-buffer drops\)\s+(\d+)/(\d+)/(\d+)\s*$", re.IGNORECASE
-)
-_RE_PKTS_OUT = re.compile(r"^\((?:pkts|pts) output/bytes output\)\s+(\d+)/(\d+)\s*$", re.IGNORECASE)
-_RE_BW_REMAIN = re.compile(r"^bandwidth remaining\s+(\d+)\s*%\s*$", re.IGNORECASE)
-_RE_BW_FLAT = re.compile(r"^bandwidth\s+(\d+)\s*kbps\s*$", re.IGNORECASE)
-_RE_PRIORITY = re.compile(
-    r"^Priority:\s*(?:(?P<pct>\d+)%\s*)?\(\s*(?P<kbps>\d+)\s*kbps\s*\)\s*,\s*"
-    r"burst bytes\s+(?P<burst>\d+)\s*,\s*b/?w exceed drops:?\s*(?P<exceed>\d+)?",
-    re.IGNORECASE,
-)
-_RE_SHAPE = re.compile(r"^shape\s*\(average\)\s*cir\s+(?P<cir>\d+)", re.IGNORECASE)
-_RE_TARGET_SHAPE = re.compile(r"^target shape rate\s+(\d+)\s*$", re.IGNORECASE)
-_RE_SVC_OUTPUT = re.compile(r"^Service policy output:\s*(\S*)\s*$", re.IGNORECASE)
-_RE_SVC_NESTED = re.compile(r"^Service policy\s*:\s*(\S+)\s*$", re.IGNORECASE)
-_RE_PRIORITY_AGG = re.compile(r"^queue stats for all priority classes:\s*$", re.IGNORECASE)
-
-
-def _new_class(name: str, match_type: str, indent: int) -> dict:
-    return {
-        "name": name, "match_type": match_type, "indent": indent,
-        "packets": None, "bytes": None,
-        "offered_bps": None, "drop_bps": None,
-        "matches": [],
-        "queue_limit": None, "queue_depth": None, "total_drops": None, "no_buffer_drops": None,
-        "pkts_output": None, "bytes_output": None,
-        "bandwidth_remaining_pct": None, "bandwidth_kbps": None,
-        "priority_pct": None, "priority_kbps": None, "priority_burst_bytes": None, "bw_exceed_drops": None,
-        "shape_cir_bps": None, "target_shape_bps": None,
-        "shared_priority_queue": False,
-    }
-
-
-def parse_policy_map(text: str) -> dict:
-    """Parse `show policy-map interface ... output` into interface name,
-    parent/nested policy names, and a list of per-class-map queue dicts.
-    Tolerant by design: unrecognized lines are ignored rather than raising,
-    since policy-map shapes vary (WRED, marking actions, single-level
-    policies, ...) — anything not captured here is still visible in the
-    raw CLI output the caller keeps alongside this."""
-    lines = [l for l in text.splitlines() if l.strip()]
-
-    interface_name = None
-    top_policy_name = None
-    nested_policy_name = None
-    classes: list[dict] = []
-    current: dict | None = None
-    pending_priority: dict | None = None
-    capturing_priority_agg = False
-
-    for raw in lines:
-        stripped = raw.strip()
-        indent = len(raw) - len(raw.lstrip())
-
-        if interface_name is None and not stripped.lower().startswith(("service policy", "class-map")):
-            interface_name = stripped
-            continue
-
-        m = _RE_SVC_OUTPUT.match(stripped)
-        if m:
-            top_policy_name = m.group(1) or top_policy_name
-            continue
-        m = _RE_SVC_NESTED.match(stripped)
-        if m:
-            nested_policy_name = m.group(1)
-            continue
-
-        if _RE_PRIORITY_AGG.match(stripped):
-            capturing_priority_agg = True
-            pending_priority = {
-                "queue_limit": None, "queue_depth": None, "total_drops": None,
-                "no_buffer_drops": None, "pkts_output": None, "bytes_output": None,
-            }
-            continue
-
-        m = _RE_CLASS.match(stripped)
-        if m:
-            if current is not None:
-                classes.append(current)
-            current = _new_class(m.group(1), m.group(2), indent)
-            capturing_priority_agg = False
-            continue
-
-        if capturing_priority_agg and pending_priority is not None:
-            m = _RE_QUEUE_LIMIT.match(stripped)
-            if m:
-                pending_priority["queue_limit"] = int(m.group(1)); continue
-            m = _RE_QUEUE_STATS.match(stripped)
-            if m:
-                pending_priority["queue_depth"] = int(m.group(1))
-                pending_priority["total_drops"] = int(m.group(2))
-                pending_priority["no_buffer_drops"] = int(m.group(3))
-                continue
-            m = _RE_PKTS_OUT.match(stripped)
-            if m:
-                pending_priority["pkts_output"] = int(m.group(1))
-                pending_priority["bytes_output"] = int(m.group(2))
-                continue
-            if stripped.lower() == "queueing":
-                continue
-
-        if current is None:
-            continue
-
-        m = _RE_COUNTS.match(stripped)
-        if m:
-            current["packets"] = int(m.group(1).replace(",", ""))
-            current["bytes"] = int(m.group(2).replace(",", ""))
-            continue
-        m = _RE_RATE.match(stripped)
-        if m:
-            current["offered_bps"] = int(m.group(1))
-            current["drop_bps"] = int(m.group(2))
-            continue
-        m = _RE_MATCH.match(stripped)
-        if m:
-            current["matches"].append(m.group(1).strip())
-            continue
-        m = _RE_QUEUE_LIMIT.match(stripped)
-        if m:
-            current["queue_limit"] = int(m.group(1)); continue
-        m = _RE_QUEUE_STATS.match(stripped)
-        if m:
-            current["queue_depth"] = int(m.group(1))
-            current["total_drops"] = int(m.group(2))
-            current["no_buffer_drops"] = int(m.group(3))
-            continue
-        m = _RE_PKTS_OUT.match(stripped)
-        if m:
-            current["pkts_output"] = int(m.group(1))
-            current["bytes_output"] = int(m.group(2))
-            continue
-        m = _RE_BW_REMAIN.match(stripped)
-        if m:
-            current["bandwidth_remaining_pct"] = int(m.group(1)); continue
-        m = _RE_BW_FLAT.match(stripped)
-        if m:
-            current["bandwidth_kbps"] = int(m.group(1)); continue
-        m = _RE_PRIORITY.match(stripped)
-        if m:
-            current["priority_pct"] = int(m.group("pct")) if m.group("pct") else None
-            current["priority_kbps"] = int(m.group("kbps")) if m.group("kbps") else None
-            current["priority_burst_bytes"] = int(m.group("burst")) if m.group("burst") else None
-            current["bw_exceed_drops"] = int(m.group("exceed")) if m.group("exceed") else None
-            continue
-        m = _RE_SHAPE.match(stripped)
-        if m:
-            current["shape_cir_bps"] = int(m.group("cir")); continue
-        m = _RE_TARGET_SHAPE.match(stripped)
-        if m:
-            current["target_shape_bps"] = int(m.group(1)); continue
-        # Anything else (bare "Queueing", "QoS Set", "Marker statistics: ...",
-        # nested marking-action lines) is intentionally not modeled.
-
-    if current is not None:
-        classes.append(current)
-
-    # Priority classes share one physical LLQ system queue on IOS-XE and
-    # don't print their own per-class queue line — attach the aggregate
-    # block to every class that has priority config but no queue line of
-    # its own.
-    if pending_priority is not None:
-        for c in classes:
-            has_priority = c["priority_pct"] is not None or c["priority_kbps"] is not None
-            if has_priority and c["queue_depth"] is None:
-                c["queue_limit"] = pending_priority["queue_limit"]
-                c["queue_depth"] = pending_priority["queue_depth"]
-                c["total_drops"] = pending_priority["total_drops"]
-                c["no_buffer_drops"] = pending_priority["no_buffer_drops"]
-                c["pkts_output"] = pending_priority["pkts_output"]
-                c["bytes_output"] = pending_priority["bytes_output"]
-                c["shared_priority_queue"] = True
-
-    uniq_indents = sorted({c["indent"] for c in classes})
-    depth_map = {ind: i for i, ind in enumerate(uniq_indents)}
-    for c in classes:
-        c["depth"] = depth_map[c["indent"]]
-
-    return {
-        "interface": interface_name,
-        "top_policy_name": top_policy_name,
-        "nested_policy_name": nested_policy_name,
-        "classes": classes,
-    }
-
-
-def compute_stats(parsed: dict) -> dict:
-    """Derived per-queue stats: drop % of the queue's own traffic, each
-    queue's share of total interface drops/traffic, instantaneous 30s drop
-    %, and queue fill %. Percentages are denominated against the depth-0
-    (outermost) class(es) so a hierarchical policy's parent-level rollup
-    counters aren't double-counted against its own child queues."""
-    classes = parsed["classes"]
-    parent = [c for c in classes if c["depth"] == 0]
-
-    total_traffic_pkts = sum(c["packets"] or 0 for c in parent) or None
-    total_drops = sum(c["total_drops"] or 0 for c in parent) or None
-    if total_drops is None:
-        total_drops = sum(c["total_drops"] or 0 for c in classes) or None
-
-    enriched = []
-    for c in classes:
-        pkts = c["packets"] or 0
-        drops = c["total_drops"] or 0
-        out_pkts = c["pkts_output"] or 0
-        denom_q = drops + out_pkts
-        offered = c["offered_bps"] or 0
-        dropped_rate = c["drop_bps"] or 0
-
-        enriched.append({
-            **c,
-            "drop_pct_of_queue": (drops / denom_q * 100) if denom_q else 0.0,
-            "pct_of_total_traffic": (pkts / total_traffic_pkts * 100) if total_traffic_pkts else None,
-            "share_of_total_drops": (drops / total_drops * 100) if total_drops else 0.0,
-            "instant_drop_pct": (dropped_rate / offered * 100) if offered else 0.0,
-            "queue_fill_pct": (c["queue_depth"] / c["queue_limit"] * 100) if c["queue_limit"] else None,
-        })
-
-    return {"classes": enriched, "total_traffic_pkts": total_traffic_pkts, "total_drops": total_drops}
-
-
 # ─────────────────────────── report rendering ──────────────────────────────
 
 def _fmt_int(n) -> str:
@@ -509,6 +282,21 @@ def _fmt_int(n) -> str:
 
 def _fmt_pct(n) -> str:
     return f"{n:.2f}%" if n is not None else "n/a"
+
+
+def _fmt_delay(ms) -> str:
+    """Queue delay, in whichever unit keeps it readable. These span five
+    orders of magnitude on one table — a shallow LLQ measures in single-digit
+    ms while a 4096-packet scavenger queue measures in tens of seconds — and
+    printing "33043.4 ms" next to "4.2 ms" makes the outlier harder to spot,
+    not easier."""
+    if ms is None:
+        return "n/a"
+    if ms >= 10_000:
+        return f"{ms / 1000:.0f} s"
+    if ms >= 1_000:
+        return f"{ms / 1000:.1f} s"
+    return f"{ms:.0f} ms"
 
 
 def _bw_config(c: dict) -> str:
@@ -547,20 +335,33 @@ def render_report(hostname: str, ip: str, wan_if: str, detection_method: str,
           f"({_fmt_pct((stats['total_drops'] / stats['total_traffic_pkts'] * 100) if stats['total_traffic_pkts'] and stats['total_drops'] is not None else None)} overall)")
     print()
 
+    # "Full queue" is the delay this class's *configured* queue-limit permits
+    # at its guaranteed drain rate. It is the column that makes a deep buffer
+    # legible: "4096 packets" reads as fine until it reads as "2.7 s". Packet
+    # size comes from the class's own cumulative counters here (a single
+    # snapshot has no window to average over) — scripts/wan_queue_latency.py
+    # samples over time and reports the measured figure instead.
+    shape_bps = parent_shape_bps(parsed)
+    prio_bps = total_priority_bps(parsed)
+
     print("Queue summary:")
     name_w = max(30, max((len(_display_name(c)) for c in classes), default=0) + 2)
-    header = f"  {'Queue':<{name_w}}{'% Traffic':>10}{'Depth/Limit':>14}{'Drops':>12}{'Drop% (queue)':>15}{'Drop% (all)':>13}   BW config"
+    header = (f"  {'Queue':<{name_w}}{'% Traffic':>10}{'Depth/Limit':>14}{'Drops':>12}"
+              f"{'Drop% (queue)':>15}{'Drop% (all)':>13}{'Full queue':>12}   BW config")
     print(header)
     for c in sorted(classes, key=lambda c: c["depth"]):
         depth_lo = c["queue_depth"] if c["queue_depth"] is not None else "?"
         limit = c["queue_limit"] if c["queue_limit"] is not None else "?"
+        pkt_bytes = (c["bytes_output"] / c["pkts_output"]) if c.get("pkts_output") else None
+        drain = guaranteed_bps(c, shape_bps, prio_bps)
         row = (
             f"  {_display_name(c):<{name_w}}"
             f"{_fmt_pct(c['pct_of_total_traffic']):>10}"
             f"{f'{depth_lo}/{limit}':>14}"
             f"{_fmt_int(c['total_drops']):>12}"
             f"{_fmt_pct(c['drop_pct_of_queue']):>15}"
-            f"{_fmt_pct(c['share_of_total_drops']):>13}   "
+            f"{_fmt_pct(c['share_of_total_drops']):>13}"
+            f"{_fmt_delay(full_queue_delay_ms(c, pkt_bytes, drain)):>12}   "
             f"{_bw_config(c)}"
         )
         print(row)
@@ -631,7 +432,8 @@ def process_device(dnac, device: dict, args) -> int:
 
     logger.info("%s: connecting via SSH...", hostname)
     try:
-        raw = ssh_run_commands(ip, args.username, args.password, device_type, commands, args.timeout)
+        raw = ssh_run_commands(ip, args.username, args.password, device_type, commands,
+                               args.timeout, required=("policy",))
     except Exception as e:
         logger.error("%s: SSH failed — %s: %s", hostname, type(e).__name__, str(e)[:200])
         return 1
