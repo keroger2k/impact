@@ -18,8 +18,10 @@ import pytest
 from utils.wan_qos import (
     MIN_QUEUE_LIMIT_PACKETS,
     avg_packet_bytes,
+    coalesce_counter_spans,
     compute_stats,
     counter_delta,
+    counter_resolution_s,
     full_queue_delay_ms,
     guaranteed_bps,
     observed_drain_bps,
@@ -347,6 +349,67 @@ def test_pick_drain_bps_prefers_measured_but_says_so():
     # A near-idle class's observed rate is noise; fall back and label it.
     assert pick_drain_bps(12.0, 17_850_000) == (17_850_000, "guaranteed")
     assert pick_drain_bps(None, None) == (None, "unknown")
+
+
+def test_coalesce_merges_intervals_until_the_counter_moves():
+    """The regression this exists for, reproduced from a real run.
+
+    A 42.5 Mbps circuit averaging 42.0 Mbps was reported as peaking at
+    123.7 Mbps — 291% of its own shaper. The router refreshes these counters
+    every ~6s, so polling every 2s left two of every three intervals reading
+    a delta of zero and the third carrying three intervals' worth of bytes.
+    Dividing that lump by one interval inflates the rate by exactly the
+    aliasing ratio.
+    """
+    bytes_per_2s = 42_000_000 * 2 / 8  # 42 Mbps for 2 seconds
+    readings, total = [], 0
+    for i in range(31):
+        if i % 3 == 0 and i > 0:
+            total += int(bytes_per_2s * 3)   # three intervals published at once
+        readings.append((float(i * 2), total))
+
+    spans = coalesce_counter_spans(readings)
+    rates = [d * 8 / secs for secs, d in spans]
+    # Every span is a true 6-second average at the real rate, not a 3x spike.
+    assert all(41_000_000 < r < 43_000_000 for r in rates), rates
+    assert max(rates) < 45_000_000
+    assert counter_resolution_s(spans) == pytest.approx(6.0)
+
+
+def test_naive_adjacent_pairs_are_what_produced_the_bogus_peak():
+    """Pins the failure mode itself, so the fix can't be quietly reverted."""
+    bytes_per_2s = 42_000_000 * 2 / 8
+    readings, total = [], 0
+    for i in range(31):
+        if i % 3 == 0 and i > 0:
+            total += int(bytes_per_2s * 3)
+        readings.append((float(i * 2), total))
+
+    naive = [(b[1] - a[1]) * 8 / (b[0] - a[0]) for a, b in zip(readings, readings[1:])]
+    assert max(naive) > 120_000_000     # the 123.7 Mbps artifact
+    # ...while the mean over the window was right all along, which is why the
+    # bogus peak was not obviously wrong.
+    total_secs = readings[-1][0] - readings[0][0]
+    assert readings[-1][1] * 8 / total_secs == pytest.approx(42_000_000, rel=0.05)
+
+
+def test_coalesce_drops_a_counter_reset_without_smearing_it():
+    readings = [(0.0, 1000), (2.0, 3000), (4.0, 12), (6.0, 2012)]
+    spans = coalesce_counter_spans(readings)
+    # The 3000 -> 12 reset contributes nothing; the span after it is clean.
+    assert spans == [(2.0, 2000), (2.0, 2000)]
+
+
+def test_coalesce_discards_a_trailing_unpublished_run():
+    # Counters that never moved after the last change: those bytes simply
+    # haven't been published, so reporting an idle span would be a lie.
+    readings = [(0.0, 0), (2.0, 1000), (4.0, 1000), (6.0, 1000)]
+    assert coalesce_counter_spans(readings) == [(2.0, 1000)]
+
+
+def test_coalesce_handles_a_never_moving_counter():
+    assert coalesce_counter_spans([(0.0, 5), (2.0, 5), (4.0, 5)]) == []
+    assert counter_resolution_s([]) is None
 
 
 def test_percentile_is_nearest_rank():

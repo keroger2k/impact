@@ -467,6 +467,63 @@ def counter_delta(prev: int | None, cur: int | None) -> int | None:
     return delta if delta >= 0 else None
 
 
+def coalesce_counter_spans(readings: list[tuple[float, int | None]]) -> list[tuple[float, int]]:
+    """Turn a series of (timestamp, cumulative counter) readings into
+    (elapsed, delta) spans that each end on an actual counter *change*.
+
+    IOS-XE refreshes `show interfaces` and policy-map byte counters from the
+    data plane on its own schedule — commonly every several seconds — not
+    continuously. Polling faster than that produces a sawtooth: several
+    intervals reading a delta of zero, then one interval carrying the whole
+    accumulation. Dividing that lump by one poll interval reports a rate
+    inflated by exactly the aliasing ratio, which is how a 42.5 Mbps shaper
+    came to show a "123.7 Mbps peak" — three intervals of bytes over one
+    interval of time.
+
+    Merging until the counter moves gives an honest average over the span
+    the device actually measured. It costs burst resolution, which was never
+    really there: you cannot observe bursts faster than the counter updates,
+    and pretending otherwise reports the polling artifact as a finding.
+
+    Spans with a None/negative delta (a reset or wrap) are dropped, and a
+    trailing run of no-change intervals is discarded rather than reported as
+    an idle span — the bytes for it simply haven't been published yet.
+    """
+    spans: list[tuple[float, int]] = []
+    pending_time = 0.0
+    prev_t, prev_v = None, None
+    for t, v in readings:
+        if prev_t is None:
+            prev_t, prev_v = t, v
+            continue
+        elapsed = t - prev_t
+        delta = counter_delta(prev_v, v)
+        prev_t = t
+        if delta is None:
+            # Reset/wrap or a missing reading: abandon whatever was pending
+            # rather than smearing it across the discontinuity.
+            pending_time = 0.0
+            prev_v = v
+            continue
+        pending_time += elapsed
+        if delta == 0:
+            continue
+        spans.append((pending_time, delta))
+        pending_time = 0.0
+        prev_v = v
+    return spans
+
+
+def counter_resolution_s(spans: list[tuple[float, int]]) -> float | None:
+    """Typical span length — how often the device actually publishes these
+    counters. Reported alongside any rate derived from them so a reader knows
+    the resolution of what they're looking at rather than assuming it matches
+    the poll interval."""
+    if not spans:
+        return None
+    return percentile([s for s, _ in spans], 50)
+
+
 def observed_drain_bps(prev: dict, cur: dict, elapsed_s: float) -> float | None:
     """Measured rate this class actually drained at, from its own
     (pkts output/bytes output) counters over the real elapsed time.

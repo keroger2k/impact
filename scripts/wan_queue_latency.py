@@ -104,11 +104,11 @@ import clients.dnac as dc  # noqa: E402
 from utils.device_ssh import guess_device_type, ssh_session  # noqa: E402
 from utils.wan_qos import (  # noqa: E402
     MIN_QUEUE_LIMIT_PACKETS,
-    avg_packet_bytes,
+    coalesce_counter_spans,
     counter_delta,
+    counter_resolution_s,
     full_queue_delay_ms,
     guaranteed_bps,
-    observed_drain_bps,
     parent_shape_bps,
     parse_interface_config,
     parse_interface_counters,
@@ -163,7 +163,8 @@ _LLQ_MAX_MS = 50              # a priority queue deeper than this defeats its pu
 _DEEP_QUEUE_MS = 200          # any class whose full queue exceeds this is oversized
 _AQM_QUEUE_LIMIT = 512        # tail-dropping a queue this deep is worth calling out
 _UNMANAGED_SHARE_PCT = 80.0   # above this, the policy isn't classifying anything
-_BURST_PCT = 90.0             # an interval at this share of the shaper is saturated
+_BURST_PCT = 90.0             # a span at this share of the shaper is running full
+_SATURATED_PCT = 85.0         # ...and a whole-window mean this high is a pegged circuit
 
 
 # ─────────────────────────── sampling ──────────────────────────────────────
@@ -338,17 +339,6 @@ def profile_classes(samples: list[Sample], target_ms: dict[str, float]) -> list[
             t["drops"] += d_drops or 0
             t["secs"] += elapsed
 
-            # Per-interval delay, using that interval's own measured drain
-            # rate where it's meaningful. Depth is the reading at the end of
-            # the interval — the queue that rate was draining.
-            interval_bps, _ = pick_drain_bps(
-                observed_drain_bps(prev_c, c, elapsed), p.guaranteed_bps,
-            )
-            interval_pkt_bytes = avg_packet_bytes(prev_c, c)
-            ms = queue_delay_ms(c.get("queue_depth"), interval_pkt_bytes, interval_bps)
-            if ms is not None:
-                p.delays_ms.append(ms)
-
     for key, p in profiles.items():
         t = totals[key]
         p.window_pkts, p.window_drops, p.window_seconds = t["pkts"], t["drops"], t["secs"]
@@ -362,6 +352,24 @@ def profile_classes(samples: list[Sample], target_ms: dict[str, float]) -> list[
         # ever drain 9 kbps. Fall back to the contracted rate and say so.
         if not p.depth_max:
             p.drain_source = "guaranteed" if p.guaranteed_bps else "unknown"
+
+    # Delays are computed here, in a second pass, against each class's
+    # *window-average* drain rate and packet size rather than per-interval
+    # ones. The device publishes these counters on its own schedule, so a
+    # single interval's apparent drain rate is an aliasing artifact (see
+    # utils.wan_qos.coalesce_counter_spans) — and because drain rate is the
+    # denominator, an inflated one *understates* the delay, which is the
+    # error this tool can least afford to make. Window totals are immune:
+    # summed deltas equal the true total no matter how they clustered.
+    for s in samples:
+        for c in s.parsed["classes"]:
+            p = profiles.get(_class_key(c))
+            if p is None or c.get("queue_depth") is None:
+                continue
+            drain, _ = pick_drain_bps(p.measured_bps, p.guaranteed_bps)
+            ms = queue_delay_ms(c["queue_depth"], p.pkt_bytes, drain)
+            if ms is not None:
+                p.delays_ms.append(ms)
 
     # Share is denominated against the child (queueing) level, the same way
     # wan_qos_report denominates against depth 0 — whichever level actually
@@ -377,22 +385,40 @@ def profile_classes(samples: list[Sample], target_ms: dict[str, float]) -> list[
 
 
 def burst_profile(samples: list[Sample], shape_bps: int | None) -> dict:
-    """Interval-average egress rates from the raw interface byte counters."""
-    rates: list[float] = []
-    for prev_s, cur_s in zip(samples, samples[1:]):
-        elapsed = cur_s.t - prev_s.t
-        d = counter_delta(prev_s.iface.get("bytes_out"), cur_s.iface.get("bytes_out"))
-        if d is None or elapsed <= 0:
-            continue
-        rates.append(d * 8 / elapsed)
+    """Egress rates from the raw interface byte counters.
+
+    Rates are computed over *counter-change spans*, not adjacent poll pairs.
+    The device publishes these counters on its own schedule; polling faster
+    than that makes two of every three intervals read zero and the third read
+    three intervals' worth of bytes over one interval of time — which reports
+    a ~3x inflated "peak" that is purely a polling artifact. See
+    utils.wan_qos.coalesce_counter_spans.
+
+    `resolution_s` is how often the counters actually moved, and is reported
+    so the peak figure is read at its true resolution rather than assumed to
+    be a per-interval one.
+    """
+    readings = [(s.t, s.iface.get("bytes_out")) for s in samples]
+    spans = coalesce_counter_spans(readings)
+    if not spans:
+        return {"samples": 0}
+
+    rates = [d * 8 / secs for secs, d in spans if secs > 0]
     if not rates:
         return {"samples": 0}
+    total_bytes = sum(d for _, d in spans)
+    total_secs = sum(secs for secs, _ in spans)
     over = [r for r in rates if shape_bps and r >= shape_bps * _BURST_PCT / 100]
     return {
         "samples": len(rates),
+        "polls": len(samples) - 1,
+        "resolution_s": counter_resolution_s(spans),
         "peak_bps": max(rates),
         "p95_bps": percentile(rates, 95),
-        "mean_bps": sum(rates) / len(rates),
+        # Mean from the totals, not the mean of the per-span rates: spans have
+        # unequal lengths, so averaging their rates would weight a short span
+        # the same as a long one.
+        "mean_bps": (total_bytes * 8 / total_secs) if total_secs > 0 else None,
         "over_threshold": len(over),
         "shape_bps": shape_bps,
     }
@@ -467,14 +493,30 @@ def build_findings(profiles: list[ClassProfile], burst: dict, unmanaged_pct: flo
             f"header only, which collapses every tunnelled flow into one class.",
         ))
 
-    if burst.get("samples") and burst.get("over_threshold"):
-        out.append((
-            "BURST",
-            f"{burst['over_threshold']} of {burst['samples']} intervals reached "
-            f"{_BURST_PCT:.0f}%+ of the {_fmt_bps(burst['shape_bps'])} shaper "
-            f"(peak {_fmt_bps(burst['peak_bps'])}), against a mean of "
-            f"{_fmt_bps(burst['mean_bps'])}. A 5-minute chart shows you the mean.",
-        ))
+    # Saturation is judged on the window mean, which is exact regardless of
+    # how the counters clustered. The peak is only as trustworthy as the
+    # counter refresh rate, so it is context here, never the claim.
+    mean, shape = burst.get("mean_bps"), burst.get("shape_bps")
+    if mean and shape:
+        share = mean / shape * 100
+        if share >= _SATURATED_PCT:
+            out.append((
+                "SATURATED",
+                f"The circuit averaged {_fmt_bps(mean)} over the whole window — "
+                f"{share:.0f}% of the {_fmt_bps(shape)} shaper. At that load the "
+                f"queues are the only thing standing between users and loss, which "
+                f"is why they are deep and why everything feels slow.",
+            ))
+        elif burst.get("over_threshold"):
+            res = burst.get("resolution_s")
+            out.append((
+                "BURST",
+                f"{burst['over_threshold']} of {burst['samples']} spans reached "
+                f"{_BURST_PCT:.0f}%+ of the {_fmt_bps(shape)} shaper against a mean of "
+                f"{_fmt_bps(mean)}"
+                + (f" (measured over {res:.0f}s spans)" if res else "")
+                + ". A 5-minute chart shows you the mean.",
+            ))
 
     return out
 
@@ -580,7 +622,8 @@ def render(hostname: str, ip: str, wan_if: str, method: str, samples: list[Sampl
     print()
 
     # ── burst profile ──
-    print("Egress burst profile (interval averages from raw byte counters):")
+    res = burst.get("resolution_s")
+    print("Egress profile (from raw byte counters):")
     if not burst.get("samples"):
         print("  n/a — interface counters unavailable")
     else:
@@ -589,8 +632,16 @@ def render(hostname: str, ip: str, wan_if: str, method: str, samples: list[Sampl
             share = f"  ({val / shape_bps * 100:.1f}% of shaper)" if shape_bps and val else ""
             print(f"  {label:<6}{_fmt_bps(val):>12}{share}")
         if shape_bps:
-            print(f"  Intervals at {_BURST_PCT:.0f}%+ of shaper: "
+            print(f"  Spans at {_BURST_PCT:.0f}%+ of shaper: "
                   f"{burst['over_threshold']} of {burst['samples']}")
+        if res:
+            print(f"  Measured over {res:.0f}s spans — the router only refreshes these "
+                  f"counters that often,")
+            print(f"  so {res:.0f}s is the finest burst this can see, whatever "
+                  f"--interval is set to.")
+            if res > _args_interval_hint(samples) * 1.5:
+                print(f"  (Polling faster than that gains nothing here; the Mean is "
+                      f"unaffected either way.)")
     print()
 
     # ── queue latency ──
@@ -686,6 +737,14 @@ def render(hostname: str, ip: str, wan_if: str, method: str, samples: list[Sampl
 
     if suggest:
         render_suggestion(last, profiles, target_ms)
+
+
+def _args_interval_hint(samples: list[Sample]) -> float:
+    """Actual median poll interval, for comparing against the counter
+    refresh rate. Taken from the samples rather than the --interval flag,
+    since a slow command makes the real interval longer than requested."""
+    gaps = [b.t - a.t for a, b in zip(samples, samples[1:])]
+    return percentile(gaps, 50) or 1.0
 
 
 def _wrap(text: str, width: int) -> list[str]:
