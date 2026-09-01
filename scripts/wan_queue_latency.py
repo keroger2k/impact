@@ -349,7 +349,6 @@ def profile_classes(samples: list[Sample], target_ms: dict[str, float]) -> list[
             if ms is not None:
                 p.delays_ms.append(ms)
 
-    total_window_pkts = 0
     for key, p in profiles.items():
         t = totals[key]
         p.window_pkts, p.window_drops, p.window_seconds = t["pkts"], t["drops"], t["secs"]
@@ -363,8 +362,6 @@ def profile_classes(samples: list[Sample], target_ms: dict[str, float]) -> list[
         # ever drain 9 kbps. Fall back to the contracted rate and say so.
         if not p.depth_max:
             p.drain_source = "guaranteed" if p.guaranteed_bps else "unknown"
-        if p.depth > 0 or len(profiles) == 1:
-            total_window_pkts += t["pkts"] + t["drops"]
 
     # Share is denominated against the child (queueing) level, the same way
     # wan_qos_report denominates against depth 0 — whichever level actually
@@ -655,6 +652,18 @@ def render(hostname: str, ip: str, wan_if: str, method: str, samples: list[Sampl
             for line in context["nbar"]:
                 print(f"    {line}")
     print()
+
+    # ── IP SLA ──
+    # The one *independent* latency measurement available here: everything
+    # else in this report is the router describing its own queues, which is
+    # an inference about user experience. An IP SLA probe is a real
+    # round-trip across the circuit. Only shown when probes are configured.
+    if collected and context.get("ipsla"):
+        print("IP SLA (independent round-trip measurement across this circuit):")
+        for line in context["ipsla"].splitlines()[:12]:
+            if line.strip():
+                print(f"  {line.rstrip()}")
+        print()
 
     # ── findings ──
     findings = build_findings(profiles, burst, unmanaged if leaves else None,
