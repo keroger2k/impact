@@ -16,6 +16,7 @@ from utils.bandwidth_report import (
     bare_interface_name,
     find_node_ip,
     generate_bandwidth_report,
+    get_traffic_series,
     list_interfaces_for_router,
     short_hostname,
 )
@@ -300,3 +301,54 @@ def test_generate_bandwidth_report_24h_and_7d_windows_land_correctly_when_run_co
 
     assert result["series_24h"] == [{"t": "2026-08-04T00:00:00Z", "in": 1.0, "out": 2.0}]
     assert result["series_7d"] == [{"t": "2026-07-29T00:00:00Z", "in": 3.0, "out": 4.0}]
+
+
+# ── get_traffic_series bucketing ─────────────────────────────────────────────
+# SolarWinds' own PerfStack chart time-averages raw polls before rendering;
+# without the same treatment here, plotting every raw sample renders as a
+# noisy sawtooth relative to what the SolarWinds UI shows for the same data.
+
+def test_get_traffic_series_24h_averages_within_15_minute_buckets():
+    rows = [
+        {"DateTime": "2026-08-04T00:00:00Z", "InPercentUtil": "10", "OutPercentUtil": "20"},
+        {"DateTime": "2026-08-04T00:05:00Z", "InPercentUtil": "20", "OutPercentUtil": "40"},
+        {"DateTime": "2026-08-04T00:10:00Z", "InPercentUtil": "30", "OutPercentUtil": "60"},
+        # Falls in the next 15-minute bucket.
+        {"DateTime": "2026-08-04T00:15:00Z", "InPercentUtil": "90", "OutPercentUtil": "90"},
+    ]
+    with patch("clients.solarwinds.query", return_value=rows):
+        series = get_traffic_series(interface_id=42, hours=24)
+
+    assert series == [
+        {"t": "2026-08-04T00:00:00Z", "in": 20.0, "out": 40.0},
+        {"t": "2026-08-04T00:15:00Z", "in": 90.0, "out": 90.0},
+    ]
+
+
+def test_get_traffic_series_7d_averages_within_hourly_buckets():
+    rows = [
+        {"DateTime": "2026-07-29T00:00:00Z", "InPercentUtil": "10", "OutPercentUtil": "10"},
+        {"DateTime": "2026-07-29T00:30:00Z", "InPercentUtil": "30", "OutPercentUtil": "50"},
+        # Falls in the next hourly bucket.
+        {"DateTime": "2026-07-29T01:00:00Z", "InPercentUtil": "100", "OutPercentUtil": "100"},
+    ]
+    with patch("clients.solarwinds.query", return_value=rows):
+        series = get_traffic_series(interface_id=42, hours=24 * 7)
+
+    assert series == [
+        {"t": "2026-07-29T00:00:00Z", "in": 20.0, "out": 30.0},
+        {"t": "2026-07-29T01:00:00Z", "in": 100.0, "out": 100.0},
+    ]
+
+
+def test_get_traffic_series_missing_field_stays_null_in_bucket():
+    """A gap should read as missing data (null, breaking the chart line), not
+    as 0% utilization — a real SolarWinds outage and genuine zero traffic must
+    not render identically."""
+    rows = [
+        {"DateTime": "2026-08-04T00:00:00Z", "InPercentUtil": "10", "OutPercentUtil": None},
+    ]
+    with patch("clients.solarwinds.query", return_value=rows):
+        series = get_traffic_series(interface_id=42, hours=24)
+
+    assert series == [{"t": "2026-08-04T00:00:00Z", "in": 10.0, "out": None}]

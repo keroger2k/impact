@@ -12,6 +12,7 @@ import re
 
 import clients.solarwinds as solarwinds
 from utils.report_pool import FANOUT_POOL
+from utils.time_buckets import bucket_start, parse_iso
 
 # Conservative charset for names interpolated into SWQL — mirrors
 # routers/firewall.py's _CLI_NAME_RE for the same reason (untrusted web input
@@ -216,6 +217,54 @@ WHERE i.InterfaceID = {int(interface_id)}
     return rows[0] if rows else None
 
 
+# SolarWinds' own PerfStack "Percent Utilization" chart time-averages this
+# same Orion.NPM.InterfaceTraffic data before rendering it rather than
+# plotting every raw poll — without that, the same series renders as a noisy
+# sawtooth (every poll-to-poll swing becomes its own spike, and 7 days of raw
+# polls is far more points than the chart has pixels for). These mirror that:
+# a 15-minute bucket for the 24h view, hourly for the 7d view — the same
+# 24h-hourly/7d-daily split utils/sna_traffic.py uses for SNA's application
+# traffic, for the same reason.
+_BUCKET_SECONDS_24H = 15 * 60
+_BUCKET_SECONDS_7D = 60 * 60
+
+
+def _bucket_traffic_series(points: list[dict], bucket_seconds: int) -> list[dict]:
+    """Average raw {t, in, out} samples into fixed-size UTC buckets.
+
+    Bucket start times are real UTC instants (floors of actual sample
+    timestamps), not synthesized calendar days like SNA's daily buckets, so
+    report-charts.js's existing local-time rendering needs no special-casing.
+    A bucket with no raw sample for a field is left null (not 0), matching
+    the chart's existing null-breaks-the-line handling — an unpolled gap
+    should read as missing data, not as 0% utilization.
+    """
+    sums: dict = {}
+    counts: dict = {}
+    for p in points:
+        dt = parse_iso(p["t"])
+        if dt is None:
+            continue
+        key = bucket_start(dt, bucket_seconds)
+        bucket_sums = sums.setdefault(key, {"in": 0.0, "out": 0.0})
+        bucket_counts = counts.setdefault(key, {"in": 0, "out": 0})
+        for field in ("in", "out"):
+            value = p.get(field)
+            if value is None:
+                continue
+            bucket_sums[field] += value
+            bucket_counts[field] += 1
+
+    result = []
+    for key in sorted(sums):
+        row = {"t": key.isoformat().replace("+00:00", "Z")}
+        for field in ("in", "out"):
+            n = counts[key][field]
+            row[field] = round(sums[key][field] / n, 2) if n else None
+        result.append(row)
+    return result
+
+
 def get_traffic_series(interface_id: int, hours: int) -> list[dict]:
     swql = f"""
 SELECT
@@ -247,7 +296,9 @@ ORDER BY it.DateTime
             "in": _num(row.get("InPercentUtil")),
             "out": _num(row.get("OutPercentUtil")),
         })
-    return points
+
+    bucket_seconds = _BUCKET_SECONDS_24H if hours <= 24 else _BUCKET_SECONDS_7D
+    return _bucket_traffic_series(points, bucket_seconds)
 
 
 def generate_bandwidth_report(

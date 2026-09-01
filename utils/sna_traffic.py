@@ -22,6 +22,10 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
+from utils.time_buckets import bucket_range as _bucket_range
+from utils.time_buckets import bucket_start as _bucket_start
+from utils.time_buckets import parse_iso as _parse_iso
+
 # 7 named applications + "Other Apps" = 8 — the categorical palette's slot
 # ceiling (see the dataviz skill's series-count ladder: past ~7-8, fold the tail).
 TOP_N_APPS = 7
@@ -34,31 +38,6 @@ OTHER_APPS_LABEL = "Other Apps"
 
 HOURLY_BUCKET_SECONDS = 3600
 DAILY_BUCKET_SECONDS = 86400
-
-
-def _parse_iso(value: str) -> datetime | None:
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except (TypeError, ValueError):
-        return None
-
-
-def _bucket_start(dt: datetime, bucket_seconds: int) -> datetime:
-    epoch = dt.timestamp()
-    floored = epoch - (epoch % bucket_seconds)
-    return datetime.fromtimestamp(floored, tz=timezone.utc)
-
-
-def _bucket_range(start: datetime, end: datetime, bucket_seconds: int) -> list[datetime]:
-    """Every bucket start from `start` through `end`, inclusive."""
-    step = timedelta(seconds=bucket_seconds)
-    current = _bucket_start(start, bucket_seconds)
-    last = _bucket_start(end, bucket_seconds)
-    out = []
-    while current <= last:
-        out.append(current)
-        current += step
-    return out
 
 
 def bucket_application_traffic(
