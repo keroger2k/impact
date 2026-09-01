@@ -356,6 +356,13 @@ def profile_classes(samples: list[Sample], target_ms: dict[str, float]) -> list[
         p.pkt_bytes = (t["bytes"] / t["pkts"]) if t["pkts"] else None
         p.measured_bps = (t["bytes"] * 8 / t["secs"]) if t["secs"] > 0 else None
         _, p.drain_source = pick_drain_bps(p.measured_bps, p.guaranteed_bps)
+        # A class that never built a queue was never rate-limited, so what it
+        # moved is its offered load, not the rate it can drain at. Reporting
+        # that as a "measured drain rate" reads as a capacity ceiling —
+        # an EF class carrying 9 kbps of voice would look like it can only
+        # ever drain 9 kbps. Fall back to the contracted rate and say so.
+        if not p.depth_max:
+            p.drain_source = "guaranteed" if p.guaranteed_bps else "unknown"
         if p.depth > 0 or len(profiles) == 1:
             total_window_pkts += t["pkts"] + t["drops"]
 
@@ -590,7 +597,7 @@ def render(hostname: str, ip: str, wan_if: str, method: str, samples: list[Sampl
     print()
 
     # ── queue latency ──
-    print("Queue latency (depth converted at each class's measured drain rate):")
+    print("Queue latency (depth converted to delay; Drain says which rate was used):")
     name_w = max(28, max((len(p.display) for p in profiles), default=0) + 2)
     print(f"  {'Queue':<{name_w}}{'Share':>8}{'Depth max':>11}{'Standing':>10}"
           f"{'p50':>9}{'p95':>9}{'Max':>9}{'Full queue':>12}  Drain")
@@ -624,28 +631,37 @@ def render(hostname: str, ip: str, wan_if: str, method: str, samples: list[Sampl
     print()
 
     # ── classification ──
+    collected = bool(context.get("collected"))
     print("Classification:")
     child_depth = max((p.depth for p in profiles), default=0)
     leaves = [p for p in profiles if p.depth == child_depth and p.share_pct is not None]
     unmanaged = sum(p.share_pct or 0 for p in leaves if _BEST_EFFORT_RE.search(p.name))
     managed = sum(p.share_pct or 0 for p in leaves if not _BEST_EFFORT_RE.search(p.name))
+    # The class shares come from the policy-map itself, so they stand even
+    # when the supporting commands were skipped.
     print(f"  Managed classes:                {managed:6.2f}% of windowed traffic")
     print(f"  Best-effort / class-default:    {unmanaged:6.2f}%")
-    print(f"  Input service-policy:           {'yes' if context.get('input_policy') else 'no'}")
     pc = context.get("preclassify") or {}
-    tunnels = [n for n in pc if n.lower().startswith("tunnel")]
-    if tunnels:
-        have = sum(1 for n in tunnels if pc[n]["qos_pre_classify"])
-        print(f"  qos pre-classify on tunnels:    {have} of {len(tunnels)}")
-    if context.get("nbar"):
-        print("  NBAR protocol-discovery (top talkers):")
-        for line in context["nbar"]:
-            print(f"    {line}")
+    if not collected:
+        print("  (--no-classification: input policy, NBAR and qos pre-classify not checked)")
+    else:
+        print(f"  Input service-policy:           {'yes' if context.get('input_policy') else 'no'}")
+        tunnels = [n for n in pc if n.lower().startswith("tunnel")]
+        if tunnels:
+            have = sum(1 for n in tunnels if pc[n]["qos_pre_classify"])
+            print(f"  qos pre-classify on tunnels:    {have} of {len(tunnels)}")
+        if context.get("nbar"):
+            print("  NBAR protocol-discovery (top talkers):")
+            for line in context["nbar"]:
+                print(f"    {line}")
     print()
 
     # ── findings ──
     findings = build_findings(profiles, burst, unmanaged if leaves else None,
-                              pc, bool(context.get("input_policy")))
+                              pc if collected else {},
+                              # Unknown, not absent: suppresses NO_INPUT_POLICY
+                              # rather than asserting one isn't there.
+                              True if not collected else bool(context.get("input_policy")))
     print("Findings:")
     if not findings:
         print("  Nothing flagged. If users are still complaining, the congestion is not")
@@ -676,38 +692,64 @@ def _wrap(text: str, width: int) -> list[str]:
     return lines
 
 
+# A class carrying this share of the link is one where intra-class fairness
+# matters: a single bulk flow inside it can starve every interactive flow
+# sharing the same queue.
+_FAIR_QUEUE_SHARE_PCT = 20.0
+
+
 def render_suggestion(last: dict, profiles: list[ClassProfile],
                       target_ms: dict[str, float]) -> None:
-    """Print a candidate policy-map block. Never sent anywhere."""
+    """Print a candidate policy-map block. Never sent anywhere.
+
+    Deliberately conservative about what it will suggest:
+
+      * **Only reductions.** A class sitting under its latency budget needs
+        no change; suggesting it be enlarged would be this tool arguing
+        against its own purpose, and someone will paste this block verbatim.
+      * **Only classes with evidence.** A class that moved no traffic in the
+        window has shown nothing, so it gets no recommendation.
+      * **AQM only where the queue is deep enough to matter**, matching the
+        NO_AQM finding's own threshold rather than blanketing every class.
+    """
     policy = last.get("nested_policy_name") or last.get("top_policy_name") or "<child-policy>"
     lines: list[str] = []
+    comment_col = 34
+
+    def entry(cfg: str, comment: str) -> str:
+        return f"  {cfg:<{comment_col}}! {comment}"
 
     for p in profiles:
-        if p.queue_limit is None or p.depth == 0:
+        # Parent shaper class has no per-class queue worth resizing, and a
+        # class with no traffic this window has produced no evidence.
+        if p.depth == 0 or (p.window_pkts == 0 and p.window_drops == 0):
             continue
         drain = p.guaranteed_bps
         target = target_for(p.name, target_ms)
         rec = recommend_queue_limit(target, p.pkt_bytes, drain)
-        body: list[str] = []
-
         cur_pkts = queue_limit_packets(
             {"queue_limit": p.queue_limit, "queue_limit_unit": p.queue_limit_unit},
             p.pkt_bytes, drain,
         )
-        # Only worth changing if it moves the number materially — churning a
-        # config to go from 148 to 151 packets buys nothing and costs a change
-        # window.
-        if rec and cur_pkts and abs(rec - cur_pkts) / cur_pkts > 0.2:
-            body.append(f"  queue-limit {rec} packets"
-                        f"{'':<{max(0, 22 - len(str(rec)))}}"
-                        f"! was {p.queue_limit} ({_fmt_delay(p.full_queue_ms)} "
-                        f"-> ~{target:.0f} ms @ {_fmt_bps(drain)})")
-        if not p.is_priority and not p.has_random_detect:
-            body.append("  random-detect dscp-based"
-                        "        ! signal TCP before the queue is full")
-        if not p.is_priority and not p.has_fair_queue and _BEST_EFFORT_RE.search(p.name):
-            body.append("  fair-queue"
-                        "                      ! stop one bulk flow starving the class")
+        body: list[str] = []
+
+        # A 20% floor on the change: churning a config from 148 to 151
+        # packets buys nothing and still costs a change window.
+        if rec and cur_pkts and rec < cur_pkts * 0.8:
+            body.append(entry(
+                f"queue-limit {rec} packets",
+                f"was {p.queue_limit} ({_fmt_delay(p.full_queue_ms)} -> "
+                f"~{target:.0f} ms @ {_fmt_bps(drain)})",
+            ))
+        if (not p.is_priority and not p.has_random_detect
+                and (p.queue_limit or 0) >= _AQM_QUEUE_LIMIT):
+            body.append(entry("random-detect dscp-based",
+                              "signal TCP before the queue is full"))
+        if (not p.is_priority and not p.has_fair_queue
+                and (p.share_pct or 0) >= _FAIR_QUEUE_SHARE_PCT):
+            body.append(entry("fair-queue",
+                              f"{p.share_pct:.0f}% of the link in one queue — stop "
+                              f"one flow starving it"))
         if body:
             lines.append(f" class {p.name}")
             lines.extend(body)
@@ -759,6 +801,11 @@ def gather_context(run, wan_if: str) -> dict:
         if s and not s.startswith(("Last clearing", "Interface", "-")) and "Total" not in s:
             nbar_lines.append(s)
     return {
+        # Distinguishes "we looked and there is none" from "we didn't look"
+        # (--no-classification). Without it the report would assert an absent
+        # input policy and flag it as a finding on the strength of a command
+        # that was never run.
+        "collected": True,
         "input_policy": bool((out.get("input_policy") or "").strip()
                              and "Class-map" in out.get("input_policy", "")),
         "nbar": nbar_lines[:12],
