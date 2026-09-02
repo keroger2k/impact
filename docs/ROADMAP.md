@@ -24,6 +24,24 @@ Implementation sketch:
 
 ACI `fvCEp` lookup is the only net-new client work; everything else is wiring.
 
+#### Starting from an *email address* — feasibility probes (unrun)
+
+Searching by email is the variant people actually ask for, and it adds a hop the sketch above skips: email → AD username → whatever ISE stores in a session's `user_name`. That last value is the crux and is not knowable from the code — if this fleet does 802.1X **machine** auth on wired ports, sessions read `host/PC1234...` and no email will ever match one; if it does EAP-TLS with a UPN, the email may match `user_name` directly and the AD hop disappears.
+
+Five read-only probes exist to settle it before anything is built. Run them from a host with network reach to the real systems (they bypass `DEV_MODE` deliberately), and pass `--redact` before pasting output anywhere — all five print real identity data.
+
+| Probe | Answers |
+|---|---|
+| `scripts/ise_discover_user_sessions.py` | **Run this first.** What `user_name` actually holds (machine/MAB/user/UPN mix), a fill-rate inventory of every session field, and whether the unwrapped MNT `Session/UserName` + `Session/EndPointIPAddress` endpoints work here. |
+| `scripts/ad_discover_user_lookup.py` | Whether the service account can *search* AD at all (it only ever binds today, auth.py:165), which attribute carries the email, whether UPN == mail, and whether any user↔workstation link exists for the machine-auth case. |
+| `scripts/panorama_discover_userid.py` | Whether PAN-OS User-ID is configured — an identity source independent of RADIUS — plus GlobalProtect current-user, which carries the *computer name* for remote workers. |
+| `scripts/solarwinds_discover_udt.py` | Whether User Device Tracker is licensed. If it is, most of this feature already exists as a queryable database with port *history*, reachable through the SolarWinds client already in the app. |
+| `scripts/dnac_discover_clients.py` | Whether Assurance is licensed/telemetried, and critically whether client records populate `userId` — if so, DNAC answers user → switch + port in one call and ISE becomes enrichment. |
+
+Two things need no probe: ACI `fvCEp` is a plain class query through `clients/aci.py`'s generic `get()`, and NX-OS `show mac address-table` / `show ip arp` are certain to work — but note `collectors/nxos.py` collects **no CAM or ARP data today**, which is the only fallback for a port with no ISE session.
+
+Delete these probes once their findings land, per the usual practice — the conclusions belong in docstrings and this file.
+
 ---
 
 ## P1 — DNAC: Assurance & Compliance
