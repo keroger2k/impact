@@ -8,7 +8,7 @@ import threading
 import time
 import asyncio
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -78,7 +78,8 @@ def create_session(username: str, password: str) -> str:
     logger.info(f"Session created for {username}")
     import auth_persist
     if auth_persist.is_enabled():
-        auth_persist.save(token, username, password, time.time() + SESSION_TTL)
+        auth_persist.save(token, username, password, time.time() + SESSION_TTL,
+                          wall_created_at=time.time())
     return token
 
 def get_session(token: str) -> SessionEntry | None:
@@ -104,13 +105,19 @@ def session_cookie_kwargs() -> dict:
     """Shared security flags for the impact_token session cookie, so the two
     login paths (HTML form in routers/pages.py + JSON API in routers/auth.py)
     can't drift. secure defaults on; DEV_MODE turns it off unless
-    IMPACT_SECURE_COOKIES is explicitly set."""
+    IMPACT_SECURE_COOKIES is explicitly set.
+
+    max_age is the ABSOLUTE session cap, not the idle TTL: the server slides
+    the 8h idle timeout on every request (require_auth), and a cookie capped
+    at the idle TTL would hard-log-out an actively-working user at exactly 8h
+    while their server-side session was still valid. A cookie outliving an
+    idle-expired session just gets a clean 401."""
     from dev import DEV_MODE
     secure = os.getenv("IMPACT_SECURE_COOKIES", "true").lower() == "true"
     if DEV_MODE and os.getenv("IMPACT_SECURE_COOKIES") is None:
         secure = False
     return {"httponly": True, "secure": secure, "samesite": "strict",
-            "max_age": int(SESSION_TTL)}
+            "max_age": int(SESSION_ABS_MAX)}
 
 
 # ── Login throttle ───────────────────────────────────────────────────────────
@@ -158,6 +165,12 @@ def _prune_login_failures() -> None:
 def validate_ldap(username: str, password: str) -> bool:
     from dev import DEV_MODE
     if DEV_MODE: return True
+    # Reject empty/whitespace credentials before they reach the bind: an
+    # empty-password SIMPLE bind is the classic LDAP unauthenticated-bind
+    # auth bypass (RFC 4513 §5.1.2), and this boundary must not depend on
+    # ldap3's own client-side LDAPPasswordIsMandatoryError guard.
+    if not (username or "").strip() or not password:
+        return False
     ldap_url = os.getenv("AD_LDAP_URL", "")
     if not ldap_url or not ldap_url.lower().startswith("ldaps://"):
         logger.error("AD_LDAP_URL must use ldaps:// protocol for security")
@@ -270,10 +283,16 @@ def restore_sessions() -> int:
         remaining = rec["wall_expires_at"] - now_wall
         if remaining <= 0:
             continue
+        # Map the session's wall-clock age back onto the monotonic clock so
+        # the absolute lifetime cap (SESSION_ABS_MAX) keeps counting across
+        # restarts — otherwise every restart resets a (possibly stolen)
+        # token's 24h clock.
+        age = now_wall - rec.get("wall_created_at", now_wall)
         entry = SessionEntry(
             username   = rec["username"],
             password   = rec["password"],
             expires_at = now_mono + remaining,
+            created_at = now_mono - max(0.0, age),
         )
         with _store_lock:
             _sessions[rec["token"]] = entry

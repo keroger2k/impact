@@ -28,6 +28,18 @@ logger = logging.getLogger(__name__)
 # Concurrent SSE connections tracker
 sse_limit_tracker = {} # (session_token, path) -> count
 
+# Strong references to fire-and-forget background tasks: the event loop keeps
+# only a weak reference to tasks (per the asyncio.create_task docs), so an
+# unreferenced task — notably session_gc_task, which purges expired sessions
+# holding plaintext AD passwords — can be garbage-collected mid-flight.
+_background_tasks: set[asyncio.Task] = set()
+
+def _spawn(coro) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from dev import DEV_MODE, seed_cache, create_dev_session
@@ -57,10 +69,10 @@ async def lifespan(app: FastAPI):
         if not ldap_url or not ldap_url.startswith("ldaps://"):
             raise RuntimeError("LDAP misconfigured: AD_LDAP_URL must use ldaps://")
         auth_module.restore_sessions()
-        asyncio.create_task(cache.warm())
+        _spawn(cache.warm())
 
     # C8: Background GC
-    asyncio.create_task(auth_module.session_gc_task())
+    _spawn(auth_module.session_gc_task())
 
     yield
     logger.info("IMPACT II shutting down.")
@@ -94,7 +106,9 @@ SSE_LIMITED_PATHS = {"/api/warm", "/api/ipam/refresh", "/api/commands/run",
 async def sse_rate_limit(request: Request, call_next):
     if request.url.path not in SSE_LIMITED_PATHS:
         return await call_next(request)
-    token = request.cookies.get("impact_token")
+    # Key on the session cookie, falling back to the Authorization header so a
+    # Bearer-authed client (which carries no cookie) can't sidestep the cap.
+    token = request.cookies.get("impact_token") or request.headers.get("Authorization")
     if not token:
         return await call_next(request)
 
@@ -176,7 +190,7 @@ async def warm_cache(session: SessionEntry = Depends(require_auth)):
     import clients.ise as ic
     import clients.panorama as pc
     import clients.aci as ac
-    from routers.nexus import init_nexus_collection, get_cached_nexus_inventory
+    from routers.nexus import init_nexus_collection
     from routers.f5 import init_f5_collection
 
     async def generate():

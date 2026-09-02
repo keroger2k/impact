@@ -6,22 +6,25 @@ Config-mode (`/config-run`) — multi-line config script pushed via Netmiko's
                               Persists with save_config after a successful push.
 """
 
+import asyncio
 import json
 import logging
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from auth import SessionEntry, require_auth
+from logger_config import run_with_context
 from utils.device_ssh import guess_device_type
 
 SSH_TIMEOUT = 30
 SSH_MAX_WORKERS = 10
+RUN_MAX_DEVICES = int(os.getenv("RUN_MAX_DEVICES", "500"))
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -47,9 +50,6 @@ def _run_on_device(
     """SSH to one device, run one command. Returns result dict."""
     from dev import DEV_MODE
     if DEV_MODE:
-        # In DEV_MODE we simulate latency synchronously since we're in ThreadPool
-        # simulate synchronously in threadpool
-        pass # simulated delay
         return {
             "ip": ip, "status": "success",
             "output": f"Mock output for '{command}' on {ip}\n(Simulated connection success)",
@@ -85,15 +85,25 @@ class CommandRequest(BaseModel):
     devices:              list[dict]   # [{ip, hostname, platform}]
     command:              str
     device_type_override: Optional[str] = None
-    max_workers:          int = SSH_MAX_WORKERS
-    timeout:              int = SSH_TIMEOUT
+    # max_workers/timeout come from the client — bounded so a request can't
+    # build an arbitrarily large thread pool or pin SSH threads indefinitely.
+    max_workers:          int = Field(SSH_MAX_WORKERS, ge=1, le=SSH_MAX_WORKERS)
+    timeout:              int = Field(SSH_TIMEOUT, ge=5, le=300)
+
+    @field_validator("devices")
+    @classmethod
+    def _cap_devices(cls, v):
+        if not v:
+            raise ValueError("No devices provided")
+        if len(v) > RUN_MAX_DEVICES:
+            raise ValueError(f"Too many devices (max {RUN_MAX_DEVICES})")
+        return v
 
 
 @router.post("/run")
 async def run_command(req: CommandRequest, session: SessionEntry = Depends(require_auth)):
     """Execute a command on multiple devices. Streams SSE progress."""
-    from os import getenv
-    if getenv("COMMANDS_ENABLED", "false").lower() != "true":
+    if os.getenv("COMMANDS_ENABLED", "false").lower() != "true":
         raise HTTPException(403, "Command execution is disabled")
 
     command = req.command.strip()
@@ -115,6 +125,7 @@ async def run_command(req: CommandRequest, session: SessionEntry = Depends(requi
         logger.info(f"User {session.username} executing command on {dev.get('ip')}: {req.command}")
 
     async def generate():
+        loop = asyncio.get_event_loop()
         total = len(req.devices)
         done  = 0
 
@@ -136,14 +147,26 @@ async def run_command(req: CommandRequest, session: SessionEntry = Depends(requi
             result["platform"] = device.get("platform", "")
             return result
 
-        with ThreadPoolExecutor(max_workers=req.max_workers) as executor:
-            futures = {executor.submit(make_result, dev): dev for dev in req.devices}
-            results = []
-            for future in as_completed(futures):
-                result = future.result()
+        # Await completions rather than blocking in
+        # concurrent.futures.as_completed(): this generator runs on the event
+        # loop thread, so a synchronous wait here would freeze every other
+        # request/stream for the duration of the slowest SSH session.
+        executor = ThreadPoolExecutor(max_workers=req.max_workers)
+        results = []
+        try:
+            tasks = [
+                loop.run_in_executor(executor, run_with_context(make_result), dev)
+                for dev in req.devices
+            ]
+            for coro in asyncio.as_completed(tasks):
+                result = await coro
                 results.append(result)
                 done += 1
                 yield f"data: {json.dumps({'type':'progress','done':done,'total':total,**result})}\n\n"
+        finally:
+            # Never block the loop waiting for straggler SSH threads — they
+            # finish (or time out) on their own and the pool is reaped.
+            executor.shutdown(wait=False)
 
         succeeded = sum(1 for r in results if r["status"] == "success")
         yield f"data: {json.dumps({'type':'complete','total':total,'succeeded':succeeded,'failed':total-succeeded})}\n\n"
@@ -222,8 +245,9 @@ class ConfigRunRequest(BaseModel):
     confirm:              str          # must equal "DEPLOY"
     save:                 bool = True
     device_type_override: Optional[str] = None
-    max_workers:          int = SSH_MAX_WORKERS
-    timeout:              int = SSH_TIMEOUT
+    # Bounded for the same reason as CommandRequest — client-supplied knobs.
+    max_workers:          int = Field(SSH_MAX_WORKERS, ge=1, le=SSH_MAX_WORKERS)
+    timeout:              int = Field(SSH_TIMEOUT, ge=5, le=300)
 
 
 @router.post("/config-run")
@@ -254,6 +278,7 @@ async def run_config(req: ConfigRunRequest, session: SessionEntry = Depends(requ
                     f"lines={len(lines)} save={req.save} script=\"{line_summary}\"")
 
     async def generate():
+        loop = asyncio.get_event_loop()
         total = len(req.devices)
         done  = 0
 
@@ -276,14 +301,21 @@ async def run_config(req: ConfigRunRequest, session: SessionEntry = Depends(requ
             result["platform"] = device.get("platform", "")
             return result
 
-        with ThreadPoolExecutor(max_workers=req.max_workers) as executor:
-            futures = {executor.submit(make_result, dev): dev for dev in req.devices}
-            results = []
-            for future in as_completed(futures):
-                result = future.result()
+        # Same non-blocking completion pattern as /run — see that generator.
+        executor = ThreadPoolExecutor(max_workers=req.max_workers)
+        results = []
+        try:
+            tasks = [
+                loop.run_in_executor(executor, run_with_context(make_result), dev)
+                for dev in req.devices
+            ]
+            for coro in asyncio.as_completed(tasks):
+                result = await coro
                 results.append(result)
                 done += 1
                 yield f"data: {json.dumps({'type':'progress','done':done,'total':total,**result})}\n\n"
+        finally:
+            executor.shutdown(wait=False)
 
         succeeded = sum(1 for r in results if r["status"] == "success")
         yield f"data: {json.dumps({'type':'complete','total':total,'succeeded':succeeded,'failed':total-succeeded})}\n\n"

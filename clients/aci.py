@@ -3,7 +3,6 @@ clients/aci.py — Cisco ACI REST API client.
 """
 
 import logging
-import os
 import re
 import time
 import urllib.parse

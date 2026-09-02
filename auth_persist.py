@@ -51,7 +51,8 @@ def is_enabled() -> bool:
     return PERSIST_ENABLED
 
 
-def save(token: str, username: str, password: str, wall_expires_at: float) -> None:
+def save(token: str, username: str, password: str, wall_expires_at: float,
+         wall_created_at: Optional[float] = None) -> None:
     if not _ensure_init():
         return
     try:
@@ -61,6 +62,9 @@ def save(token: str, username: str, password: str, wall_expires_at: float) -> No
             "username": username,
             "password_enc": encrypted,
             "wall_expires_at": wall_expires_at,
+            # Creation instant, so restore_sessions can keep the absolute
+            # lifetime cap counting across restarts.
+            "wall_created_at": wall_created_at or time.time(),
         }, expire=ttl_seconds)
     except Exception as e:
         logger.error(f"Failed to persist session for {username}: {e}")
@@ -96,9 +100,12 @@ def load_all() -> list[dict]:
                 "username": entry["username"],
                 "password": password,
                 "wall_expires_at": wall_expires,
+                # Pre-upgrade records lack the field; treat them as created now
+                # (worst case one extra abs-cap window, self-corrects on re-login).
+                "wall_created_at": entry.get("wall_created_at", now),
             })
         except InvalidToken:
-            logger.warning(f"Discarding persisted session — encryption key mismatch")
+            logger.warning("Discarding persisted session — encryption key mismatch")
             _store.delete(token)
         except Exception as e:
             logger.error(f"Failed to restore persisted session: {e}")

@@ -24,13 +24,22 @@ async def login_page(request: Request, error: str = None):
 
 @router.post("/login")
 async def login_submit(request: Request, username: str = Form(...), password: str = Form(...)):
+    # Same empty-credential guard as the JSON login path (routers/auth.py) —
+    # validate_ldap also enforces this, but rejecting here gives a clean
+    # message instead of a generic "invalid credentials".
+    if not username.strip() or not password:
+        return RedirectResponse(url="/login?error=Username and password are required", status_code=303)
     ip = request.client.host if request.client else ""
     if auth_module.login_throttled(ip, username):
         return RedirectResponse(
             url="/login?error=Too many failed attempts. Please wait a few minutes and try again.",
             status_code=303)
 
-    user_creds = verify_ldap_or_mock(username, password)
+    # LDAP bind is a blocking network call — keep it off the event loop
+    # (same as routers/auth.py's _run_sync).
+    import asyncio
+    user_creds = await asyncio.get_event_loop().run_in_executor(
+        None, verify_ldap_or_mock, username, password)
     if not user_creds:
         auth_module.record_login_failure(ip, username)
         return RedirectResponse(url="/login?error=Invalid credentials", status_code=303)

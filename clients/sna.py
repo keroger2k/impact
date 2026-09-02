@@ -1,7 +1,7 @@
 """clients/sna.py — Cisco Secure Network Analytics (SNA / Stealthwatch) read client.
 
 Auth + tenant discovery confirmed against a live SMC via
-`scripts/sna_discover.py` (see that file's docstring): stateful cookie auth
+the (since-removed) sna_discover probe script (see git history): stateful cookie auth
 (``POST /token/v2/authenticate``), a tenant discovered via
 ``GET /sw-reporting/v1/tenants`` — the ``application/json`` Accept variant
 406s on this SMC, ``text/plain`` works and still returns a JSON body.
@@ -37,8 +37,6 @@ the old flow-search job) only runs a report query — it doesn't touch SMC
 config or policy.
 """
 from __future__ import annotations
-
-from datetime import datetime, timedelta, timezone
 
 import requests
 

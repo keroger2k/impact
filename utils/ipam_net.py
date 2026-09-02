@@ -115,7 +115,7 @@ def smallest_covering(cidrs: Iterable[str]) -> Optional[str]:
 
     Used as a heuristic rollup when no configured summary covers a set of
     member subnets (mirrors the old IPv4-only helper in
-    ``scripts/discover_site_ipv4.py``, generalized to both families)."""
+    the removed ``scripts/discover_site_ipv4.py`` (git history), generalized to both families)."""
     nets = [parse_network(c) for c in cidrs]
     if not nets:
         return None

@@ -456,49 +456,57 @@ async def schedule_maintenance(req: MaintenanceScheduleRequest, session: Session
         sem = asyncio.Semaphore(5)
         queue: asyncio.Queue = asyncio.Queue()
         sentinel = object()
+        completed = 0  # actual completions — rows finish out of order under the semaphore
 
-        async def process_row(idx: int, row: dict):
-            async with sem:
-                progress_pct = round((idx / total) * 100)
-                entry = {
-                    "node": row["node"],
-                    "uri": None,
-                    "start_utc": row["start"].isoformat(),
-                    "stop_utc": row["stop"].isoformat(),
-                    "status": "error",
-                    "message": "",
-                }
-                lookup = node_map.get(row["node"].lower(), {"error": "not found in SolarWinds"})
-                if "error" in lookup:
-                    entry["message"] = lookup["error"]
-                else:
-                    entry["uri"] = lookup["uri"]
-                    try:
-                        await loop.run_in_executor(
-                            None, run_with_context(schedule_one),
-                            lookup["uri"], row["start"], row["stop"],
-                        )
-                        # "muted", not "scheduled" — the latter is exactly the word
-                        # that caused confusion with SolarWinds' own, unrelated
-                        # "Manage Maintenance Schedules" screen. This action never
-                        # touches that screen; keep the status label unambiguous.
-                        entry["status"] = "muted"
-                        entry["message"] = "Alerts muted"
-                    except Exception as e:
-                        entry["message"] = str(e)[:200]
+        async def process_row(row: dict):
+            nonlocal completed
+            try:
+                async with sem:
+                    entry = {
+                        "node": row["node"],
+                        "uri": None,
+                        "start_utc": row["start"].isoformat(),
+                        "stop_utc": row["stop"].isoformat(),
+                        "status": "error",
+                        "message": "",
+                    }
+                    lookup = node_map.get(row["node"].lower(), {"error": "not found in SolarWinds"})
+                    if "error" in lookup:
+                        entry["message"] = lookup["error"]
+                    else:
+                        entry["uri"] = lookup["uri"]
+                        try:
+                            await loop.run_in_executor(
+                                None, run_with_context(schedule_one),
+                                lookup["uri"], row["start"], row["stop"],
+                            )
+                            # "muted", not "scheduled" — the latter is exactly the word
+                            # that caused confusion with SolarWinds' own, unrelated
+                            # "Manage Maintenance Schedules" screen. This action never
+                            # touches that screen; keep the status label unambiguous.
+                            entry["status"] = "muted"
+                            entry["message"] = "Alerts muted"
+                        except Exception as e:
+                            entry["message"] = str(e)[:200]
 
-                if entry["status"] == "muted":
-                    detail = f"muted {entry['start_utc']} → {entry['stop_utc']}"
-                else:
-                    detail = entry["message"]
-                await queue.put(emit({"type": "log",
-                                      "level": "success" if entry["status"] == "muted" else "error",
-                                      "message": f"{row['node']}: {detail}"}))
-                await queue.put(emit({"type": "progress", "done": idx + 1, "total": total, "pct": progress_pct}))
-                results.append(entry)
+                    if entry["status"] == "muted":
+                        detail = f"muted {entry['start_utc']} → {entry['stop_utc']}"
+                    else:
+                        detail = entry["message"]
+                    completed += 1  # single event-loop thread: no lock needed
+                    await queue.put(emit({"type": "log",
+                                          "level": "success" if entry["status"] == "muted" else "error",
+                                          "message": f"{row['node']}: {detail}"}))
+                    await queue.put(emit({"type": "progress", "done": completed, "total": total,
+                                          "pct": round((completed / total) * 100)}))
+                    results.append(entry)
+            finally:
+                # The drain loop counts sentinels — an unexpected exception must
+                # still deliver one, or the stream hangs forever and permanently
+                # occupies one of the session's two SSE slots for this path.
                 await queue.put(sentinel)
 
-        tasks = [asyncio.create_task(process_row(i, row)) for i, row in enumerate(valid)]
+        tasks = [asyncio.create_task(process_row(row)) for row in valid]
         finished = 0
         while finished < len(tasks):
             msg = await queue.get()

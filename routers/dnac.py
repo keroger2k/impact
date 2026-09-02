@@ -12,7 +12,7 @@ from typing import Optional, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, Depends, Form
 from fastapi.responses import HTMLResponse, StreamingResponse
-from pydantic import BaseModel, ValidationError, field_validator, ValidationInfo
+from pydantic import BaseModel, ValidationError, field_validator
 
 import clients.dnac as dc
 import clients.panorama as pc

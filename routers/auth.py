@@ -1,14 +1,11 @@
 """routers/auth.py — Login / logout / session check endpoints."""
 
-import logging
-
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
 import auth as auth_module
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
 
 
 class LoginRequest(BaseModel):
@@ -39,7 +36,11 @@ async def login(req: LoginRequest, request: Request, response: Response):
     from utils.csrf import set_csrf_cookie
     set_csrf_cookie(response)
 
-    return {"token": token, "username": req.username}
+    # The token travels only in the httponly cookie — returning it in the
+    # JSON body too would hand it to any script that can read a login
+    # response, defeating httponly. No frontend code reads it (checked), and
+    # a headless Bearer client can be given a token out of band if ever needed.
+    return {"username": req.username}
 
 
 @router.post("/logout")
@@ -47,7 +48,9 @@ async def logout(response: Response, session: auth_module.SessionEntry = Depends
     # Delete the cookie
     response.delete_cookie("impact_token")
 
-    # We pass session so require_auth already validated it; destroy by username match
+    # Deliberate: destroy EVERY session for this username (all browsers/
+    # devices), not just this token — "log out" here means "this account is
+    # done", matching how shared-workstation operators use the app.
     import auth as a
     with a._store_lock:
         tokens = [t for t, s in a._sessions.items() if s.username == session.username]

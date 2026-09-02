@@ -10,8 +10,8 @@ because the rest of the project has no ORM and the schema is two tables.
 """
 from __future__ import annotations
 
+import ipaddress
 import logging
-import os
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -260,10 +260,9 @@ def delete_site(site_id: int, path: Optional[Path] = None) -> int:
         return cur.rowcount
 
 
-def _site_to_network(site: dict) -> "ipaddress.IPv6Network":
+def _site_to_network(site: dict) -> ipaddress.IPv6Network:
     """Parse a site row into its IPv6Network. Raises ValueError on a bad
     prefix — caller's responsibility to handle."""
-    import ipaddress
     raw = site["prefix"]
     length = int(site.get("prefix_length") or 48)
     candidate = raw if "/" in raw else f"{raw}::/{length}"
@@ -275,7 +274,6 @@ def find_child_sites(parent_id: int, path: Optional[Path] = None) -> list[dict]:
     prefix. Sites are siblings here — there is no FK relationship; containment
     is computed from the IPv6Network. Returns [] if the parent doesn't exist
     or has an unparseable prefix."""
-    import ipaddress
     sites = list_sites(path)
     parent = next((s for s in sites if s["id"] == parent_id), None)
     if not parent:

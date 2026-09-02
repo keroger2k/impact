@@ -15,7 +15,6 @@ from urllib.parse import quote
 import ipaddress
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse
 
 import auth as auth_module
 import clients.aci as ac
@@ -913,7 +912,6 @@ async def _get_bgp_map_data(session: SessionEntry, aci: ac.ACIClient, loop: asyn
     histogram = defaultdict(int)
     for p in processed:
         histogram[p["state"]] += 1
-        addr_norm = _norm_ip(p["addr"])
 
         # If it has an L3Out match, it's external
         if p["l3out"] != "N/A":
@@ -2335,8 +2333,9 @@ async def get_tenant_detail(
     session: SessionEntry = Depends(require_auth),
     fabric_id: str = Depends(get_fabric_id)
 ):
-    """Drill-down for a single tenant."""
-    aci = await _get_aci_async(session, fabric_id)
+    """Drill-down for a single tenant. Renders only the shell — the partials
+    it loads do their own ACI fetches, so no APIC client (or login) is needed
+    here."""
     # The detail page uses multiple partials, this endpoint returns the shell
     if request.headers.get("HX-Request"):
         from templates_module import templates
@@ -2770,10 +2769,17 @@ async def list_filters(
                     def _fmt_p(f, t): return f if f == t else f"{f}-{t}"
                     d_port = _fmt_p(ea.get("dFromPort"), ea.get("dToPort"))
                     s_port = _fmt_p(ea.get("sFromPort"), ea.get("sToPort"))
+                    # Show source-port restrictions too — omitting them makes a
+                    # filter read looser than what's actually deployed.
+                    parts = [ea.get("prot")]
+                    if s_port and s_port != "unspecified":
+                        parts.append(f"src:{s_port}")
+                    if d_port and d_port != "unspecified":
+                        parts.append(d_port)
                     entries.append({
                         "name": ea.get("name"),
                         "proto": ea.get("prot"),
-                        "descr": f"{ea.get('prot')}/{d_port}" if d_port != "unspecified" else ea.get("prot")
+                        "descr": "/".join(p for p in parts if p)
                     })
 
             items.append({

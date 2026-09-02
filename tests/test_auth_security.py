@@ -90,7 +90,11 @@ def test_cookie_kwargs_dev_defaults(monkeypatch):
     assert kw["httponly"] is True
     assert kw["samesite"] == "strict"
     assert kw["secure"] is False  # DEV_MODE + unset override
-    assert kw["max_age"] == int(auth.SESSION_TTL)
+    # The cookie lives to the ABSOLUTE session cap, not the sliding idle TTL —
+    # a cookie capped at the idle TTL would hard-log-out an actively-working
+    # user at exactly SESSION_TTL while their server-side session was still
+    # valid (the idle timeout is enforced server-side in require_auth).
+    assert kw["max_age"] == int(auth.SESSION_ABS_MAX)
 
 
 def test_cookie_kwargs_secure_when_forced(monkeypatch):

@@ -3,9 +3,7 @@
 import asyncio
 import json
 import logging
-import time
 import uuid
-from typing import Optional
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse

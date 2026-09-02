@@ -21,7 +21,7 @@ import hashlib
 import time
 from typing import Any
 
-from utils.ipsec_parser import classify_tunnel, dmvpn_role
+from utils.ipsec_parser import classify_tunnel
 
 
 # ── Public entry point ───────────────────────────────────────────────────────

@@ -287,7 +287,7 @@ def run_live_test(run, wan_if: str, target: str, count: int, size: int,
         for name, tos in PING_CLASSES:
             cmd = (f"ping {target} source {wan_if} tos {tos} "
                    f"repeat {count} size {size} timeout 1")
-            out = run([("ping", cmd)], required=())
+            out = run([("ping", cmd)], required=(), read_timeout=read_timeout)
             parsed = parse_ping(out.get("ping", ""))
             if parsed:
                 results[name].append(parsed)

@@ -75,11 +75,17 @@ def ssh_session(ip: str, username: str, password: str, device_type: str, timeout
         fast_cli=False,
     ) as conn:
         def run(commands: list[tuple[str, str]],
-                required: tuple[str, ...] = ()) -> dict[str, str]:
+                required: tuple[str, ...] = (),
+                read_timeout: int | None = None) -> dict[str, str]:
+            # `read_timeout` overrides the session timeout for commands known
+            # to block longer than a normal `show` — e.g. `ping repeat N
+            # timeout 1` holds the CLI for up to N seconds against an
+            # unreachable target (see site_experience_report.run_live_test).
+            effective = read_timeout or timeout
             out: dict[str, str] = {}
             for label, cmd in commands:
                 try:
-                    out[label] = conn.send_command(cmd, read_timeout=timeout) or ""
+                    out[label] = conn.send_command(cmd, read_timeout=effective) or ""
                 except Exception as exc:
                     if label in required:
                         raise

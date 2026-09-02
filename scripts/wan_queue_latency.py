@@ -640,8 +640,8 @@ def render(hostname: str, ip: str, wan_if: str, method: str, samples: list[Sampl
             print(f"  so {res:.0f}s is the finest burst this can see, whatever "
                   f"--interval is set to.")
             if res > _args_interval_hint(samples) * 1.5:
-                print(f"  (Polling faster than that gains nothing here; the Mean is "
-                      f"unaffected either way.)")
+                print("  (Polling faster than that gains nothing here; the Mean is "
+                      "unaffected either way.)")
     print()
 
     # ── queue latency ──

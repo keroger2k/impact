@@ -1,12 +1,9 @@
 import logging
 import re
-import json
-import asyncio
-from typing import List, Dict, Any, Optional, Set, Tuple
+from typing import List, Dict, Optional, Set, Tuple
 import netaddr
-from cache import cache, IPAM_TREE_CACHE_KEY
+from cache import cache, TTL_STANDARD
 import auth as auth_module
-import clients.aci as aci_client_mod
 
 logger = logging.getLogger(__name__)
 
@@ -239,7 +236,6 @@ class IPAMEngine:
             dnac = auth_module.get_dnac_for_session(session) if session else None
             import clients.dnac as dc
 
-            from cache import cache, TTL_STANDARD
 
             def _loader_or_empty(loader):
                 return (lambda: loader()) if dnac else (lambda: None)
@@ -356,7 +352,6 @@ class IPAMEngine:
         """Shared loader for device list, site list, and device->site map.
         Returns (devices, dev_site_map, id_to_dev) — all from cache where possible.
         """
-        from cache import cache, TTL_STANDARD
         import clients.dnac as dc
 
         dnac = auth_module.get_dnac_for_session(session) if session else None
@@ -384,7 +379,6 @@ class IPAMEngine:
         Cached as a single dict {device_id: config_str} under 'dnac_device_configs'.
         Both EIGRP summary discovery and IPv6 interface discovery consume this.
         """
-        from cache import cache, TTL_STANDARD
         import clients.dnac as dc
 
         dnac = auth_module.get_dnac_for_session(session) if session else None
@@ -527,7 +521,6 @@ class IPAMEngine:
                                   this is where the real per-site IPv6 allocations live.
         """
         try:
-            from cache import cache, TTL_STANDARD
             import clients.dnac as dc
 
             dnac = auth_module.get_dnac_for_session(session) if session else None
@@ -602,7 +595,6 @@ class IPAMEngine:
 
     async def _discover_panorama(self, session, loop):
         try:
-            from cache import cache
             devices = cache.get("pan_interfaces") or []
             for dev in devices:
                 site = "Firewall"
@@ -681,7 +673,6 @@ class IPAMEngine:
         """F5 BIG-IP source (read-only cached data). Self-IPs become real subnets;
         virtual servers become VIP host routes (/32 or /128)."""
         try:
-            from cache import cache
 
             # Self-IPs → L3 subnets the F5 owns.
             for s in (cache.get("f5_self_ips") or []):

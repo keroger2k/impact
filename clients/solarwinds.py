@@ -71,7 +71,7 @@ def _raise_for_error(resp: requests.Response, action: str) -> None:
     # puts the actual error detail ("Cannot resolve property X", "no viable
     # alternative at input '*'", or an Unmanage failure's Message field).
     # Losing that turns a one-line schema typo or bad NodeID into a blind
-    # guessing exercise — it's why scripts/solarwinds_discover_site_properties.py
+    # guessing exercise — it's why the since-removed solarwinds_discover_site_properties probe script
     # had to bypass query() entirely. Keep the detail for both verbs.
     detail = resp.text.strip()[:500]
     raise RuntimeError(f"SolarWinds {action} failed (HTTP {resp.status_code}): {detail}")

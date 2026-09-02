@@ -478,7 +478,7 @@ def _fetch_palo_live(session: SessionEntry, tunnel: dict, endpoint: dict) -> dic
     import clients.panorama as pc
     from utils.ipsec_live import (
         merge_palo_state,
-        parse_pan_vpn_flow, parse_pan_ipsec_sa, parse_pan_ike_sa,
+        parse_pan_vpn_flow, parse_pan_ike_sa,
         parse_pan_vpn_flow_one, parse_pan_ipsec_sa_one,
         list_pan_flow_names,
     )
@@ -915,7 +915,7 @@ async def refresh_stream(
                                f"({empty_configs} empty configs, {parse_failed} parse failures)."})
 
         # ── Phase 2.5: classification breakdown (helps explain inventory totals) ──
-        from utils.ipsec_parser import classify_tunnel as _classify, dmvpn_role as _drole
+        from utils.ipsec_parser import classify_tunnel as _classify
         from collections import Counter
 
         iface_class: Counter = Counter()
@@ -1242,7 +1242,7 @@ async def refresh_stream(
         yield emit({"type": "log", "level": "info",
                     "message": f"  Crypto-map entries seen:{total_cm}"})
         yield emit({"type": "log", "level": "info",
-                    "message": f"  Classifications:        " +
+                    "message": "  Classifications:        " +
                                ", ".join(f"{k}={n}" for k, n in iface_class.most_common())})
         yield emit({"type": "log", "level": "info",
                     "message": f"  DMVPN clouds:           {len(dmvpn_tunnels)} "

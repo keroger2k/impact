@@ -39,6 +39,15 @@ def _escape_literal(value: str) -> str:
     return value.replace("'", "''")
 
 
+def _escape_like(value: str) -> str:
+    """Escape LIKE metacharacters for a value already passed through
+    _escape_literal. The charset allowlist blocks % and ', but _ is in \\w
+    and is a single-char wildcard in SWQL LIKE — a literal "Tunnel_00" must
+    not silently match Tunnel500/Tunnel100. [ starts a character class in
+    SQL-Server-style LIKE, so it's escaped defensively too."""
+    return value.replace("[", "[[]").replace("_", "[_]")
+
+
 def short_hostname(name: str) -> str:
     """Reduce a possibly-FQDN hostname down to just its first label.
 
@@ -82,9 +91,9 @@ def bare_interface_name(caption: str) -> str:
 # Selected + joined once here and reused by both find_interfaces() and
 # get_interface_by_id() so the Site Information panel costs no extra round
 # trip — the interface lookup already touches every table it needs. Field
-# names confirmed against a real SolarWinds instance (see
-# scripts/solarwinds_discover_site_properties.py's docstring for the
-# discovery trail): Orion.NodesCustomProperties needs an explicit join on
+# names confirmed against a real SolarWinds instance (discovery trail: the
+# since-removed solarwinds_discover_site_properties probe script, in git
+# history): Orion.NodesCustomProperties needs an explicit join on
 # NodeID (it doesn't expose Caption directly), exactly the pattern
 # utils/cdrl49_report.py's build_swql() already uses for Site/Building/State.
 _SITE_INFO_SELECT = """
@@ -132,9 +141,9 @@ WHERE
         i.Caption = '{iface_lit}'
         OR i.Name = '{iface_lit}'
         OR i.InterfaceAlias = '{iface_lit}'
-        OR i.Caption LIKE '%{iface_lit}%'
-        OR i.Name LIKE '%{iface_lit}%'
-        OR i.InterfaceAlias LIKE '%{iface_lit}%'
+        OR i.Caption LIKE '%{_escape_like(iface_lit)}%'
+        OR i.Name LIKE '%{_escape_like(iface_lit)}%'
+        OR i.InterfaceAlias LIKE '%{_escape_like(iface_lit)}%'
     )
 ORDER BY n.Caption, i.Caption
 """
@@ -154,7 +163,7 @@ def find_node_ip(router_name: str) -> str | None:
     swql = f"""
 SELECT n.Caption AS NodeName, n.IPAddress AS NodeIpAddress
 FROM Orion.Nodes n
-WHERE n.Caption = '{lit}' OR n.Caption LIKE '%{lit}%'
+WHERE n.Caption = '{lit}' OR n.Caption LIKE '%{_escape_like(lit)}%'
 ORDER BY n.Caption
 """
     rows = solarwinds.query(swql)
@@ -198,7 +207,7 @@ SELECT
     i.StatusDescription
 FROM Orion.NPM.Interfaces i
 JOIN Orion.Nodes n ON i.NodeID = n.NodeID
-WHERE n.Caption = '{lit}' OR n.Caption LIKE '%{lit}%'
+WHERE n.Caption = '{lit}' OR n.Caption LIKE '%{_escape_like(lit)}%'
 ORDER BY n.Caption, i.Caption
 """
     rows = solarwinds.query(swql, timeout=_DROPDOWN_TIMEOUT)
@@ -352,8 +361,20 @@ def generate_bandwidth_report(
     # concurrent requests can't multiply threads without bound.
     fut_24h = FANOUT_POOL.submit(get_traffic_series, iface_id, 24)
     fut_7d = FANOUT_POOL.submit(get_traffic_series, iface_id, 24 * 7)
-    series_24h = fut_24h.result()
-    series_7d = fut_7d.result()
+    try:
+        series_24h = fut_24h.result()
+        series_7d = fut_7d.result()
+    except Exception:
+        # Don't leave the sibling query running as an unobserved zombie on the
+        # shared pool: cancel it if still queued, and drain its exception if
+        # it already failed (an unretrieved future swallows it silently).
+        for fut in (fut_24h, fut_7d):
+            if not fut.done():
+                fut.cancel()
+        for fut in (fut_24h, fut_7d):
+            if fut.done() and not fut.cancelled():
+                fut.exception()
+        raise
 
     return {
         "status": "ok",
@@ -369,7 +390,8 @@ def generate_bandwidth_report(
 
 def _build_site_info(meta: dict) -> dict:
     """Site Information panel fields confirmed against a real SolarWinds
-    instance (see scripts/solarwinds_discover_site_properties.py). Circuit
+    instance (via the since-removed solarwinds_discover_site_properties
+    probe script, in git history). Circuit
     Provider, FRM, and Transition Date aren't tracked anywhere in SolarWinds
     (checked all 43 configured custom properties plus every interface's
     caption/carrier fields) — they're left out here and stay manual inputs

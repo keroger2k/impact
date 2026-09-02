@@ -330,9 +330,15 @@ class _Importer:
             code = r[i_code] if i_code < len(r) else ""
             raw48 = r[i_pfx] if i_pfx < len(r) else ""
             vlan_raw = r[i_vlan] if i_vlan < len(r) else ""
+            mask_raw = (r[i_mask] if i_mask < len(r) else "").strip().lstrip("/")
             if not code or not raw48 or not vlan_raw:
                 continue
             try:
+                # The vvvv→hextet-4 carve below is a /64 by construction, so a
+                # MASK column value other than 64 can't be honored — reject it
+                # rather than silently importing the row as a /64.
+                if mask_raw and mask_raw != "64":
+                    raise ValueError(f"unsupported STIP child mask /{mask_raw} (only /64)")
                 cidr48 = _ipv6_high_aligned_cidr(raw48, 48)
                 vvvv = ipv6.normalize_vvvv(vlan_raw)
                 child = _stip_child_cidr(cidr48, vvvv)

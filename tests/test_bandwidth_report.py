@@ -2,7 +2,8 @@
 
 Field mapping (Site/Airport_Code/AirportCategory/Building/City/State custom
 properties, standard Nodes.Contact, and Interfaces.Speed) confirmed against a
-real SolarWinds instance — see scripts/solarwinds_discover_site_properties.py's
+real SolarWinds instance — via the since-removed
+solarwinds_discover_site_properties probe script's (git history)
 module docstring for the discovery trail. Circuit Provider, FRM, and
 Transition Date aren't tracked in SolarWinds anywhere and are intentionally
 absent from _build_site_info's output.

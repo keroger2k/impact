@@ -12,7 +12,6 @@ The server still starts normally — just set DEV_MODE=true and run uvicorn.
 
 import os
 import time
-import uuid
 
 DEV_MODE = os.getenv("DEV_MODE", "").lower() in ("1", "true", "yes")
 DEV_IPAM_LARGE = os.getenv("DEV_IPAM_LARGE", "").lower() in ("1", "true", "yes")

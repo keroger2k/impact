@@ -1,7 +1,7 @@
 import csv
 import io
 import netaddr
-from typing import List, Dict, Any, Optional
+from typing import List, Dict
 
 from utils.vlan_purposes import describe_vlan
 
