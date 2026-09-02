@@ -119,6 +119,7 @@ from utils.experience import (  # noqa: E402
     parse_ip_sla_statistics,
     parse_ping,
     sla_targets,
+    timestamp_form,
 )
 from utils.wan_qos import parse_interface_counters, parse_policy_map  # noqa: E402
 # Target resolution is imported wholesale rather than reimplemented. The
@@ -562,10 +563,21 @@ def report_device(dnac, device: dict, args) -> int:
     # The alignment guard. See utils.experience.detect_series_offset — this is
     # the failure this feature was most likely to ship with.
     offset = detect_series_offset(rtt_rows, util_rows)
+    rtt_form = timestamp_form(rtt_rows, "ObservationTimestamp")
+    util_form = timestamp_form(util_rows, "DateTime")
+    if rtt_form != util_form:
+        # Worth naming rather than silently handling: utils/bandwidth_report.py
+        # feeds raw DateTime strings into time_buckets.bucket_start, which
+        # reads a naive value in the local zone of whatever machine runs it.
+        notes.append(
+            f"Orion serialises these two entities differently — ResponseTime "
+            f"timestamps are {rtt_form}, InterfaceTraffic are {util_form}. Naive "
+            f"values are read as UTC here."
+        )
     if offset and offset != timedelta(0):
         notes.append(
             f"Response-time and utilisation timestamps differ by {offset}. Corrected "
-            f"before pairing (the two Orion entities store time differently)."
+            f"before pairing."
         )
 
     bucket_seconds = args.bucket_minutes * 60

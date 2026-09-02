@@ -107,10 +107,61 @@ def rpm(latency_ms: float | None) -> float | None:
 
 # ─────────────────────────── correlation ───────────────────────────────────
 
+def _as_utc(dt: datetime) -> datetime:
+    """SWQL timestamps arrive with or without an offset depending on entity.
+
+    A naive one is treated as UTC — the offset detection below is what
+    actually reconciles the two series, so guessing a real zone here would
+    just apply the correction twice.
+
+    Every datetime taken from a query result must pass through this before
+    being compared, subtracted or bucketed. Orion returns
+    `ObservationTimestamp` naive and `DateTime` with a trailing Z, so mixing
+    them raw raises "can't subtract offset-naive and offset-aware datetimes",
+    and `bucket_start` would silently read a naive value in the *local* zone
+    of whatever machine ran the report.
+    """
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
 def _series_max(rows: list[dict], key: str) -> datetime | None:
     stamps = [parse_iso(str(r.get(key))) for r in rows]
-    real = [s for s in stamps if s is not None]
+    # Normalised before max(): a mixed naive/aware list is unorderable, so
+    # this would raise before the subtraction in detect_series_offset ever
+    # got the chance to.
+    real = [_as_utc(s) for s in stamps if s is not None]
     return max(real) if real else None
+
+
+def timestamp_form(rows: list[dict], key: str) -> str:
+    """Whether this series' timestamps carry a UTC offset — "aware", "naive",
+    "mixed" or "none".
+
+    Reported because the two Orion entities were found to serialise
+    differently (that is what raised "can't subtract offset-naive and
+    offset-aware datetimes" the first time this ran against the live
+    instance), and because the answer matters beyond this module:
+    `utils/bandwidth_report.py` feeds raw `DateTime` strings straight into
+    `time_buckets.bucket_start`, whose `.timestamp()` call reads a *naive*
+    value in the local zone of whatever machine is running. Printing the form
+    settles on the first run what would otherwise stay a guess.
+    """
+    aware = naive = 0
+    for row in rows:
+        dt = parse_iso(str(row.get(key)))
+        if dt is None:
+            continue
+        if dt.tzinfo:
+            aware += 1
+        else:
+            naive += 1
+    if aware and naive:
+        return "mixed"
+    if aware:
+        return "aware"
+    if naive:
+        return "naive"
+    return "none"
 
 
 def detect_series_offset(rtt_rows: list[dict], util_rows: list[dict],
@@ -139,14 +190,6 @@ def detect_series_offset(rtt_rows: list[dict], util_rows: list[dict],
     raw = (util_max - rtt_max).total_seconds()
     hours = round(raw / 3600.0)
     return timedelta(hours=hours)
-
-
-def _as_utc(dt: datetime) -> datetime:
-    """SWQL timestamps arrive with or without an offset depending on entity.
-    A naive one is treated as UTC — the offset detection above is what
-    actually reconciles the two series, so guessing a zone here would just
-    apply the correction twice."""
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
 def _to_float(value) -> float | None:

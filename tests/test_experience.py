@@ -24,6 +24,7 @@ from utils.experience import (
     parse_ping,
     rpm,
     sla_targets,
+    timestamp_form,
 )
 
 BUCKET = 900  # 15 minutes
@@ -156,6 +157,40 @@ def test_offset_correction_restores_pairing():
     corrected = correlate(rtt, util, BUCKET, rtt_offset=detect_series_offset(rtt, util))
     assert len(corrected) > len(naive)
     assert len(corrected) == 96
+
+
+def test_detect_series_offset_mixes_naive_and_aware_timestamps():
+    """The shape Orion actually returns, and the crash it caused:
+    Orion.ResponseTime.ObservationTimestamp comes back naive while
+    Orion.NPM.InterfaceTraffic.DateTime carries a trailing Z, so comparing
+    them raw raises "can't subtract offset-naive and offset-aware datetimes".
+    """
+    rtt = [{"ObservationTimestamp": "2026-09-01T01:32:30",      # naive
+            "AvgResponseTime": 30.0, "MaxResponseTime": 60.0, "Availability": 100.0}]
+    util = [{"DateTime": "2026-09-01T06:30:00Z",                # aware
+             "OutPercentUtil": 50.0}]
+    # Naive is read as UTC, so the two maxima are ~5h apart.
+    assert detect_series_offset(rtt, util) == timedelta(hours=5)
+
+
+def test_detect_series_offset_within_one_series_mixing_forms():
+    # max() over a mixed list is itself unorderable — it would raise before
+    # the subtraction ever ran.
+    rtt = [
+        {"ObservationTimestamp": "2026-09-01T00:00:00"},
+        {"ObservationTimestamp": "2026-09-01T01:00:00Z"},
+    ]
+    util = [{"DateTime": "2026-09-01T01:00:00Z"}]
+    assert detect_series_offset(rtt, util) == timedelta(0)
+
+
+def test_correlate_pairs_naive_against_aware():
+    rtt = [{"ObservationTimestamp": "2026-09-01T00:00:00",
+            "AvgResponseTime": 42.0, "MaxResponseTime": 90.0, "Availability": 100.0}]
+    util = [{"DateTime": "2026-09-01T00:00:00Z", "OutPercentUtil": 80.0}]
+    pairs = correlate(rtt, util, BUCKET)
+    assert len(pairs) == 1
+    assert pairs[0]["rtt_ms"] == 42.0 and pairs[0]["util_pct"] == 80.0
 
 
 def test_detect_series_offset_needs_both_series():
@@ -385,3 +420,17 @@ def test_merge_sla_ops_prefers_the_first_source():
 def test_merge_sla_ops_handles_empty_inputs():
     assert merge_sla_ops([], []) == []
     assert len(merge_sla_ops(parse_ip_sla_statistics(SLA_SUMMARY), [])) == 2
+
+
+def test_timestamp_form_reports_what_orion_returned():
+    """Surfaced in the report because the two Orion entities were found to
+    serialise differently, and because utils/bandwidth_report.py feeds the
+    same raw strings into time_buckets.bucket_start, which reads a naive
+    value in the local zone of whatever machine runs it."""
+    assert timestamp_form([{"t": "2026-09-01T00:00:00Z"}], "t") == "aware"
+    assert timestamp_form([{"t": "2026-09-01T00:00:00"}], "t") == "naive"
+    assert timestamp_form(
+        [{"t": "2026-09-01T00:00:00Z"}, {"t": "2026-09-01T01:00:00"}], "t"
+    ) == "mixed"
+    assert timestamp_form([], "t") == "none"
+    assert timestamp_form([{"t": "not-a-date"}], "t") == "none"
