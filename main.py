@@ -255,3 +255,18 @@ app.mount("/static", NoCacheStaticFiles(directory=static_dir), name="static")
 async def get_status_partial(request: Request, session: SessionEntry = Depends(require_auth)):
     current_status = await status(session)
     return templates.TemplateResponse(request, "partials/status.html", current_status)
+
+
+if __name__ == "__main__":
+    # `python main.py` as an alternative to ./run.sh (which is the better entry
+    # point — it finds the venv for you). Same IMPACT_HOST/PORT/RELOAD knobs.
+    # Uvicorn needs the app as an import string, not the object, or --reload
+    # has no way to re-import it.
+    import uvicorn
+
+    uvicorn.run(
+        "main:app",
+        host=os.getenv("IMPACT_HOST", "0.0.0.0"),
+        port=int(os.getenv("IMPACT_PORT", "8000")),
+        reload=os.getenv("IMPACT_RELOAD", "true").lower() == "true",
+    )

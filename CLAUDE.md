@@ -39,15 +39,20 @@ pip install -r requirements.txt
 # Copy and fill in environment variables
 cp .env.template .env
 
-# Run development server (auto-reload)
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+# Run development server (auto-reload) — finds .venv on its own
+./run.sh
 
-# Run production server
-uvicorn main:app --host 0.0.0.0 --port 8000
+# Run production server (no auto-reload)
+./run.sh --prod
+
+# Override host/port (also via $IMPACT_HOST / $IMPACT_PORT)
+./run.sh --port 8080
 
 # Run tests
 pytest tests/
 ```
+
+`run.sh` is the entry point — it resolves the interpreter (project `.venv` → activated venv → `PATH`), so it works without `source .venv/bin/activate`, and passes `--env-file .env` so every module sees the same environment (the clients call `load_dotenv()` on import, but that lands partway through `main.py`'s own imports). `python main.py` works too, via the `__main__` block, honouring the same `IMPACT_HOST`/`IMPACT_PORT`/`IMPACT_RELOAD` variables. The underlying command is still plain `uvicorn main:app --reload --host 0.0.0.0 --port 8000` if you need to run it by hand.
 
 Tests live in `tests/` and use `pytest` + `pytest-asyncio` (declared in `requirements.txt`). No linter is configured. No CSS build step is required — the project uses Bootstrap v5 (vendored at `static/bootstrap/`) with custom overrides in `static/app.css`.
 
